@@ -45,6 +45,7 @@
 ## 待确认与已知局限
 
 - 继承自 pi-flow：serena 的 `prepareArguments` 在 `tool_call` 之前还是之后未核实；guard 管不到脚本文件内部（`bash x.sh`、`npm run`），兜底是提交时的 diff 检查；打码只认识常见密钥形态。
+- Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。
 - M0 之后运行时仍是 pi-flow 第六轮的流程（D0 接收 → D2 主 agent 规划 → E 模块实施与独立验收），角色名也还是 orchestrator、implementer、acceptor。pi-forge 的 v3 角色、技能和模板还没接上（M1 起）。
 
 ## 偏离记录

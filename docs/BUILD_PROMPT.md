@@ -1,4 +1,4 @@
-# pi-forge 构建提示词（给 Claude Code）· v3
+# pi-forge 构建提示词（给 Claude Code）· v3.1
 
 > 本文是新工作流 `pi-forge` 的完整规格。pi-flow 仓库是复用来源，不是要修改的对象。
 > 名字 `pi-forge`、命令前缀 `/forge-`、工具前缀 `forge_` 都是占位，可以整体替换。
@@ -296,7 +296,7 @@ tasks:
 
 1. 把最新 `.at-*` 的分支合并进任务分支。它只涉及 `tests/acceptance/<task>/**` 与 `tests/acceptance/_support/<task>/**`，按第 9.2 节的路径规则，不会与别的 task 冲突。
 2. 在任务的 worktree 中，带着第 4.1 节分配的资源运行：`typecheck`、`lint`、`test`、`acceptance -- <task>`。
-3. 检查 diff：不能越出 `writes`、`shared`，以及 test-adjust 允许的范围；`docs/contracts/**` 只能追加（第 12.1 节）；`tests/acceptance/**` 没有被改动。
+3. 检查 diff：不能越出 `writes`、`shared`，以及 test-adjust 允许的范围；`docs/contracts/**` 只能追加（第 12.1 节）；`tests/acceptance/**` 没有被改动（例外：S0 的 impl 可以改 `tests/acceptance/_support/**` 与 `tests/acceptance/S0-smoke/**`，第 5、7.5 节）。
 4. 失败的输出用 HEAD 的失败摘要压缩后交给 worker；通过时，把 diff 和输出存为 evidence。
 
 ### 8.3 恢复（resume）
@@ -487,18 +487,26 @@ task 的 `review` 字段写了值时，以它为准。没写时，由程序推�
 | 角色 | 读 | 写 | 工具 |
 |---|---|---|---|
 | main | 主工作区 `**`；`forge_read` 读集成分支 | 无 | 第 13.1 节 |
-| architect | `**`（排除 `.forge/**`） | `docs/contracts/**`、`docs/arch/**`、`docs/plan/**`、`docs/rules-draft/**`、`AGENTS.md`；glossary 只能追加 | read、write、edit、bash_readonly、codemode、serena_read、codegraph、`forge_propose_plan`、`forge_note`、`forge_submit` |
-| worker | `**`（排除 `.forge/**`） | `writes` + `shared` + test-adjust（排除 `tests/acceptance/**`）；本模块的契约文件只能追加 | read、write、edit、bash（full）、`forge_service`、serena_read、serena_edit、codegraph、`forge_sync`、`forge_dispute`、`forge_change_request`、`forge_request_scope`、`forge_note`、`forge_submit` |
-| test-author | 隔离工作区（第 9.2 节） | `tests/acceptance/<task>/**`；`_support/` 只能新建 | read、write、edit、bash（白名单），`forge_note`、`forge_submit` |
-| reviewer | `**`（排除 `.forge/**`） | 无 | read、bash_readonly、serena_read、codegraph、`forge_review_report`、`forge_review_confirm` |
-| stage-qa | `**`（排除 `.forge/**`） | 无（临时目录除外） | read、bash、`forge_service`、serena_read、codegraph、`forge_qa_report`、`forge_qa_confirm` |
+| architect | `**`（排除 `.forge/**`） | `docs/contracts/**`、`docs/arch/**`、`docs/plan/**`、`docs/rules-draft/**`、`AGENTS.md`；glossary 只能追加 | read、write、edit、codemode、serena_read、codegraph、`forge_propose_plan`、`forge_note`、`forge_submit` |
+| worker | `**`（排除 `.forge/**`） | `writes` + `shared` + test-adjust（排除 `tests/acceptance/**`）；本模块的契约文件只能追加 | read、write、edit、`forge_service`、serena_read、serena_edit、codegraph、`forge_sync`、`forge_dispute`、`forge_change_request`、`forge_request_scope`、`forge_note`、`forge_submit` |
+| test-author | 隔离工作区（第 9.2 节） | `tests/acceptance/<task>/**`、`tests/acceptance/_support/<task>/**` | read、write、edit、`forge_note`、`forge_submit` |
+| reviewer | `**`（排除 `.forge/**`） | 无 | read、serena_read、codegraph、`forge_review_report`、`forge_review_confirm` |
+| stage-qa | `**`（排除 `.forge/**`） | 无（临时目录除外） | read、`forge_service`、serena_read、codegraph、`forge_qa_report`、`forge_qa_confirm` |
 | researcher | `**`（排除 `.forge/**`） | `docs/research/**` | 原样复用 |
+
+bash 的有无和档位只由角色的 `bash:` 字段决定：architect、reviewer 为 readonly，worker、stage-qa 为 full，test-author 为 allowlist，main 和 researcher 没有 bash。
 
 **`read_paths` 的写法**：按 gitignore 的规则，从上到下逐条匹配，**后面的覆盖前面的**；以 `!` 开头的是排除。例如 `["**", "!.forge/**"]` 表示除 `.forge/` 外都能读。guard 的 `matchesAny` 要改成这种有序匹配。
 
 - 所有子进程角色隐式拥有 `forge_block`、`forge_learn`、`notes`、`history`；有 `forge_submit` 的角色隐式拥有 `forge_claim`。
-- **扩大可写范围**：沿用 HEAD 的做法，由 main 用 `forge_resolve_scope` 批准。pi-forge 加两条硬限制，由程序检查、main 无法批准：`tests/acceptance/**`、`docs/spec/**`、别的模块的契约文件。
-- **隐式授予**：`forge_service` 只给 worker 和 stage-qa（不再按"有完整 bash"自动授予）；`forge_request_scope` 只给 worker（test-author、architect、researcher 不再自动获得）。
+- **扩大可写范围**（`forge_request_scope` → `forge_resolve_scope`）：沿用 HEAD 的做法，由 main 用 `forge_resolve_scope` 批准。HEAD 的其余规则保留：每个 task 同时只能有一份申请；每次最多 10 个路径；在角色可写范围内、且不与任何未完成 task 的 `writes`、`shared` 重叠的，程序直接批准；拒绝时必须写理由（写进 handoff）。pi-forge 另加：
+  - **三类硬限制**，由程序检查、main 无法批准：`tests/acceptance/**`、`docs/spec/**`、别的模块的契约文件。
+  - **与已开始的 task 重叠时直接拒绝**：申请的路径与任何已开始但还没 done 的 task（`in_progress`、`awaiting_inputs`、`checking`、`in_review`、`disputed`、`queued_merge`、`merging`）的 `writes` 或 `shared` 重叠时，程序直接拒绝，main 也批不了。只与 `pending`、`ready` 的 task 重叠的，可以由 main 批准，派发时的互斥检查会让它们排队。
+  - 申请权限只给 worker（不再按"有可写范围且能提交"隐式授予 test-author、architect、researcher）。
+- **`forge_service`**：
+  - 授予在 config 里显式列出，只给 worker 和 stage-qa（不再按"有完整 bash"自动授予）。
+  - 启动服务时注入本次运行分配的 `PORT`、`FORGE_PORT_BASE`、`FORGE_DB_NAME`、`FORGE_TMP`（第 4.1 节）。M4 实现。
+  - 没有 worktree 的 task（例如 stage-qa），由程序在集成分支 HEAD 上建一个只读的临时 worktree 来跑服务，**绝不在主工作区启动**。M6 实现。
 
 ### 14.1 bash 的三档
 
@@ -578,9 +586,9 @@ guard 在 readonly 与 allowlist 档位下都拦截能读出其他提交内容�
 | **M1 Schema 与状态机** | 第 8.1、9.5 节的状态与转移；分开的失败计数；新字段；plan 的 schema；动态 S 阶段的记录与事件；`.forge` 格式版本 1；config 改为解析 v3 模板（`bash:`、有序 read_paths、`implementation_gate`、`acctest_workspace`、新角色），夹具模板随之迁移 | 每条转移都有正例和反例；`done` 没有出边；不在表中的转移被拒绝 |
 | **M2 P0 规格** | intake；`forge_read`；spec-lint；`forge_spec`、`forge_spec_amend`；main 的提示与技能注入；`/forge-build --prd [--prototype]` | spec-lint 每条规则都有正反用例；fake-llm 跑完 P0（main 用 `forge_read` 读到 PRD；不合格被拒 → 修正 → 批准）；修订流程走通 |
 | **M3 P1 契约与计划** | contract-check（结构解析、符号核对）；plan；DAG 推导；覆盖检查；`forge_propose_plan`；批准时生成 S 阶段与派生 task、锁定契约、应用规则与命令 | 第 7.3 节每类错误都有测试；软依赖与硬依赖正确；S0 多于一个 task 时报错；S0 的 `.at` 在 impl 之后 |
-| **M4 流水线一** | 资源分配与回收（第 4.1 节）；acctest 隔离工作区（导出基准、install 后 codegen、缓存）；第 9.5 节的单独合并；bash allowlist；impl 与 `.at` 并行；`awaiting_inputs`（含软依赖与同步）；预检；争议与 `/forge-decide`；第 9.4 节 | e2e：隔离工作区里 `git show <实现提交>` 失败，读取绝对路径被拦截；`_support/` 的修改被拒；两个并行预检的端口不冲突；软依赖的消费方在生产方 done 前停在 awaiting_inputs；争议的三种结果都正确；别的 task 的验收测试被破坏时生成 `.at-n` |
+| **M4 流水线一** | 资源分配与回收（第 4.1 节）；acctest 隔离工作区（导出基准、install 后 codegen、缓存）；第 9.5 节的单独合并；bash allowlist；impl 与 `.at` 并行；`awaiting_inputs`（含软依赖与同步）；预检；争议与 `/forge-decide`；第 9.4 节 | e2e：隔离工作区里 `git show <实现提交>` 失败，读取绝对路径被拦截；`_support/` 的修改被拒；两个并行预检的端口不冲突；软依赖的消费方在生产方 done 前停在 awaiting_inputs；争议的三种结果都正确；别的 task 的验收测试被破坏时生成 `.at-n`；`forge_service` 启动的服务拿到本次运行分配的 `PORT`、`FORGE_DB_NAME` 等变量；范围申请与已开始的 task 重叠时被拒绝、只与 pending/ready 重叠时可以批准 |
 | **M5 流水线二** | reviewer 的输入组装；`review` 的推导；report 与 confirm；出处校验与降级；合并队列选第一个合格的 task；契约追加判定与结构化三方合并 | e2e：第二轮不能新增问题；没有出处的 must 被降级；队首不合格时后面的 task 能先合并；两个 task 并行追加契约自动合并；修改已有契约被拒 |
-| **M6 阶段验收与交付** | 门禁；覆盖率矩阵；`forge_service` 与 stage-qa；fix task（按 task 分组）；精简模式的阶段审查；`/forge accept`；交付 | e2e：覆盖缺口生成 `.at-n`；stage-qa 的 must 生成 fix 并走流水线；超出轮数后进入 needs_human，可以用 accept 放行 |
+| **M6 阶段验收与交付** | 门禁；覆盖率矩阵；`forge_service` 与 stage-qa；fix task（按 task 分组）；精简模式的阶段审查；`/forge accept`；交付 | e2e：覆盖缺口生成 `.at-n`；stage-qa 的 must 生成 fix 并走流水线；超出轮数后进入 needs_human，可以用 accept 放行；没有 worktree 的 stage-qa 用 `forge_service` 启动服务时，服务运行在集成分支 HEAD 的临时 worktree 里，主工作区没有任何进程和文件改动 |
 | **M7 变更与模式** | `forge_change_request`；`/forge-add` → 规格修订；feature 模式与增量规格；`/forge init --adopt`；fix 模式 | e2e：变更请求批准后任务图、S 阶段与 `.at-n` 都正确更新 |
 | **M8 观测与文档** | `/forge-status` 与 `--metrics`（agent 时间）；flow-view；README、NOTES、流程图 | 状态视图的快照测试 |
 | **M9 真实模型验证** | P0 用户模拟脚本（对每个问题都回答"按推荐"，记录问题数）；重写 real-build；① 看板（无原型，`--prototype` 省略）新建 + 变更；② Homebox R1–R4（feature）；③ 用户自己的项目 | 通过条件（开跑前定下，不改）：①② 的隐藏测试不低于原生、0 回归；**精简模式的 agent 时间不超过原生的 3 倍**（与 pi-flow BENCHMARK-5 的"超过 3 倍只算质量更好但太慢"一致）；标准模式只记录、不设门槛；③ 由用户定性评估 |
@@ -597,6 +605,15 @@ guard 在 readonly 与 allowlist 档位下都拦截能读出其他提交内容�
 `.at` / `.at-n`：派生的验收测试 task；`.rv` / `.rv-2`：审查；`.fx-n`：修复；impl：worker 的主 task；软依赖：`~` 前缀；agent 时间：墙钟时间减去等待人工的时间；needs_human：阶段级的待人工状态（task 级用 blocked）。两者都列在"需要你处理"中。
 
 ## 21. 修订记录
+
+v3.1（M0 汇报之后）：
+
+- 第 14 节表格的"工具"列去掉 bash 字样；表格下注明 bash 的有无和档位只由 `bash:` 字段决定（architect、reviewer 为 readonly，worker、stage-qa 为 full，test-author 为 allowlist，main、researcher 没有）。
+- 第 14 节"加两条硬限制"改为"三类硬限制"。
+- 第 14 节 test-author 的可写范围改为 `tests/acceptance/<task>/**`、`tests/acceptance/_support/<task>/**`。
+- 第 8.2 节第 3 步加上 S0 impl 的例外（`_support/**`、`S0-smoke/**`）。
+- 第 14 节：扩大可写范围与已开始的 task 重叠时直接拒绝，只与 pending、ready 重叠的可以批准；申请权限只给 worker；HEAD 的其余规则保留。
+- 第 14 节：`forge_service` 在 config 里显式授予 worker、stage-qa；启动时注入第 4.1 节的资源变量（M4）；没有 worktree 的 task 在集成分支 HEAD 的只读临时 worktree 中启动服务，绝不在主工作区（M6）。M4、M6 的验收加上对应测试。
 
 v3（第二次核对之后，逐条决定见 `DECISIONS-R2.md`）：
 

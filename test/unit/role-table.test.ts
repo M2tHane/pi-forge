@@ -1,0 +1,154 @@
+// 来源：pi-flow test/unit/role-table.test.ts @ 31f3f15
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { RoleTable, keyName, textWidth, type RoleRow } from '../../src/commands/role-table.ts';
+import { runFlowConfig, type UiPort } from '../../src/commands/forge-config.ts';
+import { loadRoleSettings } from '../../src/core/role-settings.ts';
+import { parseConfig } from '../../src/core/config.ts';
+import { REAL_TEMPLATE_YAML } from '../helpers/config.ts';
+
+const models = [
+  { ref: 'a/big', levels: ['off', 'low', 'high'] as const },
+  { ref: 'b/small', levels: ['off'] as const },
+].map((m) => ({ ref: m.ref, levels: [...m.levels] }));
+const rows = (): RoleRow[] => [
+  { role: 'architect', purpose: '模块规划', defaults: { model: 'a/big' } },
+  { role: 'implementer', purpose: '模块实现', defaults: {} },
+];
+const DOWN = '\x1b[B';
+
+test('按键名：传统序列与 Kitty 序列', () => {
+  assert.equal(keyName('\x1b[A'), 'up');
+  assert.equal(keyName('\x1bOB'), 'down');
+  assert.equal(keyName('\x1b[1;1C'), 'right');
+  assert.equal(keyName('\r'), 'enter');
+  assert.equal(keyName('\x1b'), 'escape');
+  assert.equal(keyName('x'), undefined);
+});
+
+const RIGHT = '\x1b[C';
+const LEFT = '\x1b[D';
+const ENTER = '\r';
+const ESC = '\x1b';
+const UP = '\x1b[A';
+
+test('Enter 打开选择列表，上下选择，Enter 确认，Esc 返回不改', () => {
+  const t = new RoleTable(rows(), models);
+  t.handleInput(ENTER);                       // 模型列：列表 [默认, a/big, b/small]
+  assert.deepEqual(t.picker!.options, [undefined, 'a/big', 'b/small']);
+  t.handleInput(DOWN); t.handleInput(DOWN);
+  t.handleInput(ENTER);
+  assert.equal(t.rows[0]!.model, 'b/small');
+  assert.equal(t.picker, null);
+  t.handleInput(ENTER);                       // 再打开：高亮停在当前值
+  assert.equal(t.picker!.index, 2);
+  t.handleInput(UP); t.handleInput(UP);       // 回到"默认"
+  t.handleInput(ESC);                         // Esc 只关列表
+  assert.equal(t.rows[0]!.model, 'b/small');
+  t.handleInput(ENTER); t.handleInput(UP); t.handleInput(UP); t.handleInput(ENTER);
+  assert.equal(t.rows[0]!.model, undefined);
+});
+
+test('左右键切列、选行；备用模型与思考强度；Backspace 恢复默认；Esc 保存退出', () => {
+  const t = new RoleTable(rows(), models);
+  t.handleInput(RIGHT); t.handleInput(ENTER); t.handleInput(DOWN); t.handleInput(ENTER);
+  assert.equal(t.rows[0]!.escalate, 'a/big');
+  t.handleInput(RIGHT); t.handleInput(ENTER);          // 思考强度：默认模型 a/big 的 off/low/high
+  assert.deepEqual(t.picker!.options, [undefined, 'off', 'low', 'high']);
+  t.handleInput(DOWN); t.handleInput(DOWN); t.handleInput(ENTER);
+  assert.equal(t.rows[0]!.thinking, 'low');
+  t.handleInput(DOWN);
+  assert.equal(t.row, 1);
+  t.handleInput(UP);
+  t.handleInput('\x7f');
+  assert.equal(t.rows[0]!.thinking, undefined);
+  assert.equal(t.handleInput(ESC), 'save');
+});
+
+test('换到不支持当前思考强度的模型时，思考强度回到默认', () => {
+  const t = new RoleTable(rows(), models);
+  t.handleInput(RIGHT); t.handleInput(RIGHT);
+  t.handleInput(ENTER); t.handleInput(DOWN); t.handleInput(DOWN); t.handleInput(DOWN); t.handleInput(ENTER);
+  assert.equal(t.rows[0]!.thinking, 'high');
+  t.handleInput(LEFT); t.handleInput(LEFT);                 // 回到模型列
+  t.handleInput(ENTER); t.handleInput(DOWN); t.handleInput(DOWN); t.handleInput(ENTER);   // b/small 只支持 off
+  assert.equal(t.rows[0]!.model, 'b/small');
+  assert.equal(t.rows[0]!.thinking, undefined);
+});
+
+test('下拉框紧贴当前格展开：在所选行下方、与所选列左对齐；下方放不下时向上展开', () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ ref: `p/m${i}`, levels: ['off'] as ('off')[] }));
+  const rs = Array.from({ length: 7 }, (_, i): RoleRow => ({ role: `r${i}`, purpose: '职责', defaults: {} }));
+  const strip = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, '');
+  const t = new RoleTable(rs, many);
+  t.handleInput(ENTER);
+  let lines = t.render(100).map(strip);
+  assert.match(lines.at(-1)!, /Enter 确认.*Esc 返回/);
+  const top = lines.findIndex((l) => l.includes('┌'));
+  assert.equal(top, 4);                                  // 标题、空行、表头、第一行之后
+  assert.ok(lines.every((l) => textWidth(l) <= 100));
+  assert.ok(lines[top + 1]!.includes('│ 默认'));
+  assert.ok(lines.some((l) => l.includes('↓5')));         // 12+1 项只显示 8 项
+  const col = lines[top]!.indexOf('┌');
+  assert.equal(lines[0]!.includes('┌'), false);
+  assert.ok(col > 0);
+  // 选中接近底部的一行：向上展开，不超出表格底部
+  const t2 = new RoleTable(rs, many.slice(0, 3));
+  for (let i = 0; i < 6; i++) t2.handleInput(DOWN);
+  t2.handleInput(ENTER);
+  lines = t2.render(100).map(strip);
+  const top2 = lines.findIndex((l) => l.includes('┌'));
+  const bottom2 = lines.findIndex((l) => l.includes('└'));
+  assert.ok(bottom2 < lines.findIndex((l) => l.startsWith('→ r6')));
+  assert.ok(top2 > 2);
+});
+
+test('渲染：每行不超过终端宽度，含表头与当前行标记', () => {
+  const t = new RoleTable(rows(), models);
+  for (const width of [60, 100, 160]) {
+    const lines = t.render(width);
+    for (const l of lines) assert.ok(textWidth(l.replace(/\x1b\[[0-9;]*m/g, '')) <= width, `宽 ${width}：${l}`);
+  }
+  const text = t.render(120).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+  assert.match(text, /角色\s+职责\s+模型\s+备用模型\s+思考强度/);
+  assert.match(text, /→ architect/);
+  assert.match(t.render(120).at(-1)!, /Esc 保存并退出/);
+});
+
+test('/forge-config 表格：保存各行的模型、备用模型与思考强度，放弃时不写', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'pi-forge-rt-'));
+  try {
+    const settingsPath = path.join(dir, 'pi-forge.json');
+    const config = parseConfig(REAL_TEMPLATE_YAML.replace('strong: "<provider/model>"', 'strong: "a/big"'));
+    const mk = (edit: ((r: RoleRow[]) => RoleRow[] | null)): UiPort => ({
+      select: async () => undefined, notify: () => {},
+      editTable: async (r) => edit(r),
+    });
+    const modelOpts = [{ ref: 'a/big', name: 'Big', levels: ['off', 'low', 'high'] as const }, { ref: 'b/small', name: 'Small', levels: ['off'] as const }]
+      .map((m) => ({ ...m, levels: [...m.levels] }));
+    const deps = (ui: UiPort) => ({ ui, models: modelOpts, config, settingsPath });
+
+    const seen: RoleRow[][] = [];
+    const out = await runFlowConfig('', deps(mk((r) => {
+      seen.push(r);
+      return r.map((x) => (x.role === 'implementer' ? { ...x, model: 'b/small', escalate: 'a/big', thinking: 'off' as const } : x));
+    })));
+    assert.match(out, /已保存/);
+    assert.ok(seen[0]!.some((r) => r.role === 'orchestrator' && r.purpose.includes('主 agent')));
+    const s = loadRoleSettings(settingsPath).roles['implementer']!;
+    assert.deepEqual(s, { model: 'b/small', thinking: 'off', escalate_model: 'a/big' });
+
+    // 再打开：现有设置带入；恢复默认后清除
+    const out2 = await runFlowConfig('', deps(mk((r) => {
+      assert.equal(r.find((x) => x.role === 'implementer')!.model, 'b/small');
+      return r.map((x) => ({ ...x, model: undefined, escalate: undefined, thinking: undefined }));
+    })));
+    assert.match(out2, /已保存/);
+    assert.deepEqual(loadRoleSettings(settingsPath).roles, {});
+
+    assert.match(await runFlowConfig('', deps(mk(() => null))), /放弃/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

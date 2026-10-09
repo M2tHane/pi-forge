@@ -1,0 +1,11 @@
+// 来源：pi-flow test/helpers/config.ts @ 31f3f15
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { PKG_CONTENT } from './package.ts';
+
+/** 运行时测试用的固定配置（第四轮模板的副本，含按层拆分的角色），与 templates/workflow.yaml 解耦；模板本身由 REAL_TEMPLATE_YAML 测试 */
+export const TEMPLATE_YAML = readFileSync(path.join(import.meta.dirname, '../fixtures/workflow-legacy.yaml'), 'utf8');
+export const REAL_TEMPLATE_YAML = readFileSync(path.join(PKG_CONTENT, 'templates/workflow.yaml'), 'utf8');
+
+/** 并发保持 2，测试中的调度顺序不随模板默认值变化；自动派发关闭：测试显式调用 engine.next，派发顺序可控（自动派发有单独的测试） */
+export const TEST_YAML = TEMPLATE_YAML.replace(/^  max_parallel: 3 .*$/m, '  max_parallel: 2').replace(/^  auto_dispatch: true .*$/m, '  auto_dispatch: false');

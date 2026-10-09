@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pi-forge/flow.schema.json",
+  "type": "object",
+  "required": [
+    "id",
+    "mode",
+    "title",
+    "stages",
+    "stage",
+    "stage_status",
+    "integration_branch",
+    "base_sha",
+    "approvals",
+    "created_at",
+    "version"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[BFX]-[0-9]{3,}$"
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "build"
+        },
+        {
+          "type": "string",
+          "const": "feature"
+        },
+        {
+          "type": "string",
+          "const": "fix"
+        }
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "stage": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stage_status": {
+      "enum": [
+        "active",
+        "awaiting_gate",
+        "awaiting_human",
+        "done",
+        "aborted"
+      ]
+    },
+    "integration_branch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_sha": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "approvals": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "type": "object",
+          "required": [
+            "by",
+            "at"
+          ],
+          "properties": {
+            "by": {
+              "type": "string",
+              "const": "human"
+            },
+            "at": {
+              "type": "string",
+              "minLength": 1
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cost": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "sync": {
+      "type": "object",
+      "required": [
+        "stage",
+        "status",
+        "main_sha",
+        "at"
+      ],
+      "properties": {
+        "stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "ok"
+            },
+            {
+              "type": "string",
+              "const": "fixing"
+            },
+            {
+              "type": "string",
+              "const": "conflict"
+            }
+          ]
+        },
+        "main_sha": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string",
+          "pattern": "^T-[0-9]{3,}$"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "gate_rounds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage",
+          "command",
+          "tasks",
+          "at"
+        ],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^T-[0-9]{3,}$"
+            }
+          },
+          "at": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skip_stages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "required": [
+        "submitted",
+        "rounds"
+      ],
+      "properties": {
+        "submitted": {
+          "type": "boolean"
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string"
+        },
+        "feedback": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "intake": {
+      "type": "object",
+      "required": [
+        "prd",
+        "pages",
+        "design_doc"
+      ],
+      "properties": {
+        "prd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "design_doc": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "planning": {
+      "type": "object",
+      "required": [
+        "submitted",
+        "rounds"
+      ],
+      "properties": {
+        "submitted": {
+          "type": "boolean"
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "feedback": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "replan_request": {
+      "type": "object",
+      "required": [
+        "reason",
+        "at"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feedback": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

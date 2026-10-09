@@ -1,0 +1,52 @@
+{
+  "name": "pi-forge",
+  "version": "0.1.0",
+  "description": "把 PRD 与原型变成分阶段交付、逐阶段验收的大型项目的多 agent 开发流程，固化为 Pi 插件：程序调度、契约先行、独立验收测试。",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src",
+    "agents",
+    "rules",
+    "skills",
+    "schemas",
+    "templates",
+    "README.md",
+    "NOTES.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/pi-adapter/extension.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-reporter=spec \"test/unit/**/*.test.ts\" && node --test --test-concurrency=2 --test-reporter=spec \"test/e2e/**/*.test.ts\"",
+    "gen:schemas": "node scripts/gen-schemas.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "minimatch": "10.2.6",
+    "proper-lockfile": "4.1.2",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "typebox": "1.3.27",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pi-forge/role-settings.schema.json",
+  "type": "object",
+  "required": [
+    "version",
+    "roles"
+  ],
+  "properties": {
+    "version": {
+      "type": "number",
+      "const": 1
+    },
+    "roles": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "pattern": "^[^/\\s]+/\\S+$"
+            },
+            "thinking": {
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            "escalate_model": {
+              "type": "string",
+              "pattern": "^[^/\\s]+/\\S+$"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

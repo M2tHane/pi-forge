@@ -1,0 +1,109 @@
+// 来源：pi-flow src/pi-adapter/pi-api.d.ts @ 31f3f15
+// pi-forge 用到的 Pi API 的最小类型声明，摘自 @earendil-works/pi-coding-agent 0.99.2 与 pi-ai 的 .d.ts（已核实；1.0.0 中这些类型未变）。
+// 运行时由 Pi（jiti）提供这些模块；只有 src/pi-adapter/ 可以引用它们。Pi 升级后需对照 NOTES.md 重新核实。
+declare module '@earendil-works/pi-coding-agent' {
+  export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  export interface PiModel { provider: string; id: string; name: string; reasoning: boolean }
+  export interface ModelRegistry {
+    getAll(): PiModel[];
+    getAvailable(): PiModel[];
+    find(provider: string, modelId: string): PiModel | undefined;
+  }
+  export interface ExtensionUIContext {
+    select(title: string, options: string[]): Promise<string | undefined>;
+    confirm(title: string, message: string): Promise<boolean>;
+    input(title: string, placeholder?: string): Promise<string | undefined>;
+    notify(message: string, type?: 'info' | 'warning' | 'error'): void;
+    /** 页脚状态栏文字；undefined 清除（只在终端界面显示） */
+    setStatus(key: string, text: string | undefined): void;
+    /** 临时把键盘焦点交给自定义组件，组件调用 done 后返回（Pi 1.0.0 ExtensionUIContext.custom） */
+    custom<T>(factory: (
+      tui: { requestRender(force?: boolean): void },
+      theme: unknown,
+      keybindings: unknown,
+      done: (result: T) => void,
+    ) => { render(width: number): string[]; handleInput?(data: string): void; invalidate(): void }): Promise<T>;
+  }
+  export interface ExtensionContext {
+    ui: ExtensionUIContext;
+    hasUI: boolean;
+    mode: 'tui' | 'rpc' | 'json' | 'print';
+    cwd: string;
+    modelRegistry: ModelRegistry;
+    /** 当前模型（可能未设置） */
+    model: PiModel | undefined;
+    shutdown(): void;
+    /** 当前上下文占用；percent 为 0–100，刚压缩完、还没有新回复时为 null（Pi 1.0.0 ContextUsage） */
+    getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
+    /** 触发压缩，不等待完成（Pi 1.0.0 CompactOptions） */
+    compact(options?: { customInstructions?: string; onComplete?: (result: unknown) => void; onError?: (error: Error) => void }): void;
+    /** 只读会话管理器；getSessionFile 为当前会话 JSONL 的路径（--no-session 时为 undefined） */
+    sessionManager: { getSessionFile(): string | undefined };
+  }
+  /** 放回上下文的自定义消息：转换给模型时变成 user 消息（Pi 1.0.0 messages.d.ts CustomMessage） */
+  export interface CustomAgentMessage { role: 'custom'; customType: string; content: string; display: boolean; timestamp: number }
+  /** 每次调用模型前触发，可替换 messages（不含系统提示；Pi 1.0.0 ContextEvent / ContextEventResult） */
+  export interface ContextEvent { type: 'context'; messages: unknown[] }
+  export interface TextContent { type: 'text'; text: string }
+  export interface AgentToolResult { content: TextContent[]; details: unknown }
+  export interface ToolDefinition {
+    name: string;
+    label: string;
+    description: string;
+    parameters: unknown;
+    /** false 时注册后不激活（需 setActiveTools 激活） */
+    defaultActive?: boolean;
+    execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, ctx: ExtensionContext): Promise<AgentToolResult>;
+  }
+  export interface BeforeAgentStartEvent {
+    type: 'before_agent_start';
+    prompt: string;
+    readonly systemPrompt: string;
+    /** 可变：后续 handler 看到修改；appendSystemPrompt 会追加到系统提示 */
+    systemPromptOptions: { appendSystemPrompt?: string; [k: string]: unknown };
+  }
+  export interface ToolCallEvent { type: 'tool_call'; toolCallId: string; toolName: string; input: Record<string, unknown> }
+  export interface ToolCallEventResult { block?: boolean; reason?: string; terminate?: boolean }
+  /** Pi 1.0.0 docs/extensions.md、dist/core/extensions/types.d.ts：工具执行后触发，可改写结果；bash 非零退出时 isError 为 true，structuredContent 含 output、exit_code */
+  export type ToolResultContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+  export interface ToolResultEvent { type: 'tool_result'; toolCallId: string; parentToolCallId?: string; toolName: string; input: Record<string, unknown>; content: ToolResultContent[]; structuredContent?: unknown; isError: boolean }
+  export interface ToolResultEventResult { content?: ToolResultContent[]; structuredContent?: unknown; isError?: boolean }
+  export interface AutocompleteItem { value: string; label: string; description?: string }
+  export interface RegisteredCommandOptions {
+    description?: string;
+    getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
+    handler: (args: string, ctx: ExtensionContext) => Promise<void>;
+  }
+  export interface ExtensionAPI {
+    registerCommand(name: string, options: RegisteredCommandOptions): void;
+    registerTool(tool: ToolDefinition): void;
+    getAllTools(): { name: string }[];
+    getActiveTools(): string[];
+    setActiveTools(names: string[]): void;
+    /** 设置本会话模型（不改默认配置）；该 provider 没有配置凭据时返回 false */
+    setModel(model: PiModel): Promise<boolean>;
+    getThinkingLevel(): ThinkingLevel;
+    /** 以用户身份发送消息，总会触发一轮；agent 正在输出时用 deliverAs 指定排队方式（Pi 1.0.0 types.d.ts） */
+    sendUserMessage(content: string, options?: { deliverAs?: 'steer' | 'followUp' }): void;
+    /** 设置本会话思考级别（按模型能力收窄） */
+    setThinkingLevel(level: ThinkingLevel): void;
+    on(event: 'session_start' | 'session_shutdown' | 'agent_end', handler: (event: unknown, ctx: ExtensionContext) => unknown): () => void;
+    on(event: 'before_agent_start', handler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => unknown): () => void;
+    /** 每条消息结束（user、assistant、toolResult）；assistant 消息带 usage、provider、model（Pi 1.0.0 types.d.ts 的 MessageEndEvent） */
+    on(event: 'message_end', handler: (event: { type: 'message_end'; message: Record<string, unknown> }, ctx: ExtensionContext) => unknown): () => void;
+    on(event: 'context', handler: (event: ContextEvent, ctx: ExtensionContext) => { messages?: unknown[] } | void | Promise<{ messages?: unknown[] } | void>): () => void;
+    /** 每个回合结束（Pi 1.0.0 TurnEndEvent；返回值可省略） */
+    on(event: 'turn_end' | 'session_compact' | 'session_compact_failed', handler: (event: unknown, ctx: ExtensionContext) => unknown): () => void;
+    on(event: 'tool_result', handler: (event: ToolResultEvent, ctx: ExtensionContext) => Promise<ToolResultEventResult | void> | ToolResultEventResult | void): () => void;
+    on(event: 'tool_call', handler: (event: ToolCallEvent, ctx: ExtensionContext) => Promise<ToolCallEventResult | void> | ToolCallEventResult | void): () => void;
+  }
+  export function getAgentDir(): string;
+  /** 当前 Pi 的版本号 */
+  export const VERSION: string;
+  export const CONFIG_DIR_NAME: string;
+}
+
+declare module '@earendil-works/pi-ai' {
+  import type { PiModel, ThinkingLevel } from '@earendil-works/pi-coding-agent';
+  export function getSupportedThinkingLevels(model: PiModel): ThinkingLevel[];
+}

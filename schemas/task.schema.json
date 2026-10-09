@@ -1,0 +1,503 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pi-forge/task.schema.json",
+  "type": "object",
+  "required": [
+    "id",
+    "stage",
+    "kind",
+    "title",
+    "role",
+    "scopes",
+    "depends_on",
+    "inputs",
+    "writes",
+    "acceptance",
+    "verify",
+    "status",
+    "attempts",
+    "violations",
+    "lease_expirations",
+    "lease",
+    "impl_run",
+    "branch",
+    "worktree",
+    "base_sha",
+    "blocked_reason",
+    "last_failure",
+    "created_by",
+    "version"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^T-[0-9]{3,}$"
+    },
+    "stage": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "impl",
+        "doc",
+        "review-fix",
+        "merge-fix",
+        "analysis"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "task",
+          "type"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "pattern": "^T-[0-9]{3,}$"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "hard"
+              },
+              {
+                "type": "string",
+                "const": "soft"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "writes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "verify": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "ready",
+        "in_progress",
+        "queued_merge",
+        "merging",
+        "done",
+        "blocked",
+        "cancelled"
+      ]
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "violations": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lease_expirations": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "interruptions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "same_failures": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failure_sig": {
+      "type": "string"
+    },
+    "timeouts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timeout_review": {
+      "type": "object",
+      "required": [
+        "run",
+        "at",
+        "minutes"
+      ],
+      "properties": {
+        "run": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_text": {
+          "type": "string"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "continue"
+            },
+            {
+              "type": "string",
+              "const": "restart"
+            }
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeout_progress": {
+      "type": "object",
+      "required": [
+        "commits",
+        "lines",
+        "decision"
+      ],
+      "properties": {
+        "commits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "continue"
+            },
+            {
+              "type": "string",
+              "const": "restart"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope_grants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "paths",
+          "reason",
+          "by",
+          "at"
+        ],
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "reason": {
+            "type": "string"
+          },
+          "by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "program"
+              },
+              {
+                "type": "string",
+                "const": "orchestrator"
+              },
+              {
+                "type": "string",
+                "const": "human"
+              }
+            ]
+          },
+          "at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "run": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "scope_request": {
+      "type": "object",
+      "required": [
+        "paths",
+        "reason",
+        "conflicts",
+        "run",
+        "at"
+      ],
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "reason": {
+          "type": "string"
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "run": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "size": {
+      "enum": [
+        "S",
+        "M",
+        "L"
+      ]
+    },
+    "manual_checks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "maxItems": 20
+    },
+    "lease": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "run_id",
+            "role",
+            "token_hash",
+            "acquired_at",
+            "expires_at"
+          ],
+          "properties": {
+            "run_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "minLength": 1
+            },
+            "token_hash": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "acquired_at": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expires_at": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "impl_run": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "worktree": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "base_sha": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "blocked_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "last_failure": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "replan": {
+      "type": "string",
+      "minLength": 1
+    },
+    "merge_fix_for": {
+      "type": "string",
+      "pattern": "^T-[0-9]{3,}$"
+    },
+    "conflict_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sync_main": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fork_from_task": {
+      "type": "string",
+      "pattern": "^T-[0-9]{3,}$"
+    },
+    "test_adjustments": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "shared": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "needs_acceptance": {
+      "type": "boolean"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "accept_of": {
+      "type": "string",
+      "pattern": "^T-[0-9]{3,}$"
+    },
+    "accept_kind": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "check"
+        },
+        {
+          "type": "string",
+          "const": "confirm"
+        }
+      ]
+    },
+    "final_review": {
+      "type": "boolean"
+    },
+    "created_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

@@ -6,7 +6,7 @@ import type { EffectiveSpec } from './spec.ts';
 import { validate, type PlanFile, type TaskFile } from './schemas.ts';
 import type { TaskInput } from './state-store.ts';
 import { conflictsWith, dagReport, findCycle, mutexPairs, type DagReport } from './dag.ts';
-import { globsOverlap } from './paths.ts';
+import { globsOverlap, ownAcceptanceGlob } from './paths.ts';
 
 export const PLAN_PATH = 'docs/plan/plan.yaml';
 /** S0 的 worker 额外可写的验收目录（规格第 7.5、8.2 节） */
@@ -269,14 +269,15 @@ export function deriveAcctest(impl: Pick<TaskInput, 'id' | 'stage' | 'title' | '
 }
 
 /** 计划批准时生成的 task：每个 plan task 一个 impl（worker），以及它的 .at（test-author） */
-export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['depends_on']>, scopes: { worker: string[]; testAuthor: string[] }, opts: { acctest: boolean; verify?: string[] }): TaskInput[] {
+export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['depends_on']>, scopes: { worker: string[]; testAuthor: string[] }, opts: { acctest: boolean; verify?: string[]; selfTest?: boolean }): TaskInput[] {
+  // selfTest（test_author: false，偏离 81）：不派生 .at，impl 的 writes 加上自己的验收目录，由 worker 自己写验收测试
   const out: TaskInput[] = [];
   for (const t of plan.tasks) {
     const impl: TaskInput = {
       id: t.id, stage: t.stage, kind: 'impl', role: 'worker', title: t.title, scopes: [...scopes.worker],
       depends_on: (deps.get(t.id) ?? []).map((d) => ({ ...d })), inputs: [],
       // verify 非空的任务合并时跑全量 typecheck、lint、test（merge-queue）
-      writes: [...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : [])], verify: [...(opts.verify ?? [])],
+      writes: [...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(opts.selfTest ? [ownAcceptanceGlob(t.id)] : [])], verify: [...(opts.verify ?? [])],
       module: t.module, size: t.size, layers: [...t.layers], ac: [...t.ac], produces: [...t.produces], requires: [...t.requires],
       test_interface: [...t.test_interface],
       ...(t.shared?.length ? { shared: [...t.shared] } : {}),

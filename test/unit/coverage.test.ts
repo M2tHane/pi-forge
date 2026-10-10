@@ -177,3 +177,27 @@ test('gateFailed：生成 .fx-n（验收测试失败时 writes 为 impl 的 writ
     assert.match(r3.reason ?? '', /2 轮后仍失败/);
   } finally { p.cleanup(); }
 });
+
+test('createCoverageGapRound：selfTest（test_author: false）给 impl 建 .fx-n，写自己的验收目录，不建 .at-n', async () => {
+  const p = await project();
+  try {
+    const gaps = [
+      { req: 'REQ-001', ac: 'REQ-001.AC2', text: '密码错误', owner: 'T-001', files: [] },
+      { req: 'REQ-005', ac: 'REQ-005.AC1', files: [] },
+    ];
+    const r = await createCoverageGapRound(p.store, p.flowId, gaps, true);
+    assert.deepEqual(r.tasks, ['T-001.fx-1']);
+    assert.deepEqual(r.unowned.map((x) => x.ac), ['REQ-005.AC1']);
+    const t = p.store.readTask(p.flowId, 'T-001.fx-1');
+    assert.deepEqual([t.kind, t.role, t.for_task, t.title, t.fork_from_task], ['fix', 'worker', 'T-001', '补齐 AC 编号的验收测试', 'T-001']);
+    assert.ok(t.writes.includes('tests/acceptance/T-001/**'));
+    assert.ok(t.writes.includes('src/server/t-001/**'), '补测时也可以改实现：writes 同 impl');
+    assert.deepEqual(t.ac, ['REQ-001.AC2']);
+    assert.match(p.store.readHandoff(p.flowId, 'T-001.fx-1'), /补齐验收测试[\s\S]*REQ-001\.AC2：密码错误/);
+    assert.ok(!p.store.listTasks(p.flowId).some((x) => x.kind === 'acctest'));
+    assert.deepEqual(p.store.readFlow(p.flowId).gate_rounds?.map((x) => [x.command, x.tasks]), [['coverage', ['T-001.fx-1']]]);
+    // 上一个 .fx-n 还没结束：跳过
+    const again = await createCoverageRounds(p.store, p.flowId, gaps, 'engine', true);
+    assert.deepEqual([again.tasks, again.skipped], [[], ['T-001']]);
+  } finally { p.cleanup(); }
+});

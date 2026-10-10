@@ -11,6 +11,7 @@
 import type { ChangeActionSummary, ChangeFile, Dependency, FlowFile, PlanFile, TaskFile } from './schemas.ts';
 import { acctestRoundInput, latestAcctest } from './acceptance-flow.ts';
 import { deriveAcctest, deriveTasks, S0_EXTRA_WRITES } from './plan.ts';
+import { ownAcceptanceGlob, writesOwnAcceptance } from './paths.ts';
 import type { ChangeOps } from './state-store.ts';
 
 export type PlanTask = PlanFile['tasks'][number];
@@ -50,11 +51,12 @@ const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.l
 const stageDefEq = (a: PlanStageDef, b: PlanStageDef) => a.goal === b.goal && sameSet(a.exit, b.exit);
 
 /** 计划里的 task 字段 → TaskFile 的字段（用于调整未开始的 task） */
-function taskPatch(t: PlanTask, fields: readonly string[]): Record<string, unknown> {
+/** ownTests：该 task 自己写验收测试（test_author: false，偏离 81），writes 里保留自己的验收目录 */
+function taskPatch(t: PlanTask, fields: readonly string[], ownTests = false): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
     const v = (t as Record<string, unknown>)[f];
-    if (f === 'writes') out['writes'] = [...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : [])];
+    if (f === 'writes') out['writes'] = [...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(ownTests ? [ownAcceptanceGlob(t.id)] : [])];
     else if (OPTIONAL_LISTS.has(f) && Array.isArray(v) && !v.length) out[f] = undefined;
     else out[f] = structuredClone(v);
   }
@@ -134,7 +136,7 @@ export function diffPlanRevision(oldPlan: CurrentPlan, newPlan: PlanFile, tasks:
       }
       if (!stageOk(t.stage)) { errors.push(`${t.id} 的阶段 ${t.stage} 在当前阶段 ${flow.stage} 之前或不存在，只能调整到当前阶段或之后`); continue; }
       if ((oldIdx.get(old.stage) ?? -1) < cur) { errors.push(`${t.id} 属于已完成的阶段 ${old.stage}，不能调整`); continue; }
-      const patch = taskPatch(t, fields);
+      const patch = taskPatch(t, fields, writesOwnAcceptance(l));
       if (depsChanged) patch['depends_on'] = newDeps.map((d) => ({ ...d }));
       actions.push({ kind: 'adjust', id: t.id, fields: [...fields, ...(depsChanged ? ['depends_on'] : [])], patch });
       if (fields.some((f) => ['ac', 'test_interface', 'title', 'stage', 'writes'].includes(f)) || depsChanged) {
@@ -278,6 +280,8 @@ export interface MaterializeContext {
   scopes: { worker: string[]; testAuthor: string[] };
   verify: string[];
   changeId: string;
+  /** test_author 为 false（偏离 81）：新增与修改的 impl 自己写验收测试，不派生 .at */
+  selfTest?: boolean;
 }
 
 /**
@@ -293,20 +297,20 @@ export function materializeChange(actions: readonly ChangeAction[], newPlan: Pla
     if (a.kind === 'add') { addedPlan.push(a.task); depsMap.set(a.task.id, a.deps); }
   }
   if (addedPlan.length) {
-    ops.add.push(...deriveTasks(sub(addedPlan), depsMap, ctx.scopes, { acctest: true, verify: ctx.verify }));
+    ops.add.push(...deriveTasks(sub(addedPlan), depsMap, ctx.scopes, { acctest: !ctx.selfTest, selfTest: !!ctx.selfTest, verify: ctx.verify }));
     for (const t of addedPlan) ops.handoffs[t.id] = `由变更请求 ${ctx.changeId} 新增。`;
   }
   for (const a of actions) {
     switch (a.kind) {
       case 'followup': {
         const m = new Map<string, Dependency[]>([[a.task.id, a.deps]]);
-        const [impl] = deriveTasks(sub([a.task]), m, ctx.scopes, { acctest: false, verify: ctx.verify });
+        const [impl] = deriveTasks(sub([a.task]), m, ctx.scopes, { acctest: false, selfTest: !!ctx.selfTest, verify: ctx.verify });
         const i = impl!;
         if (!i.depends_on.some((d) => d.task === a.of && d.type === 'hard')) i.depends_on = [...i.depends_on.filter((d) => d.task !== a.of), { task: a.of, type: 'hard', reason: `变更请求 ${ctx.changeId}：修改 ${a.of}` }];
         ops.add.push(i);
         const original = tasks.find((t) => t.id === a.of);
         const own = a.task.ac.filter((x) => !(original?.ac ?? []).includes(x));
-        if (own.length) ops.add.push(deriveAcctest({ ...i, ac: own }, ctx.scopes.testAuthor));
+        if (own.length && !ctx.selfTest) ops.add.push(deriveAcctest({ ...i, ac: own }, ctx.scopes.testAuthor));
         ops.handoffs[i.id] = `这是对 ${a.of}「${original?.title ?? ''}」的修改 task（变更请求 ${ctx.changeId}）。${a.of} ${a.originalStatus === 'done' ? '已经完成并合并' : `${a.originalStatus}，做完后才会开始本任务`}；在它的基础上做本任务要求的修改，不要重写。`;
         break;
       }

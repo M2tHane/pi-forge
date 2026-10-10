@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { FlowConfig } from './config.ts';
 import type { AgentDef } from './agents.ts';
 import type { TaskFile } from './schemas.ts';
+import { writesOwnAcceptance } from './paths.ts';
 
 export interface RuleFile { path: string; content: string }
 
@@ -143,6 +144,12 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     `## 可写范围（writes）\n${list(writes, '（只读）')}`,
     ...(verify.length ? [`## 全量测试命令\n${list(verify)}\n合并时程序会在集成分支最新代码上跑全量 typecheck、lint、test。`] : []),
   ];
+  // test_author 为 false（偏离 81）：没有 test-author，worker 自己按 AC 编号写本任务的验收测试（写在用户消息里，不动系统提示）
+  if (i.mode === 'impl' && (t.kind === 'impl' || t.kind === 'fix') && writesOwnAcceptance(t)) {
+    const impl = t.for_task ?? t.id;
+    const acs = (t.ac ?? []).filter((a) => /^REQ-\d+\.AC\d+$/.test(a));
+    parts.push(`## 验收测试（由你编写）\n本任务没有单独的测试作者：按 AC 编号为本任务写验收测试，放在 \`tests/acceptance/${impl}/\`（辅助代码也放在这个目录下），用例标题带 \`[REQ-xxx.ACn]\`，每条 AC 至少一个用例。预检会运行 \`acceptance -- ${impl}\`，合并前这些测试必须通过。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
+  }
   if (i.priorTask) {
     parts.push(`## 接着你之前的对话\n上面的对话是你完成 ${i.priorTask.id}「${i.priorTask.title}」时的过程（run ${i.priorTask.run}），你熟悉这些代码，不必从头重读。那个任务已经合入；现在是一个新任务、新的 worktree（集成分支最新代码，可能包含别人之后的改动），文件路径与可写范围以本次说明为准。`);
   }

@@ -222,7 +222,7 @@ export async function approveChange(root: string, store: StateStore, config: Flo
   if (JSON.stringify(summarizeActions(r.actions)) !== JSON.stringify(c.actions)) throw new ChangeError('task 的状态在提交修订之后发生了变化，原来的动作清单已不适用，请打回让 architect 重新提交。');
   const tasks = store.listTasks(flowId);
   const verify = ['typecheck', 'lint', 'test'].filter((x) => config.commands[x]?.trim());
-  const ops = materializeChange(r.actions, r.plan, tasks, { flowStage: flow.stage, scopes: { worker: config.role('worker').scopes, testAuthor: config.role('test-author').scopes }, verify, changeId: id });
+  const ops = materializeChange(r.actions, r.plan, tasks, { flowStage: flow.stage, scopes: { worker: config.role('worker').scopes, testAuthor: config.role('test-author').scopes }, verify, changeId: id, selfTest: !config.testAuthor });
   ops.notes = initialNotes(ops.add.filter((t) => t.kind === 'impl'), r.spec);
   await store.applyChange(flowId, id, ops, 'human');
   const lines = [

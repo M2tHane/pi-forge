@@ -224,11 +224,11 @@ export async function gateFailed(d: StageDeps, flowId: string, failed: { command
  * 覆盖率缺口：为缺口所属的 impl 建补充测试轮次（.at-n），记一轮 command 为 coverage 的 gate_rounds（与门禁修复共用 MAX_GATE_ROUNDS）。
  * 已满轮次时返回空数组与原因；没有建成任何任务（负责 task 的验收测试还在进行、或缺口都无主）时不记轮次。
  */
-export async function createCoverageGapRound(store: StateStore, flowId: string, gaps: readonly CoverageRow[]): Promise<{ tasks: string[]; unowned: CoverageRow[]; skipped: string[]; reason?: string }> {
+export async function createCoverageGapRound(store: StateStore, flowId: string, gaps: readonly CoverageRow[], selfTest = false): Promise<{ tasks: string[]; unowned: CoverageRow[]; skipped: string[]; reason?: string }> {
   const flow = store.readFlow(flowId);
   const rounds = (flow.gate_rounds ?? []).filter((r) => r.stage === flow.stage);
   if (rounds.length >= MAX_GATE_ROUNDS) return { tasks: [], unowned: [...gaps].filter((g) => !g.owner), skipped: [], reason: `覆盖率缺口补测 ${MAX_GATE_ROUNDS} 轮后仍未补齐` };
-  const r = await createCoverageRounds(store, flowId, gaps);
+  const r = await createCoverageRounds(store, flowId, gaps, 'engine', selfTest);
   if (r.tasks.length) await store.addGateRound(flowId, { stage: flow.stage, command: 'coverage', tasks: r.tasks, at: new Date().toISOString() }, [], {});
   return r;
 }

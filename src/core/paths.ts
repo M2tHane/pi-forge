@@ -9,6 +9,10 @@ const GLOB_CHARS = /[*?[\]{}]/;
 export const PROTECTED_PATHS = ['.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
 /** 模块之间的接口文档（第五轮）：实现者只能追加 */
 export const INTERFACES_PATH = 'docs/contracts/**';
+/** implementation_gate.test_author 为 false 时（偏离 81），impl 自己写验收测试：它自己的验收目录 */
+export const ownAcceptanceGlob = (impl: string) => `tests/acceptance/${impl}/**`;
+/** task（impl 或它的 fix）的 writes 里带有自己的验收目录，即由 worker 自己写验收测试 */
+export const writesOwnAcceptance = (t: { id: string; for_task?: string | undefined; writes: readonly string[] }) => t.writes.includes(ownAcceptanceGlob(t.for_task ?? t.id));
 export const SENSITIVE_PATHS = ['**/.env*', '**/*.pem', 'secrets/**', '**/secrets/**'] as const;
 
 /** 把路径规范化为相对 root 的 posix 路径；越出 root 返回 null。不解析符号链接（由调用方用 realpath 处理）。 */

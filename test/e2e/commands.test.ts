@@ -88,8 +88,6 @@ test('/forge-build 缺参数、旧参数与路径错误不建流程；feature �
     writeFileSync(path.join(p.dir, 'inputs/prd.md'), '# PRD');
     const branches = p.git('for-each-ref', '--format=%(refname)', 'refs/heads/flow/');
     for (const [args, error] of [
-      ['', /缺少必填参数 --prd[\s\S]*用法/],
-      ['--prototype inputs', /缺少必填参数 --prd/],
       ['--prd', /缺少路径/],
       ['--prd --prototype inputs', /缺少路径/],
       ['--prd ""', /缺少路径/],

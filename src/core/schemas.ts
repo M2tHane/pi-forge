@@ -118,7 +118,8 @@ export const FlowFile = Type.Object({
   plan_rework: Type.Optional(Type.Object({ reason: Type.String({ minLength: 1 }), at: IsoTime }, { additionalProperties: false })),
   /** PRD 与可选原型原件的位置及恢复会话所需的文件清单 */
   intake: Type.Optional(Type.Object({
-    prd: Type.String({ minLength: 1 }),
+    /** 需求文档在集成分支上的位置；只给了原型时没有 */
+    prd: Type.Optional(Type.String({ minLength: 1 })),
     prototype_path: Type.Optional(Type.String({ minLength: 1 })),
     files: Type.Array(Type.Object({ path: Type.String({ minLength: 1 }), size: Type.Integer({ minimum: 0 }), type: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
   }, { additionalProperties: false })),

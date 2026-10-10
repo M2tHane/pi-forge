@@ -11,7 +11,7 @@
 |---|---|---|
 | Node | 24.18.0 | 要求 ≥22；测试用原生 TS 类型剥离（只用可擦除语法） |
 | git | 2.50.1 | 要求 ≥2.30（worktree） |
-| Pi | `@earendil-works/pi-coding-agent` **1.0.0**（本机全局安装）；**1.1.0 已评估、兼容**（10-10，见下方升级评估） | 本机全局仍是 1.0.0，是否升级等用户决定；M9 在升级后的版本上跑 |
+| Pi | `@earendil-works/pi-coding-agent` **1.1.0**（本机全局安装，10-10 由 1.0.0 升级） | 评估见下方；M9 在 1.1.0 上跑 |
 | typebox | 1.3.27 | Pi 内置核心包，`peerDependencies: "*"`，不打包 |
 | minimatch 10.2.6、proper-lockfile 4.1.2、yaml 2.9.0 | | 与 pi-flow 相同，不新增运行时依赖（规格第 1 节第 6 条） |
 | typescript 5.9.3、@types/node 22 | | 开发依赖 |
@@ -58,7 +58,7 @@
 ## 待确认与已知局限
 
 - 继承自 pi-flow：serena 的 `prepareArguments` 在 `tool_call` 之前还是之后未核实；guard 管不到脚本文件内部（`bash x.sh`、`npm run`），兜底是提交时的 diff 检查；打码只认识常见密钥形态。
-- Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。（10-10 已完成评估，结论兼容，见「Pi 1.0.0 → 1.1.0 升级评估」；全局安装是否升级等用户决定。）
+- Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。（10-10 已完成评估并把全局升级到 1.1.0，见「Pi 1.0.0 → 1.1.0 升级评估」。）
 - M4 已接上资源隔离、bash 白名单、test-author 隔离工作区与 .at、真实预检、争议、验收测试单独合并与范围申请规则；e2e 按用户要求留到全部开发完统一运行（M4 到 M7 的 e2e 都是这样处理的，M9 之前统一跑一遍）。
 - M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；M3 已接上 P1：architect 起草契约与计划、forge_propose_plan 校验、doc 预检、P1 闸门、批准后生成 S 阶段与 task 并进入 S0。真实预检、验收测试 task、审查与契约锁定检查、阶段验收分别由 M4/M5/M6 接入（均已完成，见偏离第 32、44–62 条）。主会话角色按用户决定沿用 orchestrator。
 - stage-qa 的 bash 是 full，现有 guard 拦不住 shell 重定向改源码，而规格第 14 节要求 stage-qa 不能写（临时目录除外）。M6 改为由隔离兜底：stage-qa 和阶段审查在集成分支 HEAD 的临时 detached worktree 里运行，没有任何流程从这个 worktree 提交，结束后删除。重定向和 write 工具仍按可写范围（空）拦截。仍然留着的缺口：full bash 命令参数里写主工作区的绝对路径（例如 `cp x /项目/...`）是否被拦截，没有专门的测试。留到统一 e2e 时核对。
@@ -150,6 +150,7 @@
 68. fix 模式（第 13.4 节）由 `src/modes/fix.ts` 驱动，改编自 7006e7d。T-001 是 worker 的 impl，writes 为 `**`，不派 `.at`，不做审查，合并时跑全量直接进 main。之后派 X1.qa（stage-qa，只读），在阶段 active 时运行，和 S 阶段不同。must 生成 `.fx-n`，然后 X1.qa-2 只确认，最多两轮，之后转 needs_human，`/forge accept --note` 放行。修复日志写在 `.forge/fixes/<日期>-nnn.md`。`implementation_gate.qa: false` 时跳过确认。`fix_max_files` 只写进 handoff，程序不强制。
 69. feature 模式：增量规格文件名带"日期-000-"前缀，规格写的是 `<名字>.md`，加前缀是为了按文件名叠加的顺序稳定。修改过的权限行记在 `flow.spec.permission_changes`，在批准页单独列出。P1 计划只要求新增或变化的 AC 有归属，因为基线里的 AC 已经实现。main 上已有的契约从流程开始就锁定，只能追加。没有 `docs/contracts/` 时 `/forge-build --feature` 拒绝，并提示先运行 `/forge init --adopt`。
 70. `/forge init --adopt ["<说明>"] [--force]` 用一个 feature 流程，只有一个阶段 `ADOPT`。architect 的 doc task 只写 `docs/contracts/**` 和 `docs/arch/**`，只描述现有行为；契约结构检查通过后由用户批准，批准时 `--no-ff` 合入 main。`--force` 用于以后纳管更多模块，此时已有契约只能追加。`/forge-add` 只把需求交给主会话整理成 `forge_spec_amend`，不改状态。
+71. 按用户要求，`/forge-build` 不再必须带 `--prd`（规格第 13.2 节写的是必填）：不指定时扫描项目 `docs/` 下用户放的文档，跳过 pi-forge 维护的目录（spec、contracts、arch、plan、qa、review、research、rules-draft）、隐藏文件、敏感文件，入库到集成分支 `docs/spec/inputs/docs/` 并保持相对路径。feature 模式按 git blob 编号跳过主分支 `docs/spec/inputs/` 下已入库过的文档。有文档时主会话先读、只就疑点提问；没有文档时不记 intake，主会话按 grilling 详细访谈。`--prd`、`--prototype` 仍然可用，位置参数是流程名。
 
 ## M1 删除、由 Mx 重建
 
@@ -232,3 +233,4 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 - 10-09（M0）：`agents/`、`rules/`、`skills/`、`templates/` 是用户提供的 v3 全文，M0 没有改动；运行时还没有使用它们。
 - 10-09（M1）：`agents/main.md` 改名为 `agents/orchestrator.md` 并同步 frontmatter；`skills/domain-modeling/SKILL.md`、`skills/change-request/SKILL.md` 将主会话用词改为 orchestrator。运行时开始使用包内角色与技能，稳定前缀改变，提示缓存会失效一次。
 - 10-10（M8）：`agents/architect.md` 增加 feature 模式、变更请求（完整计划与 `modifies`）、纳管（--adopt）三节；`skills/change-request/SKILL.md` 改为写完整计划、已开始的 task 用 `modifies`，删掉 N-001 编号；`agents/orchestrator.md` 增加 feature 模式的增量规格写法。architect 与 orchestrator 的提示缓存各失效一次。
+- 10-10（M8 后）：`agents/orchestrator.md` 的 P0 改为"有 docs/ 文档先读、只问疑点；没有文档详细访谈"；`skills/spec-from-prd/SKILL.md` 第一步加一句"没有文档时当作访谈提纲"。orchestrator 的提示缓存失效一次。

@@ -57,11 +57,15 @@ pi install /path/to/pi-forge        # 加 -l 写入项目的 .pi/settings.json
 
 ### 新项目
 
+新建一个项目目录，把需求文档（PRD、说明、原型图等，任意格式）放进 `docs/`，然后：
+
 ```
-/forge-build --prd docs/prd.md --prototype prototype/
+/forge-build                # 或 /forge-build "项目名"
 ```
 
-`--prd` 必填（文件或目录），`--prototype` 可选；没有原型时，页面规格由主会话根据 PRD 的文字整理。原件会原样入库到集成分支的 `docs/spec/inputs/`，主会话和你讨论需求，整理成 `docs/spec/` 下的四份规格。之后按"阶段"一节走。
+程序把 `docs/` 下的文档原样入库到集成分支的 `docs/spec/inputs/docs/`（跳过 pi-forge 自己维护的 `docs/spec/`、`docs/contracts/` 等目录，以及隐藏文件和敏感文件）。主会话先读完这些文档，**只就有疑问的地方问你**（缺验收标准、缺页面状态、权限没说清、前后矛盾等）；`docs/` 下没有文档时，主会话会详细地问你需求。讨论后整理成 `docs/spec/` 下的四份规格。之后按"阶段"一节走。
+
+也可以用 `--prd <文件或目录> [--prototype <路径>]` 直接指定文档位置，这时不扫描 `docs/`。
 
 ### 已有项目上加功能
 
@@ -70,10 +74,10 @@ pi install /path/to/pi-forge        # 加 -l 写入项目的 .pi/settings.json
 ```
 /forge init --adopt "涉及的模块或说明"
 /forge-approve stage:ADOPT          # 看过 architect 整理的 docs/contracts/ 与 docs/arch/ 之后
-/forge-build --feature --prd docs/new-feature.md
+/forge-build --feature        # 先把本次功能的文档放进 docs/
 ```
 
-`--adopt` 让 architect 从现有代码反向整理边界契约（只描述现有行为，不改代码），你批准后合入主分支成为基线。主分支没有 `docs/contracts/` 时，`/forge-build --feature` 会拒绝并提示先 adopt。feature 流程的规格是增量的，写进 `docs/spec/features/`；P1 只写增量契约与计划。以后要纳管更多模块，用 `/forge init --adopt "<说明>" --force`（已有契约只能追加）。
+feature 模式同样扫描 `docs/`，但跳过之前流程已经入库过的文档，只收新放进去的。`--adopt` 让 architect 从现有代码反向整理边界契约（只描述现有行为，不改代码），你批准后合入主分支成为基线。主分支没有 `docs/contracts/` 时，`/forge-build --feature` 会拒绝并提示先 adopt。feature 流程的规格是增量的，写进 `docs/spec/features/`；P1 只写增量契约与计划。以后要纳管更多模块，用 `/forge init --adopt "<说明>" --force`（已有契约只能追加）。
 
 ### 修缺陷
 
@@ -169,8 +173,8 @@ pi install /path/to/pi-forge        # 加 -l 写入项目的 .pi/settings.json
 |---|---|
 | `/forge init` | 初始化项目骨架（可重复执行，不覆盖） |
 | `/forge init --adopt ["<说明>"] [--force]` | 已有项目纳管：生成契约基线，批准用 `/forge-approve stage:ADOPT` |
-| `/forge-build --prd <文件或目录> [--prototype <路径>]` | 新项目，进入规格阶段 |
-| `/forge-build --feature --prd <文件或目录> [--prototype <路径>]` | 已有项目加功能（需要 `docs/contracts/`） |
+| `/forge-build ["<项目名>"] [--prd <路径>] [--prototype <路径>]` | 新项目：读 `docs/` 下的需求文档（没有就访谈你），进入规格阶段 |
+| `/forge-build --feature ["<功能名>"] [--prd <路径>]` | 已有项目加功能：读 `docs/` 下新放的文档（需要 `docs/contracts/`） |
 | `/forge-fix "<问题>"`、`/forge-fix --from <文件>` | 修缺陷 |
 | `/forge-status` | 阶段、进度、需要你处理的事项 |
 | `/forge-status --detail` | 完整任务列表与内部状态 |

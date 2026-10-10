@@ -208,7 +208,7 @@ function lastEnded(store: StateStore): FlowFile | null {
   const ended = store.listFlows().map((id) => store.readFlow(id)).filter((f) => f.stage_status === 'done' || f.stage_status === 'aborted');
   return ended.at(-1) ?? null;
 }
-const START_HINT = '开始：/forge-build --prd <文件>、/forge-build --feature --prd <文件> 或 /forge-fix "<问题>"。';
+const START_HINT = '开始：把需求文档放进 docs/ 后 /forge-build（没有文档也可以，主会话会问你）、/forge-build --feature 或 /forge-fix "<问题>"。';
 export function renderStatus(store: StateStore, config: FlowConfig, now = new Date()): string {
   const flows = visibleFlows(store);
   if (!flows.length) {

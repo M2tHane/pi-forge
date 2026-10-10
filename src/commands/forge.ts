@@ -19,7 +19,7 @@ import { P1_STAGE, isArchitectStage } from '../core/plan-flow.ts';
 import { startAdoptFlow } from '../core/adopt.ts';
 import { featurePrecondition } from '../core/feature-spec.ts';
 import { approveChange, rejectChange } from '../core/change-flow.ts';
-import { importInputs, prepareInputs, type IntakeInput, type PreparedIntake } from '../core/intake.ts';
+import { importInputs, ingestedBlobs, prepareInputs, type IntakeInput, type PreparedIntake } from '../core/intake.ts';
 import { readFileSync } from 'node:fs';
 import { renderCostView, renderDetail, renderMetricsView } from '../core/status-detail.ts';
 import { deliveryReport, sStageIds, stageSignoff } from '../core/signoff.ts';
@@ -69,8 +69,8 @@ export interface CommandEnv {
 
 export const FLOW_USAGE = [
   '用法：',
-  '  /forge-build --prd <文件或目录> [--prototype <路径>]   接收 PRD 与原型原件，开始规格阶段',
-  '  /forge-build --feature --prd <文件或目录> [--prototype <路径>]   在已有项目上加功能：增量规格 → 增量契约与计划 → 实施 → 交付（需要主分支已有 docs/contracts/）',
+  '  /forge-build ["<项目名>"]   建新项目：读取 docs/ 下的需求文档（没有就由主会话访谈你），开始规格阶段；也可用 --prd/--prototype 指定位置',
+  '  /forge-build --feature ["<功能名>"]   在已有项目上加功能（读取 docs/ 下新放的文档）：增量规格 → 增量契约与计划 → 实施 → 交付（需要主分支已有 docs/contracts/）',
   '  /forge-status            当前阶段（规格 → 契约与计划 → 实施 → 交付）、进度、需要你处理的事项',
   '  /forge-status --detail   完整的任务列表与内部状态',
   '  /forge next              由程序选择 ready 任务并派发',
@@ -116,7 +116,7 @@ function fullStatus(store: Store, config: FlowConfig): string {
   const fix = store.openFixFlow();
   if (fix?.stage_status === 'awaiting_human') {
     const why = [...store.readEvents()].reverse().find((e) => e.flow === fix.id && e.type === 'gate_result')?.reason ?? '';
-    parts.push(`修复 ${fix.id} 等待你决定：${why}\n继续按修复处理 → /forge-approve；改用功能流程 → /forge abort 后 /forge-build --feature --prd <文件>`);
+    parts.push(`修复 ${fix.id} 等待你决定：${why}\n继续按修复处理 → /forge-approve；改用功能流程 → /forge abort 后 /forge-build --feature`);
   }
   if (!store.readState().active_flow && !fix) {
     // 没有进行中的流程时，显示最近一次已结束的修复及其日志
@@ -218,7 +218,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       }
       for (const r of h.engine.activeRuns().filter((x) => x.flow === flowId)) h.engine.kill(r.run_id);
       await h.store.transitionStage(flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
-      return `已中止 ${flowId}。${flow.mode === 'fix' ? '如需改用功能流程：/forge-build --feature --prd <文件>' : ''}`;
+      return `已中止 ${flowId}。${flow.mode === 'fix' ? '如需改用功能流程：/forge-build --feature' : ''}`;
     }
     case 'next': {
       const h = env.engine();
@@ -460,12 +460,11 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
 
 export const BUILD_USAGE = [
   '用法：',
-  '  /forge-build --prd <文件或目录> [--prototype <路径>]',
-  '                                          从零建新项目：PRD 必填，原型可以是文件或目录；',
-  '                                          原件入库到集成分支，主会话将和你讨论需求、整理规格',
-  '  /forge-build --feature --prd <文件或目录> [--prototype <路径>]',
-  '                                          在已有项目上加功能（主分支需已有 docs/contracts/，没有时先 /forge init --adopt）：',
-  '                                          增量规格写进 docs/spec/features/，P1 只写增量契约与计划',
+  '  /forge-build ["<项目名>"]                从零建新项目：把需求文档（PRD、原型图、说明等）放在项目的 docs/ 下即可；',
+  '                                          主会话先读这些文档，只就有疑问的地方问你；docs/ 下没有文档时，主会话会详细地问你需求',
+  '  /forge-build --feature ["<功能名>"]      在已有项目上加功能（主分支需已有 docs/contracts/，没有时先 /forge init --adopt）：',
+  '                                          把本次功能的文档放进 docs/（之前入库过的文档会跳过）；增量规格写进 docs/spec/features/',
+  '  可选：--prd <文件或目录> [--prototype <路径>]   直接指定需求文档与原型的位置，不扫描 docs/',
   '小改动（单文件、几十行以内）直接用 pi 更划算；缺陷修复用 /forge-fix。',
 ].join('\n');
 
@@ -482,10 +481,13 @@ async function ensureInitialized(env: CommandEnv, lines: string[]): Promise<void
 }
 
 /** /forge-build 只接受 PRD 与可选原型；值与重复参数都显式校验。 */
-export function parseBuildArgs(argv: string[]): IntakeInput {
-  const input: Partial<IntakeInput> = {};
+/** 解析 /forge-build 的参数：--prd、--prototype 可选；其余位置参数是流程名 */
+export function parseBuildArgs(argv: string[]): IntakeInput & { title?: string } {
+  const input: { prd?: string; prototype?: string } = {};
+  const words: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
+    if (!flag.startsWith('--')) { words.push(flag); continue; }
     const name = flag === '--prd' ? 'prd' : flag === '--prototype' ? 'prototype' : null;
     if (!name) throw new Error(`未知参数 ${flag}。\n${BUILD_USAGE}`);
     if (input[name] !== undefined) throw new Error(`参数 ${flag} 不能重复。\n${BUILD_USAGE}`);
@@ -493,13 +495,13 @@ export function parseBuildArgs(argv: string[]): IntakeInput {
     if (!value?.trim() || value.startsWith('--')) throw new Error(`参数 ${flag} 缺少路径。\n${BUILD_USAGE}`);
     input[name] = value;
   }
-  if (!input.prd) throw new Error(`缺少必填参数 --prd。\n${BUILD_USAGE}`);
-  return { prd: input.prd, ...(input.prototype !== undefined ? { prototype: input.prototype } : {}) };
+  const title = words.join(' ').trim();
+  return { ...input, ...(title ? { title } : {}) };
 }
 
-/** 流程名取 PRD 文件或目录名，原件内容交给 P0 读取。 */
-function intakeTitle(root: string, prd: string): string {
-  return path.basename(path.resolve(root, prd)).slice(0, 120);
+/** 流程名：命令里写的名字 > PRD 文件或目录名 > 项目目录名 */
+function intakeTitle(root: string, intake: { prd?: string; title?: string }): string {
+  return (intake.title || path.basename(path.resolve(root, intake.prd ?? '.'))).slice(0, 120);
 }
 
 function readFromFile(env: CommandEnv, argv: string[]): string | null {
@@ -526,7 +528,10 @@ export async function runFlowBuild(args: string, env: CommandEnv): Promise<strin
   const argv = splitArgs(args);
   if (argv[0] === 'help' || argv[0] === '--help') return BUILD_USAGE;
   const feature = argv.includes('--feature');
-  const intake = parseBuildArgs(feature ? argv.filter((a) => a !== '--feature') : argv);
+  const parsed = parseBuildArgs(feature ? argv.filter((a) => a !== '--feature') : argv);
+  // 没有指定 --prd 时扫描 docs/；feature 模式跳过主分支上已经入库过的文档
+  const intake: IntakeInput = parsed.prd !== undefined ? { prd: parsed.prd, ...(parsed.prototype !== undefined ? { prototype: parsed.prototype } : {}) }
+    : { ...(parsed.prototype !== undefined ? { prototype: parsed.prototype } : {}), docs: { ingested: feature ? ingestedBlobs(env.root, mainBranchOf(env)) : new Set<string>() } };
   // 输入无效时连初始化与流程创建都不进行。
   const prepared = prepareInputs(env.root, intake);
   if (feature) {
@@ -538,7 +543,7 @@ export async function runFlowBuild(args: string, env: CommandEnv): Promise<strin
   await ensureInitialized(env, lines);
   const h = env.engine();
   assertNoActiveFlow(h);
-  return startBuildFlow(env, feature ? 'feature' : 'build', intakeTitle(env.root, intake.prd), lines, intake, prepared);
+  return startBuildFlow(env, feature ? 'feature' : 'build', intakeTitle(env.root, parsed), lines, intake, prepared);
 }
 
 /** 开流程前检查依赖：Pi 版本过低直接拒绝；插件缺失或版本未经验证只提醒 */
@@ -558,15 +563,28 @@ async function startBuildFlow(env: CommandEnv, mode: 'build' | 'feature', title:
   dependencyGate(env, h.config, lines);
   const flow = await startFlow({ root: env.root, store: h.store, config: h.config }, mode, title);
   const r = await importInputs(env.root, h.store, flow.id, intake, prepared);
-  lines.push(`已接收 PRD（${r.prd}）${r.prototype ? `、原型（${r.prototype}）` : ''}，共 ${r.files.length} 个文件，放在集成分支 ${flow.integration_branch} 上。`);
-  lines.push(...r.files.map((f) => `- ${f.path}（${f.size} 字节，${f.type}）`));
+  const list = r.files.map((f) => `- ${f.path}（${f.size} 字节，${f.type}）`);
+  if (r.files.length) lines.push(`已接收需求文档${r.prototype ? '与原型' : ''}，共 ${r.files.length} 个文件，放在集成分支 ${flow.integration_branch} 的 docs/spec/inputs/ 下。`, ...list);
+  else lines.push(intake.docs ? '项目 docs/ 下没有找到需求文档：主会话会详细地问你需求。' : '没有接收到需求文档。');
+  if (r.skipped?.length) lines.push(`跳过：${r.skipped.join('、')}`);
   lines.push(`已创建流程 ${flow.id}（${flow.mode}），阶段：${flow.stages.join(' → ')}；集成分支 ${flow.integration_branch}。`);
   lines.push('主会话将和你讨论需求、整理规格。', '', renderStatus(h.store, h.config));
   await env.activateOrchestrator?.();
-  env.startConversation?.(`${mode === 'feature'
-    ? '这是在已有项目上加功能（feature 模式）。用户的 PRD 与原型已入库，请先用 forge_read 阅读它们，以及已有的基线规格（docs/spec/）和现有契约（docs/contracts/），与用户讨论本次功能后，用 forge_spec 的 feature_name + feature 提交增量规格（需求、页面、权限三节，REQ 编号接着已有最大编号）。'
-    : '用户的 PRD 与原型已入库，请用 forge_read 逐份阅读后与用户讨论需求、整理四份规格。'}\n${r.files.map((f) => `- ${f.path}（${f.size} 字节，${f.type}）`).join('\n')}`);
+  env.startConversation?.(p0Opening(mode, list));
   return lines.join('\n');
+}
+
+/** P0 第一轮给主会话的说明：有文档时先读、只问有疑问的地方；没有文档时详细访谈（纯函数） */
+export function p0Opening(mode: 'build' | 'feature', files: readonly string[]): string {
+  const what = mode === 'feature' ? '本次功能' : '这个项目';
+  const intro = mode === 'feature' ? '这是在已有项目上加功能（feature 模式）。' : '';
+  const submit = mode === 'feature'
+    ? '确认后用 forge_spec 的 feature_name + feature 提交增量规格（需求、页面、权限三节，REQ 编号接着已有最大编号）。先用 forge_read 读已有的基线规格（docs/spec/）和现有契约（docs/contracts/）。'
+    : '确认后整理四份规格，用 forge_spec 提交。';
+  if (!files.length) {
+    return `${intro}用户没有提供需求文档。请按技能 grilling 详细地向用户了解${what}的需求：先问目标与要解决的问题、使用者与角色，再问核心流程、页面与每个页面的状态、权限、数据与边界情况、明确不做的范围。每轮把能问的问完，每题给出推荐答案。${submit}`;
+  }
+  return `${intro}用户的需求文档已入库到集成分支，请先用 forge_read 逐份读完：\n${files.join('\n')}\n读完后按技能 spec-from-prd 的缺口清单找出有疑问的地方（缺验收标准、缺页面状态、权限没说清、叫法不一致、前后矛盾、范围不明），**只就这些点**按技能 grilling 向用户提问；文档里已经写清楚的不要再问。${submit}`;
 }
 
 /** /forge-fix "<问题>" 或 /forge-fix --from <文件>（规格第 13.2、13.4 节） */
@@ -653,7 +671,7 @@ async function runFlowAdd(text: string, env: CommandEnv): Promise<string> {
   if (!text) throw new Error('用法：/forge-add "<需求>"');
   const store = env.store();
   const id = store.readState().active_flow;
-  if (!id) return '当前没有进行中的流程，/forge-add 用来在 P0 批准之后追加需求。开始：/forge-build --prd <文件> 或 /forge-build --feature --prd <文件>。';
+  if (!id) return '当前没有进行中的流程，/forge-add 用来在 P0 批准之后追加需求。开始：/forge-build 或 /forge-build --feature。';
   const flow = store.readFlow(id);
   if (flow.stages.includes('ADOPT')) return `${flow.id} 是纳管流程，没有规格可以修订。`;
   if (!flow.approvals['P0']) return `${flow.id} 还在规格阶段（P0），不需要规格修订：直接把需求告诉主会话，它会在 forge_spec 提交的规格里一并整理。`;

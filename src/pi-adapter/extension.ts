@@ -486,7 +486,7 @@ export default function piFlow(pi: ExtensionAPI): void {
   }
 
   pi.registerCommand('forge-build', {
-    description: 'pi-forge：带上必填 PRD（--prd）与可选原型（--prototype），主会话讨论需求、整理规格；--feature 在已有项目上加功能（需要主分支已有 docs/contracts/，没有时先 /forge init --adopt）',
+    description: 'pi-forge：建新项目。需求文档放在 docs/ 下（可选，也可用 --prd/--prototype 指定），主会话先读文档、只问疑点，没有文档时详细问你；--feature 在已有项目上加功能（需要主分支已有 docs/contracts/，没有时先 /forge init --adopt）',
     getArgumentCompletions: (prefix) => ['--prd', '--prototype', '--feature'].filter((x) => x.startsWith(prefix.trim().split(' ').at(-1) ?? '')).map((x) => ({ value: x, label: x })),
     handler: async (args, ctx) => {
       try {

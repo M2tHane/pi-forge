@@ -22,7 +22,7 @@ export function hasContracts(root: string, ref: string): boolean {
 /** feature 模式的前置条件：主分支上必须已有 docs/contracts/。满足返回 null，否则返回给用户的中文提示 */
 export function featurePrecondition(root: string, mainBranch: string): string | null {
   if (hasContracts(root, mainBranch)) return null;
-  return `主分支 ${mainBranch} 上没有 ${CONTRACTS_DIR}/，feature 模式需要已有契约作为基线。\n已有项目请先运行 /forge init --adopt ["<涉及的模块或说明>"]：architect 会从现有代码反向整理边界契约，你批准后即成为基线；全新项目请用 /forge-build --prd。`;
+  return `主分支 ${mainBranch} 上没有 ${CONTRACTS_DIR}/，feature 模式需要已有契约作为基线。\n已有项目请先运行 /forge init --adopt ["<涉及的模块或说明>"]：architect 会从现有代码反向整理边界契约，你批准后即成为基线；全新项目请用 /forge-build。`;
 }
 
 /** 读某个引用（分支、提交）上的基线规格与 features；缺基线文件时返回 null */

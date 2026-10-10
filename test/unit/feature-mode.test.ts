@@ -123,8 +123,8 @@ test('/forge-build --feature：没有契约时只给提示、不建流程；有�
     assert.equal(full.git('show', `${flow.integration_branch}:docs/spec/inputs/prd/prd.md`), '# 导出 PRD');
     assert.equal(nextStep(full.store, 3).tool, 'forge_spec');
     assert.match(nextStep(full.store, 3).next, /增量规格[\s\S]*REQ 编号接着已有的最大编号/);
-    // 缺参数仍然按 build 的规则报错
-    await assert.rejects(runFlowBuild('--feature', env(full)), /缺少必填参数 --prd/);
+    // 已有进行中的流程时不能再开
+    await assert.rejects(runFlowBuild('--feature', env(full)), /已有进行中的流程/);
   } finally { bare.cleanup(); full.cleanup(); }
 });
 

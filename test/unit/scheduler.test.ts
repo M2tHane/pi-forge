@@ -34,3 +34,11 @@ test('不与在途任务互斥，也不在同一批里选互斥的任务', () =>
 test('只选当前阶段的 ready 任务', () => {
   assert.deepEqual(selectDispatchable([mkTask('T-001', { status: 'ready', stage: 'S4' })], 'S3', 2), []);
 });
+
+test('同一 impl 谱系里的验收测试 task 不与实现 task 互斥（.fx 争议后等 .at-n，偏离 87）；别的谱系仍互斥', () => {
+  const fx = mkTask('T-002.fx-1', { status: 'disputed', stage: 'S0', kind: 'fix', for_task: 'T-002', writes: ['src/**', 'tests/acceptance/_support/**'] });
+  const at = mkTask('T-002.at-2', { status: 'ready', stage: 'S0', kind: 'acctest', for_task: 'T-002', writes: ['tests/acceptance/T-002/**', 'tests/acceptance/_support/T-002/**'] });
+  assert.deepEqual(selectDispatchable([fx, at], 'S0', 4), ['T-002.at-2']);
+  const other = mkTask('T-003.at', { status: 'ready', stage: 'S0', kind: 'acctest', for_task: 'T-003', writes: ['tests/acceptance/_support/T-002/**'] });
+  assert.deepEqual(selectDispatchable([fx, other], 'S0', 4), []);
+});

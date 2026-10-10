@@ -14,10 +14,19 @@ export function selectDispatchable(tasks: readonly TaskFile[], stage: string, ma
   const picked: TaskFile[] = [];
   for (const t of ready) {
     if (capacity <= 0) break;
-    // merge-fix 任务不与它所修复的（挂起中的）原任务互斥
-    if (inflight.some((x) => x.id !== t.merge_fix_for && conflictsWith(x, t)) || picked.some((x) => conflictsWith(x, t))) continue;
+    // merge-fix 任务不与它所修复的（挂起中的）原任务互斥；同一 impl 谱系里的验收测试 task 与实现 task 也不互斥（偏离 87）
+    if (inflight.some((x) => x.id !== t.merge_fix_for && !sameLineageAcctest(x, t) && conflictsWith(x, t)) || picked.some((x) => !sameLineageAcctest(x, t) && conflictsWith(x, t))) continue;
     picked.push(t);
     capacity--;
   }
   return picked.map((t) => t.id);
+}
+
+/**
+ * 同一 impl 谱系（impl 本身、它的 .fx-n、.at、.at-n）里一方是验收测试 task：二者由争议与单独合并协调，.at 在隔离工作区里写、
+ * 补丁只进 acc 分支，不需要按 writes 互斥。M9 冒烟：S0 的 .fx-1（继承 tests/acceptance/_support/**）提出争议后等 .at-2，
+ * .at-2 的 tests/acceptance/_support/T-002/** 与它重叠被互斥挡住，两边互等。
+ */
+function sameLineageAcctest(a: Pick<TaskFile, 'id' | 'kind' | 'for_task'>, b: Pick<TaskFile, 'id' | 'kind' | 'for_task'>): boolean {
+  return (a.kind === 'acctest' || b.kind === 'acctest') && (a.for_task ?? a.id) === (b.for_task ?? b.id);
 }

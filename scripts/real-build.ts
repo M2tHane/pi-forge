@@ -225,7 +225,9 @@ export async function main(argv: string[]): Promise<number> {
   type Fail = { kind: string; reason: string; status: RunStatus };
   const st: { failure: Fail | null } = { failure: null };
   const fail = (kind: string, reason: string, status: RunStatus = 'flow_failed') => { if (!st.failure) { st.failure = { kind, reason, status }; log(`失败：${kind}：${reason}`); } };
-  const live = { running: false, turnEnded: false, turnEndedAt: 0, lastText: '', lastNotify: '', inFlight: false, lastDetail: '' };
+  const live = { running: false, turnEnded: false, turnEndedAt: 0, lastText: '', lastNotify: '', inFlight: false, lastDetail: '', lastToolError: '', sameToolErrors: 0 };
+  // 方案修订 1：主会话同一工具连续报同一个错误达到这个次数，算卡住（RPC 一直有输出，30 分钟无活动的规则发现不了）
+  const SAME_TOOL_ERROR_LIMIT = 10;
   const p0Intervals: Interval[] = [];
   let phase: Phase | null = null;
   let stopping = false;
@@ -253,6 +255,16 @@ export async function main(argv: string[]): Promise<number> {
       case 'message_end': {
         const m = r['message'] as { role?: string; content?: { type: string; text?: string }[] } | undefined;
         if (m?.role === 'assistant') { const t = (m.content ?? []).filter((x) => x.type === 'text').map((x) => x.text ?? '').join('').trim(); if (t) live.lastText = t; }
+        break;
+      }
+      case 'tool_execution_end': {
+        const res = r['result'] as { content?: { type: string; text?: string }[] } | undefined;
+        const text = `${String(r['toolName'] ?? '')}：${(res?.content ?? []).map((c) => c.text ?? '').join('').slice(0, 300)}`;
+        if (r['isError'] === true) {
+          live.sameToolErrors = text === live.lastToolError ? live.sameToolErrors + 1 : 1;
+          live.lastToolError = text;
+          if (live.sameToolErrors >= SAME_TOOL_ERROR_LIMIT) fail('tool_error_loop', `主会话连续 ${live.sameToolErrors} 次得到同一个工具错误：${text}`);
+        } else { live.sameToolErrors = 0; live.lastToolError = ''; }
         break;
       }
       case 'extension_ui_request': {

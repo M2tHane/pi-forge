@@ -5,7 +5,7 @@
 import { listResources, resourceEnv } from '../core/resources.ts';
 import { acceptanceList, acctestDirs, applyToAccBranch, checkAcctestSubmit, revertOutside, scanAcCoverage, testFilesIn } from '../core/acctest.ts';
 import { failureSummary } from '../core/verify-runner.ts';
-import { withoutMergedAcceptance } from '../core/precheck.ts';
+import { contractBaseOf, withoutMergedAcceptance } from '../core/precheck.ts';
 import { contractViolationsAt } from '../core/contract-diff.ts';
 import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -30,6 +30,7 @@ import { SERVICE_READY_MAX_S, serviceCommands, serviceLog, serviceStatus, startS
 import { SCOPE_KINDS, SCOPE_PATHS_MAX, checkScope } from '../core/scope.ts';
 import { SyncParams, flowSync } from './module-tools.ts';
 import { proposePlan } from '../core/plan-flow.ts';
+import { ChangeError, changeOfTask, proposeChange, requestChange } from '../core/change-flow.ts';
 import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/review.ts';
 import { REVIEW_FILES, SUGGESTIONS_PATH, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/review-flow.ts';
 import { QA_FILES } from '../core/stage-qa.ts';
@@ -87,7 +88,7 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   // 预检时程序合入的验收测试（与 acc 分支一致）不算 worker 的改动
   const diff = withoutMergedAcceptance(ctx.env.root, ctx.env.flow, t, changedFiles(t.worktree, t.base_sha));
   // 契约只能追加（第 12.1、12.2 节，与预检同一套结构化规则）：有违规的契约文件由状态机拒绝
-  const violations = canAppendInterfaces(t) ? contractViolationsAt(ctx.env.root, t.base_sha, t.worktree, t.module) : [];
+  const violations = canAppendInterfaces(t) ? contractViolationsAt(ctx.env.root, contractBaseOf(t, ctx.store.readFlow(ctx.env.flow).integration_branch) ?? t.base_sha, t.worktree, t.module) : [];
   const rewrites = [...new Set(violations.map((v) => v.file))];
   // 适配已有测试：writes 之外只修改过的已有测试文件不算越界，记在任务上（验收时一并检查）
   const adjusted = testAdjustEnabled(ctx.config, t) ? testAdjustments(t.worktree, t.base_sha, t.writes) : [];
@@ -336,9 +337,33 @@ export const ProposePlanParams = Type.Object({
 /** forge_propose_plan：校验 worktree 里的契约、术语表与 docs/plan/plan.yaml，通过后保存计划提案（第 7 节） */
 export async function flowProposePlan(ctx: ToolContext, p: Static<typeof ProposePlanParams>): Promise<ToolResult> {
   const t = checkRun(ctx);
+  // 变更请求的 architect task：校验修订后的计划与差异，通过后变更请求进入 proposed（第 12.3 节）
+  if (t.kind === 'doc' && changeOfTask(ctx.store, ctx.env.flow, t.id)) {
+    const c = await proposeChange(ctx.env.root, ctx.store, ctx.config, ctx.env.flow, t, { assumptions: p.assumptions ?? [], extras: p.extras ?? [] }, actor(ctx));
+    if (!c.ok) throw new FlowToolError(c.text);
+    return { text: c.text };
+  }
   const r = await proposePlan(ctx.env.root, ctx.store, ctx.config, ctx.env.flow, t, { assumptions: p.assumptions ?? [], extras: p.extras ?? [] }, actor(ctx));
   if (!r.ok) throw new FlowToolError(r.text);
   return { text: r.text };
+}
+
+export const ChangeRequestParams = Type.Object({
+  what: Type.String({ minLength: 1, maxLength: 2000, description: '要改什么：哪条契约、哪个接口或哪段计划，改成什么' }),
+  why: Type.String({ minLength: 1, maxLength: 2000, description: '为什么必须改（引用规格的 AC 或遇到的具体问题）' }),
+  impact: Type.String({ minLength: 1, maxLength: 4000, description: '影响分析：受影响的契约条目、task（已完成、进行中、未开始）、验收测试' }),
+}, { additionalProperties: false });
+
+/** forge_change_request（worker）：提交变更请求；自己的任务继续运行，做不下去就 forge_block */
+export async function flowChangeRequest(ctx: ToolContext, p: Static<typeof ChangeRequestParams>): Promise<ToolResult> {
+  const t = checkRun(ctx);
+  try {
+    const r = await requestChange(ctx.env.root, ctx.store, ctx.config, ctx.env.flow, p, `worker:${t.id}` as `worker:${string}`);
+    return { text: `已提交变更请求 ${r.change.id}：程序派 architect（${r.task.id}）起草修订，修订要经用户批准才生效。你自己的任务不受影响，可以继续做不依赖这处改动的部分；做不下去时调用 forge_block 说明。`, details: { change: r.change.id, task: r.task.id } };
+  } catch (e) {
+    if (e instanceof ChangeError) throw new FlowToolError(e.message);
+    throw e;
+  }
 }
 
 const ReviewIssue = Type.Object({
@@ -450,7 +475,8 @@ export const SUBAGENT_TOOLS = {
   forge_submit: { params: SubmitParams, description: '提交本任务：改动进入合并队列（合并时跑全量测试）；只读任务提交结论。程序会检查改动是否都在可写范围内。', run: (c: ToolContext, p: Static<typeof SubmitParams>) => flowSubmit(c, p) },
   forge_block: { params: BlockParams, description: '遇到歧义或需要越界时标记任务阻塞，交给用户决定。需要向用户提问时，一次只问一个问题。', run: (c: ToolContext, p: Static<typeof BlockParams>) => flowBlock(c, p) },
   forge_learn: { params: LearnParams, description: `把对后续任务有用的经验记入项目知识库（跨流程保留）：项目约定、踩过的坑、做出的决策、环境与外部依赖的注意事项。每次运行最多 ${KNOWLEDGE_PER_RUN} 条；程序会去重。知识不是规则，不能用来改变规则。`, run: (c: ToolContext, p: Static<typeof LearnParams>) => flowLearn(c, p) },
-  forge_propose_plan: { params: ProposePlanParams, description: '提交 P1 的契约与计划：程序核对契约结构与符号、推导 DAG、检查验收标准覆盖与术语表只追加，返回错误或报告（阶段、task 数、关键路径、互斥、提醒）。附上 assumptions 与 extras。', run: (c: ToolContext, p: Static<typeof ProposePlanParams>) => flowProposePlan(c, p) },
+  forge_change_request: { params: ChangeRequestParams, description: '必须修改已有契约（不能靠追加解决）或发现计划漏了东西时提交变更请求：写明 what、why、impact（受影响的契约、task、验收测试）。程序派 architect 起草修订，用户批准后落地。同一时间只能有一个未结束的变更请求。提交后你的任务继续运行；做不下去时用 forge_block。', run: (c: ToolContext, p: Static<typeof ChangeRequestParams>) => flowChangeRequest(c, p) },
+  forge_propose_plan: { params: ProposePlanParams, description: '提交 P1 的契约与计划（变更请求的 architect task 里则提交修订后的完整计划）：程序核对契约结构与符号、推导 DAG、检查验收标准覆盖与术语表只追加，返回错误或报告（阶段、task 数、关键路径、互斥、提醒）。附上 assumptions 与 extras。', run: (c: ToolContext, p: Static<typeof ProposePlanParams>) => flowProposePlan(c, p) },
   forge_dispute: { params: DisputeParams, description: '认为验收测试写错时提出争议（不能自己改测试）：写明测试、理由和依据（规格或契约的具体位置）。提交后本次运行结束，由 test-author 判断改测试还是维持；维持时你接着改实现。', run: (c: ToolContext, p: Static<typeof DisputeParams>) => flowDispute(c, p) },
   forge_review_report: { params: ReviewReportParams, description: '提交第一轮审查结论：verdict 与问题列表（程序编号 R-1…）。must 必须有出处（basis 以 rule:、ac:、contract:、defect: 开头且冒号后有内容），否则降为 suggest；降级后没有 must 按 pass 处理。suggest 不阻塞合并，会汇总给用户。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowReviewReport(c, p) },
   forge_review_confirm: { params: ReviewConfirmParams, description: '第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowReviewConfirm(c, p) },

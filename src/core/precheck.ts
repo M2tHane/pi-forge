@@ -39,10 +39,21 @@ export function mergeAcceptance(root: string, flowId: string, t: TaskFile): { me
   }
 }
 
-/** docs/contracts/** 只能追加（第 12.1、12.2 节）：基线 base_sha 对比任务 worktree。有违规返回中文原因（最多列 20 条），否则 null */
-export function contractAppendCheck(root: string, t: TaskFile): string | null {
-  if (!t.base_sha || !t.worktree) return null;
-  const vs = contractViolationsAt(root, t.base_sha, t.worktree, t.module);
+/**
+ * 契约检查的基线：任务 worktree 与集成分支的合并基点。任务同步过集成分支（forge_sync）后，基点含已批准变更请求对契约的修改，
+ * 这些修改不算 worker 的改动；没有集成分支信息或算不出时用 base_sha。
+ */
+export function contractBaseOf(t: Pick<TaskFile, 'base_sha' | 'worktree'>, integrationBranch?: string): string | undefined {
+  const fallback = t.base_sha ?? undefined;
+  if (!t.worktree || !integrationBranch) return fallback;
+  try { return git(t.worktree, ['merge-base', 'HEAD', integrationBranch]).trim() || fallback; } catch { return fallback; }
+}
+
+/** docs/contracts/** 只能追加（第 12.1、12.2 节）：基线（contractBaseOf）对比任务 worktree。有违规返回中文原因（最多列 20 条），否则 null */
+export function contractAppendCheck(root: string, t: TaskFile, integrationBranch?: string): string | null {
+  const base = contractBaseOf(t, integrationBranch);
+  if (!base || !t.worktree) return null;
+  const vs = contractViolationsAt(root, base, t.worktree, t.module);
   if (!vs.length) return null;
   const lines = vs.slice(0, 20).map((v) => `- ${v.file}${v.path ? ` ${v.path}` : ''}：${v.message}`);
   const more = vs.length > 20 ? `\n……还有 ${vs.length - 20} 条` : '';
@@ -55,7 +66,7 @@ export async function runPrecheck(root: string, store: StateStore, config: FlowC
   const impl = t.for_task ?? t.id;
   const acc = mergeAcceptance(root, flowId, t);
   if (acc.error) return { ok: false, reason: acc.error, command: 'merge', output: '' };
-  const contract = contractAppendCheck(root, t);
+  const contract = contractAppendCheck(root, t, store.readFlow(flowId).integration_branch);
   if (contract) return { ok: false, reason: contract, command: 'contracts', output: '' };
   const hasAcceptance = existsSync(path.join(wt, 'tests/acceptance', impl));
   const plan = precheckCommands(config.commands, impl, hasAcceptance);

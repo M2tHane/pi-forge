@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pi-forge/change.schema.json",
+  "type": "object",
+  "required": [
+    "version",
+    "id",
+    "what",
+    "why",
+    "impact",
+    "source",
+    "status",
+    "task",
+    "changed_acs",
+    "touched",
+    "rounds",
+    "created_at"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^C-[0-9]{3,}$"
+    },
+    "what": {
+      "type": "string",
+      "minLength": 1
+    },
+    "why": {
+      "type": "string",
+      "minLength": 1
+    },
+    "impact": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "pattern": "^(main|worker:T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|amend:A-[0-9]{3,})$"
+    },
+    "status": {
+      "enum": [
+        "drafting",
+        "proposed",
+        "approved",
+        "rejected",
+        "cancelled"
+      ]
+    },
+    "task": {
+      "type": "string",
+      "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+    },
+    "changed_acs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "plan_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "plan_text": {
+      "type": "string"
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "question",
+          "decision"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "extras": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "what",
+          "why"
+        ],
+        "properties": {
+          "what": {
+            "type": "string",
+            "minLength": 1
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "summary": {
+      "type": "string"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "add",
+              "adjust",
+              "cancel",
+              "followup",
+              "acctest",
+              "stages"
+            ]
+          },
+          "task": {
+            "type": "string",
+            "minLength": 1
+          },
+          "of": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mode": {
+            "enum": [
+              "patch",
+              "round"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "touched": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rounds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decided_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "feedback": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

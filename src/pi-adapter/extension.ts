@@ -24,7 +24,7 @@ import { parseAgentFile } from '../core/agents.ts';
 import { runFlowConfig, type ModelOption } from '../commands/forge-config.ts';
 import { RoleTable, type RoleRow, type TableModel } from '../commands/role-table.ts';
 import { runFlowCommand, runFlowBuild, runFlowFix, FLOW_USAGE, type CommandEnv, type EngineHandle } from '../commands/forge.ts';
-import { flowSpec, flowSpecAmend, SpecParams, SpecAmendParams, ResolveScopeParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveScope, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
+import { flowChangeRequestMain, flowSpec, flowSpecAmend, SpecParams, SpecAmendParams, ResolveScopeParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveScope, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
 import { PiLauncher } from './launcher.ts';
 import { lastFailureKind, notices, snapshotOf, statusLine, visibleFlows } from '../core/status-view.ts';
 import { packageRoots, pluginExtensionsFor } from './plugins.ts';
@@ -33,13 +33,13 @@ import { redactToolResult } from './redact-hook.ts';
 import { notifyEvents, runNotify } from '../core/notify.ts';
 import { NOTES_DESCRIPTION, NotesError, NotesParams, applyNoteOps, notesContextMessage, renderNotes } from '../core/notes.ts';
 import { HISTORY_DESCRIPTION, HistoryParams } from '../core/history.ts';
-import { historyTool } from '../tools/subagent-tools.ts';
+import { ChangeRequestParams, historyTool } from '../tools/subagent-tools.ts';
 import { MAIN_NOTES_REL } from '../core/state-store.ts';
 
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TEMPLATE_WORKFLOW = path.join(PACKAGE_ROOT, 'templates', 'workflow.yaml');
 const SUBAGENT_EXTENSION = path.join(PACKAGE_ROOT, 'src', 'pi-adapter', 'subagent.ts');
-const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_spec', 'forge_spec_amend', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_resolve_scope'];
+const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_spec', 'forge_spec_amend', 'forge_change_request', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_resolve_scope'];
 
 /** 用户级设置文件：~/.pi/agent/pi-forge.json（与 Pi 官方 preset 示例的全局配置位置一致） */
 export function roleSettingsPath(): string {
@@ -278,7 +278,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     });
     pi.registerTool({
-      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交 requirements、screens、permissions、glossary 四份完整规格。spec-lint 拒绝时修正重提；通过后等待用户批准。',
+      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交 requirements、screens、permissions、glossary 四份完整规格；feature 流程改为提交增量规格 feature_name + feature（需求、页面、权限三节，基线已存在时不传四份）。spec-lint 拒绝时修正重提；通过后等待用户批准。',
       parameters: SpecParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
@@ -292,6 +292,15 @@ export default function piFlow(pi: ExtensionAPI): void {
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
         const r = await flowSpecAmend(ctx.cwd, h.store, checked(SpecAmendParams, p, 'forge_spec_amend'));
+        return toolResult(r.text, r.details);
+      },
+    });
+    pi.registerTool({
+      name: 'forge_change_request', label: 'forge_change_request', description: '计划批准后需要修改已有契约或计划时提交变更请求（what、why、impact）：程序派 architect 起草修订，用户批准后落地。同一时间只能有一个未结束的变更请求。',
+      parameters: ChangeRequestParams,
+      async execute(_id, p, _s, _u, ctx) {
+        const h = engineFor(ctx.cwd);
+        const r = await flowChangeRequestMain(ctx.cwd, h.store, h.config, checked(ChangeRequestParams, p, 'forge_change_request'));
         return toolResult(r.text, r.details);
       },
     });
@@ -458,7 +467,7 @@ export default function piFlow(pi: ExtensionAPI): void {
   const shortcuts: [string, string, string][] = [
     ['forge-approve', 'approve', 'pi-forge：批准当前阶段（规划、最终合入主分支）或待批准的计划修订'],
     ['forge-reject', 'reject', 'pi-forge：打回需求、规划或计划修订并写明意见，主 agent 带着意见修改'],
-    ['forge-add', 'add', 'pi-forge：中途追加需求，送到正在做的模块或交给主 agent 安排'],
+    ['forge-add', 'add', 'pi-forge：中途追加需求，交给主 agent 整理成规格修订（P0 批准之后）'],
     ['forge-resume', 'resume', 'pi-forge：会话丢失或进程被杀后恢复流程，并进入调度模式'],
     ['forge-status', 'status', 'pi-forge：当前阶段、进度、正在做什么、需要你处理什么（--detail 看完整任务列表）'],
     ['forge-decide', 'decide', 'pi-forge：裁决交给你的验收测试争议（keep-test 维持测试 / fix-test "<说明>" 按说明改测试）'],
@@ -477,7 +486,7 @@ export default function piFlow(pi: ExtensionAPI): void {
   }
 
   pi.registerCommand('forge-build', {
-    description: 'pi-forge：带上必填 PRD（--prd）与可选原型（--prototype），主会话讨论需求、整理规格；--feature 在 M7 实现',
+    description: 'pi-forge：带上必填 PRD（--prd）与可选原型（--prototype），主会话讨论需求、整理规格；--feature 在已有项目上加功能（需要主分支已有 docs/contracts/，没有时先 /forge init --adopt）',
     getArgumentCompletions: (prefix) => ['--prd', '--prototype', '--feature'].filter((x) => x.startsWith(prefix.trim().split(' ').at(-1) ?? '')).map((x) => ({ value: x, label: x })),
     handler: async (args, ctx) => {
       try {

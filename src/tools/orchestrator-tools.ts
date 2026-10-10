@@ -2,6 +2,8 @@
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
 import { checkScope } from '../core/scope.ts';
 import { submitSpec, proposeSpecAmend, amendSummary, specStatus } from '../core/spec-flow.ts';
+import { ADOPT_STAGE, adoptApprovalSummary } from '../core/adopt.ts';
+import { featurePermissionSummary, submitFeatureSpec } from '../core/feature-spec.ts';
 import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan-flow.ts';
 import { runStageGate } from '../core/gates.ts';
 import { activePauses, describePause } from '../core/model-pause.ts';
@@ -14,12 +16,19 @@ import type { FlowConfig } from '../core/config.ts';
 import { actionsNeeded } from '../core/status-view.ts';
 import { REVIEW_GUIDE, awaitingReview, timeoutReviewText } from '../core/run-budget.ts';
 import { DispatchError } from '../core/dispatcher.ts';
+import { fixHelpHint, fixStatusLine, readFixLog } from '../modes/fix.ts';
+import { isFinished } from '../core/state-store.ts';
+import { ChangeError, changeStatus, requestChange } from '../core/change-flow.ts';
+import { ChangeRequestParams } from './subagent-tools.ts';
 
 export const SpecParams = Type.Object({
-  requirements: Type.String({ minLength: 1, maxLength: 120000 }),
-  screens: Type.String({ minLength: 1, maxLength: 120000 }),
-  permissions: Type.String({ minLength: 1, maxLength: 120000 }),
-  glossary: Type.String({ minLength: 1, maxLength: 120000 }),
+  requirements: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
+  screens: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
+  permissions: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
+  glossary: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
+  /** feature 流程：增量规格的名字与内容（## 需求、## 页面、## 权限三节） */
+  feature_name: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+  feature: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
 }, { additionalProperties: false });
 export const SpecAmendParams = Type.Object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
@@ -28,13 +37,35 @@ export const SpecAmendParams = Type.Object({
 }, { additionalProperties: false });
 export async function flowSpec(root: string, store: StateStore, config: FlowConfig, p: Static<typeof SpecParams>): Promise<ToolResult> {
   const id = activeFlowId(store);
-  const r = await submitSpec(root, store, id, p);
+  const base = [p.requirements, p.screens, p.permissions, p.glossary];
+  if (store.readFlow(id).mode === 'feature') {
+    if (!p.feature || !p.feature_name) throw new FlowToolError('feature 流程提交增量规格：用 feature_name 与 feature（## 需求、## 页面、## 权限三节）。基线规格已在主分支上时不要传 requirements 等四份文件。');
+    if (base.some(Boolean) && !base.every(Boolean)) throw new FlowToolError('基线规格要么四份（requirements、screens、permissions、glossary）都给，要么都不给。');
+    const f = await submitFeatureSpec(root, store, id, { name: p.feature_name, content: p.feature, ...(base.every(Boolean) ? { baseline: { requirements: p.requirements!, screens: p.screens!, permissions: p.permissions!, glossary: p.glossary! } } : {}) });
+    const g = await runStageGate(root, store, config, id);
+    const perms = g.passed ? featurePermissionSummary(root, store.readFlow(id)) : [];
+    return { text: g.passed ? `增量规格已提交到 ${f.path}，spec-lint（基线 + 全部 feature）通过，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${f.lint.warnings.length ? `\n警告：\n${f.lint.warnings.map((i) => i.message).join('\n')}` : ''}${perms.length ? `\n向用户单独列出权限变更：\n${perms.join('\n')}` : ''}` : `集成分支上的 spec-lint 未通过，已回到规格讨论，请修正后用 forge_spec 重新提交：\n${g.reasons.join('\n')}`, details: { sha: f.sha, lint: f.lint, gate: g } };
+  }
+  if (p.feature || p.feature_name) throw new FlowToolError('build 流程不使用 feature_name 与 feature，请提交四份完整规格。');
+  if (!base.every(Boolean)) throw new FlowToolError('请提交四份完整规格：requirements、screens、permissions、glossary。');
+  const r = await submitSpec(root, store, id, { requirements: p.requirements!, screens: p.screens!, permissions: p.permissions!, glossary: p.glossary! });
   const gate = await runStageGate(root, store, config, id);
   return { text: gate.passed ? `四份规格已提交，spec-lint 通过，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${r.lint.warnings.length ? `\n警告：\n${r.lint.warnings.map((i) => i.message).join('\n')}` : ''}` : `集成分支上的 spec-lint 未通过，已回到规格讨论，请修正后用 forge_spec 重新提交：\n${gate.reasons.join('\n')}`, details: { sha: r.sha, lint: r.lint, gate } };
 }
 export async function flowSpecAmend(root: string, store: StateStore, p: Static<typeof SpecAmendParams>): Promise<ToolResult> {
   const a = await proposeSpecAmend(root, store, activeFlowId(store), p);
   return { text: `${amendSummary(a)}\n已提交修订，等待用户 /forge-approve amend:${a.id} 或 /forge-reject amend:${a.id} "<意见>"。`, details: { amend: a } };
+}
+
+/** forge_change_request（main）：提交变更请求，交给 architect 起草修订（第 12.3 节） */
+export async function flowChangeRequestMain(root: string, store: StateStore, config: FlowConfig, p: Static<typeof ChangeRequestParams>): Promise<ToolResult> {
+  try {
+    const r = await requestChange(root, store, config, activeFlowId(store), p, 'main');
+    return { text: `已提交变更请求 ${r.change.id}：程序派 architect（${r.task.id}）起草修订。修订提交后等待用户 /forge-approve change:${r.change.id}；批准前被调整或取消的未开始 task 不会派发。`, details: { change: r.change.id, task: r.task.id } };
+  } catch (e) {
+    if (e instanceof ChangeError) throw new FlowToolError(e.message);
+    throw e;
+  }
 }
 
 export const WaitParams = Type.Object({
@@ -117,11 +148,15 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
     `流程 ${flow.id}「${flow.title}」（${flow.mode}）阶段 ${flow.stage}：${flow.stage_status}`,
     `任务 ${tasks.length} 个：${TASK_STATUSES.filter((s) => count(s)).map((s) => `${s} ${count(s)}`).join('，') || '无'}`,
   ];
+  if (flow.mode === 'fix') lines.push(fixStatusLine(flow, tasks));
   const spec = specStatus(store, flowId);
   if (spec) lines.push(spec);
   const plan = planStatus(store, flowId);
   if (plan) lines.push(plan);
   if (flow.stage === P1_STAGE && flow.stage_status === 'awaiting_human') lines.push(planApprovalSummary(store, flowId));
+  if (flow.stage === ADOPT_STAGE && flow.stage_status === 'awaiting_human') lines.push(adoptApprovalSummary(store.root, flow));
+  const changes = changeStatus(store, flowId);
+  if (changes) lines.push(changes);
   const running = engine?.activeRuns().filter((r) => r.flow === flowId) ?? [];
   const leased = tasks.filter((t) => t.lease);
   if (leased.length) lines.push(`运行中：${leased.map((t) => `${t.id}（${t.lease!.role}，run ${t.lease!.run_id}${running.some((r) => r.run_id === t.lease!.run_id) ? '' : '，不在本会话'}）`).join('；')}`);
@@ -141,6 +176,11 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
   if (['awaiting_human', 'needs_human'].includes(flow.stage_status)) lines.push(`等待用户：阶段 ${flow.stage}（${flow.stage_status}）→ /forge-approve 或 /forge-reject "<意见>"`);
   const gateFail = [...store.readEvents()].reverse().find((e) => e.flow === flowId && e.type === 'gate_result');
   if (gateFail && gateFail.to === 'active' && flow.stage_status === 'active') lines.push(`阶段闸门未通过：${one(gateFail.reason ?? '', 300)}（修复后执行 /forge gate 重跑）`);
+  if (flow.mode === 'fix' && flow.stage_status === 'needs_human') lines.push(fixHelpHint(flow.id));
+  if (flow.mode === 'fix' && isFinished(flow)) {
+    const log = readFixLog(store, flowId);
+    if (log) lines.push(`修复日志：\n${log.trim()}`);
+  }
   return lines.join('\n');
 }
 

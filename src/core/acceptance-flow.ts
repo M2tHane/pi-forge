@@ -61,24 +61,26 @@ export function validateEvidence(evidence: string, read: (rel: string) => string
   return refs.length ? { ok: true, refs } : { ok: false, refs, reason: '依据要引用规格或契约的具体位置：docs/spec/… 或 docs/contracts/… 的文件（可带 :行号 或 #标题），或规格中的 AC 编号' };
 }
 
-/** 新建一轮验收测试返工（.at-n）：接着上一个 test-author 的会话，原因写进 handoff */
-export async function createAcctestRound(store: StateStore, flowId: string, impl: string, round: NonNullable<TaskFile['acctest_round']>, brief: string, actor: string): Promise<TaskFile> {
-  const tasks = store.listTasks(flowId);
+/** 一轮验收测试返工（.at-n）的 task 输入（纯函数）：接着上一个 test-author 的会话；waitFor 是还没结束的上一个 .at，先等它 */
+export function acctestRoundInput(tasks: readonly TaskFile[], stage: string, impl: string, round: NonNullable<TaskFile['acctest_round']>, waitFor?: string): TaskInput {
   const implTask = tasks.find((t) => t.id === impl);
   if (!implTask) throw new Error(`找不到 ${impl}`);
   const prev = latestAcctest(tasks, impl);
-  const flow = store.readFlow(flowId);
-  const id = nextAcctestId(tasks, impl);
-  const input: TaskInput = {
-    id, stage: flow.stage, kind: 'acctest', role: 'test-author', title: `验收测试返工：${implTask.title}`, scopes: [...(prev?.scopes ?? ['acctest'])],
-    depends_on: [], inputs: [], writes: acctestDirs(impl), verify: [], for_task: impl, ac: [...(implTask.ac ?? [])],
+  return {
+    id: nextAcctestId(tasks, impl), stage, kind: 'acctest', role: 'test-author', title: `验收测试返工：${implTask.title}`, scopes: [...(prev?.scopes ?? ['acctest'])],
+    depends_on: waitFor ? [{ task: waitFor, type: 'hard', reason: '等上一轮验收测试结束' }] : [], inputs: [], writes: acctestDirs(impl), verify: [], for_task: impl, ac: [...(implTask.ac ?? [])],
     ...(implTask.test_interface?.length ? { test_interface: [...implTask.test_interface] } : {}),
     ...(implTask.module ? { module: implTask.module } : {}),
     ...(prev ? { fork_from_task: prev.id } : {}),
     acctest_round: round,
   };
+}
+
+/** 新建一轮验收测试返工（.at-n）：接着上一个 test-author 的会话，原因写进 handoff */
+export async function createAcctestRound(store: StateStore, flowId: string, impl: string, round: NonNullable<TaskFile['acctest_round']>, brief: string, actor: string): Promise<TaskFile> {
+  const input = acctestRoundInput(store.listTasks(flowId), store.readFlow(flowId).stage, impl, round);
   const [t] = await store.addTasks(flowId, [input], actor);
-  await store.appendHandoff(flowId, id, brief, actor);
+  await store.appendHandoff(flowId, input.id, brief, actor);
   return t!;
 }
 

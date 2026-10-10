@@ -23,6 +23,8 @@ export interface PlanContext {
   /** 流程里已有的 task 编号（P1 的 architect task 等），plan 不能复用 */
   existingTaskIds: readonly string[];
   mode: 'build' | 'feature';
+  /** 变更请求的修订才允许 task 写 modifies（第 12.3 节）；P1 的计划里不能写 */
+  allowModifies?: boolean;
   limits: { max_parallel: number; max_task_files: number; lean_below_loc: number };
 }
 
@@ -122,6 +124,7 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
     ids.add(t.id);
     if (!stageIdx.has(t.stage)) errors.push(`${t.id} 的阶段 ${t.stage} 不在 stages 中`);
     if (!t.writes.length) errors.push(`${t.id} 的 writes 不能为空`);
+    if (t.modifies && !ctx.allowModifies) errors.push(`${t.id} 写了 modifies：只有变更请求的修订可以新增"修改 task"，P1 的计划不能写`);
     for (const w of t.writes) {
       const bad = FORBIDDEN_WRITES.find((f) => globsOverlap(w, f));
       if (bad) errors.push(`${t.id} 的 writes ${w} 与 ${bad} 重叠：验收测试归 test-author，规格与契约不能由 impl 直接改写`);
@@ -139,15 +142,26 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
     warnings.push(`预估 ${plan.size_estimate.loc} 行，低于 lean_below_loc=${ctx.limits.lean_below_loc}，建议选 mode: lean（每个阶段一个 task）`);
   }
 
+  const planIds = new Map(plan.tasks.map((t) => [t.id, t]));
+  for (const t of plan.tasks) {
+    if (!t.modifies || !ctx.allowModifies) continue;
+    const target = planIds.get(t.modifies);
+    if (!target) errors.push(`${t.id} 的 modifies ${t.modifies} 不在计划里`);
+    else if (target.modifies) errors.push(`${t.id} 的 modifies ${t.modifies} 本身也是修改 task，请指向最初的 task`);
+    else if (t.modifies === t.id) errors.push(`${t.id} 的 modifies 不能指向自己`);
+  }
+
   // AC：存在、不含 manual；MVP 的非 manual AC 恰好分配一次；exit 需求的 AC 分配在本阶段或更早
   const acs = acKeys(ctx.spec);
   const owner = new Map<string, string[]>();
-  for (const t of plan.tasks) {
+  // 修改 task 重复列出原 task 已负责的 AC 不算再分配一次（先算普通 task，再算修改 task）
+  for (const t of [...plan.tasks.filter((x) => !x.modifies), ...plan.tasks.filter((x) => x.modifies)]) {
     for (const ac of t.ac) {
       const info = acs.get(ac);
       if (!info) { errors.push(`${t.id} 的 ac ${ac} 在规格中不存在（写成 REQ-012.AC1）`); continue; }
       if (info.manual) errors.push(`${t.id} 的 ac ${ac} 是 manual 条目，不分配给 task（写进 manual_checks）`);
       if (!info.mvp) warnings.push(`${t.id} 的 ac ${ac} 属于非 MVP 需求 ${info.req}`);
+      if (t.modifies && owner.get(ac)?.includes(t.modifies)) continue;
       owner.set(ac, [...(owner.get(ac) ?? []), t.id]);
     }
   }

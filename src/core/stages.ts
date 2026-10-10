@@ -6,7 +6,7 @@ import type { FlowFile } from './schemas.ts';
 import { git, gitOk } from './git.ts';
 import { ensureIntegrationBranch } from './worktree.ts';
 import { mergeToMain } from './release.ts';
-import { materializePlan, P1_STAGE } from './plan-flow.ts';
+import { materializePlan, P1_STAGE, isArchitectStage } from './plan-flow.ts';
 import { deliveryReport } from './signoff.ts';
 
 export interface StageDeps { root: string; store: StateStore; config: FlowConfig }
@@ -59,7 +59,7 @@ export async function rejectStage(d: StageDeps, flowId: string, feedback: string
   if (!['awaiting_human', 'needs_human'].includes(flow.stage_status)) throw new Error(`阶段 ${flow.stage} 当前是 ${flow.stage_status}，没有等待批准的闸门。`);
   if (!feedback.trim()) throw new Error('打回必须写明意见：/forge-reject "<意见>"');
   await d.store.transitionStage(flowId, { to: 'active', trigger: 'reject', actor: 'human', reason: feedback });
-  if (flow.stage === P1_STAGE) {
+  if (isArchitectStage(flow.stage)) {
     await d.store.setPlanRework(flowId, `用户打回：${feedback}`, 'human');
     return `已打回阶段 ${flow.stage}，程序将派 architect 按意见返工。`;
   }

@@ -338,6 +338,12 @@
         },
         "sha": {
           "type": "string"
+        },
+        "permission_changes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false

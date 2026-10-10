@@ -14,7 +14,9 @@ import { resourceOptions, withResources } from './resources.ts';
 
 import type { StageDeps } from './stages.ts';
 import type { TaskFile } from './schemas.ts';
-import { P1_STAGE, p1GateProblems } from './plan-flow.ts';
+import { P1_STAGE, isArchitectStage, p1GateProblems } from './plan-flow.ts';
+import { adoptGateProblems } from './adopt.ts';
+import { featurePermissionSummary } from './feature-spec.ts';
 import { headSha } from './worktree.ts';
 import { failingAcceptanceDirs } from './acceptance-flow.ts';
 import { createStageFixTasks, type StageIssue } from './stage-fix.ts';
@@ -43,15 +45,16 @@ export async function runStageGate(root: string, store: StateStore, config: Flow
     const passed = reasons.length === 0;
     await store.transitionStage(flowId, { to: passed ? 'awaiting_human' : 'active', trigger: passed ? 'gate_passed' : 'gate_failed', actor: 'gate', needs_human: true,
       ...(reasons.length ? { reason: reasons.join('\n') } : {}),
-      spec: { ...flow.spec, submitted: passed, errors: reasons, warnings: lint.warnings.map((i) => i.message) } });
+      spec: { ...flow.spec, submitted: passed, errors: reasons, warnings: lint.warnings.map((i) => i.message),
+        ...(flow.mode === 'feature' ? { permission_changes: passed ? featurePermissionSummary(root, flow) : [] } : {}) } });
     return { stage: 'P0', passed, needsHuman: true, reasons };
   }
-  if (flow.stage === P1_STAGE) {
-    const reasons = p1GateProblems(root, store, config, flowId);
+  if (isArchitectStage(flow.stage)) {
+    const reasons = flow.stage === P1_STAGE ? p1GateProblems(root, store, config, flowId) : adoptGateProblems(root, flow);
     const passed = reasons.length === 0;
     await store.transitionStage(flowId, { to: passed ? 'awaiting_human' : 'active', trigger: passed ? 'gate_passed' : 'gate_failed', actor: 'gate', needs_human: true,
       ...(reasons.length ? { reason: reasons.join('\n').slice(0, 4000) } : {}) });
-    return { stage: P1_STAGE, passed, needsHuman: true, reasons };
+    return { stage: flow.stage, passed, needsHuman: true, reasons };
   }
   const def = stageDef(config, flow.mode, flow.stage);
   const isLast = flow.stage === flow.stages.at(-1);

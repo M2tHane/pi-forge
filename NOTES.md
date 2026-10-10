@@ -52,7 +52,9 @@
 - M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；M3 已接上 P1：architect 起草契约与计划、forge_propose_plan 校验、doc 预检、P1 闸门、批准后生成 S 阶段与 task 并进入 S0。真实预检、验收测试 task、审查与契约锁定检查、阶段验收分别由 M4/M5/M6 接入。主会话角色按用户决定沿用 orchestrator。
 - stage-qa 的 bash 是 full，现有 guard 拦不住 shell 重定向改源码，而规格第 14 节要求 stage-qa 不能写（临时目录除外）。M6 改为由隔离兜底：stage-qa 和阶段审查在集成分支 HEAD 的临时 detached worktree 里运行，没有任何流程从这个 worktree 提交，结束后删除。重定向和 write 工具仍按可写范围（空）拦截。仍然留着的缺口：full bash 命令参数里写主工作区的绝对路径（例如 `cp x /项目/...`）是否被拦截，没有专门的测试。留到统一 e2e 时核对。
 - M6 的 e2e（`test/e2e/stage-acceptance.test.ts`）只写了，没有运行。旧的 `test/e2e/gates.test.ts` 按模块生成 `T-NNN` 修复任务；现在改为按 task 生成 `.fx-n`，需要在统一 e2e 时更新。测试项目的 `PROJECT_YAML` 默认 `qa: false`，M6 的测试显式打开。
-- 阶段被打回（stage_reopened）后，再跑 stage-qa 与阶段审查时，旧的轮次仍计入 `qa.max_rounds` 和 `review.max_rounds`。这一点随 M7 的规格修订与变更请求一起处理。
+- 阶段被打回（stage_reopened）后，再跑 stage-qa 与阶段审查时，旧的轮次仍计入 `qa.max_rounds` 和 `review.max_rounds`。M7 没有处理，留作已知局限：签收被打回后，用户可以用 `/forge accept` 放行。
+- M7 的 e2e（`change-request`、`fix`）只写了，没有运行。没有为 feature 和 adopt 写 e2e，它们由单元测试覆盖。`agents/architect.md`、`skills/change-request` 没有提到 `modifies` 和 adopt，目前只靠程序生成的 brief 说明；是否修改提示词由用户决定。修改提示词会让缓存失效。
+- 变更请求的 `cancelled` 状态在 store 里有，但没有接命令。
 
 ## 偏离记录
 
@@ -127,6 +129,13 @@
 61. fix task 的归属（第 11.1 节）：文件归"writes 覆盖它、已 done 的 impl task 中编号最大的一个"，因为 task 没有时间戳。验收测试目录 `tests/acceptance/<T>/` 里的失败直接归 T，`writes` 用 T 的 writes，因为 worker 不能改测试。fork 的会话取该 impl 最近一个已 done 的 `.fx-n`，没有时取 impl 本身。stage-qa 和阶段审查生成的 fix 用标题里的"（S1.qa 第 k 轮）"识别轮次，不新增字段。
 62. stage-qa 与阶段审查复用 reviewer 的出处校验、降级和"确认轮不能新增问题"规则。结论存为 evidence：`qa-input.json`、`qa-report.json`、`qa-confirm.json`。它们没有自己的 worktree，派发时在集成分支 HEAD 建临时 detached worktree，结束后删除。`forge_service` 在没有 worktree 时直接拒绝，不再回退到主工作区。
 63. 精简模式跨阶段接着会话：impl 没有 `fork_from_task` 时，派发时 fork 上一阶段 impl 谱系里最后一个 worker task。会话大小和 `continue_session` 仍由 `forkSource` 检查。签收汇总与交付汇报在 `signoff.ts`（改编自 pi-flow finish-report）：`/forge report` 显示；最后一个阶段批准时把汇报存为阶段 evidence `delivery.md`，再 `--no-ff` 合入主分支。第 17 节的指标由 `/forge-status --metrics` 显示。
+64. 变更请求（第 12.3 节）存为 `changes/C-001.json`，状态依次为 drafting → proposed → approved/rejected。同一流程同时只能有一个未结束的变更请求，第二个直接拒绝，不排队。architect 在当前阶段的 doc task 里改计划，用 `forge_propose_plan` 提交。对已开始或已完成的 task 的修改，写成新 task 加 `modifies: T-xxx`（计划新增的字段，只在变更请求里允许），程序把它变成硬依赖原 task 的后续 task。批准时在一个事务里落地：新增、调整、取消 task，`.at-n`（kind `change`），以及 `stages_revised`。
+65. 变更请求在 proposed 时就暂停被它调整的 task，而不是等合并之后。有未结束的变更请求时，阶段门禁等待。architect 对契约的修改在用户批准前就合入集成分支。当前计划取自最近一个已批准变更请求的 `plan_text`，没有时取 `contracts_base` 上的 plan.yaml，所以被打回的修订不会污染基线。
+66. 契约只能追加的检查，基线改为任务 worktree 与集成分支的合并基点（`contractBaseOf`）：任务 forge_sync 之后，已批准变更请求对契约的修改不算 worker 的改动。
+67. 规格修订批准后，如果计划已批准且 AC 有变化，程序自动发起变更请求（source `amend:A-xxx`）。已有未结束的变更请求时只提示，不发起。
+68. fix 模式（第 13.4 节）由 `src/modes/fix.ts` 驱动，改编自 7006e7d。T-001 是 worker 的 impl，writes 为 `**`，不派 `.at`，不做审查，合并时跑全量直接进 main。之后派 X1.qa（stage-qa，只读），在阶段 active 时运行，和 S 阶段不同。must 生成 `.fx-n`，然后 X1.qa-2 只确认，最多两轮，之后转 needs_human，`/forge accept --note` 放行。修复日志写在 `.forge/fixes/<日期>-nnn.md`。`implementation_gate.qa: false` 时跳过确认。`fix_max_files` 只写进 handoff，程序不强制。
+69. feature 模式：增量规格文件名带"日期-000-"前缀，规格写的是 `<名字>.md`，加前缀是为了按文件名叠加的顺序稳定。修改过的权限行记在 `flow.spec.permission_changes`，在批准页单独列出。P1 计划只要求新增或变化的 AC 有归属，因为基线里的 AC 已经实现。main 上已有的契约从流程开始就锁定，只能追加。没有 `docs/contracts/` 时 `/forge-build --feature` 拒绝，并提示先运行 `/forge init --adopt`。
+70. `/forge init --adopt ["<说明>"] [--force]` 用一个 feature 流程，只有一个阶段 `ADOPT`。architect 的 doc task 只写 `docs/contracts/**` 和 `docs/arch/**`，只描述现有行为；契约结构检查通过后由用户批准，批准时 `--no-ff` 合入 main。`--force` 用于以后纳管更多模块，此时已有契约只能追加。`/forge-add` 只把需求交给主会话整理成 `forge_spec_amend`，不改状态。
 
 ## M1 删除、由 Mx 重建
 

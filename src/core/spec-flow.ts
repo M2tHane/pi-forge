@@ -7,6 +7,8 @@ import { git, gitOk } from './git.ts';
 import { commitFilesToBranch } from './intake.ts';
 import { diffAcs, effectiveSpec, lintSpec, type SpecFiles, type SpecFeature, type LintResult } from './spec.ts';
 import { planStageTransition } from './state-machine.ts';
+import type { FlowConfig } from './config.ts';
+import { ChangeError, changeApprovalText, pendingChanges, requestChange } from './change-flow.ts';
 
 export const SPEC_PATHS = ['requirements', 'screens', 'permissions', 'glossary'] as const;
 export class SpecFlowError extends Error {}
@@ -68,7 +70,30 @@ export async function proposeSpecAmend(root: string, store: StateStore, flowId: 
   const affected_tasks = store.listTasks(flowId).filter((t) => t.ac?.some((ac) => changed.has(ac))).map((t) => t.id);
   return store.proposeAmend(flowId, { name, path: `docs/spec/features/${filename}`, content: input.content, reason: input.reason.trim(), diff, affected_tasks, base_sha: git(root, ['rev-parse', `refs/heads/${flow.integration_branch}`]).trim() });
 }
-export async function approveSpecAmend(root: string, store: StateStore, flowId: string, id: string): Promise<string> {
+/**
+ * 批准规格修订。P1 之后（计划已批准）、修订改动了 AC 或影响了已有 task 时，自动发起变更请求交给 architect（第 13.5 节）；
+ * 没有传 config 时只批准修订，不发起。P0 阶段的修订保持原样。
+ */
+export async function approveSpecAmend(root: string, store: StateStore, flowId: string, id: string, config?: FlowConfig): Promise<string> {
+  const approved = await approveAmendOnly(root, store, flowId, id);
+  const { a, text } = approved;
+  const flow = store.readFlow(flowId);
+  const acs = [...a.diff.added, ...a.diff.changed, ...a.diff.removed];
+  if (!config || !flow.s_stages?.length || (!acs.length && !a.affected_tasks.length)) return text;
+  const list = (label: string, xs: readonly string[]) => `${label}：${xs.join('、') || '无'}`;
+  try {
+    const r = await requestChange(root, store, config, flowId, {
+      what: `规格修订 ${a.id}「${a.name}」已批准，契约和计划需要跟着调整。${list('AC 新增', a.diff.added)}；${list('修改', a.diff.changed)}；${list('删除', a.diff.removed)}。`,
+      why: a.reason,
+      impact: `${list('受影响的 task', a.affected_tasks)}。规格修订文件：${a.path}（已进入集成分支）。按覆盖率映射检查这些 task 的验收测试。`,
+    }, `amend:${a.id}`, acs);
+    return `${text}\n涉及契约或计划，已自动发起变更请求 ${r.change.id}，程序派 architect（${r.task.id}）起草修订，起草好后等你 /forge-approve change:${r.change.id}。`;
+  } catch (e) {
+    if (!(e instanceof ChangeError)) throw e;
+    return `${text}\n未能自动发起变更请求：${e.message}\n之后由 main 调用 forge_change_request 发起（规格修订 ${a.id} 的影响见上）。`;
+  }
+}
+async function approveAmendOnly(root: string, store: StateStore, flowId: string, id: string): Promise<{ a: AmendFile; text: string }> {
   return store.transaction((tx) => {
     const flow = tx.readFlow(flowId);
     const a = tx.readJson<AmendFile>(amendRel(flowId, id));
@@ -88,16 +113,16 @@ export async function approveSpecAmend(root: string, store: StateStore, flowId: 
     const sha = commitFilesToBranch(root, flow.integration_branch, [{ rel: a.path, content: a.content }], `pi-forge: ${flowId} 批准规格修订 ${id}`);
     tx.putJson<AmendFile>(amendRel(flowId, id), 'amend', { ...a, status: 'approved', decided_at: tx.ts, ...(sha ? { sha } : {}) });
     tx.event({ flow: flowId, actor: 'human', type: 'approval', reason: `规格修订 ${id} 已批准`, data: { amend: id, sha } });
-    return `已批准 amend:${id}，规格修订已提交到集成分支 ${a.path}。交给 architect 的变更请求在 M7 实现。`;
+    return { a, text: `已批准 amend:${id}，规格修订已提交到集成分支 ${a.path}。` };
   });
 }
 export interface ApprovalTarget { object: string; summary: string }
 export function approvalTargets(store: StateStore, flowId: string, includeNeedsHuman = false): ApprovalTarget[] {
   const f = store.readFlow(flowId);
-  return [...(f.stage_status === 'awaiting_human' || includeNeedsHuman && f.stage_status === 'needs_human' ? [{ object: `stage:${f.stage}`, summary: `stage:${f.stage} 等待用户${f.stage_status === 'needs_human' ? '处理' : '批准'}` }] : []), ...store.listAmends(flowId).filter((a) => a.status === 'proposed').map((a) => ({ object: `amend:${a.id}`, summary: amendSummary(a) }))];
+  return [...(f.stage_status === 'awaiting_human' || includeNeedsHuman && f.stage_status === 'needs_human' ? [{ object: `stage:${f.stage}`, summary: `stage:${f.stage} 等待用户${f.stage_status === 'needs_human' ? '处理' : '批准'}` }] : []), ...store.listAmends(flowId).filter((a) => a.status === 'proposed').map((a) => ({ object: `amend:${a.id}`, summary: amendSummary(a) })), ...pendingChanges(store, flowId).map((c) => ({ object: `change:${c.id}`, summary: changeApprovalText(c) }))];
 }
 export function specStatus(store: StateStore, flowId: string): string {
   const f = store.readFlow(flowId);
   const spec = f.spec;
-  return [...(f.stage === 'P0' || spec ? [`规格：${spec?.submitted ? '已提交' : '尚未提交'}；spec-lint：${spec ? spec.errors.length ? '未通过' : '通过' : '尚未检查'}`, ...(spec?.errors ?? []).map((s) => `- ${s}`), ...(spec?.warnings ?? []).map((s) => `警告：${s}`), ...(spec?.feedback ? [`反馈：${spec.feedback}`] : [])] : []), ...store.listAmends(flowId).map(amendSummary), ...approvalTargets(store, flowId).map((a) => `等待批准：${a.object}`)].join('\n');
+  return [...(f.stage === 'P0' || spec ? [`规格：${spec?.submitted ? '已提交' : '尚未提交'}；spec-lint：${spec ? spec.errors.length ? '未通过' : '通过' : '尚未检查'}`, ...(spec?.errors ?? []).map((s) => `- ${s}`), ...(spec?.warnings ?? []).map((s) => `警告：${s}`), ...(spec?.feedback ? [`反馈：${spec.feedback}`] : []), ...(spec?.permission_changes ?? [])] : []), ...store.listAmends(flowId).map(amendSummary), ...approvalTargets(store, flowId).map((a) => `等待批准：${a.object}`)].join('\n');
 }

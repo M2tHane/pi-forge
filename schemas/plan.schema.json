@@ -182,6 +182,10 @@
               "normal",
               "high"
             ]
+          },
+          "modifies": {
+            "type": "string",
+            "pattern": "^T-\\d{3,}$"
           }
         },
         "additionalProperties": false

@@ -241,7 +241,7 @@ export interface MetricsInput {
   costRow?: CostRow | null;
 }
 
-export const sStageIds = (flow: FlowFile): string[] => flow.s_stages?.map((s) => s.id) ?? flow.stages.filter((s) => !['P0', 'P1'].includes(s));
+export const sStageIds = (flow: FlowFile): string[] => flow.s_stages?.map((s) => s.id) ?? flow.stages.filter((s) => !['P0', 'P1', 'ADOPT'].includes(s));
 
 /** 纯函数：从普通数据算出 §17 的全部度量 */
 export function computeMetrics(i: MetricsInput): Metrics {

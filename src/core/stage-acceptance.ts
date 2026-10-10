@@ -9,6 +9,7 @@ import type { FlowConfig } from './config.ts';
 import type { FlowFile, TaskFile } from './schemas.ts';
 import type { StateStore } from './state-store.ts';
 import { isSettled } from './state-machine.ts';
+import { isOpenChange } from './change-request.ts';
 import { headSha } from './worktree.ts';
 import { createCoverageGapRound, gateFailed, stageDef, type ImplementationChecks } from './gates.ts';
 import { QA_INPUT, createQaTask, qaTasksOf, resolveQa } from './stage-qa.ts';
@@ -83,6 +84,8 @@ export async function stageStep(d: AcceptanceDeps, flowId: string, opts: { force
   if (flow.stage_status === 'active') {
     const tasks = store.listTasks(flowId);
     if (!stageWorkSettled(tasks, stage)) return 'wait';
+    // 变更请求还没结束（起草中、等待批准、被打回）：批准后可能在本阶段新增 task，先不提交门禁
+    if (store.listChanges(flowId).some(isOpenChange)) return 'wait';
     if (isLean(flow)) {
       const r = await resolveStageReview(d.root, store, d.config, flowId, stage);
       if (r.kind === 'running') return 'wait';

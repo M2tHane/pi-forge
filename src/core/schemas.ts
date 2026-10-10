@@ -129,6 +129,8 @@ export const FlowFile = Type.Object({
     warnings: Type.Array(Type.String()),
     feedback: Type.Optional(Type.String()),
     sha: Type.Optional(Type.String()),
+    /** feature 流程：权限矩阵的新增与修改行（批准页单独列出） */
+    permission_changes: Type.Optional(Type.Array(Type.String())),
   }, { additionalProperties: false })),
   version: Type.Integer({ minimum: 1 }),
 }, { additionalProperties: false });
@@ -172,7 +174,7 @@ export const TaskFile = Type.Object({
   for_task: Type.Optional(TaskId),
   /** 验收测试的返工轮次（.at-n，第 9.3–9.5 节）：争议、被别的 task 的契约追加破坏、用户裁决改测试 */
   acctest_round: Type.Optional(Type.Object({
-    kind: Type.Enum(['dispute', 'foreign', 'decide', 'coverage']),
+    kind: Type.Enum(['dispute', 'foreign', 'decide', 'coverage', 'change']),
     /** 争议的测试标识 */
     test: Type.Optional(Type.String()),
     /** 引发这一轮的 task（争议的 worker 或破坏测试的 task） */
@@ -495,6 +497,8 @@ export const PlanFile = Type.Object({
     manual_checks: Type.Optional(ManualChecks),
     review: Type.Optional(TaskReview),
     risk: Type.Optional(TaskRisk),
+    /** 只在变更请求的修订里使用：这是对已开始或已完成的 task 的修改 task，程序让它硬依赖原 task（第 12.3 节） */
+    modifies: Type.Optional(Type.String({ pattern: '^T-\\d{3,}$' })),
   }, { additionalProperties: false }), { minItems: 1 }),
 }, { additionalProperties: false });
 export type PlanFile = Static<typeof PlanFile>;
@@ -652,8 +656,61 @@ export const PlanProposalFile = Type.Object({
 }, { additionalProperties: false });
 export type PlanProposalFile = Static<typeof PlanProposalFile>;
 
+// —— 变更请求（.forge/flows/<流程>/changes/C-001.json，第 12.3 节）：architect 起草修订，用户批准后在一个事务里落地 ——
+
+export const CHANGE_STATUSES = ['drafting', 'proposed', 'approved', 'rejected', 'cancelled'] as const;
+export type ChangeStatus = (typeof CHANGE_STATUSES)[number];
+export const CHANGE_ACTION_KINDS = ['add', 'adjust', 'cancel', 'followup', 'acctest', 'stages'] as const;
+/** 修订里的一项动作（摘要；落地时程序按当时的状态重新推导并与它核对） */
+export const ChangeActionSummary = Type.Object({
+  kind: Type.Enum(CHANGE_ACTION_KINDS),
+  /** add、adjust、cancel：计划里的 task；followup：新的修改 task（计划里的编号）；acctest：被改测试的 impl */
+  task: Type.Optional(Type.String({ minLength: 1 })),
+  /** followup：被修改的原 task */
+  of: Type.Optional(Type.String({ minLength: 1 })),
+  stage: Type.Optional(Type.String({ minLength: 1 })),
+  /** adjust：改动的字段；stages：新增/调整/删除的阶段 */
+  fields: Type.Optional(Type.Array(Type.String())),
+  /** acctest：patch 改还没开始的 .at，round 新建 .at-n */
+  mode: Type.Optional(Type.Enum(['patch', 'round'])),
+  detail: Type.Optional(Type.String()),
+}, { additionalProperties: false });
+export type ChangeActionSummary = Static<typeof ChangeActionSummary>;
+
+export const ChangeFile = Type.Object({
+  version: Type.Integer({ minimum: 1 }),
+  id: Type.String({ pattern: '^C-[0-9]{3,}$' }),
+  what: Type.String({ minLength: 1 }),
+  why: Type.String({ minLength: 1 }),
+  impact: Type.String({ minLength: 1 }),
+  /** worker:<task>、main、amend:<A-id> */
+  source: Type.String({ pattern: '^(main|worker:T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|amend:A-[0-9]{3,})$' }),
+  status: Type.Enum(CHANGE_STATUSES),
+  /** 当前起草修订的 architect task（打回返工时换成新的） */
+  task: TaskId,
+  /** 来自规格修订时：变化的 AC，其负责 task 的验收测试要跟着改 */
+  changed_acs: StringList,
+  /** forge_propose_plan 通过时保存：修订后的 plan.yaml（批准时按它落地，也是下一次变更的"当前计划"） */
+  plan_hash: Type.Optional(Type.String({ pattern: '^[0-9a-f]{64}$' })),
+  plan_text: Type.Optional(Type.String()),
+  assumptions: Type.Optional(Type.Array(Type.Object({ question: Type.String({ minLength: 1 }), decision: Type.String({ minLength: 1 }) }, { additionalProperties: false }))),
+  extras: Type.Optional(Type.Array(Type.Object({ what: Type.String({ minLength: 1 }), why: Type.String({ minLength: 1 }) }, { additionalProperties: false }))),
+  summary: Type.Optional(Type.String()),
+  actions: Type.Optional(Type.Array(ChangeActionSummary)),
+  /** 等待批准期间不派发的 task：修订要调整或取消的未开始 task（及其验收测试） */
+  touched: Type.Array(TaskId),
+  warnings: Type.Optional(Type.Array(Type.String())),
+  /** architect 起草的轮数（打回一次加 1） */
+  rounds: Type.Integer({ minimum: 1 }),
+  created_at: IsoTime,
+  decided_at: Type.Optional(IsoTime),
+  feedback: Type.Optional(Type.String()),
+}, { additionalProperties: false });
+export type ChangeFile = Static<typeof ChangeFile>;
+
 export const SCHEMAS = {
   amend: AmendFile,
+  change: ChangeFile,
   'plan-proposal': PlanProposalFile,
   state: StateFile,
   flow: FlowFile,

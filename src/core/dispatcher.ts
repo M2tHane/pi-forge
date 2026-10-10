@@ -34,7 +34,9 @@ import { autoTimeoutDecision, awaitingReview, graceMinutes, measureProgress, run
 import { lineageExceeded } from './lineage.ts';
 import { stallOf, stuckTasks } from './forge-watch.ts';
 import { stopAllServices } from './services.ts';
-import { docPrecheck, ensureArchitectTask, P1_STAGE } from './plan-flow.ts';
+import { docPrecheck, ensureArchitectTask, isArchitectStage, P1_STAGE } from './plan-flow.ts';
+import { changeDocPrecheck, changeOfTask, ensureChangeTask } from './change-flow.ts';
+import { pausedByChange } from './change-request.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions } from './resources.ts';
 import { prepareAcctestWorkspace } from './acctest.ts';
 import { runPrecheck } from './precheck.ts';
@@ -43,6 +45,7 @@ import { REVIEW_INPUT, decideReview, readReviewEvidence, resolveReviews, reviewW
 import { QA_INPUT, stageWorktreeFor } from './stage-qa.ts';
 import { isStageLevelTask } from './stage-worktree.ts';
 import { leanForkFrom } from './stage-fix.ts';
+import { fixStep } from '../modes/fix.ts';
 import { DEFAULT_CHECKPOINT_MINUTES, createCheckpoint, dropCheckpoint, listCheckpoints } from './checkpoints.ts';
 
 const tasksHas = (store: StateStore, flowId: string, id: string) => { try { store.readTask(flowId, id); return true; } catch { return false; } };
@@ -169,7 +172,8 @@ export class Engine {
     const flow = this.d.store.readFlow(flowId);
     if (flow.sync?.status === 'conflict') return [];
     if (budgetState(this.d.store, this.d.config, flow, this.now())?.exceeded) return [];
-    const ids = selectDispatchable(this.d.store.listTasks(flowId).filter((t) => !this.pausedFor(flowId, t)), flow.stage, this.d.config.limits.max_parallel);
+    const changes = this.d.store.listChanges(flowId);
+    const ids = selectDispatchable(this.d.store.listTasks(flowId).filter((t) => !this.pausedFor(flowId, t) && !pausedByChange(changes, t.id)), flow.stage, this.d.config.limits.max_parallel);
     const out: Dispatched[] = [];
     for (const id of ids) {
       try { out.push(await this.dispatch(flowId, id)); } catch (e) { if (!(e instanceof HandedToUser)) throw e; }
@@ -197,6 +201,7 @@ export class Engine {
     ensureLocalExcludes(root);
     const flow = store.readFlow(flowId);
     let task = store.readTask(flowId, taskId);
+    if (task.status === 'ready' && pausedByChange(store.listChanges(flowId), taskId)) throw new DispatchError(`任务 ${taskId} 被等待批准的变更请求暂停（修订要调整或取消它），批准或打回后再派发`);
     const { role, model, thinking, escalated } = this.planModel(flowId, task);
     const paused = activePause(store, model, this.now());
     if (paused) throw new DispatchError(`${describePause(paused, this.now())}。恢复：/forge models resume ${paused.model}，或用 /forge-config 给 ${role} 换模型`);
@@ -380,7 +385,7 @@ export class Engine {
       const stat = git(task.worktree, ['diff', '--stat', task.base_sha]).trim();
       if (status || stat) existingWork = [stat, status && `未提交：\n${status}`].filter(Boolean).join('\n\n');
     }
-    const skillNames = [...new Set([...(role === 'architect' ? ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules'] : role === 'test-author' ? ['acceptance-tests'] : role === 'reviewer' ? ['code-review', 'tdd'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd']), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
+    const skillNames = [...new Set([...(role === 'architect' ? ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules', ...(task.stage !== P1_STAGE ? ['change-request'] : [])] : role === 'test-author' ? ['acceptance-tests'] : role === 'reviewer' ? ['code-review', 'tdd'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd']), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
     const skills = skillNames.map((n) => {
       const f = this.d.packageSkillsDir ? path.join(this.d.packageSkillsDir, n, 'SKILL.md') : '';
       return f && existsSync(f) ? { path: `skills/${n}`, content: readFileSync(f, 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim() } : null;
@@ -530,6 +535,8 @@ export class Engine {
     } catch (e) { report(e); }
     // 审查结论先处理：新建的 .rv 要在随后的 promote 中变为 ready
     try { await resolveReviews(this.d.root, this.d.store, this.d.config, flowId); } catch (e) { report(e); }
+    // 被打回的变更请求：新建 architect task 返工（要在 promote 之前，新 task 才能就绪）
+    try { await ensureChangeTask(this.d.root, this.d.store, this.d.config, flowId); } catch (e) { report(e); }
     try {
       await this.promote(flowId);
     } catch (e) { report(e); }
@@ -607,7 +614,7 @@ export class Engine {
       return;
     }
     let failure: string | null;
-    if (t.kind === 'doc') failure = docPrecheck(root, store, config, flowId, t);
+    if (t.kind === 'doc') failure = changeOfTask(store, flowId, t.id) ? changeDocPrecheck(root, store, config, flowId, t) : docPrecheck(root, store, config, flowId, t);
     else {
       const r = await runPrecheck(root, store, config, flowId, t, this.d.mergeHooks?.verifyTimeoutMs);
       failure = r.ok ? null : r.reason;
@@ -644,7 +651,7 @@ export class Engine {
     const tasks = this.d.store.listTasks(flowId);
     const ids = selectDispatchable(tasks, flow.stage, this.d.config.limits.max_parallel).filter((id) => {
       const t = tasks.find((x) => x.id === id);
-      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || t.kind === 'qa' || (t.kind === 'doc' && t.stage === P1_STAGE)) && !this.pausedFor(flowId, t);
+      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || t.kind === 'qa' || t.kind === 'doc') && !this.pausedFor(flowId, t);
     });
     for (const id of ids) {
       try { await this.dispatch(flowId, id); } catch (e) { if (!(e instanceof HandedToUser)) throw e; }
@@ -657,9 +664,16 @@ export class Engine {
   private async advanceStage(flowId: string, report: (e: unknown) => void, force = false): Promise<void> {
     try {
       const flow = this.d.store.readFlow(flowId);
-      if (flow.mode === 'fix' || this.gating.has(flowId)) return;
+      // 修复流程（第 13.4 节）：由 fixStep 逐步推进，不跑阶段门禁
+      if (flow.mode === 'fix') {
+        await fixStep({ root: this.d.root, store: this.d.store, config: this.d.config,
+          dispatch: (f, t) => { const task = this.d.store.readTask(f, t); return this.pausedFor(f, task) || awaitingReview(task) ? Promise.resolve(null) : this.dispatch(f, t).catch((e) => { if (!(e instanceof HandedToUser)) throw e; }); },
+          promote: (f) => this.promote(f), ...(this.d.now ? { now: this.d.now } : {}) }, flowId);
+        return;
+      }
+      if (this.gating.has(flowId)) return;
       // P1：保证有一个进行中的 architect task（首次进入、打回或闸门未通过后返工）
-      if (flow.stage === P1_STAGE && flow.stage_status === 'active' && await ensureArchitectTask(this.d.store, this.d.config, flowId, this.workerModel())) {
+      if (isArchitectStage(flow.stage) && flow.stage_status === 'active' && await ensureArchitectTask(this.d.store, this.d.config, flowId, this.workerModel())) {
         await this.promote(flowId);
         await this.dispatchProgramDriven(flowId);
         return;
@@ -679,7 +693,7 @@ export class Engine {
         return;
       }
       // P1：architect 的任务都结束后跑 P1 闸门；未通过时返工
-      if (flow.stage === P1_STAGE) {
+      if (isArchitectStage(flow.stage)) {
         if (force && flow.stage_status === 'needs_human') await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'gate_rerun', actor: 'human' });
         else {
           if (flow.stage_status !== 'active') return;
@@ -692,7 +706,7 @@ export class Engine {
         this.track(runStageGate(this.d.root, this.d.store, this.d.config, flowId, this.d.verifyTimeoutMs)
           .then(async (g) => {
             this.d.onGate?.(g);
-            if (!g.passed) await this.d.store.setPlanRework(flowId, `P1 闸门未通过：\n${g.reasons.join('\n')}`.slice(0, 4000), 'gate');
+            if (!g.passed) await this.d.store.setPlanRework(flowId, `${flow.stage === P1_STAGE ? 'P1' : '纳管'}闸门未通过：\n${g.reasons.join('\n')}`.slice(0, 4000), 'gate');
           })
           .finally(() => this.gating.delete(flowId))
           .then(() => { this.notify(); return this.pump(flowId); }));

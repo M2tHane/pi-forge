@@ -106,7 +106,7 @@ test('/forge-build 缺参数、旧参数与路径错误不建流程；feature �
       assert.equal(p.store.readState().active_flow, null);
       assert.equal(p.git('for-each-ref', '--format=%(refname)', 'refs/heads/flow/'), branches);
     }
-    assert.match(await runFlowBuild('--feature --prd inputs/prd.md', e), /feature 模式在 M7 实现/);
+    assert.match(await runFlowBuild('--feature --prd inputs/prd.md', e), /\/forge init --adopt/);
     assert.equal(p.store.readState().active_flow, null);
     assert.match(await runFlowBuild('--help', e), /--prd <文件或目录> \[--prototype <路径>\]/);
     assert.match(await runFlowCommand('help', e), /\/forge-build --prd <文件或目录> \[--prototype <路径>\]/);

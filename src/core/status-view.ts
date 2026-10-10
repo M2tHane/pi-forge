@@ -11,6 +11,7 @@ import { type FlowFile, type Phase, type TaskFile } from './schemas.ts';
 import { stallOf, stuckTasks } from './forge-watch.ts';
 import { IN_FLIGHT } from './state-machine.ts';
 import { awaitingReview } from './run-budget.ts';
+import { fixStatusLine } from '../modes/fix.ts';
 
 export type PhaseOrDone = Phase | 'done';
 export const PHASE_LABEL: Record<PhaseOrDone, string> = { spec: '规格', plan: '契约与计划', implementation: '实施', done: '交付' };
@@ -19,7 +20,7 @@ export const phaseLabel = (flow: Pick<FlowFile, 'stage' | 'stages' | 'stage_stat
 const INFLIGHT = new Set<string>(IN_FLIGHT);
 const short = (s: string, n = 120) => (s.length > n ? `${s.slice(0, n)}…` : s).replace(/\s+/g, ' ');
 export function phaseOfStage(config: FlowConfig, mode: 'build' | 'feature', stage: string): Phase {
-  return config.raw.modes[mode]?.stages.find((s) => s.id === stage)?.phase ?? (stage === 'P0' ? 'spec' : stage === 'P1' ? 'plan' : 'implementation');
+  return config.raw.modes[mode]?.stages.find((s) => s.id === stage)?.phase ?? (stage === 'P0' ? 'spec' : stage === 'P1' || stage === 'ADOPT' ? 'plan' : 'implementation');
 }
 export function currentPhase(config: FlowConfig, flow: FlowFile, _tasks: TaskFile[]): PhaseOrDone {
   return isFinished(flow) && flow.stage_status === 'done' ? 'done' : flow.mode === 'fix' ? 'implementation' : phaseOfStage(config, flow.mode, flow.stage);
@@ -48,7 +49,8 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
     if (flow.stage_status === 'awaiting_human') out.push({ key: `${flow.id}:gate:${flow.stage}`, text: awaitingMerge(flow) ? '全部任务已完成，等你批准合入主分支' : `${phaseLabel(flow, currentPhase(config, flow, tasks))}阶段的产出等待你审批`, command: `/forge-approve stage:${flow.stage} 或 /forge-reject stage:${flow.stage} "<意见>"${isS ? '；签收材料：/forge report' : ''}` });
     if (flow.stage_status === 'needs_human') {
       const why = needsHumanReason(store, flow);
-      out.push({ key: `${flow.id}:gatefail:${flow.stage}`, text: `阶段门禁修复轮数用尽，需要你处理${why ? `：${short(why, 200)}` : ''}`, command: `/forge accept ${flow.stage} --note "<说明>"（人工放行进入签收）、/forge gate（重跑门禁）或 /forge-reject "<意见>"（打回）` });
+      if (flow.mode === 'fix') out.push({ key: `${flow.id}:fixhelp`, text: `修复需要你处理${why ? `：${short(why, 200)}` : ''}`, command: '/forge accept --note "<说明>"（放行并结束）或 /forge abort（放弃）' });
+      else out.push({ key: `${flow.id}:gatefail:${flow.stage}`, text: `阶段门禁修复轮数用尽，需要你处理${why ? `：${short(why, 200)}` : ''}`, command: `/forge accept ${flow.stage} --note "<说明>"（人工放行进入签收）、/forge gate（重跑门禁）或 /forge-reject "<意见>"（打回）` });
     }
     const gate = [...store.readEvents()].reverse().find((e) => e.flow === flow.id && e.type === 'gate_result');
     if (flow.stage_status === 'active' && gate?.to === 'active' && gate.data?.['stage'] === flow.stage && !tasks.some((t) => t.stage === flow.stage && !['done', 'cancelled'].includes(t.status))) out.push({ key: `${flow.id}:gatefail:${gate.seq}`, text: `阶段检查未通过：${short(gate.reason ?? '')}`, command: '处理后执行 /forge gate 重跑' });
@@ -97,7 +99,7 @@ export function renderFlow(store: StateStore, config: FlowConfig, flow: FlowFile
   const cur = currentPhase(config, flow, tasks);
   const counted = tasks.filter((t) => t.status !== 'cancelled' && (flow.mode === 'fix' || cur === 'done' || phaseOfStage(config, flow.mode, t.stage) === cur));
   const active = tasks.filter((t) => INFLIGHT.has(t.status));
-  return [`${flow.id}「${short(flow.title, 60)}」`, phaseBar(config, flow, cur), `${PHASE_LABEL[cur]}阶段：${cur === 'spec' ? '整理可验证的规格' : cur === 'plan' ? '制定契约与计划' : cur === 'implementation' ? '按任务实施并运行全量验证' : '已合入主分支'}`, `进度：${counted.filter((t) => t.status === 'done').length} / ${counted.length} 个任务完成`, specStatus(store, flow.id), ...[planStatus(store, flow.id)].filter(Boolean), active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${flow.stage_status === 'awaiting_human' ? `无（等待你审批${(flow.s_stages ?? []).some((x) => x.id === flow.stage) ? '，签收材料：/forge report' : ''}）` : flow.stage_status === 'needs_human' ? '无（阶段检查未通过，等你决定）' : flow.stage_status === 'awaiting_gate' ? '阶段检查中' : '无'}`, `阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、') || '无'}`].join('\n');
+  return [`${flow.id}「${short(flow.title, 60)}」`, phaseBar(config, flow, cur), flow.mode === 'fix' ? fixStatusLine(flow, tasks) : `${PHASE_LABEL[cur]}阶段：${cur === 'spec' ? '整理可验证的规格' : cur === 'plan' ? '制定契约与计划' : cur === 'implementation' ? '按任务实施并运行全量验证' : '已合入主分支'}`, `进度：${counted.filter((t) => t.status === 'done').length} / ${counted.length} 个任务完成`, specStatus(store, flow.id), ...[planStatus(store, flow.id)].filter(Boolean), active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${flow.stage_status === 'awaiting_human' ? `无（等待你审批${(flow.s_stages ?? []).some((x) => x.id === flow.stage) ? '，签收材料：/forge report' : ''}）` : flow.stage_status === 'needs_human' ? '无（阶段检查未通过，等你决定）' : flow.stage_status === 'awaiting_gate' ? '阶段检查中' : '无'}`, `阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、') || '无'}`].join('\n');
 }
 export function renderStatus(store: StateStore, config: FlowConfig): string {
   const flows = visibleFlows(store);

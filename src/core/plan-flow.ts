@@ -13,13 +13,17 @@ import { acTexts, effectiveSpec, glossaryTerms, type SpecFeature, type SpecFiles
 import { SPEC_PATHS } from './spec-flow.ts';
 import { isSettled } from './state-machine.ts';
 import { applyDrafts, commandsDraftProblems, formatDrafts, listDrafts } from './rules-draft.ts';
+import { ADOPT_STAGE, ADOPT_WRITES, adoptBrief, adoptPrecheck, adoptScope } from './adopt.ts';
+import { hasContracts, lockedContractProblems, readSpecAt, scopeSpecToFeature } from './feature-spec.ts';
 
 export const P1_STAGE = 'P1';
+/** 由程序派发 architect 的阶段：P1 契约与计划，以及 --adopt 的 ADOPT */
+export const isArchitectStage = (stage: string): boolean => stage === P1_STAGE || stage === ADOPT_STAGE;
 
 /** 从 git 引用（分支）或目录（worktree，含未提交的改动）读取文件 */
 export type Source = { root: string; ref: string } | { dir: string };
 
-function readRel(src: Source, rel: string): string | null {
+export function readRel(src: Source, rel: string): string | null {
   if ('dir' in src) {
     const abs = path.join(src.dir, rel);
     return existsSync(abs) && statSync(abs).isFile() ? readFileSync(abs, 'utf8') : null;
@@ -64,11 +68,17 @@ export function checkP1(root: string, src: Source, flow: FlowFile, existingTaskI
   const warnings: string[] = [];
   const specFiles = readSpecFrom(src);
   if (typeof specFiles === 'string') return { errors: [specFiles], warnings, plan: null, planText: null, check: null, spec: null };
-  const spec = effectiveSpec(specFiles.files, specFiles.features);
+  let spec = effectiveSpec(specFiles.files, specFiles.features);
+  // feature 流程：计划只需要覆盖本次新增或修改的 AC，已有需求早已实现
+  const baseSpec = flow.mode === 'feature' && flow.base_sha ? readSpecAt(root, flow.base_sha) : null;
+  if (baseSpec) spec = scopeSpecToFeature(spec, effectiveSpec(baseSpec.files, baseSpec.features));
 
-  const contracts = parseContracts('dir' in src ? contractFilesInDir(src.dir) : contractFilesAt(src.root, src.ref));
+  const contractFiles = 'dir' in src ? contractFilesInDir(src.dir) : contractFilesAt(src.root, src.ref);
+  const contracts = parseContracts(contractFiles);
   errors.push(...contracts.errors.map((e) => `契约 ${e.file}：${e.message}`));
   warnings.push(...contracts.warnings.map((e) => `契约 ${e.file}：${e.message}`));
+  // feature 流程：流程起点时主分支上已有的契约从一开始就锁定，P1 只能追加（第 13.3 节）
+  if (flow.mode === 'feature') errors.push(...lockedContractProblems(root, flow.base_sha, contractFiles));
 
   // 术语表：P1 起只能追加条目，已有条目改动走规格修订（第 13.5 节）
   if (flow.spec?.sha && gitOk(root, ['cat-file', '-e', `${flow.spec.sha}:docs/spec/glossary.md`])) {
@@ -94,14 +104,26 @@ export function checkP1(root: string, src: Source, flow: FlowFile, existingTaskI
   return { errors: [...errors, ...check.errors], warnings: [...warnings, ...check.warnings], plan: parsed.plan, planText, check, spec };
 }
 
+/** feature 模式的 P1 补充说明（第 13.3 节） */
+export const FEATURE_BRIEF: readonly string[] = [
+  '',
+  '## feature 模式：只写增量',
+  '- 这是在已有项目上加功能。主分支上现有的 docs/contracts/ 是**基线，已锁定，只能追加**（新增路径、字段、错误码、表、模块），修改或删除已有条目会被程序拒绝；docs/arch/overview.md 已有时只追加本次相关的部分。',
+  '- 只为本次 feature（docs/spec/features/ 里本流程新增的文件）新增或修改的需求写契约和计划；plan.yaml 里的阶段与 task 只覆盖这些 AC，已有需求不要重复分配。',
+  '- 计划用到的**已有**契约符号（接口、表、错误码、函数）列入 plan.yaml 的 baseline，例如 baseline: [api:GET /api/users/me]；baseline 中的符号必须能在现有契约里找到。不要用 baseline 绕过"缺少生产方"：本次要新增的符号由某个 task 的 produces 声明。',
+  '- S0 仍然是第一个阶段且只有一个 task：这里是已有项目，不要重建骨架，用它放最薄的一条能跑通本次功能的链路（新表迁移、新接口桩等）。',
+  '- 先用 codegraph、serena 读懂相关现有代码，新增的契约要和现有风格、命名一致。',
+];
+
 /** architect task 的说明：worker 用的模型决定粒度，lean 阈值，task 编号从哪里起（第 7.5、7.6 节） */
-export function architectBrief(config: FlowConfig, existingTaskIds: readonly string[], workerModel: string | null, rework?: string): string {
+export function architectBrief(config: FlowConfig, existingTaskIds: readonly string[], workerModel: string | null, rework?: string, mode: FlowFile['mode'] = 'build'): string {
   return [
-    '# P1 契约与计划',
+    mode === 'feature' ? '# P1 增量契约与计划（feature 模式）' : '# P1 契约与计划',
     '按角色提示的顺序产出：docs/arch/overview.md、契约（docs/contracts/）、术语表追加、规则与命令草案（docs/rules-draft/）、AGENTS.md、docs/plan/plan.yaml。',
     `worker 使用的模型：${workerModel ?? '尚未设置（按强模型估计粒度）'}；粒度按技能 plan-dag 的说明跟模型走。`,
     `size_estimate.loc 低于 ${config.limits.lean_below_loc ?? 6000} 时选 mode: lean（每个阶段一个 task）。`,
     `plan.yaml 的 task 编号从 ${nextPlanTaskId(existingTaskIds)} 起（流程里已有 ${existingTaskIds.join('、') || '无'}）。`,
+    ...(mode === 'feature' ? FEATURE_BRIEF : []),
     '写完后用 forge_propose_plan 提交（附 assumptions 与 extras），按返回的错误或提醒修改，通过后用 forge_note 写 handoff，再 forge_submit。',
     ...(rework ? ['', '## 需要返工', rework, '只改上面提到的地方，其余保持不变。'] : []),
   ].join('\n');
@@ -112,10 +134,12 @@ export function architectBrief(config: FlowConfig, existingTaskIds: readonly str
  * 返工的 task 接着上一个 architect task 的会话（fork）。返回新建的 task，没有新建时返回 null。
  */
 export async function ensureArchitectTask(store: StateStore, config: FlowConfig, flowId: string, workerModel: string | null): Promise<TaskFile | null> {
+  const root = store.root;
   const flow = store.readFlow(flowId);
-  if (flow.stage !== P1_STAGE || flow.stage_status !== 'active') return null;
+  if (!isArchitectStage(flow.stage) || flow.stage_status !== 'active') return null;
+  const adopt = flow.stage === ADOPT_STAGE;
   const all = store.listTasks(flowId);
-  const p1 = all.filter((t) => t.stage === P1_STAGE);
+  const p1 = all.filter((t) => t.stage === flow.stage);
   if (p1.some((t) => !isSettled(t))) return null;
   if (p1.length && !flow.plan_rework) return null;
   const ids = all.map((t) => t.id);
@@ -123,12 +147,14 @@ export async function ensureArchitectTask(store: StateStore, config: FlowConfig,
   const role = config.role('architect');
   const prev = p1.filter((t) => t.status === 'done').at(-1);
   const input: TaskInput = {
-    id, stage: P1_STAGE, kind: 'doc', role: 'architect', title: p1.length ? '契约与计划（返工）' : '契约与计划',
-    scopes: [...role.scopes], depends_on: [], inputs: [], writes: [...role.writes], verify: [],
+    id, stage: flow.stage, kind: 'doc', role: 'architect', title: `${adopt ? '纳管契约' : '契约与计划'}${p1.length ? '（返工）' : ''}`,
+    scopes: [...role.scopes], depends_on: [], inputs: [], writes: adopt ? [...ADOPT_WRITES] : [...role.writes], verify: [],
     ...(prev ? { fork_from_task: prev.id } : {}),
   };
   const [task] = await store.addTasks(flowId, [input], 'engine');
-  await store.appendHandoff(flowId, id, architectBrief(config, [...ids, id], workerModel, flow.plan_rework?.reason), 'engine');
+  await store.appendHandoff(flowId, id, adopt
+    ? adoptBrief(adoptScope(flow.title), { existingContracts: hasContracts(root, flow.base_sha ?? config.raw.main_branch), rework: flow.plan_rework?.reason })
+    : architectBrief(config, [...ids, id], workerModel, flow.plan_rework?.reason, flow.mode), 'engine');
   if (flow.plan_rework) await store.setPlanRework(flowId, null, 'engine');
   return task!;
 }
@@ -142,6 +168,7 @@ const proposalProblem = (store: StateStore, flowId: string, planText: string | n
 
 /** P1 的 doc task 预检（v3.2 第 8.1 节：契约检查与计划校验接进 doc 的预检）；通过返回 null，否则返回失败原因 */
 export function docPrecheck(root: string, store: StateStore, config: FlowConfig, flowId: string, task: TaskFile): string | null {
+  if (task.kind === 'doc' && task.stage === ADOPT_STAGE) return adoptPrecheck(root, store.readFlow(flowId), task);
   if (task.kind !== 'doc' || task.stage !== P1_STAGE || !task.branch) return null;
   const flow = store.readFlow(flowId);
   const r = checkP1(root, { root, ref: task.branch }, flow, store.listTasks(flowId).map((t) => t.id), config);
@@ -231,6 +258,10 @@ type PlanProposalInput = { assumptions: { question: string; decision: string }[]
 /** 状态视图与 forge_status 的 P1 摘要 */
 export function planStatus(store: StateStore, flowId: string): string {
   const flow = store.readFlow(flowId);
+  if (flow.stage === ADOPT_STAGE) {
+    const state = flow.stage_status === 'awaiting_human' ? '契约已通过检查，等你批准（批准后合入主分支成为基线）' : flow.stage_status === 'done' ? '已完成，契约已合入主分支' : flow.plan_rework ? `architect 返工中：${flow.plan_rework.reason.split('\n')[0]}` : 'architect 正在从现有代码整理契约';
+    return `纳管：${adoptScope(flow.title)}；${state}`;
+  }
   if (flow.stage !== P1_STAGE && !flow.s_stages?.length) return '';
   if (flow.s_stages?.length) return `计划：${flow.s_stages.length} 个 S 阶段（${flow.plan_mode === 'lean' ? '精简模式' : '标准模式'}），契约锁定于 ${flow.contracts_base?.slice(0, 8) ?? '-'}`;
   const p = store.readPlanProposal(flowId);

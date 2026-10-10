@@ -2,6 +2,7 @@
 // 每轮注入程序状态与主会话可执行的下一步；主工作区改动检测保留。
 import { approvalTargets, specStatus } from './spec-flow.ts';
 import { P1_STAGE, planApprovalSummary } from './plan-flow.ts';
+import { ADOPT_STAGE, adoptScope } from './adopt.ts';
 import type { StateStore } from './state-store.ts';
 import type { FlowConfig } from './config.ts';
 import { budgetState } from './cost-control.ts';
@@ -22,8 +23,16 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
   if (pending) return { summary, next: `${specStatus(store, flowId)}\n等待用户批准或打回；对象：${approvalTargets(store, flowId).map((a) => a.object).join('、')}。用户使用 /forge-approve <对象> 或 /forge-reject <对象> "<意见>"。`, tool: 'none' };
   if (flow.stage === 'P0') {
     if (flow.stage_status === 'awaiting_gate') return { summary, next: '规格已提交，程序正在重读集成分支并执行 spec-lint，等待闸门结果。', tool: 'none' };
-    if (flow.stage_status === 'awaiting_human') return { summary, next: '规格已提交，spec-lint 通过。向用户概述规格，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。', tool: 'none' };
+    if (flow.stage_status === 'awaiting_human') return { summary, next: `${flow.mode === 'feature' ? '增量规格已提交，spec-lint（基线 + 全部 feature）通过。' : '规格已提交，spec-lint 通过。'}向用户概述规格，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${flow.spec?.permission_changes?.length ? `\n必须向用户单独列出权限变更：\n${flow.spec.permission_changes.join('\n')}` : ''}`, tool: 'none' };
+    if (flow.mode === 'feature') return { summary, next: `用 forge_read 阅读集成分支 docs/spec/inputs/ 的 PRD 与可选原型，以及已有的基线规格（docs/spec/*.md、docs/spec/features/）和现有契约（docs/contracts/），和用户讨论本次功能；确认后用 forge_spec 的 feature_name + feature 提交增量规格（不要重写基线四份文件；基线不存在时才同时提交四份）。feature 含三节：## 需求（REQ 编号接着已有的最大编号；改动已有需求写 ### REQ-012（修订）…，删除写 ### REQ-012（删除））、## 页面（新增页面，或对已有页面整页重写）、## 权限（只写新增或修改的矩阵行，修改的行会在批准页单独列出）。${flow.spec?.feedback ? `\n规格被打回或检查失败，意见：${flow.spec.feedback}` : ''}`, tool: 'forge_spec' };
     return { summary, next: `用 forge_read 阅读集成分支 docs/spec/inputs/ 的 PRD 与可选原型，和用户讨论需求；确认后用 forge_spec 提交四份规格。${flow.spec?.feedback ? `\n规格被打回或检查失败，意见：${flow.spec.feedback}` : ''}`, tool: 'forge_spec' };
+  }
+  if (flow.stage === ADOPT_STAGE) {
+    if (flow.stage_status === 'awaiting_human') return { summary, next: `纳管的契约已通过程序检查。用 forge_read 阅读 docs/contracts/ 与 docs/arch/overview.md（尤其"待确认"一节），向用户概述 architect 从现有代码整理出的边界契约，然后等待用户 /forge-approve stage:ADOPT 或 /forge-reject stage:ADOPT "<意见>"。批准后集成分支合入主分支，之后可以 /forge-build --feature。`, tool: 'none' };
+    if (flow.stage_status === 'awaiting_gate') return { summary, next: '程序正在检查集成分支上的契约，等待闸门结果。', tool: 'none' };
+    const stuck = tasks.filter((t) => t.stage === ADOPT_STAGE && t.status === 'blocked');
+    if (stuck.length) return { summary, next: `向用户报告阻塞：${stuck.map((t) => `${t.id}（${t.blocked_reason ?? ''}）`).join('；')}；请其 /forge unblock <任务>，或 /forge-reject stage:ADOPT "<意见>" 让 architect 重做。`, tool: 'none' };
+    return { summary, next: `architect 正在从现有代码整理契约（范围：${adoptScope(flow.title)}），调用 forge_wait 等待。${flow.plan_rework ? `\n返工原因：${flow.plan_rework.reason}` : ''}`, tool: 'forge_wait' };
   }
   if (flow.stage === P1_STAGE) {
     if (flow.stage_status === 'awaiting_human') return { summary, next: `契约与计划已通过程序检查。用 forge_read 阅读 docs/plan/plan.yaml、docs/arch/overview.md 与 docs/contracts/，向用户概述：阶段与每个阶段交付什么、task 数与并行度、报告里的提醒；assumptions 与 extras 逐条列给用户确认。然后等待用户 /forge-approve stage:P1 或 /forge-reject stage:P1 "<意见>"。\n${planApprovalSummary(store, flowId)}`, tool: 'none' };

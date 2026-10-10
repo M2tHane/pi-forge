@@ -49,7 +49,9 @@ function atPointer(doc: unknown, pointer: string): unknown {
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 /** 解析全部契约文件，给出符号目录与结构错误。文件为空集合时报"缺少契约"。 */
-export function parseContracts(files: ContractFiles): ContractCheck {
+export function parseContracts(all: ContractFiles): ContractCheck {
+  // 空文件（含 /forge init 留下的 .gitkeep）视为不存在：architect 没有删除能力，不需要的文件清空即可（偏离 83）
+  const files: ContractFiles = Object.fromEntries(Object.entries(all).filter(([, text]) => text.trim() !== ''));
   const errors: ContractIssue[] = [];
   const warnings: ContractIssue[] = [];
   const catalog: ContractCatalog = { apis: new Map(), tables: new Map(), errors: new Map(), fns: new Map() };
@@ -65,7 +67,7 @@ export function parseContracts(files: ContractFiles): ContractCheck {
   for (const dir of ['paths', 'components', 'errors', 'modules']) {
     for (const rel of Object.keys(files).filter((f) => f.startsWith(`${dir}/`))) {
       const m = moduleOf(rel, dir);
-      if (m === null) errors.push({ file: at(rel), message: `${dir}/ 下只能放 <模块>.${dir === 'modules' ? 'md' : 'yaml'}，不能有子目录或其他文件` });
+      if (m === null) errors.push({ file: at(rel), message: `${dir}/ 下只能放 <模块>.${dir === 'modules' ? 'md' : 'yaml'}，不能有子目录或其他文件（不需要的文件把内容清空即可，空文件视为不存在）` });
       else if (m !== 'common' && !MODULE_NAME.test(m)) errors.push({ file: at(rel), message: `模块名 ${m} 只能用小写字母、数字和短横线，并以字母开头` });
     }
   }

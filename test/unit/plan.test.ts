@@ -191,3 +191,14 @@ test('test_author: false（偏离 81）：不派生 .at，impl 的 writes 加上
   assert.ok(normal.filter((x) => x.kind === 'impl').every((x) => !x.writes.includes(`tests/acceptance/${x.id}/**`)), '默认不给 impl 验收目录');
   assert.deepEqual(normal.map((x) => x.id), ['T-002', 'T-002.at', 'T-003', 'T-003.at']);
 });
+
+test('S0 的 writes 写出 _support/ 与 S0-smoke/ 也接受，派生时去重；别的阶段仍拒绝（偏离 83）', () => {
+  const extra = ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**'];
+  const r = run((p) => { t(p, 'T-002').writes.push(...extra); });
+  assert.deepEqual(r.errors, []);
+  const p = base();
+  t(p, 'T-002').writes.push(...extra);
+  const impl = deriveTasks(p, r.deps, { worker: [], testAuthor: [] }, { acctest: false }).find((x) => x.id === 'T-002')!;
+  assert.equal(impl.writes.filter((w) => w === 'tests/acceptance/_support/**').length, 1);
+  assert.match(errs(run((p2) => { t(p2, 'T-003').writes.push('tests/acceptance/_support/**'); })), /与 tests\/acceptance\/\*\* 重叠/);
+});

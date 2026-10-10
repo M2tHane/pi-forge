@@ -56,7 +56,7 @@ function taskPatch(t: PlanTask, fields: readonly string[], ownTests = false): Re
   const out: Record<string, unknown> = {};
   for (const f of fields) {
     const v = (t as Record<string, unknown>)[f];
-    if (f === 'writes') out['writes'] = [...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(ownTests ? [ownAcceptanceGlob(t.id)] : [])];
+    if (f === 'writes') out['writes'] = [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(ownTests ? [ownAcceptanceGlob(t.id)] : [])])];
     else if (OPTIONAL_LISTS.has(f) && Array.isArray(v) && !v.length) out[f] = undefined;
     else out[f] = structuredClone(v);
   }

@@ -126,6 +126,8 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
     if (!t.writes.length) errors.push(`${t.id} 的 writes 不能为空`);
     if (t.modifies && !ctx.allowModifies) errors.push(`${t.id} 写了 modifies：只有变更请求的修订可以新增"修改 task"，P1 的计划不能写`);
     for (const w of t.writes) {
+      // S0 的 worker 本来就可写 _support/ 与 S0-smoke/（程序在派生时自动加上），计划里写出来也接受（偏离 83）
+      if (t.stage === 'S0' && (S0_EXTRA_WRITES as readonly string[]).includes(w)) continue;
       const bad = FORBIDDEN_WRITES.find((f) => globsOverlap(w, f));
       if (bad) errors.push(`${t.id} 的 writes ${w} 与 ${bad} 重叠：验收测试归 test-author，规格与契约不能由 impl 直接改写`);
     }
@@ -277,7 +279,7 @@ export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['
       id: t.id, stage: t.stage, kind: 'impl', role: 'worker', title: t.title, scopes: [...scopes.worker],
       depends_on: (deps.get(t.id) ?? []).map((d) => ({ ...d })), inputs: [],
       // verify 非空的任务合并时跑全量 typecheck、lint、test（merge-queue）
-      writes: [...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(opts.selfTest ? [ownAcceptanceGlob(t.id)] : [])], verify: [...(opts.verify ?? [])],
+      writes: [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(opts.selfTest ? [ownAcceptanceGlob(t.id)] : [])])], verify: [...(opts.verify ?? [])],
       module: t.module, size: t.size, layers: [...t.layers], ac: [...t.ac], produces: [...t.produces], requires: [...t.requires],
       test_interface: [...t.test_interface],
       ...(t.shared?.length ? { shared: [...t.shared] } : {}),

@@ -57,6 +57,8 @@ test('模块谱系预算：失败原因各不相同、失败次数也没用完�
     assert.equal(launcher.launched.length, 3);
     assert.equal(t.status, 'blocked');
     assert.ok(t.attempts < 10);
+    // 前提：各个计数都没用完（预检失败确实发生，但没到放宽后的上限），阻塞来自谱系预算
+    assert.ok((t.precheck_failures ?? 0) > 0 && (t.precheck_failures ?? 0) < 10, String(t.precheck_failures));
     assert.match(t.blocked_reason ?? '', /模块 T-001「任务 T-001」连同派生任务（T-001）已运行 3 次[\s\S]*超过上限（3 次[\s\S]*最近的失败/);
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'unblock', actor: 'human' });
     await engine.pump(p.flowId);

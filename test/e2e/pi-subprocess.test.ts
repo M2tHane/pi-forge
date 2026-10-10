@@ -145,8 +145,9 @@ test('真实 pi 子进程：预检时测试失败退回，接着上一次的对�
     assert.deepEqual(runs.map((r) => r.role), ['worker', 'worker']);
     assert.equal(runs[1]!.forked_from, runs[0]!.run_id);
     const triggers = p.store.readEvents().filter((e) => e.task === 'T-001' && e.type === 'transition').map((e) => e.trigger);
-    assert.ok(triggers.includes('precheck_fail'), triggers.join(','));
-    assert.equal(triggers.at(-1), 'merge_done', triggers.join(','));
+    // 完整序列（核对 6146bc8 时恢复：改写后只断言了包含 precheck_fail 与最后 merge_done）
+    assert.deepEqual(triggers.filter((x) => x !== 'dispatch' && x !== 'schedule'),
+      ['submit', 'inputs_ready', 'precheck_fail', 'submit', 'inputs_ready', 'precheck_pass_skip', 'merge_start', 'merge_done'], triggers.join(','));
     const reqs = readFileSync(logFile, 'utf8').slice(before).trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'impl-fork');
     const second = reqs.find((r) => r.turn === 5)!;
     assert.ok(second, '第二次运行的第一个请求带着上一次的 5 条回复');

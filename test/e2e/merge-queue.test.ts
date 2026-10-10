@@ -87,13 +87,15 @@ test('语义冲突：writes 不重叠、各自预检通过，后合并者在合�
       waited = true;
       await until(() => p.store.readTask(p.flowId, 'T-002').status === 'queued_merge');
     };
+    let retryPrompt = '';
     const { engine, merges } = makeEngine(p, async (_role, nth, a) => {
       if (a.env.task === 'T-001') return implement(a, { 'src/server/t-001/a.ts': 'v2\n' });
       if (nth === 1) {
         await until(() => p.store.readTask(p.flowId, 'T-001').status === 'queued_merge');
         return implement(a, { 'src/server/t-002/b.ts': 'v1\n' });
       }
-      // 第二次派发：worktree 已 rebase 到集成分支，读到新的 a.ts
+      // 第二次派发：提示带着合并后验证失败的原因（6146bc8 删掉的 single-task 用例原来覆盖这一点）；worktree 已 rebase 到集成分支，读到新的 a.ts
+      retryPrompt = a.spec.prompt;
       const cur = await a.call('read', { path: 'src/server/t-001/a.ts' });
       return implement(a, { 'src/server/t-002/b.ts': cur.text });
     }, undefined, { beforeMerge });
@@ -106,6 +108,9 @@ test('语义冲突：writes 不重叠、各自预检通过，后合并者在合�
     assert.equal(t2.status, 'done');
     assert.equal(t2.merge_failures, 1);
     assert.equal(t2.attempts, 0);
+    assert.match(retryPrompt, /上次未通过的原因[\s\S]*合并后验证失败（[^）]*test 退出码 1）/);
+    const transitions = p.store.readEvents().filter((e) => e.type === 'transition' && e.task === 'T-002').map((e) => `${e.trigger}:${e.from}->${e.to}`);
+    assert.ok(transitions.includes('merge_verify_fail:merging->in_progress'), transitions.join(' '));
     assert.ok(readdirEvidence(p.dir, p.flowId, 'T-002').some((f) => f.startsWith('merge-a0-test')));
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-002/b.ts`), 'v2');
     assertSingleMerging(p.store.readEvents());

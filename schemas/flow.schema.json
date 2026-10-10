@@ -248,26 +248,74 @@
       "type": "object",
       "required": [
         "prd",
-        "pages",
-        "design_doc"
+        "files"
       ],
       "properties": {
         "prd": {
           "type": "string",
           "minLength": 1
         },
-        "arch": {
+        "prototype_path": {
           "type": "string",
           "minLength": 1
         },
-        "pages": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "size",
+              "type"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "submitted",
+        "errors",
+        "warnings"
+      ],
+      "properties": {
+        "submitted": {
+          "type": "boolean"
+        },
+        "errors": {
           "type": "array",
           "items": {
             "type": "string"
           }
         },
-        "design_doc": {
-          "type": "boolean"
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "feedback": {
+          "type": "string"
+        },
+        "sha": {
+          "type": "string"
         }
       },
       "additionalProperties": false

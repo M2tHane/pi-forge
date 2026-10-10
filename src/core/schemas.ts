@@ -111,14 +111,19 @@ export const FlowFile = Type.Object({
   /** P1 批准时由程序写入的有序实施阶段 */
   s_stages: Type.Optional(Type.Array(PlanStage)),
   plan_mode: Type.Optional(PlanMode),
-  /** 用户带进来的输入（第六轮：PRD、技术架构、原型与设计规范），原样放在集成分支上的位置 */
+  /** PRD 与可选原型原件的位置及恢复会话所需的文件清单 */
   intake: Type.Optional(Type.Object({
     prd: Type.String({ minLength: 1 }),
-    arch: Type.Optional(Type.String({ minLength: 1 })),
-    /** 原型页面（prototype/ 下的 html） */
-    pages: Type.Array(Type.String()),
-    /** 导出物里带了设计规范 DESIGN.md */
-    design_doc: Type.Boolean(),
+    prototype_path: Type.Optional(Type.String({ minLength: 1 })),
+    files: Type.Array(Type.Object({ path: Type.String({ minLength: 1 }), size: Type.Integer({ minimum: 0 }), type: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
+  }, { additionalProperties: false })),
+  /** 最近一次规格提交或检查结果；打回保留检查记录并标为未提交 */
+  spec: Type.Optional(Type.Object({
+    submitted: Type.Boolean(),
+    errors: Type.Array(Type.String()),
+    warnings: Type.Array(Type.String()),
+    feedback: Type.Optional(Type.String()),
+    sha: Type.Optional(Type.String()),
   }, { additionalProperties: false })),
   version: Type.Integer({ minimum: 1 }),
 }, { additionalProperties: false });
@@ -594,7 +599,26 @@ export const RoleSettingsFile = Type.Object({
 }, { additionalProperties: false });
 export type RoleSettingsFile = Static<typeof RoleSettingsFile>;
 
+export const AmendFile = Type.Object({
+  version: Type.Integer({ minimum: 1 }),
+  id: Type.String({ pattern: '^A-[0-9]{3,}$' }),
+  name: Type.String({ minLength: 1 }),
+  path: Type.String({ pattern: '^docs/spec/features/[^/]+\\.md$' }),
+  content: Type.String({ minLength: 1 }),
+  reason: Type.String({ minLength: 1 }),
+  status: Type.Enum(['proposed', 'approved', 'rejected']),
+  diff: Type.Object({ added: StringList, changed: StringList, removed: StringList }, { additionalProperties: false }),
+  affected_tasks: Type.Array(TaskId),
+  base_sha: Type.String({ minLength: 1 }),
+  created_at: IsoTime,
+  decided_at: Type.Optional(IsoTime),
+  feedback: Type.Optional(Type.String()),
+  sha: Type.Optional(Type.String()),
+}, { additionalProperties: false });
+export type AmendFile = Static<typeof AmendFile>;
+
 export const SCHEMAS = {
+  amend: AmendFile,
   state: StateFile,
   flow: FlowFile,
   task: TaskFile,

@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/sync.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/sync.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第二轮 F 验收：阶段边界把主分支同步进集成分支；冲突按规则生成 merge-fix 或交给用户；最终合入主分支不再冲突。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -84,7 +84,7 @@ test('阶段边界同步主分支：无冲突直接合入；writes 内冲突生�
     // writes 内的冲突：生成 merge-fix（角色取写过该文件的任务的角色），看到冲突标记
     const fix = p.store.listTasks(flowId).find((t) => t.kind === 'merge-fix')!;
     assert.ok(fix, '应生成同步冲突的 merge-fix');
-    assert.equal(fix.role, 'backend-engineer');
+    assert.equal(fix.role, 'worker');
     assert.deepEqual(fix.conflict_files, ['src/server/t-001/a.ts']);
     assert.match(mergeFixSaw, /<<<<<<< [\s\S]*集成分支上的版本[\s\S]*=======[\s\S]*main 上的版本/);
     assert.equal(fix.status, 'done');

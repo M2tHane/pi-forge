@@ -10,7 +10,7 @@ import lockfile from 'proper-lockfile';
 import { MIGRATIONS, SCHEMA_VERSION, migrationChain, type Migration } from './migrations.ts';
 import {
   validate, type FlowFile, type MergeQueueFile, type RunFile, type KnowledgeFile, type ModelPausesFile, type SchemaKind, type StageStatus, type StateFile,
-  type TaskFile, type TaskStatus, type FlowEvent, type NotesFile,
+  type TaskFile, type TaskStatus, type FlowEvent, type NotesFile, type AmendFile,
 } from './schemas.ts';
 import {
   IN_FLIGHT, planStageTransition, planTransition, type Facts, type StageTrigger, type TaskPatch, type Trigger,
@@ -65,6 +65,7 @@ type StagedEvent = Omit<EventInput, 'ts'> & { ts?: string };
 
 const TASK_PATCH_KEYS = new Set(['lease', 'worktree', 'branch', 'base_sha', 'timeout_review', 'timeout_progress']);
 
+export const amendRel = (flow: string, amend: string) => `flows/${flow}/amends/${amend}.json`;
 export const flowRel = (flow: string) => `flows/${flow}/flow.json`;
 export const taskRel = (flow: string, task: string) => `flows/${flow}/tasks/${task}.json`;
 export const handoffRel = (flow: string, task: string) => `flows/${flow}/handoff/${task}.md`;
@@ -80,6 +81,7 @@ export const MAIN_NOTES_REL = 'notes/main.json';
 export const MODEL_PAUSES_REL = 'model-pauses.json';
 
 export function schemaKindOf(rel: string): SchemaKind | null {
+  if (/^flows\/[^/]+\/amends\/A-[0-9]{3,}\.json$/.test(rel)) return 'amend';
   if (rel === MQ_REL) return 'merge-queue';
   if (/^flows\/[^/]+\/flow\.json$/.test(rel)) return 'flow';
   if (/^flows\/[^/]+\/tasks\/[^/]+\.json$/.test(rel)) return 'task';
@@ -898,7 +900,7 @@ export class StateStore {
     await this.transaction((tx) => tx.event(e));
   }
 
-  async transitionStage(flowId: string, req: { to: StageStatus; trigger: StageTrigger; actor: string; reason?: string; needs_human?: boolean; note?: string }): Promise<FlowFile> {
+  async transitionStage(flowId: string, req: { to: StageStatus; trigger: StageTrigger; actor: string; reason?: string; needs_human?: boolean; note?: string; spec?: NonNullable<FlowFile['spec']> }): Promise<FlowFile> {
     return this.transaction((tx) => {
       const flow = tx.readFlow(flowId);
       const errors = planStageTransition(flow.stage_status, req.to, req.trigger, req);
@@ -906,6 +908,10 @@ export class StateStore {
       const from = flow.stage_status;
       flow.stage_status = req.to;
       if (req.trigger === 'approve') flow.approvals[flow.stage] = { by: 'human', at: tx.ts, ...(req.note ? { note: req.note } : {}) };
+      if (req.spec) flow.spec = req.spec;
+      if (flow.stage === 'P0' && req.to === 'active' && ['reject', 'gate_failed'].includes(req.trigger)) {
+        flow.spec = { submitted: false, errors: flow.spec?.errors ?? [], warnings: flow.spec?.warnings ?? [], ...(req.reason ? { feedback: req.reason } : {}) };
+      }
       const next = tx.putFlow(flow);
       if (req.to === 'aborted' && flow.mode !== 'fix') tx.setActiveFlow(null);
       const type = req.trigger === 'approve' ? 'approval' : req.trigger.startsWith('gate_') ? 'gate_result' : 'transition';
@@ -960,7 +966,52 @@ export class StateStore {
   async setIntake(flowId: string, intake: NonNullable<FlowFile['intake']>, actor: string, reason: string): Promise<FlowFile> {
     return this.transaction((tx) => {
       const saved = tx.putFlow({ ...tx.readFlow(flowId), intake });
-      tx.event({ flow: flowId, actor, type: 'note', reason, data: { intake: { prd: intake.prd, pages: intake.pages.length, design_doc: intake.design_doc } } });
+      tx.event({ flow: flowId, actor, type: 'note', reason, data: { intake: { prd: intake.prd, prototype_path: intake.prototype_path, files: intake.files.length } } });
+      return saved;
+    });
+  }
+
+  async setSpec(flowId: string, spec: NonNullable<FlowFile['spec']>, actor: string): Promise<void> {
+    await this.transaction((tx) => {
+      tx.putFlow({ ...tx.readFlow(flowId), spec });
+      tx.event({ flow: flowId, actor, type: 'note', reason: spec.submitted ? '规格已提交，spec-lint 通过' : '规格检查未通过', data: { spec } });
+    });
+  }
+
+  readAmend(flowId: string, id: string): AmendFile {
+    if (!/^A-[0-9]{3,}$/.test(id)) throw new StateError(`修订编号不合法：${id}`);
+    const value = this.readJsonRel<AmendFile>(amendRel(flowId, id));
+    if (!value) throw new StateError(`修订 ${id} 不存在`);
+    return value;
+  }
+
+  listAmends(flowId: string): AmendFile[] {
+    this.readFlow(flowId);
+    const dir = this.abs(`flows/${flowId}/amends`);
+    return existsSync(dir) ? readdirSync(dir).filter((f) => /^A-[0-9]{3,}\.json$/.test(f)).sort().map((f) => this.readAmend(flowId, f.slice(0, -5))) : [];
+  }
+
+  async proposeAmend(flowId: string, input: Omit<AmendFile, 'id' | 'status' | 'created_at' | 'version'>): Promise<AmendFile> {
+    return this.transaction((tx) => {
+      const flow = tx.readFlow(flowId);
+      if (!flow.approvals['P0'] || this.readState().active_flow !== flowId) throw new StateError('只有活动流程的 P0 已批准后才能提交规格修订。');
+      const all = this.listAmends(flowId);
+      if (all.some((a) => a.status === 'proposed')) throw new StateError('已有修订等待批准，请先等待用户 /forge-approve 或 /forge-reject。');
+      const id = `A-${String(Math.max(0, ...all.map((a) => Number(a.id.slice(2)))) + 1).padStart(3, '0')}`;
+      const amend: AmendFile = { ...input, id, status: 'proposed', created_at: tx.ts, version: 1 };
+      const saved = tx.putJson(amendRel(flowId, id), 'amend', amend);
+      tx.event({ flow: flowId, actor: 'orchestrator', type: 'note', reason: `规格修订 ${id} 等待批准`, data: { amend: id, diff: amend.diff, affected_tasks: amend.affected_tasks } });
+      return saved;
+    });
+  }
+
+  async decideAmend(flowId: string, id: string, status: 'approved' | 'rejected', feedback?: string, sha?: string): Promise<AmendFile> {
+    return this.transaction((tx) => {
+      const amend = tx.readJson<AmendFile>(amendRel(flowId, id));
+      if (!amend || amend.status !== 'proposed') throw new StateError(`修订 ${id} 没有等待批准。`);
+      const next: AmendFile = { ...amend, status, decided_at: tx.ts, ...(feedback ? { feedback } : {}), ...(sha ? { sha } : {}) };
+      const saved = tx.putJson(amendRel(flowId, id), 'amend', next);
+      tx.event({ flow: flowId, actor: 'human', type: 'approval', reason: `规格修订 ${id} ${status === 'approved' ? '已批准' : '已打回'}${feedback ? `：${feedback}` : ''}`, data: { amend: id, status } });
       return saved;
     });
   }

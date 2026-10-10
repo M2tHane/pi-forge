@@ -11,10 +11,10 @@ import { FakeLauncher, type FakeAgent } from '../fixtures/fake-subagent/launcher
 import type { Project } from './project.ts';
 const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
-/** 包内角色（agents/）加上测试夹具里只用于运行时机制测试的旧角色 */
-export const AGENTS = [path.join(PACKAGE_ROOT, 'agents'), path.join(import.meta.dirname, '../fixtures/agents')].join(path.delimiter);
+/** 子进程只加载包内的七个角色定义。 */
+export const AGENTS = path.join(PACKAGE_ROOT, 'agents');
 export const ALL_FAKE: RoleSettingsFile = { version: 1, roles: Object.fromEntries(
-  ['backend-engineer', 'frontend-engineer', 'architect', 'test-engineer', 'worker', 'test-author', 'reviewer', 'stage-qa', 'orchestrator'].map((r) => [r, { model: 'fake/model', thinking: 'low' as const }])) };
+  ['orchestrator', 'architect', 'worker', 'test-author', 'reviewer', 'stage-qa', 'researcher'].map((r) => [r, { model: 'fake/model', thinking: 'low' as const }])) };
 
 export type RoleScript = (role: string, nth: number, a: FakeAgent) => Promise<void>;
 

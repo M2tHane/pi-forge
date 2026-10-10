@@ -36,7 +36,7 @@ export async function approveStage(d: StageDeps, flowId: string, note?: string):
   }
   await d.store.transitionStage(flowId, { to: 'done', trigger: 'approve', actor: 'human', ...(note ? { note } : {}) });
   const next = await d.store.advanceStage(flowId, 'human');
-  lines.push(`已批准阶段 ${flow.stage}。`, next.stage !== flow.stage ? `进入阶段 ${next.stage}。` : `流程 ${flow.id} 已完成。`);
+  lines.push(`已批准阶段 ${flow.stage}。`, next.stage !== flow.stage ? `进入阶段 ${next.stage}。${next.stage === 'P1' ? 'P1（契约与计划）在 M3 实现。' : ''}` : `流程 ${flow.id} 已完成。`);
   return lines.join('\n');
 }
 

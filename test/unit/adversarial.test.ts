@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/adversarial.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/adversarial.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
@@ -28,9 +28,9 @@ async function setup() {
   mkdirSync(path.join(wt, 'src/server'), { recursive: true });
   await store.transitionTask(flow.id, 'T-001', { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
   await store.transitionTask(flow.id, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher', patch: {
-    lease: { run_id: 'r-1', role: 'backend-engineer', token_hash: hashToken('t'), acquired_at: now().toISOString(), expires_at: '2026-01-01T01:00:00Z' },
+    lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('t'), acquired_at: now().toISOString(), expires_at: '2026-01-01T01:00:00Z' },
     worktree: wt, branch: 'flow/B-001/T-001', base_sha: 'abc' } });
-  await store.createRun({ run_id: 'r-1', flow: flow.id, task: 'T-001', role: 'backend-engineer', model: null,
+  await store.createRun({ run_id: 'r-1', flow: flow.id, task: 'T-001', role: 'worker', model: null,
     started_at: now().toISOString(), ended_at: null, tokens: { input: null, output: null, cache_read: null, cache_write: null },
     outcome: null, token_hash: hashToken('t'), violations: 0 });
   const cleanup = () => { repo.cleanup(); rmSync(wt, { recursive: true, force: true }); };
@@ -40,7 +40,7 @@ async function setup() {
 test('对抗：实施 agent 修改 .forge/、改写历史、审批闸门全部失败且留下 violation 事件', async () => {
   const { store, flow, wt, dir, cleanup } = await setup();
   try {
-    const ctx: GuardContext = { config, role: 'backend-engineer', cwd: wt, workspaceRoot: wt, mainRoot: dir, writes: ['src/server/**'] };
+    const ctx: GuardContext = { config, role: 'worker', cwd: wt, workspaceRoot: wt, mainRoot: dir, writes: ['src/server/**'] };
     const run = { flow: flow.id, task: 'T-001', run: 'r-1' };
     const attempts = [
       { toolName: 'write', input: { path: '.forge/state.json', content: '{}' } },
@@ -88,7 +88,7 @@ test('对抗：orchestrator 自己写代码被阻断并记录', async () => {
 test('违规达到上限：结束 run 并计一次失败（第六轮 B5），任务留在 in_progress 等重新派发；失败次数用完才转 blocked', async () => {
   const { store, flow, wt, dir, cleanup } = await setup();
   try {
-    const ctx: GuardContext = { config: strict, role: 'backend-engineer', cwd: wt, workspaceRoot: wt, mainRoot: dir };
+    const ctx: GuardContext = { config: strict, role: 'worker', cwd: wt, workspaceRoot: wt, mainRoot: dir, writes: ['src/server/**'] };
     const run = { flow: flow.id, task: 'T-001', run: 'r-1' };
     const bad = { toolName: 'bash', input: { command: 'rm -rf src' } };
     const r1 = await enforceToolCall(bad, ctx, store, run);

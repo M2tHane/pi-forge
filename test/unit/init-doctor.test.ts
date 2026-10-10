@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/init-doctor.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/init-doctor.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
@@ -63,13 +63,15 @@ test('/forge init 在非 git 目录与子目录中报错', async () => {
 test('preflight：报告缺失的规则、未设置模型的角色与 workflow 错误', async () => {
   const p = await setupProject();
   try {
+    // 七角色共享模板中的 global 规则；显式移除该文件制造缺失场景。
+    rmSync(path.join(p.dir, 'rules/global.md'));
     const items = preflight({ root: p.dir, roleSettings: { version: 1, roles: { architect: { model: 'x/y' } } }, availableModels: ['a/b'] });
     const get = (k: string) => items.find((i) => i.item === k)!;
     assert.equal(get('git').level, 'ok');
     assert.equal(get('workflow.yaml').level, 'ok');
     assert.equal(get('主分支').level, 'ok');
     assert.equal(get('规则文件').level, 'warn');
-    assert.match(get('规则文件').detail, /database\.md/);
+    assert.match(get('规则文件').detail, /global\.md/);
     assert.match(get('角色模型').detail, /architect 的模型 x\/y 当前不可用/);
     writeFileSync(path.join(p.dir, 'workflow.yaml'), 'version: 2\n');
     assert.equal(preflight({ root: p.dir }).find((i) => i.item === 'workflow.yaml')!.level, 'error');
@@ -107,7 +109,7 @@ test('唯一允许的下一步：dispatch → wait → 报告阻塞；闸门等�
     assert.equal(s.task, undefined);
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'schedule', actor: 's' });
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'd', patch: {
-      lease: { run_id: 'r', role: 'backend-engineer', token_hash: 'a'.repeat(64), acquired_at: 'x', expires_at: '2999-01-01T00:00:00Z' },
+      lease: { run_id: 'r', role: 'worker', token_hash: 'a'.repeat(64), acquired_at: 'x', expires_at: '2999-01-01T00:00:00Z' },
       worktree: '/w', branch: 'b', base_sha: 'c' } });
     s = nextStep(p.store, 2);
     assert.equal(s.tool, 'forge_wait');

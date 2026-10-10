@@ -1,7 +1,7 @@
 // 来源：pi-flow test/helpers/config.ts @ 31f3f15
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-/** 运行时测试固定使用 v3 配置，保留按层角色；真实模板单独验证 */
+/** 运行时测试固定使用 v3 配置与 pi-forge 角色；真实模板单独验证 */
 export const TEMPLATE_YAML = readFileSync(path.join(import.meta.dirname, '../fixtures/workflow-runtime.yaml'), 'utf8');
 export const REAL_TEMPLATE_YAML = readFileSync(path.join(import.meta.dirname, '../../templates/workflow.yaml'), 'utf8');
 

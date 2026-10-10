@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/config.test.ts @ 31f3f15，按 v3 配置与权限改编
+// 改编自 pi-flow test/unit/config.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse, stringify } from 'yaml';
@@ -28,7 +28,20 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
     for (const mode of ['build', 'feature'] as const) {
       assert.deepEqual(c.raw.modes[mode]?.stages.map((s) => s.id), ['P0', 'P1']);
     }
-    for (const role of ['orchestrator', 'architect', 'worker', 'test-author', 'reviewer', 'stage-qa']) assert.ok(c.roles[role]);
+    assert.deepEqual(Object.keys(c.roles).sort(), ['orchestrator', 'architect', 'worker', 'test-author', 'reviewer', 'stage-qa', 'researcher'].sort());
+    const template = parseConfig(REAL_TEMPLATE_YAML);
+    assert.deepEqual(c.raw.scopes, template.raw.scopes);
+    assert.deepEqual(c.raw.tool_groups, template.raw.tool_groups);
+    for (const name of Object.keys(template.roles)) {
+      const role = c.role(name), expected = template.role(name);
+      assert.deepEqual(role.scopes, expected.scopes, name);
+      assert.deepEqual(role.writes, expected.writes, name);
+      assert.deepEqual(role.readPaths, expected.readPaths, name);
+      assert.equal(role.modelTier, expected.modelTier, name);
+      assert.equal(role.bash, expected.bash, name);
+      assert.deepEqual(role.bashAllow, expected.bashAllow, name);
+      assert.deepEqual([...role.tools].sort(), [...expected.tools].sort(), name);
+    }
   }
   const c = parseConfig(TEST_YAML);
   assert.equal(c.limits.max_parallel, 2);
@@ -61,18 +74,21 @@ test('新配置块、命令与次数默认值可读取', () => {
   assert.equal(c.commands.db_drop, 'dropdb --if-exists $FORGE_DB_NAME');
 });
 
-test('角色 writes 由 scopes 并集推导；保留按层角色、env 与读路径顺序', () => {
+test('角色 writes 由真实 scopes 并集推导；env 与读路径顺序保留', () => {
   const c = parseConfig(TEST_YAML);
-  assert.deepEqual(c.role('architect').writes, ['docs/**', 'src/shared/**']);
+  assert.deepEqual(c.role('architect').writes, ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'docs/rules-draft/**', 'AGENTS.md']);
   assert.deepEqual(c.role('reviewer').writes, []);
-  assert.deepEqual(c.role('backend-engineer').writes, ['src/server/**', 'tests/server/**']);
-  assert.deepEqual(c.role('backend-engineer').env, {});
-  assert.equal(c.role('backend-engineer').modelTier, 'medium');
+  assert.deepEqual(c.role('stage-qa').writes, []);
+  assert.deepEqual(c.role('test-author').writes, ['tests/acceptance/**']);
+  assert.deepEqual(c.role('researcher').writes, ['docs/research/**']);
+  assert.deepEqual(c.role('worker').writes, ['**']);
+  assert.deepEqual(c.role('worker').env, {});
+  assert.equal(c.role('worker').modelTier, 'strong');
   const strict = parseConfig(changed((wf) => {
-    wf.roles['backend-engineer']!.env = { PI_SERENA_STRICT: '1' };
+    wf.roles['worker']!.env = { PI_SERENA_STRICT: '1' };
     wf.roles.worker!.read_paths = ['**', '!a/**', 'a/b/**'];
   }, TEST_YAML));
-  assert.equal(strict.role('backend-engineer').env.PI_SERENA_STRICT, '1');
+  assert.equal(strict.role('worker').env.PI_SERENA_STRICT, '1');
   assert.deepEqual(strict.role('worker').readPaths, ['**', '!a/**', 'a/b/**']);
   assert.match(errorsOf(changed((wf) => { wf.roles.researcher!.writes = ['src/**']; })).join(), /roles\.researcher\.writes.*scopes/);
 });
@@ -143,15 +159,21 @@ test('分组工具同样执行专属工具校验，不得借分组绕过 bash �
   })).join(), /bash_readonly.*请改用.*bash:/);
 });
 
-test('只有 worker 与 *-engineer 享有 worker 专属授予', () => {
-  const c = parseConfig(changed((wf) => {
-    wf.roles['backend-engineer']!.tools.push('forge_dispute');
-  }, TEST_YAML));
-  assert.ok(c.role('backend-engineer').tools.has('forge_dispute'));
-  assert.ok(c.role('backend-engineer').tools.has('forge_request_scope'));
-  assert.match(errorsOf(changed((wf) => {
-    wf.roles['ui-designer']!.tools.push('forge_request_scope');
-  }, TEST_YAML)).join(), /forge_request_scope 只能分配给 worker/);
+test('worker 专属工具按真实名字校验，改名或名字后缀不能继承权限', () => {
+  const c = parseConfig(TEST_YAML);
+  assert.ok(c.role('worker').tools.has('forge_dispute'));
+  assert.ok(c.role('worker').tools.has('forge_request_scope'));
+  for (const name of ['custom-worker', 'custom-engineer']) {
+    assert.match(errorsOf(changed((wf) => {
+      wf.roles[name] = wf.roles.worker!;
+      delete wf.roles.worker;
+    }, TEST_YAML)).join(), /forge_request_scope 只能分配给 worker/);
+  }
+  for (const name of ['architect', 'test-author', 'researcher']) {
+    assert.match(errorsOf(changed((wf) => {
+      wf.roles[name]!.tools.push('forge_request_scope');
+    }, TEST_YAML)).join(), /forge_request_scope 只能分配给 worker/);
+  }
 });
 
 test('隐式授予只包含通用子进程工具；专属工具不再隐式授予', () => {

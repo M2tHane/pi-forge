@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/loops.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/loops.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 跨运行的循环（第六轮 B3、B4）：同样的原因连续失败时立刻升级模型、升级后仍一样就交给用户；模块连同派生任务超出谱系预算时交给用户。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +18,7 @@ async function submit(a: FakeAgent, content: string) {
 }
 
 test('同样的原因连续失败两次：第三次直接用升级模型（不等失败次数）；升级后仍然一样就交给用户', async () => {
-  const settings = { version: 1 as const, roles: { ...ALL_FAKE.roles, 'backend-engineer': { model: 'fake/small', escalate_model: 'fake/big' } } };
+  const settings = { version: 1 as const, roles: { ...ALL_FAKE.roles, 'worker': { model: 'fake/small', escalate_model: 'fake/big' } } };
   const p = await setupProject({ yaml: PROJECT_YAML.replace(/after_failures: \d+/, 'after_failures: 5').replace(/max_attempts: \d+/, 'max_attempts: 6'), tasks: [task1()] });
   try {
     const { engine, launcher, errors } = makeEngine(p, async (_role, _n, a) => {
@@ -69,7 +69,7 @@ test('谱系：merge-fix、验收、修复任务都追溯到模块本身', () =>
   const tasks = [
     mkTask('T-001'),
     mkTask('T-002', { kind: 'merge-fix', merge_fix_for: 'T-001' }),
-    mkTask('T-003', { kind: 'review', for_task: 'T-001' }),
+    mkTask('T-003', { kind: 'review', role: 'reviewer', scopes: ['review'], writes: [], for_task: 'T-001' }),
     mkTask('T-004', { kind: 'fix', fork_from_task: 'T-001' }),
     mkTask('T-005', { kind: 'merge-fix', merge_fix_for: 'T-004' }),
     mkTask('T-006'),

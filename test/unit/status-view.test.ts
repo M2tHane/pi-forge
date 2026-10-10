@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/status-view.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/status-view.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseConfig, ConfigError } from '../../src/core/config.ts';
@@ -20,10 +20,11 @@ test('phase：模板显式配置；缺省按阶段 id 推断；顺序倒退报�
 });
 
 test('任务活动用人话表示，重试带上次失败原因', () => {
-  const lease = { run_id: 'r', role: 'backend-engineer', token_hash: 'a'.repeat(64), acquired_at: 'x', expires_at: 'y' };
+  const lease = { run_id: 'r', role: 'worker', token_hash: 'a'.repeat(64), acquired_at: 'x', expires_at: 'y' };
   assert.equal(taskActivity(mkTask('T-1', { status: 'in_progress', lease }), null), '实现中');
   assert.equal(taskActivity(mkTask('T-1', { status: 'in_progress', attempts: 1 }), '合并时全量测试失败'), '等待重新派发（第 2 次，上次：合并时全量测试失败）');
-  assert.equal(taskActivity(mkTask('T-1', { status: 'in_progress', lease, kind: 'qa', for_task: 'T-2' }), null), '阶段验收中');
+  const qaLease = { ...lease, role: 'stage-qa' };
+  assert.equal(taskActivity(mkTask('T-1', { status: 'in_progress', lease: qaLease, kind: 'qa', role: 'stage-qa', scopes: ['qa'], writes: [], for_task: 'T-2' }), null), '阶段验收中');
   assert.equal(taskActivity(mkTask('T-1', { status: 'queued_merge' }), null), '合入中');
   assert.equal(taskActivity(mkTask('T-1', { status: 'merging' }), null), '合入中');
 });
@@ -40,10 +41,10 @@ test('/forge status 精简视图：阶段条、进度、正在进行、需要你
 
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'schedule', actor: 's' });
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'd', patch: {
-      lease: { run_id: 'r-1', role: 'backend-engineer', token_hash: hashToken('t'), acquired_at: 'x', expires_at: '2999-01-01T00:00:00Z' },
+      lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('t'), acquired_at: 'x', expires_at: '2999-01-01T00:00:00Z' },
       worktree: '/w', branch: 'b', base_sha: 'c' } });
     out = renderStatus(p.store, p.config);
-    assert.match(out, /正在进行：\n- T-001 用户服务（backend-engineer）实现中/);
+    assert.match(out, /正在进行：\n- T-001 用户服务（worker）实现中/);
 
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'run:r-1', facts: { reason: '用 PostgreSQL 还是 SQLite？' } });
     out = renderStatus(p.store, p.config);
@@ -64,7 +65,7 @@ test('主动通知：只在进入新阶段、出现需要处理的事、首次�
     assert.deepEqual(notices(s0, snapshotOf(p.store, p.config)), [], '普通的任务推进不通知');
     const s1 = snapshotOf(p.store, p.config);
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'd', patch: {
-      lease: { run_id: 'r-1', role: 'backend-engineer', token_hash: hashToken('t'), acquired_at: 'x', expires_at: '2999-01-01T00:00:00Z' },
+      lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('t'), acquired_at: 'x', expires_at: '2999-01-01T00:00:00Z' },
       worktree: '/w', branch: 'b', base_sha: 'c' } });
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'run_failed', actor: 'd', facts: { reason: '崩溃' } });
     const s2 = snapshotOf(p.store, p.config);
@@ -87,7 +88,7 @@ test('状态栏一行：流程、高层阶段、进度、进行中的任务、�
   try {
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher',
-      patch: { worktree: '/w', branch: 'b', base_sha: 'abc', lease: { run_id: 'r-1', role: 'backend-engineer', token_hash: hashToken('t'), acquired_at: '2026-10-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' } } });
+      patch: { worktree: '/w', branch: 'b', base_sha: 'abc', lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('t'), acquired_at: '2026-10-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' } } });
     assert.equal(statusLine(p.store, p.config), 'pi-forge B-001 实施 · 0/3 · 进行中：T-001 实现中');
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'run:r-1', facts: { token: 't', reason: '需要决定' } });
     assert.match(statusLine(p.store, p.config)!, /需要你处理 1 项$/);

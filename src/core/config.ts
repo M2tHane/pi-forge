@@ -241,10 +241,9 @@ export function parseConfig(source: string): FlowConfig {
     const unique = [...new Set(toolList)];
     const tools = new Set(unique);
 
-    const policyRole = name.endsWith('-engineer') ? 'worker' : name;
     for (const t of unique) {
       const owners = ROLE_EXCLUSIVE[t];
-      if (owners && !owners.includes(policyRole)) errors.push(`${at(['roles', name, 'tools'])}: ${t} 只能分配给 ${owners.join('、')}`);
+      if (owners && !owners.includes(name)) errors.push(`${at(['roles', name, 'tools'])}: ${t} 只能分配给 ${owners.join('、')}`);
     }
     if (name === 'orchestrator') {
       const extra = unique.filter((t) => !ORCHESTRATOR_ALLOWED.has(t));

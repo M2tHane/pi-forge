@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/prompt-assembler.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/prompt-assembler.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -37,14 +37,17 @@ test('规则按 global + 任务 scopes 选择，缺失的文件报告出来', ()
     mkdirSync(path.join(dir, 'rules'));
     writeFileSync(path.join(dir, 'rules/global.md'), 'G1');
     writeFileSync(path.join(dir, 'rules/backend.md'), 'B1');
-    const r = ruleFilesFor(config, dir, ['backend', 'shared']);
+    // 测试专用规则声明：沿用真实 code scope，验证去重、选中与缺失报告。
+    const scoped = parseConfig(TEST_YAML);
+    scoped.raw.scopes.code!.rules!.push('rules/backend.md', 'rules/shared-types.md');
+    const r = ruleFilesFor(scoped, dir, ['code', 'review']);
     assert.deepEqual(r.rules.map((x) => x.path), ['rules/global.md', 'rules/backend.md']);
     assert.deepEqual(r.missing, ['rules/shared-types.md']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('提示组装顺序：角色提示 → 规则 → 任务与输入 → handoff 与打回意见；稳定前缀与任务无关', () => {
-  const agent = { name: 'backend-engineer', tier: 'medium', thinking: null, description: '', prompt: 'ROLE-PROMPT' };
+  const agent = { name: 'worker', tier: 'strong', thinking: null, description: '', prompt: 'ROLE-PROMPT' };
   const rules = [{ path: 'rules/global.md', content: 'RULE-G' }, { path: 'rules/backend.md', content: 'RULE-B' }];
   const t1 = mkTask('T-001', { title: '导出 API', ac: ['POST /exports 参数非法返回 422'], inputs: ['docs/contracts/export.ts'],
     last_failure: 'src/a.ts:3 缺少校验，应返回 422', base_sha: 'abc123' });
@@ -64,7 +67,7 @@ test('提示组装顺序：角色提示 → 规则 → 任务与输入 → hando
 });
 
 test('返工接着上一次的对话：用户消息只有续做说明，系统提示不变', () => {
-  const agent = { name: 'backend-engineer', tier: 'medium', thinking: null, description: '', prompt: 'R' };
+  const agent = { name: 'worker', tier: 'strong', thinking: null, description: '', prompt: 'R' };
   const task = mkTask('T-001', { base_sha: 'abc123', last_failure: '审查前验证失败：test 退出码 1' });
   const base = { agent, rules: [], task, flowId: 'B-001', handoff: 'HANDOFF', mode: 'impl' as const, commands: config.commands, scratchDir: '/tmp/s/r-2' };
   const full = assemblePrompt(base);
@@ -76,7 +79,7 @@ test('返工接着上一次的对话：用户消息只有续做说明，系统�
 });
 
 test('重新派发时提示工作区已有的改动，位于任务说明之后、handoff 之前', () => {
-  const agent = { name: 'backend-engineer', tier: 'medium', thinking: null, description: '', prompt: 'R' };
+  const agent = { name: 'worker', tier: 'strong', thinking: null, description: '', prompt: 'R' };
   const p = assemblePrompt({ agent, rules: [], task: mkTask('T-001', { base_sha: 'abc123' }), flowId: 'B-001', handoff: 'HANDOFF', mode: 'impl',
     commands: config.commands, existingWork: ' src/server/t-001/a.ts | 3 +++\n\n未提交：\n?? src/server/t-001/b.ts' });
   const iWork = p.user.indexOf('## 工作区已有的改动');

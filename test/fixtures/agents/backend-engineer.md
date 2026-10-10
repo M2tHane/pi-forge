@@ -1,7 +1,0 @@
----
-name: backend-engineer
-description: 测试用的旧角色（只用于运行时机制的测试）
-tier: medium
----
-
-你是 backend-engineer（测试夹具）。按任务说明修改可写范围内的文件，forge_note 写 handoff，forge_submit 提交。

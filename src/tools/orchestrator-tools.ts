@@ -1,5 +1,7 @@
 // 来源：pi-flow src/tools/orchestrator-tools.ts @ 31f3f15
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
+import { submitSpec, proposeSpecAmend, amendSummary, specStatus } from '../core/spec-flow.ts';
+import { runStageGate } from '../core/gates.ts';
 import { activePauses, describePause } from '../core/model-pause.ts';
 import { Type, type Static } from 'typebox';
 import type { StateStore } from '../core/state-store.ts';
@@ -10,6 +12,28 @@ import type { FlowConfig } from '../core/config.ts';
 import { actionsNeeded } from '../core/status-view.ts';
 import { REVIEW_GUIDE, awaitingReview, timeoutReviewText } from '../core/run-budget.ts';
 import { DispatchError } from '../core/dispatcher.ts';
+
+export const SpecParams = Type.Object({
+  requirements: Type.String({ minLength: 1, maxLength: 120000 }),
+  screens: Type.String({ minLength: 1, maxLength: 120000 }),
+  permissions: Type.String({ minLength: 1, maxLength: 120000 }),
+  glossary: Type.String({ minLength: 1, maxLength: 120000 }),
+}, { additionalProperties: false });
+export const SpecAmendParams = Type.Object({
+  name: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+  content: Type.String({ minLength: 1, maxLength: 120000 }),
+  reason: Type.String({ minLength: 1, maxLength: 4000 }),
+}, { additionalProperties: false });
+export async function flowSpec(root: string, store: StateStore, config: FlowConfig, p: Static<typeof SpecParams>): Promise<ToolResult> {
+  const id = activeFlowId(store);
+  const r = await submitSpec(root, store, id, p);
+  const gate = await runStageGate(root, store, config, id);
+  return { text: gate.passed ? `四份规格已提交，spec-lint 通过，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${r.lint.warnings.length ? `\n警告：\n${r.lint.warnings.map((i) => i.message).join('\n')}` : ''}` : `集成分支上的 spec-lint 未通过，已回到规格讨论，请修正后用 forge_spec 重新提交：\n${gate.reasons.join('\n')}`, details: { sha: r.sha, lint: r.lint, gate } };
+}
+export async function flowSpecAmend(root: string, store: StateStore, p: Static<typeof SpecAmendParams>): Promise<ToolResult> {
+  const a = await proposeSpecAmend(root, store, activeFlowId(store), p);
+  return { text: `${amendSummary(a)}\n已提交修订，等待用户 /forge-approve amend:${a.id} 或 /forge-reject amend:${a.id} "<意见>"。`, details: { amend: a } };
+}
 
 export const WaitParams = Type.Object({
   task_id: Type.Optional(Type.String({ pattern: '^T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?$' })),
@@ -88,6 +112,8 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
     `流程 ${flow.id}「${flow.title}」（${flow.mode}）阶段 ${flow.stage}：${flow.stage_status}`,
     `任务 ${tasks.length} 个：${TASK_STATUSES.filter((s) => count(s)).map((s) => `${s} ${count(s)}`).join('，') || '无'}`,
   ];
+  const spec = specStatus(store, flowId);
+  if (spec) lines.push(spec);
   const running = engine?.activeRuns().filter((r) => r.flow === flowId) ?? [];
   const leased = tasks.filter((t) => t.lease);
   if (leased.length) lines.push(`运行中：${leased.map((t) => `${t.id}（${t.lease!.role}，run ${t.lease!.run_id}${running.some((r) => r.run_id === t.lease!.run_id) ? '' : '，不在本会话'}）`).join('；')}`);

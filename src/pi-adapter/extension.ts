@@ -13,6 +13,7 @@ import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { loadConfig, type FlowConfig } from '../core/config.ts';
 import { ROLE_SETTINGS_FILENAME, loadRoleSettings, resolveRoleModel } from '../core/role-settings.ts';
 import { THINKING_LEVELS, type ThinkingLevel } from '../core/schemas.ts';
+import { forgeRead, type ForgeReadInput } from '../core/forge-read.ts';
 import { StateStore } from '../core/state-store.ts';
 import { Engine } from '../core/dispatcher.ts';
 import { codegraphSync } from '../core/codegraph.ts';
@@ -23,7 +24,7 @@ import { parseAgentFile } from '../core/agents.ts';
 import { runFlowConfig, type ModelOption } from '../commands/forge-config.ts';
 import { RoleTable, type RoleRow, type TableModel } from '../commands/role-table.ts';
 import { runFlowCommand, runFlowBuild, runFlowFix, FLOW_USAGE, type CommandEnv, type EngineHandle } from '../commands/forge.ts';
-import { ResolveScopeParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveScope, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
+import { flowSpec, flowSpecAmend, SpecParams, SpecAmendParams, ResolveScopeParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveScope, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
 import { PiLauncher } from './launcher.ts';
 import { lastFailureKind, notices, snapshotOf, statusLine, visibleFlows } from '../core/status-view.ts';
 import { packageRoots, pluginExtensionsFor } from './plugins.ts';
@@ -38,7 +39,7 @@ import { MAIN_NOTES_REL } from '../core/state-store.ts';
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TEMPLATE_WORKFLOW = path.join(PACKAGE_ROOT, 'templates', 'workflow.yaml');
 const SUBAGENT_EXTENSION = path.join(PACKAGE_ROOT, 'src', 'pi-adapter', 'subagent.ts');
-const ORCHESTRATOR_TOOLS = ['forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_resolve_scope'];
+const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_spec', 'forge_spec_amend', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_resolve_scope'];
 
 /** 用户级设置文件：~/.pi/agent/pi-forge.json（与 Pi 官方 preset 示例的全局配置位置一致） */
 export function roleSettingsPath(): string {
@@ -258,6 +259,42 @@ export default function piFlow(pi: ExtensionAPI): void {
   const registerFlowTools = () => {
     if (flowToolsRegistered) return;
     flowToolsRegistered = true;
+    const readParams = Type.Object({
+      path: Type.String({ minLength: 1, description: '仓库内的文件或目录路径' }),
+      ref: Type.Optional(Type.String({ description: '主分支或存在的流程分支；默认使用活动流程的集成分支' })),
+      offset: Type.Optional(Type.Integer({ minimum: 1, description: '起始行号，从 1 开始' })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, description: '最多读取的行数' })),
+    }, { additionalProperties: false });
+    pi.registerTool({
+      name: 'forge_read', label: 'forge_read', description: '从集成分支读取 PRD、原型与产物；目录列出内容，图片作为附件，文本上限为 2000 行或 50 KiB，截断时给出下一次 offset。',
+      parameters: readParams,
+      async execute(_id, p, _s, _u, ctx) {
+        const h = engineFor(ctx.cwd);
+        const r = forgeRead(ctx.cwd, checked<ForgeReadInput>(readParams, p, 'forge_read'), h);
+        if (r.kind === 'image') {
+          return { content: [{ type: 'text' as const, text: `图片 ${r.path}（分支 ${r.ref}，${r.mimeType}）` }, { type: 'image' as const, mimeType: r.mimeType, data: r.data }], details: { ref: r.ref, path: r.path, kind: r.kind } };
+        }
+        return toolResult(r.text, { ref: r.ref, path: r.path, kind: r.kind, ...(r.nextOffset !== undefined ? { nextOffset: r.nextOffset } : {}) });
+      },
+    });
+    pi.registerTool({
+      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交 requirements、screens、permissions、glossary 四份完整规格。spec-lint 拒绝时修正重提；通过后等待用户批准。',
+      parameters: SpecParams,
+      async execute(_id, p, _s, _u, ctx) {
+        const h = engineFor(ctx.cwd);
+        const r = await flowSpec(ctx.cwd, h.store, h.config, checked(SpecParams, p, 'forge_spec'));
+        return toolResult(r.text, r.details);
+      },
+    });
+    pi.registerTool({
+      name: 'forge_spec_amend', label: 'forge_spec_amend', description: 'P0 批准后提交增量规格修订（需求、页面、权限三节），列出变化 AC 与受影响 task，等待用户批准。',
+      parameters: SpecAmendParams,
+      async execute(_id, p, _s, _u, ctx) {
+        const h = engineFor(ctx.cwd);
+        const r = await flowSpecAmend(ctx.cwd, h.store, checked(SpecAmendParams, p, 'forge_spec_amend'));
+        return toolResult(r.text, r.details);
+      },
+    });
     pi.registerTool({
       name: 'forge_status', label: 'forge_status', description: '只读：当前流程、阶段、任务计数、可派发与失败任务摘要、等待用户处理的事项。',
       parameters: Type.Object({}),
@@ -346,7 +383,12 @@ export default function piFlow(pi: ExtensionAPI): void {
     if (!s?.orchestrator || !s.handle) return;
     const { store, engine, config } = s.handle;
     s.driftBefore = dirtyFiles(ctx.cwd);
-    const injected = `${agentPrompt(ctx.cwd, 'orchestrator')}\n\n${turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t))}`;
+    const flowId = store.readState().active_flow;
+    const flow = flowId ? store.readFlow(flowId) : null;
+    const amendInProgress = flowId && store.listAmends(flowId).some((a) => a.status === 'proposed' || a.status === 'rejected');
+    const skills = flow?.stage === 'P0' || amendInProgress
+      ? ['spec-from-prd', 'grilling'].map((name) => readFileSync(path.join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'), 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim()).join('\n\n') : '';
+    const injected = `${agentPrompt(ctx.cwd, 'orchestrator')}\n\n${skills}\n\n${turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t))}`;
     event.systemPromptOptions.appendSystemPrompt = `${event.systemPromptOptions.appendSystemPrompt ?? ''}\n\n${injected}`.trim();
   });
 
@@ -434,8 +476,8 @@ export default function piFlow(pi: ExtensionAPI): void {
   }
 
   pi.registerCommand('forge-build', {
-    description: 'pi-forge：带上 PRD（--prd）、架构（--arch）与原型（--design）从零建新项目，或 --feature 在已有项目上加功能',
-    getArgumentCompletions: (prefix) => ['--prd', '--arch', '--design', '--feature'].filter((x) => x.startsWith(prefix.trim().split(' ').at(-1) ?? '')).map((x) => ({ value: x, label: x })),
+    description: 'pi-forge：带上必填 PRD（--prd）与可选原型（--prototype），主会话讨论需求、整理规格；--feature 在 M7 实现',
+    getArgumentCompletions: (prefix) => ['--prd', '--prototype', '--feature'].filter((x) => x.startsWith(prefix.trim().split(' ').at(-1) ?? '')).map((x) => ({ value: x, label: x })),
     handler: async (args, ctx) => {
       try {
         report(ctx, await runFlowBuild(args, commandEnv(ctx)));

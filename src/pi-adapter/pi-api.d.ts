@@ -45,7 +45,7 @@ declare module '@earendil-works/pi-coding-agent' {
   /** 每次调用模型前触发，可替换 messages（不含系统提示；Pi 1.0.0 ContextEvent / ContextEventResult） */
   export interface ContextEvent { type: 'context'; messages: unknown[] }
   export interface TextContent { type: 'text'; text: string }
-  export interface AgentToolResult { content: TextContent[]; details: unknown }
+  export interface AgentToolResult { content: ToolResultContent[]; details: unknown }
   export interface ToolDefinition {
     name: string;
     label: string;

@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/guard.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/guard.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test, before, after } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
@@ -9,14 +9,8 @@ import { checkToolCall, scriptOpensGui, type GuardContext, type GuardDecision } 
 import { parseConfig } from '../../src/core/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 
-// 额外加一个可写 ** 的角色，用来验证受保护路径对"任何 writes"都只读
-const YAML = TEST_YAML
-  .replace('infra:      {', 'everything: { writes: ["**"] }\n  infra:      {')
-  .replace(/^  reviewer:.*\n/m, '')
-  // chaos：可写 **；reviewer、scout：只读角色（bash 只读白名单），用来验证只读角色的约束
-  + '  chaos:             { model: medium, scopes: [everything], bash: full, tools: [read, find, grep, ls, write, edit, "@serena_edit"] }\n'
-  + '  reviewer:          { model: medium, scopes: [], bash: readonly, tools: [codemode, read, "@serena_read", "@codegraph"], writes: [] }\n'
-  + '  scout:             { model: cheap,  scopes: [], bash: readonly, tools: [codemode, read, "@serena_read", "@codegraph", forge_note, forge_submit], writes: [] }\n';
+// 扩展 worker 的只读搜索工具，以验证路径归一化；权限仍由真实七角色与 task writes 约束。
+const YAML = TEST_YAML.replace('tools: [read, write, edit, "@serena_read"', 'tools: [read, find, grep, ls, write, edit, "@serena_read"');
 const config = parseConfig(YAML);
 
 let base: string, main: string, wt: string;
@@ -77,8 +71,8 @@ test('orchestrator：有序 read_paths 仍可限制只读路径为 docs 与 .for
 
 const readCtx = (patterns: string[]): GuardContext => {
   const scoped = parseConfig(YAML);
-  scoped.role('chaos').readPaths = patterns;
-  return ctx('chaos', { config: scoped });
+  scoped.role('worker').readPaths = patterns;
+  return ctx('worker', { config: scoped });
 };
 
 test('有序 read_paths：排除 .forge，目录本身与符号链接同样拒绝', () => {
@@ -106,7 +100,9 @@ test('有序 read_paths：只有排除项或空列表拒绝所有读取，null �
     blocked(checkToolCall(call('ls', {}), c), 'read_paths');
     blocked(checkToolCall(call('grep', { pattern: 'x' }), c), 'read_paths');
   }
-  allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), ctx('chaos')));
+  const unrestricted = parseConfig(YAML);
+  unrestricted.role('worker').readPaths = null;
+  allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), ctx('worker', { config: unrestricted })));
 });
 
 test('reviewer：任何写入都被阻断', () => {
@@ -130,8 +126,45 @@ test('reviewer：只读命令放行', () => {
   allowed(checkToolCall(call('serena_find_symbol', { name_path: 'X', relative_path: 'src/server' }), c));
 });
 
+test('stage-qa：没有写工具或可写范围，服务与无界面测试可用，临时目录可存测试结果', () => {
+  const scratch = path.join(base, 'scratch-qa');
+  mkdirSync(scratch, { recursive: true });
+  const c = ctx('stage-qa', { scratchDir: scratch });
+  for (const tool of ['write', 'edit', 'serena_replace_content']) {
+    blocked(checkToolCall(call(tool, { path: 'src/server/a.ts', relative_path: 'src/server/a.ts', content: '' }), c), 'tool_whitelist');
+  }
+  allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), c));
+  allowed(checkToolCall(call('forge_service', { action: 'status' }), c));
+  allowed(checkToolCall(bash('pnpm test'), c));
+  assert.deepEqual(config.role('stage-qa').writes, []);
+  blocked(checkToolCall(bash('echo changed > .forge/state.json'), c), 'protected');
+  allowed(checkToolCall(bash(`echo result > ${scratch}/result.txt`), c));
+});
+
+test('architect：只能写规划产物，不能写实现代码或规格需求', () => {
+  const c = ctx('architect');
+  for (const file of ['docs/contracts/openapi.yaml', 'docs/arch/overview.md', 'docs/plan/plan.yaml', 'docs/rules-draft/backend.md', 'docs/spec/glossary.md', 'AGENTS.md']) {
+    allowed(checkToolCall(call('write', { path: file, content: '' }), c));
+  }
+  for (const file of ['src/server/a.ts', 'docs/spec/requirements.md', 'docs/research/findings.md']) {
+    blocked(checkToolCall(call('write', { path: file, content: '' }), c), 'write_paths');
+  }
+  blocked(checkToolCall(call('read', { path: '.forge/state.json' }), c), 'read_paths');
+});
+
+test('test-author：角色验收 scope 与任务 writes 同时约束，只能写自己的测试和公共工具子目录', () => {
+  const c = ctx('test-author', { writes: ['tests/acceptance/T-001/**', 'tests/acceptance/_support/T-001/**'] });
+  for (const file of ['tests/acceptance/T-001/api.test.ts', 'tests/acceptance/_support/T-001/client.ts']) {
+    allowed(checkToolCall(call('write', { path: file, content: '' }), c));
+  }
+  for (const file of ['tests/acceptance/T-002/api.test.ts', 'tests/acceptance/_support/shared.ts', 'tests/server/api.test.ts', 'src/server/a.ts', 'docs/contracts/openapi.yaml']) {
+    blocked(checkToolCall(call('write', { path: file, content: '' }), c), 'write_paths');
+  }
+  blocked(checkToolCall(call('forge_request_scope', { paths: ['src/server/a.ts'], reason: '越权申请' }), c), 'tool_whitelist');
+});
+
 test('实施角色：writes 白名单', () => {
-  const c = ctx('backend-engineer', { writes: ['src/server/**'] });
+  const c = ctx('worker', { writes: ['src/server/**'] });
   allowed(checkToolCall(call('write', { path: 'src/server/new.ts', content: '' }), c));
   allowed(checkToolCall(call('write', { path: '@src/server/new.ts', content: '' }), c));
   allowed(checkToolCall(call('edit', { path: path.join(wt, 'src/server/a.ts'), edits: [] }), c));
@@ -144,16 +177,16 @@ test('实施角色：writes 白名单', () => {
   blocked(checkToolCall(call('serena_replace_symbol_body', { relative_path: 'src/web/a.ts' }), c), 'write_paths');
   blocked(checkToolCall(call('serena_replace_symbol_body', { body: 'x' }), c), 'write_paths', /无法确定/);
   // 任务 writes 比角色 writes 窄时以任务为准
-  const narrow = ctx('backend-engineer', { writes: ['src/server/export/**'] });
+  const narrow = ctx('worker', { writes: ['src/server/export/**'] });
   blocked(checkToolCall(call('write', { path: 'src/server/a.ts', content: '' }), narrow), 'write_paths');
   // merge-fix 以冲突文件为准
-  const mf = ctx('backend-engineer', { writes: ['src/server/a.ts'] });
+  const mf = ctx('worker', { writes: ['src/server/a.ts'] });
   allowed(checkToolCall(call('edit', { path: 'src/server/a.ts', edits: [] }), mf));
   blocked(checkToolCall(call('edit', { path: 'src/server/b.ts', edits: [] }), mf), 'write_paths');
 });
 
 test('受保护路径对所有角色只读（即使 writes 覆盖）', () => {
-  const c = ctx('chaos');
+  const c = ctx('worker');
   for (const p of ['.forge/state.json', '.git/config', 'workflow.yaml', 'rules/backend.md', '.pi/settings.json',
     '.FORGE/state.json', 'src/server/evil/state.json', '@.forge/x', `file://${wt}/.forge/x`]) {
     blocked(checkToolCall(call('write', { path: p, content: '' }), c), 'protected', /只读/);
@@ -215,7 +248,7 @@ const IMPL_BLOCKED = [
 ];
 
 test('实施角色：bash 约束（对抗用例）', () => {
-  const c = ctx('backend-engineer', { writes: ['src/server/**'] });
+  const c = ctx('worker', { writes: ['src/server/**'] });
   for (const cmd of IMPL_BLOCKED) {
     const d = checkToolCall(bash(cmd), c);
     assert.equal(d.allow, false, `应阻断：${cmd}`);
@@ -223,7 +256,7 @@ test('实施角色：bash 约束（对抗用例）', () => {
 });
 
 test('实施角色：正常命令放行', () => {
-  const c = ctx('backend-engineer', { writes: ['src/server/**'] });
+  const c = ctx('worker', { writes: ['src/server/**'] });
   for (const cmd of ['pnpm test', 'pnpm typecheck > /tmp/tc.log 2>&1', 'git status && git diff', 'git add -A && git commit -m "feat: x"',
     'git checkout -- src/server/a.ts', 'git checkout abc123 -- src/server/a.ts', 'git rm -q src/server/a.ts', 'cd src/server && ls', 'echo x > src/server/out.txt', 'node -e "console.log(1)"',
     'ls *', 'grep -rn TODO src', 'FOO=1 pnpm test', 'cat <<EOF\nhello\nEOF']) {
@@ -234,7 +267,7 @@ test('实施角色：正常命令放行', () => {
 test('临时目录：实施角色可以 cd、写入、rm、mv；worktree 中只能对 writes 内的文件 rm、mv；只读角色不能进临时目录', () => {
   const scratch = path.join(base, 'scratch-r1');
   mkdirSync(scratch, { recursive: true });
-  const c = ctx('backend-engineer', { writes: ['src/server/**'], scratchDir: scratch });
+  const c = ctx('worker', { writes: ['src/server/**'], scratchDir: scratch });
   for (const cmd of [`cd ${scratch} && mkdir -p a && echo x > a/b.js && node a/b.js`, `rm -rf ${scratch}/a`, `mv ${scratch}/x ${scratch}/y`,
     `cp src/server/a.ts ${scratch}/a.ts`, 'mv src/server/a.ts src/server/b.ts', 'rm src/server/a.ts', 'rm -f src/server/x.ts']) {
     allowed(checkToolCall(bash(cmd), c));
@@ -247,19 +280,19 @@ test('临时目录：实施角色可以 cd、写入、rm、mv；worktree 中只�
 });
 
 test('敏感读取对所有角色阻断', () => {
-  for (const role of ['backend-engineer', 'reviewer', 'architect', 'scout']) {
+  for (const role of ['worker', 'reviewer', 'architect', 'stage-qa', 'test-author', 'researcher', 'orchestrator']) {
     const c = ctx(role, { writes: undefined });
     for (const p of ['.env', 'config/.env.local', 'key.pem', 'secrets/db.json', '.ENV']) {
       blocked(checkToolCall(call('read', { path: p }), c), 'sensitive', /敏感/);
     }
   }
-  const ch = ctx('chaos');
+  const ch = ctx('worker');
   blocked(checkToolCall(call('find', { pattern: '.env*' }), ch), 'sensitive');
   blocked(checkToolCall(call('grep', { pattern: 'KEY', glob: '*.pem' }), ch), 'sensitive');
   blocked(checkToolCall(call('grep', { pattern: 'KEY', path: 'secrets' }), ch), 'sensitive');
   allowed(checkToolCall(call('find', { pattern: '*.ts' }), ch));
   allowed(checkToolCall(call('grep', { pattern: 'KEY', path: 'src' }), ch));
-  const be = ctx('backend-engineer');
+  const be = ctx('worker');
   for (const cmd of ['cat .env', 'cat .e*', 'cat < .env', 'grep KEY config/.env.local', 'printenv', 'env', 'head secrets/x', 'source .env']) {
     blocked(checkToolCall(bash(cmd), be), 'sensitive');
   }
@@ -268,8 +301,8 @@ test('敏感读取对所有角色阻断', () => {
 });
 
 test('不在白名单的工具被阻断，reason 带角色提示', () => {
-  blocked(checkToolCall(call('forge_propose_tasks', { tasks: [] }), ctx('backend-engineer')), 'tool_whitelist', /backend-engineer/);
-  blocked(checkToolCall(call('web_search', { query: 'x' }), ctx('backend-engineer')), 'tool_whitelist');
+  blocked(checkToolCall(call('forge_propose_tasks', { tasks: [] }), ctx('worker')), 'tool_whitelist', /worker/);
+  blocked(checkToolCall(call('web_search', { query: 'x' }), ctx('worker')), 'tool_whitelist');
   allowed(checkToolCall(call('web_search', { query: 'x' }), ctx('researcher')));
   blocked(checkToolCall(call('bash', { command: 'ls' }), ctx('researcher')), 'tool_whitelist');
   blocked(checkToolCall(call('unknown_tool', {}), ctx('architect')), 'tool_whitelist');
@@ -285,7 +318,7 @@ test('worktree 中未被 git 跟踪的临时文件可以删除；被跟踪的 wr
   g('-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '-m', 'init');
   mkdirSync(path.join(repo, '.tmpcheck'), { recursive: true });
   writeFileSync(path.join(repo, '.tmpcheck/x.js'), 'x');
-  const c = { ...ctx('backend-engineer', { writes: ['src/server/**'] }), cwd: realpathSync(repo), workspaceRoot: realpathSync(repo) };
+  const c = { ...ctx('worker', { writes: ['src/server/**'] }), cwd: realpathSync(repo), workspaceRoot: realpathSync(repo) };
   allowed(checkToolCall(bash('rm -rf .tmpcheck'), c));
   blocked(checkToolCall(bash('rm docs/a.md'), c), 'bash');
   blocked(checkToolCall(bash('mv .tmpcheck/x.js .tmpcheck/y.js'), c), 'bash');
@@ -294,7 +327,7 @@ test('worktree 中未被 git 跟踪的临时文件可以删除；被跟踪的 wr
 test('同一命令中字面量赋值的变量会被代入后校验；含命令替换或未知变量的仍阻断', () => {
   const scratch = path.join(base, 'scratch-r2');
   mkdirSync(scratch, { recursive: true });
-  const c = ctx('backend-engineer', { writes: ['src/server/**'], scratchDir: scratch });
+  const c = ctx('worker', { writes: ['src/server/**'], scratchDir: scratch });
   allowed(checkToolCall(bash(`S=${scratch}; mkdir -p $S/a && cp src/server/a.ts $S/a/ && rm -rf "\${S}/a"`), c));
   blocked(checkToolCall(bash('S=/etc; rm -rf $S/x'), c), 'bash');
   blocked(checkToolCall(bash('F=.forge; echo x > $F/state.json'), c));
@@ -303,16 +336,16 @@ test('同一命令中字面量赋值的变量会被代入后校验；含命令�
 });
 
 test('实现类任务可以在接口文档里追加（不受任务可写范围限制），其他路径照旧；没有该标记时不可写', () => {
-  const impl = ctx('backend-engineer', { interfaceAdditions: true, writes: ['src/server/a.ts'] });
+  const impl = ctx('worker', { interfaceAdditions: true, writes: ['src/server/a.ts'] });
   allowed(checkToolCall(call('write', { path: 'docs/contracts/web.md', content: '' }), impl));
   allowed(checkToolCall(call('write', { path: 'src/server/a.ts', content: '' }), impl));
   blocked(checkToolCall(call('write', { path: 'docs/requirements.md', content: '' }), impl), 'write_paths');
   blocked(checkToolCall(call('write', { path: 'workflow.yaml', content: '' }), impl));
-  blocked(checkToolCall(call('write', { path: 'docs/contracts/web.md', content: '' }), ctx('backend-engineer', { writes: ['src/server/a.ts'] })), 'write_paths');
+  blocked(checkToolCall(call('write', { path: 'docs/contracts/web.md', content: '' }), ctx('worker', { writes: ['src/server/a.ts'] })), 'write_paths');
 });
 
 test('禁止后台运行：单独的 & 被拦下，&& 与 2>&1 不受影响；setsid、disown 被拦下', () => {
-  const c = ctx('backend-engineer');
+  const c = ctx('worker');
   blocked(checkToolCall(bash('node --test tests/a.test.js &'), c), 'bash', /后台运行/);
   blocked(checkToolCall(bash('sleep 1 & echo done'), c), 'bash', /后台运行/);
   blocked(checkToolCall(bash('setsid node x.js'), c), 'bash');
@@ -320,18 +353,18 @@ test('禁止后台运行：单独的 & 被拦下，&& 与 2>&1 不受影响；se
   allowed(checkToolCall(bash('ls && echo ok'), c));
 });
 
-test('适配已有测试：列出的已有测试文件可以写（不受角色可写范围限制），其他测试与受保护路径照旧', () => {
-  const c = ctx('backend-engineer', { writes: ['src/server/a.ts'], adjustableTests: ['tests/acceptance/api.test.js'] });
-  allowed(checkToolCall(call('write', { path: 'tests/acceptance/api.test.js', content: '' }), c));
-  allowed(checkToolCall(call('edit', { path: 'tests/acceptance/api.test.js', edits: [] }), c));
-  blocked(checkToolCall(call('write', { path: 'tests/acceptance/new.test.js', content: '' }), c), 'write_paths');
-  blocked(checkToolCall(bash('rm tests/acceptance/api.test.js'), c), 'bash');
-  blocked(checkToolCall(call('write', { path: 'tests/acceptance/api.test.js', content: '' }), ctx('backend-engineer', { writes: ['src/server/a.ts'] })), 'write_paths');
+test('适配已有单元测试：task writes 外列出的已有测试可改，其他测试仍拒绝', () => {
+  const c = ctx('worker', { writes: ['src/server/a.ts'], adjustableTests: ['tests/server/api.test.js'] });
+  allowed(checkToolCall(call('write', { path: 'tests/server/api.test.js', content: '' }), c));
+  allowed(checkToolCall(call('edit', { path: 'tests/server/api.test.js', edits: [] }), c));
+  blocked(checkToolCall(call('write', { path: 'tests/server/new.test.js', content: '' }), c), 'write_paths');
+  blocked(checkToolCall(bash('rm tests/server/api.test.js'), c), 'bash');
+  blocked(checkToolCall(call('write', { path: 'tests/server/api.test.js', content: '' }), ctx('worker', { writes: ['src/server/a.ts'] })), 'write_paths');
 });
 
 test('不能打开桌面应用或浏览器窗口：内置的界面命令与 gui_commands 都被拦下；无界面的测试照常运行', () => {
   const gui = parseConfig(YAML.replace(/^limits:/m, 'gui_commands: ["pnpm dev:desktop", "node scripts/dev-desktop-env.mjs"]\nlimits:'));
-  const c = { ...ctx('backend-engineer'), config: gui };
+  const c = { ...ctx('worker'), config: gui };
   for (const cmd of [
     'open http://localhost:3000',
     'open -a Safari index.html',
@@ -353,7 +386,7 @@ test('不能打开桌面应用或浏览器窗口：内置的界面命令与 gui_
 });
 
 test('curl 只能访问本机：调用自己启动的服务放行；外网、写文件、代理被拦下', () => {
-  const c = ctx('backend-engineer');
+  const c = ctx('worker');
   for (const cmd of [
     'curl -s http://localhost:3000/api/health',
     'curl -sS -X POST -H "Content-Type: application/json" -d \'{"a":1}\' http://127.0.0.1:8080/x',

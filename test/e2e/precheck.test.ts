@@ -16,7 +16,7 @@ async function submitted(p: Project, content: string) {
   await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
   await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher', patch: {
     worktree: wt.path, branch: wt.branch, base_sha: wt.base_sha,
-    lease: { run_id: 'r-1', role: 'backend-engineer', token_hash: hashToken('token'), acquired_at: new Date().toISOString(), expires_at: '2099-01-01' },
+    lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('token'), acquired_at: new Date().toISOString(), expires_at: '2099-01-01' },
   } });
   mkdirSync(path.join(wt.path, 'src/server/t-001'), { recursive: true });
   writeFileSync(path.join(wt.path, 'src/server/t-001/a.ts'), content);
@@ -82,7 +82,7 @@ test('直通预检：不会执行命令；合并时全量验证失败能阻止�
 test('直通预检：最新验收测试与软依赖未完成时保持 awaiting_inputs', async () => {
   for (const wait of ['acctest', 'soft']) {
     const p = await setupProject({ tasks: [mkTask('T-001', { deps: wait === 'soft' ? [soft('T-002')] : [] }),
-      wait === 'soft' ? mkTask('T-002') : mkTask('T-001.at-2', { kind: 'acctest', for_task: 'T-001', writes: [] })] });
+      wait === 'soft' ? mkTask('T-002') : mkTask('T-001.at-2', { kind: 'acctest', role: 'test-author', scopes: ['acctest'], for_task: 'T-001', writes: [] })] });
     try {
       await submitted(p, 'ok');
       await passthroughPrecheck(p.store, p.flowId);

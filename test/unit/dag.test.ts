@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/dag.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/dag.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateDag, computeReady, dagStats, mutexPairs, conflictsWith, remainingPath, type DagCatalog,
@@ -7,14 +7,19 @@ import { mkTask, hard, soft } from '../helpers/tasks.ts';
 
 const catalog: DagCatalog = {
   roles: {
-    'backend-engineer': { scopes: ['backend'] },
-    'frontend-engineer': { scopes: ['frontend'] },
-    'test-engineer': { scopes: ['acceptance'] },
+    worker: { scopes: ['code'] },
+    architect: { scopes: ['plan'] },
+    'test-author': { scopes: ['acctest'] },
+    reviewer: { scopes: ['review'] },
+    'stage-qa': { scopes: ['qa'] },
+    researcher: { scopes: ['research'] },
+    orchestrator: { scopes: [] },
   },
   scopes: {
-    backend: ['src/server/**', 'tests/server/**'],
-    frontend: ['src/web/**', 'tests/web/**'],
-    acceptance: ['tests/acceptance/**', 'tests/e2e/**'],
+    code: ['**'],
+    plan: ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'docs/rules-draft/**', 'AGENTS.md'],
+    acctest: ['tests/acceptance/**'],
+    review: [], qa: [], research: ['docs/research/**'],
   },
   commands: ['typecheck', 'test', 'e2e'],
   maxTaskFiles: 12,
@@ -22,8 +27,8 @@ const catalog: DagCatalog = {
 
 test('合法 DAG 通过校验', () => {
   const tasks = [
-    mkTask('T-001', { kind: 'impl', role: 'test-engineer', scopes: ['acceptance'], writes: ['tests/acceptance/a/**'] }),
-    mkTask('T-002', { deps: [hard('T-001', '先有验收测试')] }),
+    mkTask('T-001', { kind: 'acctest', role: 'test-author', scopes: ['acctest'], writes: ['tests/acceptance/T-002/**'], for_task: 'T-002' }),
+    mkTask('T-002', { writes: ['src/server/orders/**', 'src/web/orders/**', 'migrations/*_orders.sql'], deps: [hard('T-001', '先有验收测试')] }),
   ];
   const r = validateDag(tasks, catalog);
   assert.deepEqual(r.errors, []);
@@ -49,14 +54,14 @@ test('检出缺 reason 的硬依赖', () => {
 test('检出非法角色、scope、命令与越出 scope 的 writes', () => {
   const r = validateDag([
     mkTask('T-001', { role: 'nobody' }),
-    mkTask('T-002', { scopes: ['frontend'] }),
+    mkTask('T-002', { scopes: ['plan'] }),
     mkTask('T-003', { verify: ['deploy'] }),
-    mkTask('T-004', { writes: ['src/web/**'] }),
+    mkTask('T-004', { role: 'architect', scopes: ['plan'], writes: ['src/web/**'] }),
     mkTask('T-005', { scopes: ['ghost'] }),
   ], catalog);
   const all = r.errors.join('\n');
   assert.match(all, /T-001.*nobody/);
-  assert.match(all, /T-002.*frontend/);
+  assert.match(all, /T-002.*plan/);
   assert.match(all, /T-003.*deploy/);
   assert.match(all, /T-004.*src\/web/);
   assert.match(all, /T-005.*ghost/);

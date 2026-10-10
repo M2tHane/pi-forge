@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/orchestrator-session.test.ts @ 31f3f15（M1 改编）
+// 改编自 pi-flow test/e2e/orchestrator-session.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 真实 Pi 进程连接本地假模型：主会话只读，任务由程序派发。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,12 +22,11 @@ after(() => { rmSync(LOG, { force: true }); return llm?.close(); });
 
 test('调度模式：orchestrator 不能自己写代码，程序派发后 wait/status；任务经子进程完成', { skip: !piAvailable && 'pi 不可用', timeout: 300_000 }, async () => {
   const p = await setupProject({ yaml: PROJECT_YAML.replace('auto_dispatch: false', 'auto_dispatch: true').replace('read_paths: ["**"], writes: []', 'read_paths: ["docs/**", ".forge/**"], writes: []'),
-    tasks: [mkTask('T-001', { verify: ['test'] })],
-    files: { '.pi/agents/backend-engineer.md': readFileSync(path.join(ROOT, 'test/fixtures/agents/backend-engineer.md'), 'utf8') } });
+    tasks: [mkTask('T-001', { verify: ['test'] })] });
   const agentDir = mkdtempSync(path.join(tmpdir(), 'pi-forge-agentdir-'));
   try {
     writeFileSync(path.join(agentDir, 'pi-forge.json'), JSON.stringify({ version: 1, roles: {
-      orchestrator: { model: 'fakellm/orch-runtime' }, 'backend-engineer': { model: 'fakellm/impl-happy' } } }));
+      orchestrator: { model: 'fakellm/orch-runtime' }, 'worker': { model: 'fakellm/impl-happy' } } }));
     const provider = path.join(ROOT, 'test/fixtures/fake-llm/provider.ts');
     const r = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve) => {
       const c = spawn('pi', ['-p', '--no-session', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',

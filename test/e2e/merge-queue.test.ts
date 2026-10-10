@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/merge-queue.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/merge-queue.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // M4 验收：合并队列。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,7 +48,7 @@ test('正常合并：squash 成单个提交快进到集成分支，清理 worktr
       await a.call('write', { path: `src/server/${id}/b.ts`, content: id });
       await a.call('forge_note', { text: 'n' });
       await a.call('forge_submit', { summary: `实现 ${id}` });
-    }, { version: 1, roles: { 'backend-engineer': { model: 'f/m' } } });
+    }, { version: 1, roles: { 'worker': { model: 'f/m' } } });
     // 并发 2：T-001、T-002 先跑；T-003 在名额空出后由 next 派发
     await engine.next(p.flowId);
     await until(() => ['T-001', 'T-002'].every((id) => p.store.readTask(p.flowId, id).status === 'done'));
@@ -206,7 +206,7 @@ test('提交后直接进入合并队列；合并时跑全量 typecheck、lint、
     assert.ok(!existsSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence', 'T-002')), '文档类任务不跑命令');
     const evs = p.store.readEvents().filter((e) => e.type === 'transition');
     assert.equal(evs.filter((e) => e.trigger === 'submit').length, 3);
-    assert.deepEqual(p.store.listRuns().map((r) => r.role).sort(), ['backend-engineer', 'backend-engineer', 'backend-engineer']);
+    assert.deepEqual(p.store.listRuns().map((r) => r.role).sort(), ['worker', 'worker', 'worker']);
     assertSingleMerging(p.store.readEvents());
   } finally { p.cleanup(); }
 });
@@ -244,7 +244,7 @@ test('批量合并：队列里的 3 个任务一起叠加、只跑一次全量�
   }
 });
 
-test('适配已有测试：接口变化让别的角色的旧测试失败时，实施任务可以直接修改基线上已有的测试并一起合入；不能新增、删除可写范围外的文件；testing.adjust_tests 关闭时不能改', async () => {
+test('适配已有测试：接口变化让其他 task 的旧测试失败时，worker 可以直接修改基线上已有的单元测试并一起合入；不能新增、删除可写范围外的文件；testing.adjust_tests 关闭时不能改', async () => {
   // 全量 test：旧测试还在断言 OLD、而实现已经是 NEW 时失败
   const yaml = DIRECT_YAML.replace(/  test:      ".*"/, '  test:      "! grep -qs OLD tests/server/api.test.js || ! grep -rqs NEW src/server"');
   const files = { 'tests/server/api.test.js': 'assert OLD\n', 'tests/server/other.test.js': 'keep\n' };

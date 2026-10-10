@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/tools6.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/tools6.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第六轮 D1–D3：forge_service 启动并在运行结束时清理服务；forge_request_scope 程序批准或交给主会话；guard 拒绝时给出可行做法。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +21,7 @@ test('forge_service：只能启动 serve 命令；ready 等端口就绪；本次
   const yaml = PROJECT_YAML.replace(/  e2e:       "true"/, `  e2e:       "true"\n  serve:     "${server.replace(/"/g, '\\"')}"`);
   const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: [] })] });
   try {
-    assert.ok(p.config.role('backend-engineer').tools.has('forge_service'), '能运行任意命令的角色隐式拥有 forge_service');
+    assert.ok(p.config.role('worker').tools.has('forge_service'), 'worker 按模板显式拥有 forge_service');
     let pid = 0;
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
       await a.call('forge_claim');
@@ -48,8 +48,8 @@ test('forge_service：只能启动 serve 命令；ready 等端口就绪；本次
   } finally { p.cleanup(); }
 });
 
-test('forge_request_scope：角色范围内、不与其他任务重叠的程序直接批准；重叠或超出角色范围的交给主会话，拒绝写进 handoff、批准后可写', async () => {
-  const p = await setupProject({ tasks: [mkTask('T-001', { verify: [] }), mkTask('T-002', { verify: [], deps: [{ task: 'T-001', type: 'hard', reason: 'x' }] })] });
+test('forge_request_scope：task writes 外无重叠的直接批准；与其他 task 的 writes 或 shared 重叠交给主会话，拒绝写入 handoff、批准后可写', async () => {
+  const p = await setupProject({ tasks: [mkTask('T-001', { verify: [] }), mkTask('T-002', { verify: [], shared: ['src/shared/date.ts'], deps: [{ task: 'T-001', type: 'hard', reason: 'x' }] })] });
   try {
     const settled = async () => { while (p.store.readTask(p.flowId, 'T-001').scope_request) await new Promise((r) => setTimeout(r, 20)); };
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
@@ -61,7 +61,7 @@ test('forge_request_scope：角色范围内、不与其他任务重叠的程序�
       assert.ok((await a.call('write', { path: 'src/server/common/date.ts', content: 'x\n' })).ok);
       assert.match((await a.call('forge_request_scope', { paths: ['src/server/t-002/util.ts'], reason: '顺手加个工具函数' })).text, /已交给主会话决定：src\/server\/t-002\/util.ts（与 T-002 的范围重叠）/);
       await settled();
-      assert.match((await a.call('forge_request_scope', { paths: ['src/shared/date.ts'], reason: '前后端共用' })).text, /src\/shared\/date.ts（超出角色 backend-engineer 的范围）/);
+      assert.match((await a.call('forge_request_scope', { paths: ['src/shared/date.ts'], reason: '前后端共用' })).text, /已交给主会话决定：src\/shared\/date.ts（与 T-002 的范围重叠）/);
       await settled();
       assert.ok((await a.call('write', { path: 'src/shared/date.ts', content: 'x\n' })).ok, '主会话批准后可写');
       await a.call('write', { path: 'src/server/t-001/a.ts', content: 'ok\n' });

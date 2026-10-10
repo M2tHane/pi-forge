@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/lease-session.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/lease-session.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第二轮 D + E 验收：租约心跳续租；子进程会话留档的查看与按保留期清理。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,7 +74,7 @@ test('会话留档：run 记录会话目录；/forge run 显示工具调用摘�
     for (const r of runs) assert.equal(r.session_dir, sessionDirOf(p.dir, r.run_id));
 
     // 假子进程不写会话文件：这里按 Pi 的会话格式写一份，模拟真实 pi 的留档
-    const impl = runs.find((r) => r.role === 'backend-engineer')!;
+    const impl = runs.find((r) => r.role === 'worker')!;
     const lines = [
       { type: 'session', version: 3, id: 'u', timestamp: '2026-10-01T00:00:00Z', cwd: '/w' },
       { type: 'message', id: 'a', parentId: null, timestamp: 't', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'forge_claim', arguments: {} }] } },
@@ -95,7 +95,7 @@ test('会话留档：run 记录会话目录；/forge run 显示工具调用摘�
       engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
       roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
     };
-    assert.match(await runFlowCommand('run', env), new RegExp(`${impl.run_id}　B-001/T-001　backend-engineer　submitted`));
+    assert.match(await runFlowCommand('run', env), new RegExp(`${impl.run_id}　B-001/T-001　worker　submitted`));
     const detail = await runFlowCommand(`run ${impl.run_id}`, env);
     assert.match(detail, /工具调用（2 次，失败 1 次）[\s\S]*2\. write \{"path":"\/etc\/x"[\s\S]*✗ 越界：只能写 worktree[\s\S]*最后的回复：已提交，结束。/);
     rmSync(file);

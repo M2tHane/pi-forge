@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/resume.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/resume.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // M5：恢复（进程内模拟崩溃：丢弃旧引擎，用新的 StateStore 与引擎恢复）。真实强杀见 crash-recovery.test.ts。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -65,7 +65,7 @@ test('任务进行中会话中断：残留 run 被终止，保留 worktree，计
     await ok.engine.pump(p.flowId);
     await ok.engine.idle();
     // 新的 subagent 被告知工作区里已有上一次运行留下的改动
-    const respawn = ok.launcher.launched.find((x) => x.env['PI_FORGE_ROLE'] === 'backend-engineer')!;
+    const respawn = ok.launcher.launched.find((x) => x.env['PI_FORGE_ROLE'] === 'worker')!;
     assert.match(respawn.prompt, /## 工作区已有的改动[\s\S]*src\/server\/t-001\/a\.ts/);
     assert.equal(store.readTask(p.flowId, 'T-001').status, 'done');
     assert.deepEqual((await store.verifyIntegrity()).errors, []);

@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/pi-subprocess.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/pi-subprocess.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 真实 pi 子进程 + 假 LLM（OpenAI 兼容流式服务）：验证 pi-adapter（启动参数、子进程扩展、guard、forge_* 工具、token 统计）。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,7 +53,7 @@ test('真实 pi 子进程：实施 → 合并（全量测试）；越权被拦�
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
       roleSettings: () => ({ version: 1, roles: {
-        'backend-engineer': { model: 'fakellm/impl-happy' } } }),
+        'worker': { model: 'fakellm/impl-happy' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -67,7 +67,7 @@ test('真实 pi 子进程：实施 → 合并（全量测试）；越权被拦�
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), 'export const a = 1;');
 
     const violations = p.store.readEvents().filter((e) => e.type === 'violation');
-    assert.deepEqual(violations.map((v) => [v.data?.['role'], v.data?.['rule']]), [['backend-engineer', 'write_paths']]);
+    assert.deepEqual(violations.map((v) => [v.data?.['role'], v.data?.['rule']]), [['worker', 'write_paths']]);
 
     const runs = p.store.listRuns();
     assert.equal(runs.length, 1, '提交后直接合并，不派审查');
@@ -96,7 +96,7 @@ test('真实 pi 子进程：模型返回额度用完（429 insufficient_quota）
     const errors: unknown[] = [];
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'backend-engineer': { model: 'fakellm/quota' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/quota' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -127,7 +127,7 @@ test('真实 pi 子进程：提交直接合并，合并时全量测试失败退�
     const errors: unknown[] = [];
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'backend-engineer': { model: 'fakellm/impl-fork' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-fork' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -141,7 +141,7 @@ test('真实 pi 子进程：提交直接合并，合并时全量测试失败退�
     assert.equal(t.merge_failures, 1, '第一次提交在合并时的全量测试中失败');
     assert.equal(t.attempts, 0);
     const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at));
-    assert.deepEqual(runs.map((r) => r.role), ['backend-engineer', 'backend-engineer']);
+    assert.deepEqual(runs.map((r) => r.role), ['worker', 'worker']);
     assert.equal(runs[1]!.forked_from, runs[0]!.run_id);
     const triggers = p.store.readEvents().filter((e) => e.task === 'T-001' && e.type === 'transition').map((e) => e.trigger);
     assert.deepEqual(triggers.filter((x) => x !== 'dispatch' && x !== 'schedule'), ['submit', 'inputs_ready', 'precheck_pass_skip', 'merge_start', 'merge_verify_fail', 'submit', 'inputs_ready', 'precheck_pass_skip', 'merge_start', 'merge_done']);
@@ -161,7 +161,7 @@ test('真实 pi 子进程：bash 命令没给超时或超过上限时改成 limi
     const before = existsSync(logFile) ? readFileSync(logFile, 'utf8').length : 0;
     const engine = new Engine({
       root: p.dir, store: p.store, config: parseConfig(yaml), launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'backend-engineer': { model: 'fakellm/impl-sleep' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-sleep' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -189,7 +189,7 @@ test('真实 pi 子进程：notes 与 history 工具可用；任务笔记由程�
     const errors: unknown[] = [];
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'backend-engineer': { model: 'fakellm/impl-notes' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-notes' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],

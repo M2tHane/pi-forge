@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/state-store.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/state-store.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, appendFileSync } from 'node:fs';
@@ -33,7 +33,7 @@ async function flowWithTasks(store: StateStore) {
 }
 
 const lease = (run: string, token: string) => ({
-  run_id: run, role: 'backend-engineer', token_hash: hashToken(token), acquired_at: clock.toISOString(), expires_at: later(30),
+  run_id: run, role: 'worker', token_hash: hashToken(token), acquired_at: clock.toISOString(), expires_at: later(30),
 });
 
 async function toInProgress(store: StateStore, flow: string, id: string, run = 'r-1', token = 'tok') {

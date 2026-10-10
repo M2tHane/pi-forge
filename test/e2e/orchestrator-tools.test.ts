@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/orchestrator-tools.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/orchestrator-tools.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // orchestrator 工具：forge_wait 返回精简摘要，forge_status 列出待处理事项；派发由程序执行。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,13 +25,13 @@ test('forge_wait / forge_status：运行中摘要、超时、完成后唤醒', a
       await a.call('forge_submit', { summary: 's' });
     });
     const engine = new Engine({ root: p.dir, store: p.store, config: p.config, launcher,
-      roleSettings: () => ({ version: 1, roles: { 'backend-engineer': { model: 'fake/m' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fake/m' } } }),
       packageAgentsDir: AGENTS, subagentExtension: 'sub.ts' });
 
     await engine.promote(p.flowId);
     await engine.dispatch(p.flowId, 'T-001');
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'in_progress', 'dispatch 应立即返回');
-    assert.match(statusText(p.store, engine, p.flowId), /运行中：T-001（backend-engineer/);
+    assert.match(statusText(p.store, engine, p.flowId), /运行中：T-001（worker/);
 
     const timeout = await flowWait(p.store, engine, { task_id: 'T-001', timeout_s: 1 });
     assert.match(timeout.text, /等待超时/);
@@ -63,7 +63,7 @@ test('自动派发：ready 任务由引擎派发，依赖完成后接着派发�
       await a.call('forge_submit', { summary: 's' });
     });
     const engine = new Engine({ root: p.dir, store: p.store, config, launcher,
-      roleSettings: () => ({ version: 1, roles: { 'backend-engineer': { model: 'fake/m' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fake/m' } } }),
       packageAgentsDir: AGENTS, subagentExtension: 'sub.ts' });
     const origDispatch = engine.dispatch.bind(engine);
     engine.dispatch = (f, t) => { dispatchCalls++; return origDispatch(f, t); };

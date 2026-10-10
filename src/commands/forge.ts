@@ -12,9 +12,10 @@ import { resume, type DecisionAnswer } from '../core/resume.ts';
 import { formatPreflight } from '../core/preflight.ts';
 import { activeFlowId, statusText } from '../tools/orchestrator-tools.ts';
 import { splitArgs } from './args.ts';
+import { approvalTargets, approveSpecAmend, amendSummary } from '../core/spec-flow.ts';
 import { approveStage, rejectStage, unblockTask, startFlow } from '../core/stages.ts';
-import { importInputs, intakeBrief, type IntakeInput } from '../core/intake.ts';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { importInputs, prepareInputs, type IntakeInput, type PreparedIntake } from '../core/intake.ts';
+import { readFileSync } from 'node:fs';
 import { costReport, formatCost } from '../core/cost.ts';
 import { renderStatus, visibleFlows } from '../core/status-view.ts';
 import { applyDrafts, formatDrafts, listDrafts, type Draft } from '../core/rules-draft.ts';
@@ -61,6 +62,8 @@ export interface CommandEnv {
 
 export const FLOW_USAGE = [
   '用法：',
+  '  /forge-build --prd <文件或目录> [--prototype <路径>]   接收 PRD 与原型原件，开始规格阶段',
+  '  /forge-build --feature --prd <文件或目录>             feature 模式在 M7 实现',
   '  /forge-status            当前阶段（规格 → 契约与计划 → 实施 → 交付）、进度、需要你处理的事项',
   '  /forge-status --detail   完整的任务列表与内部状态',
   '  /forge next              由程序选择 ready 任务并派发',
@@ -68,8 +71,8 @@ export const FLOW_USAGE = [
   '  /forge off               退出调度模式，恢复原来的模型与工具（流程状态不变）',
   '  /forge doctor [--fix]    状态完整性与前置条件检查；--fix 清理残留 worktree 与提示文件',
   '  /forge init              初始化项目骨架（可重复执行，不覆盖）',
-  '  /forge-approve [--yes]   批准当前阶段（仅用户）；实施阶段批准时把集成分支合入主分支',
-  '  /forge-reject "<意见>"   打回等待签收或需要人工处理的阶段，意见写入 stage_reopened 事件',
+  '  /forge-approve [stage:<id>|amend:<id>] [--yes]   批准等待审阅的对象（仅用户）；实施阶段批准时把集成分支合入主分支',
+  '  /forge-reject [stage:<id>|amend:<id>] "<意见>"   打回对象并记录意见',
   '  /forge-add "<需求>"       规格修订在 M7 实现',
   '  /forge accept <阶段或任务> --note "<说明>"   接受耗尽轮数的阶段门禁或任务审查',
   '  /forge answer [<任务>]   回答阻塞任务提出的问题（弹出输入框），回答后任务继续',
@@ -208,6 +211,14 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       const h = env.engine();
       const flowId = currentFlowId(h.store);
       if (h.store.readFlow(flowId).mode === 'fix') return '修复不需要批准：合并后由验收者确认，通过即合入主分支。验收"需要你处理"时用 /forge accept <任务> 放行。';
+      const targets = approvalTargets(h.store, flowId);
+      const args = argv.slice(1).filter((a) => a !== '--yes');
+      if (args.length > 1 || args[0] && !/^(stage|amend|change):[^\s]+$/.test(args[0])) throw new Error('用法：/forge-approve [stage:<id>|amend:<id>] [--yes]');
+      const explicit = args[0];
+      if (!explicit && targets.length > 1) return `有多个对象等待批准，请明确对象：\n${targets.map((t) => t.summary).join('\n\n')}\n用法：/forge-approve stage:<id> 或 /forge-approve amend:<id>`;
+      const target = explicit ?? targets[0]?.object;
+      if (!target || !targets.some((t) => t.object === target)) throw new Error(`没有等待批准的闸门或修订 ${target ?? ''}。`);
+      if (target.startsWith('amend:')) return approveSpecAmend(env.root, h.store, flowId, target.slice(6));
       const flow = h.store.readFlow(flowId);
       if (flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && !argv.includes('--yes')) {
         const msg = `批准阶段 ${flow.stage} 将把 ${flow.integration_branch} 合入 ${h.config.raw.main_branch}，流程随之结束。`;
@@ -216,6 +227,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         if (ok !== '确认合入并结束流程') return '已取消。';
       }
       let text = await approveStage({ root: env.root, store: h.store, config: h.config }, flowId, option(argv, '--note'));
+      if (flow.stage === 'P0') return `${text}\n\n${renderStatus(h.store, h.config)}`;
       if (h.store.readState().active_flow) {
         await h.engine.pump(flowId);
         const d = await h.engine.next(flowId);
@@ -227,7 +239,21 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
     case 'reject': {
       const h = env.engine();
       const flowId = activeFlowId(h.store);
-      const text = await rejectStage({ root: env.root, store: h.store, config: h.config }, flowId, argv.slice(1).join(' '));
+      const args = argv.slice(1);
+      const explicit = /^(stage|amend|change):/.test(args[0] ?? '') ? args.shift() : undefined;
+      const feedback = args.join(' ').trim();
+      if (!feedback) throw new Error('用法：/forge-reject [stage:<id>|amend:<id>] "<意见>"');
+      const targets = approvalTargets(h.store, flowId, true);
+      if (!explicit && targets.length > 1) return `有多个对象等待处理，请明确对象：\n${targets.map((t) => t.summary).join('\n\n')}`;
+      const target = explicit ?? targets[0]?.object;
+      if (!target || !targets.some((t) => t.object === target)) throw new Error(`没有等待处理的对象 ${target ?? ''}。`);
+      if (target.startsWith('amend:')) {
+        const a = await h.store.decideAmend(flowId, target.slice(6), 'rejected', feedback);
+        env.startConversation?.(`规格修订被打回，请带着意见继续讨论并重新提交：\n${amendSummary(a)}`);
+        return `已打回 amend:${a.id}，意见已记录。`;
+      }
+      const text = await rejectStage({ root: env.root, store: h.store, config: h.config }, flowId, feedback);
+      env.startConversation?.(`阶段被打回，请带着意见继续讨论：${feedback}`);
       await h.engine.pump(flowId);
       return text;
     }
@@ -375,11 +401,10 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
 
 export const BUILD_USAGE = [
   '用法：',
-  '  /forge-build --prd <文件或目录> [--arch <文件或目录>] [--design <目录>]',
-  '                                          从零建新项目：带上写好的 PRD、技术架构与原型（例如 Claude Design 的导出目录）；',
-  '                                          创建流程与集成分支，停在 P0（规格）；P0 在 M2 实现（--from 等同 --prd）',
-  '  /forge-build "<想法>"                    没有 PRD 时也先创建流程、停在 P0',
-  '  /forge-build --feature ...               在已有项目上加功能，参数相同',
+  '  /forge-build --prd <文件或目录> [--prototype <路径>]',
+  '                                          从零建新项目：PRD 必填，原型可以是文件或目录；',
+  '                                          原件入库到集成分支，主会话将和你讨论需求、整理规格',
+  '  /forge-build --feature --prd <文件或目录> [--prototype <路径>]   feature 模式在 M7 实现',
   '小改动（单文件、几十行以内）直接用 pi 更划算；缺陷修复用 /forge-fix。',
 ].join('\n');
 
@@ -395,25 +420,25 @@ async function ensureInitialized(env: CommandEnv, lines: string[]): Promise<void
   }
 }
 
-/** /forge-build 的输入：--prd（或 --from）、--arch、--design */
-function intakeOptions(argv: string[]): IntakeInput | null {
-  const prd = option(argv, '--prd') ?? option(argv, '--from');
-  const arch = option(argv, '--arch');
-  const design = option(argv, '--design');
-  if (prd === undefined) {
-    if (arch !== undefined || design !== undefined) throw new Error('--arch、--design 要和 --prd 一起用（PRD 是必需的）。');
-    return null;
+/** /forge-build 只接受 PRD 与可选原型；值与重复参数都显式校验。 */
+export function parseBuildArgs(argv: string[]): IntakeInput {
+  const input: Partial<IntakeInput> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i]!;
+    const name = flag === '--prd' ? 'prd' : flag === '--prototype' ? 'prototype' : null;
+    if (!name) throw new Error(`未知参数 ${flag}。\n${BUILD_USAGE}`);
+    if (input[name] !== undefined) throw new Error(`参数 ${flag} 不能重复。\n${BUILD_USAGE}`);
+    const value = argv[++i];
+    if (!value?.trim() || value.startsWith('--')) throw new Error(`参数 ${flag} 缺少路径。\n${BUILD_USAGE}`);
+    input[name] = value;
   }
-  return { prd, ...(arch !== undefined ? { arch } : {}), ...(design !== undefined ? { design } : {}) };
+  if (!input.prd) throw new Error(`缺少必填参数 --prd。\n${BUILD_USAGE}`);
+  return { prd: input.prd, ...(input.prototype !== undefined ? { prototype: input.prototype } : {}) };
 }
 
-/** PRD 的标题作为流程名：文件取第一行，目录取其中第一个 md 的第一行 */
+/** 流程名取 PRD 文件或目录名，原件内容交给 P0 读取。 */
 function intakeTitle(root: string, prd: string): string {
-  const abs = path.resolve(root, prd);
-  if (!existsSync(abs)) throw new Error(`找不到 PRD ${prd}`);
-  const file = statSync(abs).isFile() ? abs : readdirSync(abs).filter((f) => f.endsWith('.md')).sort().map((f) => path.join(abs, f))[0];
-  const first = file ? readFileSync(file, 'utf8').split('\n').find((l) => l.trim()) ?? '' : '';
-  return first.replace(/^#+\s*/, '').trim().slice(0, 120) || path.basename(abs);
+  return path.basename(path.resolve(root, prd)).slice(0, 120);
 }
 
 function readFromFile(env: CommandEnv, argv: string[]): string | null {
@@ -439,16 +464,15 @@ function assertNoActiveFlow(h: EngineHandle): void {
 export async function runFlowBuild(args: string, env: CommandEnv): Promise<string> {
   const argv = splitArgs(args);
   if (argv[0] === 'help' || argv[0] === '--help') return BUILD_USAGE;
+  if (argv.includes('--feature')) return 'feature 模式在 M7 实现。';
+  const intake = parseBuildArgs(argv);
+  // 输入无效时连初始化与流程创建都不进行。
+  const prepared = prepareInputs(env.root, intake);
   const lines: string[] = [];
   await ensureInitialized(env, lines);
   const h = env.engine();
-  const mode = argv.includes('--feature') ? 'feature' : 'build';
-  const intake = intakeOptions(argv);
-  const description = argv.filter((a, i) => !a.startsWith('--') && !['--from', '--prd', '--arch', '--design'].includes(argv[i - 1] ?? '')).join(' ').trim();
   assertNoActiveFlow(h);
-  if (intake) return startBuildFlow(env, mode, description || intakeTitle(env.root, intake.prd), lines, intake);
-  if (!description) throw new Error(`请带上 PRD（--prd），或写下你的想法（主 agent 会和你讨论）。\n${BUILD_USAGE}`);
-  return startBuildFlow(env, mode, description, lines);
+  return startBuildFlow(env, 'build', intakeTitle(env.root, intake.prd), lines, intake, prepared);
 }
 
 /** 开流程前检查依赖：Pi 版本过低直接拒绝；插件缺失或版本未经验证只提醒 */
@@ -462,19 +486,18 @@ function dependencyGate(env: CommandEnv, config: FlowConfig, lines: string[]): v
   if (warns.length) lines.push(`依赖提醒（不影响开始，相关工具可能不可用；/forge doctor 查看）：\n${warns.map((i) => `! ${i.item}：${i.detail}`).join('\n')}`, '');
 }
 
-/** intake：用户带来的 PRD、架构与原型，原样放进集成分支，主 agent 接着做就绪检查 */
-async function startBuildFlow(env: CommandEnv, mode: 'build' | 'feature', title: string, lines: string[], intake?: IntakeInput): Promise<string> {
+/** 接收 PRD 与原型原件后停在 P0，主会话流程由第二批接入。 */
+async function startBuildFlow(env: CommandEnv, mode: 'build', title: string, lines: string[], intake: IntakeInput, prepared: PreparedIntake): Promise<string> {
   const h = env.engine();
   dependencyGate(env, h.config, lines);
-  // 先检查输入是否存在，避免建了流程才发现路径写错
-  if (intake) for (const [label, p] of [['PRD', intake.prd], ['技术架构', intake.arch], ['原型', intake.design]] as const) if (p && !existsSync(path.resolve(env.root, p))) throw new Error(`找不到${label} ${p}`);
   const flow = await startFlow({ root: env.root, store: h.store, config: h.config }, mode, title);
-  if (intake) {
-    const r = await importInputs(env.root, h.store, flow.id, intake);
-    lines.push(`已接收 PRD（${r.prd}）${r.arch ? `、技术架构（${r.arch}）` : ''}${r.pages.length ? `、原型 ${r.pages.length} 页` : ''}${r.design_doc ? '、设计规范 DESIGN.md' : ''}，放在集成分支 ${flow.integration_branch} 上。`);
-  }
+  const r = await importInputs(env.root, h.store, flow.id, intake, prepared);
+  lines.push(`已接收 PRD（${r.prd}）${r.prototype ? `、原型（${r.prototype}）` : ''}，共 ${r.files.length} 个文件，放在集成分支 ${flow.integration_branch} 上。`);
+  lines.push(...r.files.map((f) => `- ${f.path}（${f.size} 字节，${f.type}）`));
   lines.push(`已创建流程 ${flow.id}（${flow.mode}），阶段：${flow.stages.join(' → ')}；集成分支 ${flow.integration_branch}。`);
-  lines.push('P0（规格）在 M2 实现。', '', renderStatus(h.store, h.config));
+  lines.push('主会话将和你讨论需求、整理规格。', '', renderStatus(h.store, h.config));
+  await env.activateOrchestrator?.();
+  env.startConversation?.(`用户的 PRD 与原型已入库，请用 forge_read 逐份阅读后与用户讨论需求、整理四份规格。\n${r.files.map((f) => `- ${f.path}（${f.size} 字节，${f.type}）`).join('\n')}`);
   return lines.join('\n');
 }
 

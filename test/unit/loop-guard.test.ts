@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/loop-guard.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/loop-guard.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 运行内的打转检测（第六轮 B1、B2）：滑动窗口里的同类调用、同样的检查失败反复出现。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,12 +27,12 @@ async function setup() {
   mkdirSync(path.join(wt, 'src/server'), { recursive: true });
   await store.transitionTask(flow.id, 'T-001', { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
   await store.transitionTask(flow.id, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher', patch: {
-    lease: { run_id: 'r-1', role: 'backend-engineer', token_hash: hashToken('t'), acquired_at: now().toISOString(), expires_at: '2026-01-01T01:00:00Z' },
+    lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('t'), acquired_at: now().toISOString(), expires_at: '2026-01-01T01:00:00Z' },
     worktree: wt, branch: 'flow/B-001/T-001', base_sha: 'abc' } });
-  await store.createRun({ run_id: 'r-1', flow: flow.id, task: 'T-001', role: 'backend-engineer', model: null,
+  await store.createRun({ run_id: 'r-1', flow: flow.id, task: 'T-001', role: 'worker', model: null,
     started_at: now().toISOString(), ended_at: null, tokens: { input: null, output: null, cache_read: null, cache_write: null },
     outcome: null, token_hash: hashToken('t'), violations: 0 });
-  const rt = new SubagentRuntime({ root: repo.dir, flow: flow.id, task: 'T-001', run: 'r-1', token: 't', role: 'backend-engineer' }, store, config, now);
+  const rt = new SubagentRuntime({ root: repo.dir, flow: flow.id, task: 'T-001', run: 'r-1', token: 't', role: 'worker' }, store, config, now);
   const cleanup = () => { repo.cleanup(); rmSync(wt, { recursive: true, force: true }); };
   return { store, flow, rt, wt: realpathSync(wt), cleanup };
 }

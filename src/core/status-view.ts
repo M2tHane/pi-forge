@@ -1,5 +1,6 @@
 // 来源：pi-flow src/core/status-view.ts @ 31f3f15（M1 改编）
 // 用户界面只显示规格、契约与计划、实施、交付；内部状态保留在 --detail。
+import { specStatus, amendSummary } from './spec-flow.ts';
 import type { FlowConfig } from './config.ts';
 import { isFinished, type StateStore } from './state-store.ts';
 import { budgetState, formatBudget } from './cost-control.ts';
@@ -39,8 +40,9 @@ export interface Action { key: string; text: string; command: string }
 export function actionsNeeded(store: StateStore, config: FlowConfig, now = new Date()): Action[] {
   const out: Action[] = [];
   for (const flow of visibleFlows(store)) {
+    for (const a of store.listAmends(flow.id).filter((a) => a.status === 'proposed')) out.push({ key: `${flow.id}:amend:${a.id}`, text: amendSummary(a), command: `/forge-approve amend:${a.id} 或 /forge-reject amend:${a.id} "<意见>"` });
     const tasks = store.listTasks(flow.id);
-    if (flow.stage_status === 'awaiting_human') out.push({ key: `${flow.id}:gate:${flow.stage}`, text: awaitingMerge(flow) ? '全部任务已完成，等你批准合入主分支' : `${phaseLabel(flow, currentPhase(config, flow, tasks))}阶段的产出等待你审批`, command: '/forge-approve 或 /forge-reject "<意见>"' });
+    if (flow.stage_status === 'awaiting_human') out.push({ key: `${flow.id}:gate:${flow.stage}`, text: awaitingMerge(flow) ? '全部任务已完成，等你批准合入主分支' : `${phaseLabel(flow, currentPhase(config, flow, tasks))}阶段的产出等待你审批`, command: `/forge-approve stage:${flow.stage} 或 /forge-reject stage:${flow.stage} "<意见>"` });
     if (flow.stage_status === 'needs_human') out.push({ key: `${flow.id}:gatefail:${flow.stage}`, text: '阶段门禁修复轮数用尽，需要你处理', command: '/forge gate 重跑、/forge-reject "<意见>" 或 /forge accept <阶段> --note "<说明>"' });
     const gate = [...store.readEvents()].reverse().find((e) => e.flow === flow.id && e.type === 'gate_result');
     if (flow.stage_status === 'active' && gate?.to === 'active' && gate.data?.['stage'] === flow.stage && !tasks.some((t) => t.stage === flow.stage && !['done', 'cancelled'].includes(t.status))) out.push({ key: `${flow.id}:gatefail:${gate.seq}`, text: `阶段检查未通过：${short(gate.reason ?? '')}`, command: '处理后执行 /forge gate 重跑' });
@@ -79,7 +81,7 @@ export function renderFlow(store: StateStore, config: FlowConfig, flow: FlowFile
   const cur = currentPhase(config, flow, tasks);
   const counted = tasks.filter((t) => t.status !== 'cancelled' && (flow.mode === 'fix' || cur === 'done' || phaseOfStage(config, flow.mode, t.stage) === cur));
   const active = tasks.filter((t) => INFLIGHT.has(t.status));
-  return [`${flow.id}「${short(flow.title, 60)}」`, phaseBar(config, flow, cur), `${PHASE_LABEL[cur]}阶段：${cur === 'spec' ? '整理可验证的规格（M2 实现）' : cur === 'plan' ? '制定契约与计划（M3 实现）' : cur === 'implementation' ? '按任务实施并运行全量验证' : '已合入主分支'}`, `进度：${counted.filter((t) => t.status === 'done').length} / ${counted.length} 个任务完成`, active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${flow.stage_status === 'awaiting_human' ? '无（等待你审批）' : flow.stage_status === 'awaiting_gate' ? '阶段检查中' : '无'}`, `阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、') || '无'}`].join('\n');
+  return [`${flow.id}「${short(flow.title, 60)}」`, phaseBar(config, flow, cur), `${PHASE_LABEL[cur]}阶段：${cur === 'spec' ? '整理可验证的规格' : cur === 'plan' ? '制定契约与计划（M3 实现）' : cur === 'implementation' ? '按任务实施并运行全量验证' : '已合入主分支'}`, `进度：${counted.filter((t) => t.status === 'done').length} / ${counted.length} 个任务完成`, specStatus(store, flow.id), active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${flow.stage_status === 'awaiting_human' ? '无（等待你审批）' : flow.stage_status === 'awaiting_gate' ? '阶段检查中' : '无'}`, `阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、') || '无'}`].join('\n');
 }
 export function renderStatus(store: StateStore, config: FlowConfig): string {
   const flows = visibleFlows(store);

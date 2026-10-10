@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/rules-draft.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/rules-draft.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 规则与命令草案：architect 写在 docs/rules-draft/（随文档合入集成分支），用户确认后程序写入 rules/ 与 workflow.yaml。
 import { test } from 'node:test';
 import { parseConfig } from '../../src/core/config.ts';
@@ -24,7 +24,7 @@ function env(p: Project, engine: ReturnType<typeof makeEngine>['engine'], ui: Co
 
 const DRAFTS = {
   'docs/rules-draft/backend.md': '# 后端规则\n\n1. 数据库访问统一用 Prisma Client，不写原生 SQL。\n',
-  'docs/rules-draft/prisma.md': '# Prisma 规则\n\n1. schema.prisma 只由 db-engineer 修改。\n',
+  'docs/rules-draft/prisma.md': '# Prisma 规则\n\n1. schema.prisma 只由 worker 修改。\n',
   'docs/rules-draft/commands.yaml': 'commands:\n  test: "npm test"\n  typecheck: "npx tsc --noEmit"\ngui_commands: ["npm run dev:desktop"]\n',
 };
 

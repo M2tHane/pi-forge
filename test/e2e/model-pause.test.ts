@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/model-pause.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/model-pause.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第三轮 A 验收：模型额度用完、限流时暂停这个模型，而不是判任务失败；只影响这个模型；恢复后继续。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +16,7 @@ const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 const YAML = PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "true"');
 const SETTINGS: RoleSettingsFile = { version: 1, roles: {
-  'backend-engineer': { model: 'f/glm' }, architect: { model: 'f/arch' } } };
+  'worker': { model: 'f/glm' }, architect: { model: 'f/arch' } } };
 const QUOTA = 'Codex error: You have hit your ChatGPT usage limit (plus plan). Try again in ~120 min.';
 
 const env = (p: Project, engine: Engine): CommandEnv => ({
@@ -35,12 +35,12 @@ async function implement(a: FakeAgent, file: string) {
 test('额度用完：任务不计失败、不转阻塞；这个模型不再派发，其他模型照常；/forge models resume 后继续并完成', async () => {
   const p = await setupProject({ yaml: YAML, tasks: [
     mkTask('T-001', { verify: [] }),
-    mkTask('T-002', { kind: 'doc', role: 'architect', scopes: ['docs'], writes: ['docs/guide/**'], verify: [] }),
+    mkTask('T-002', { kind: 'doc', role: 'architect', scopes: ['plan'], writes: ['docs/arch/**'], verify: [] }),
   ] });
   try {
     let quotaLeft = true;
     const { engine, launcher, errors } = makeEngine(p, async (role, _n, a) => {
-      if (role === 'architect') return implement(a, 'docs/guide/intro.md');
+      if (role === 'architect') return implement(a, 'docs/arch/intro.md');
       if (quotaLeft) throw new Error(QUOTA);
       return implement(a, 'src/server/t-001/a.ts');
     }, SETTINGS);
@@ -61,7 +61,7 @@ test('额度用完：任务不计失败、不转阻塞；这个模型不再派�
     assert.equal(pause.model, 'f/glm');
     assert.equal(pause.kind, 'quota');
     assert.ok(pause.retry_after && Date.parse(pause.retry_after) - Date.now() > 110 * 60_000, '从错误信息读出约 120 分钟后恢复');
-    assert.deepEqual(pause.roles, ['backend-engineer']);
+    assert.deepEqual(pause.roles, ['worker']);
     assert.deepEqual(pause.tasks, [`${p.flowId}/T-001`]);
 
     const action = actionsNeeded(p.store, p.config).find((x) => x.key.startsWith('model-pause:'));

@@ -531,8 +531,21 @@ export class Engine {
   private async advanceStage(flowId: string, report: (e: unknown) => void, force = false): Promise<void> {
     try {
       const flow = this.d.store.readFlow(flowId);
-      // P0/M2、P1/M3 尚未实现，空阶段不能自动通过。
-      if (flow.mode === 'fix' || ['P0', 'P1'].includes(flow.stage) || this.gating.has(flowId)) return;
+      // P0 只处理已提交后的闸门（包括崩溃恢复），P1 留给 M3。
+      if (flow.mode === 'fix' || flow.stage === 'P1' || this.gating.has(flowId)) return;
+      if (flow.stage === 'P0') {
+        if (flow.stage_status !== 'awaiting_gate') {
+          if (!force || flow.stage_status !== 'active' || !flow.spec) return;
+          await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
+        }
+        this.gating.add(flowId);
+        try {
+          const result = await runStageGate(this.d.root, this.d.store, this.d.config, flowId);
+          this.d.onGate?.(result);
+        }
+        finally { this.gating.delete(flowId); this.notify(); }
+        return;
+      }
       if (force && flow.stage_status === 'needs_human') {
         await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'gate_rerun', actor: 'human' });
       } else {

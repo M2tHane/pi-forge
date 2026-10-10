@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/knowledge.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/knowledge.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第二轮 B + C 验收：上游 handoff 传给下游；项目级知识库的写入、注入、候选、废弃、提升为规则与完整性。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,14 +30,14 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
   const p = await setupProject({ yaml: YAML, tasks: [
     mkTask('T-001', { verify: ['test'] }),
     mkTask('T-002', { verify: [], deps: [{ task: 'T-001', type: 'hard', reason: '需要订单模型' }] }),
-    mkTask('T-003', { role: 'frontend-engineer', scopes: ['frontend'], writes: ['src/web/t-003/**'], verify: [] }),
+    mkTask('T-003', { role: 'researcher', scopes: ['research'], writes: ['docs/research/t-003/**'], verify: [] }),
   ] });
   try {
-    const settings = { version: 1 as const, roles: { 'backend-engineer': { model: 'f/m' }, 'frontend-engineer': { model: 'f/m' } } };
+    const settings = { version: 1 as const, roles: { worker: { model: 'f/m' }, researcher: { model: 'f/m' } } };
     const { engine, launcher, errors } = makeEngine(p, async (_role, nth, a) => {
       if (a.env.task === 'T-001') {
         if (nth === 1) {
-          const r = await a.call('forge_learn', { category: 'convention', content: LESSON, scopes: ['backend'] });
+          const r = await a.call('forge_learn', { category: 'convention', content: LESSON, scopes: ['code'] });
           assert.ok(r.ok, r.text);
           assert.ok(!(await a.call('forge_learn', { category: 'convention', content: `${LESSON}。` })).ok, '重复内容被拒');
           assert.ok(!(await a.call('forge_learn', { category: 'pitfall', content: '范围不存在的经验条目', scopes: ['nope'] })).ok, 'scope 不存在被拒');
@@ -49,7 +49,7 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
         return implement(a, 'src/server/t-001/a.ts', `订单模型已建好（第 ${nth} 次）`, nth === 1 ? 'FAIL\n' : 'x\n');
       }
       if (a.env.task === 'T-002') return implement(a, 'src/server/t-002/a.ts', '完成');
-      return implement(a, 'src/web/t-003/a.ts', '完成');
+      return implement(a, 'docs/research/t-003/a.md', '完成');
     }, settings);
     await engine.next(p.flowId);
     await engine.idle();
@@ -61,7 +61,7 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
     const specOf = (task: string) => launcher.launched.find((s) => s.env['PI_FORGE_TASK'] === task)!;
     const sys = (task: string) => readFileSync(specOf(task).appendSystemPromptFiles[0]!, 'utf8');
     // 同 scope 的后续任务看到知识；其他 scope 的看不到
-    assert.match(sys('T-002'), new RegExp(`K-001 \\[约定\\]（backend） ${LESSON}`));
+    assert.match(sys('T-002'), new RegExp(`K-001 \\[约定\\]（code） ${LESSON}`));
     assert.ok(!sys('T-003').includes(LESSON));
     // 下游看到上游 handoff
     assert.match(specOf('T-002').prompt, /## 上游任务的 handoff[\s\S]*T-001「任务 T-001」（硬依赖，已完成）[\s\S]*订单模型已建好（第 2 次）/);
@@ -85,14 +85,14 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
 
     // 提升为规则草案（主分支上提交），用户应用后条目标为已成为规则
     const r = await promoteToDraft(p.dir, p.store, p.config, ['K-001']);
-    assert.equal(r.file, 'docs/rules-draft/backend.md');
+    assert.equal(r.file, 'docs/rules-draft/global.md');
     const drafts = listDrafts(p.dir, 'main');
     assert.equal(drafts.length, 1);
-    assert.match(drafts[0]!.content, /handler 内不写业务逻辑[\s\S]*1\. 订单金额一律用整数分存储，避免浮点误差（来自知识 K-001）/);
+    assert.match(drafts[0]!.content, /完成定义：verify 全绿[\s\S]*1\. 订单金额一律用整数分存储，避免浮点误差（来自知识 K-001）/);
     assert.ok(selectKnowledge(p.store.readKnowledge(), t2).length === 1, '应用前仍作为知识注入');
     applyDrafts(p.dir, drafts, '知识库');
     assert.deepEqual(await markPromoted(p.store, drafts.map((d) => d.file)), ['K-001']);
-    assert.match(readFileSync(path.join(p.dir, 'rules/backend.md'), 'utf8'), /来自知识 K-001/);
+    assert.match(readFileSync(path.join(p.dir, 'rules/global.md'), 'utf8'), /来自知识 K-001/);
     assert.deepEqual(selectKnowledge(p.store.readKnowledge(), t2), []);
 
     // 跨流程保留

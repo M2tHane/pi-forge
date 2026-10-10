@@ -1,4 +1,4 @@
-// 来源：pi-flow test/unit/test-adjust.test.ts @ 31f3f15
+// 改编自 pi-flow test/unit/test-adjust.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -25,7 +25,7 @@ test('可适配的已有测试：基线上已有、writes 之外的测试文件�
 });
 
 test('适配已有测试的开关：默认开；只读角色、只读任务、merge-fix 不适用；testing.adjust_tests: false 关闭', () => {
-  const t = (over: Partial<TaskFile>) => ({ kind: 'impl', role: 'backend-engineer', ...over }) as TaskFile;
+  const t = (over: Partial<TaskFile>) => ({ kind: 'impl', role: 'worker', ...over }) as TaskFile;
   const on = parseConfig(TEST_YAML);
   assert.equal(testAdjustEnabled(on, t({})), true);
   assert.equal(testAdjustEnabled(on, t({ kind: 'fix' })), true);

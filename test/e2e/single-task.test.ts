@@ -1,4 +1,4 @@
-// 来源：pi-flow test/e2e/single-task.test.ts @ 31f3f15
+// 改编自 pi-flow test/e2e/single-task.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // M3 验收：单任务闭环（fake-subagent 驱动真实的引擎、guard、工具、verify、状态存储）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 
 const allFake: RoleSettingsFile = { version: 1, roles: Object.fromEntries(
-  ['backend-engineer', 'frontend-engineer'].map((r) => [r, { model: 'fake/model', thinking: 'low' as const }])) };
+  ['worker'].map((r) => [r, { model: 'fake/model', thinking: 'low' as const }])) };
 
 const task1 = () => mkTask('T-001', { verify: ['typecheck', 'test'] });
 
@@ -50,7 +50,7 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
     assert.match(impl!.cwd, /\.worktrees\/B-001-T-001$/);
 
     const runs = p.store.listRuns();
-    assert.deepEqual(runs.map((r) => [r.role, r.outcome]), [['backend-engineer', 'submitted']]);
+    assert.deepEqual(runs.map((r) => [r.role, r.outcome]), [['worker', 'submitted']]);
     for (const r of runs) {
       assert.ok(r.ended_at && r.tokens.input! > 0 && r.tokens.output! > 0 && r.model === 'fake/model');
       assert.equal(r.token_hash.length, 64);
@@ -175,7 +175,7 @@ test('失败达上限转 blocked，不再派发；同样的原因连续失败两
     assert.equal(t.status, 'blocked');
     assert.equal(t.attempts, 3);
     assert.match(t.blocked_reason ?? '', /失败次数达到上限 3/);
-    assert.equal(launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'backend-engineer').length, 3);
+    assert.equal(launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'worker').length, 3);
   } finally { p.cleanup(); }
   const q = await setupProject({ tasks: [task1()] });
   try {

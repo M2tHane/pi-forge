@@ -165,6 +165,11 @@ test('architect：只能写规划产物，不能写实现代码或规格需求',
     blocked(checkToolCall(call('write', { path: file, content: '' }), c), 'write_paths');
   }
   blocked(checkToolCall(call('read', { path: '.forge/state.json' }), c), 'read_paths');
+  // 只读档位 bash 不能 rm / mv，但拒绝时告诉它可行的做法（偏离 86）
+  for (const cmd of ['rm docs/contracts/errors/a.yaml', 'mv docs/contracts/errors/a.yaml docs/contracts/errors/common.yaml', 'git mv a b', 'git rm -q a']) {
+    blocked(checkToolCall(bash(cmd), c), 'bash', /把不要的旧文件内容清空/);
+  }
+  blocked(checkToolCall(bash('rm x'), ctx('reviewer')), 'bash', /只读角色不能执行该命令（rm）/);
 });
 
 test('test-author：角色验收 scope 与任务 writes 同时约束，只能写自己的测试和公共工具子目录', () => {

@@ -213,6 +213,9 @@ class Evaluator {
   }
   get isReadonlyRole() { return !this.isOrchestrator && this.role.writes.length === 0; }
 
+  /** 角色能用 write 工具写文件（只读档位 bash 的 architect 属于这种） */
+  canWriteFiles(): boolean { return !this.isOrchestrator && !this.isReadonlyRole && this.role.tools.has('write'); }
+
   hint(): string {
     if (this.isOrchestrator) {
       return this.ctx.readyTaskId
@@ -539,6 +542,10 @@ class BashChecker {
 
   private checkReadonly(name: string, args: Word[]): GuardDecision {
     const no = (why: string) => deny('bash', `只读角色不能执行该命令（${why}）。${this.ev.hint()}`);
+    // 有 write 工具的只读档位角色（architect）要删除或改名 writes 内的文件：给出可行的做法（偏离 86）
+    if ((name === 'rm' || name === 'mv' || name === 'git' && ['rm', 'mv'].includes(args.find((w) => !w.text.startsWith('-'))?.text ?? '')) && this.ev.canWriteFiles()) {
+      return deny('bash', `只读档位不能执行 ${name === 'git' ? 'git rm / git mv' : name}。要删除或改名 writes 内的文件：用 write 在新路径写入内容，把不要的旧文件内容清空（写入空字符串）。空文件在契约检查与提交时视为不存在。`);
+    }
     if (!READONLY_COMMANDS.has(name)) return no(name);
     const flags = args.map((w) => w.text);
     const positional = flags.filter((f) => !f.startsWith('-'));

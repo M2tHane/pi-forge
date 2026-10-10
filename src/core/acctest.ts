@@ -56,12 +56,12 @@ export interface ExportLayer { ref: string; files: string[] }
  * 导出基准（第 9.2 节第 1 条）：首个 .at 用集成分支 HEAD；.at-n 叠加 acc 分支上本 task 尚未合并的测试与任务分支追加的契约；
  * impl 已 done 时只用集成分支 HEAD。
  */
-export function exportLayers(root: string, config: FlowConfig, flowId: string, integration: string, task: Pick<TaskFile, 'for_task' | 'id'>, implDone: boolean): ExportLayer[] {
+export function exportLayers(root: string, config: FlowConfig, flowId: string, integration: string, task: Pick<TaskFile, 'for_task' | 'id'> & { writes?: readonly string[] }, implDone: boolean): ExportLayer[] {
   const impl = task.for_task ?? task.id;
   const layers: ExportLayer[] = [{ ref: integration, files: filesAt(root, integration, exportPatterns(config)) }];
   if (implDone) return layers;
   const acc = accBranch(flowId, impl);
-  if (branchExists(root, acc)) layers.push({ ref: acc, files: filesAt(root, acc, acctestDirs(impl)) });
+  if (branchExists(root, acc)) layers.push({ ref: acc, files: filesAt(root, acc, [...new Set([...acctestDirs(impl), ...(task.writes ?? [])])]) });
   const tb = taskBranch(flowId, impl);
   if (branchExists(root, tb)) {
     const contracts = git(root, ['diff', '--name-only', '--no-renames', '--diff-filter=AM', `${integration}...${tb}`, '--', 'docs/contracts']).split('\n').filter(Boolean);
@@ -123,9 +123,8 @@ export function scanAcCoverage(files: readonly { path: string; content: string }
 
 export interface AcctestSubmitCheck { outside: string[]; missing: string[]; unknown: string[] }
 
-/** 提交检查（纯函数）：改动只能在本 task 的测试目录；task 的每条 AC 至少有一个带编号的测试；未知编号只提醒 */
-export function checkAcctestSubmit(changed: readonly string[], impl: string, ac: readonly string[], coverage: ReadonlyMap<string, string[]>): AcctestSubmitCheck {
-  const dirs = acctestDirs(impl);
+/** 提交检查（纯函数）：改动只能在本 task 的测试目录（dirs 默认 acctestDirs，即 task 的 writes）；task 的每条 AC 至少有一个带编号的测试；未知编号只提醒 */
+export function checkAcctestSubmit(changed: readonly string[], impl: string, ac: readonly string[], coverage: ReadonlyMap<string, string[]>, dirs: readonly string[] = acctestDirs(impl)): AcctestSubmitCheck {
   return {
     outside: changed.filter((f) => !matchesAny(f, dirs)),
     missing: ac.filter((a) => !coverage.has(a)),
@@ -164,8 +163,9 @@ export async function acceptanceList(config: FlowConfig, ws: string, impl: strin
  * 把隔离工作区里本 task 测试目录的改动作为补丁应用到主仓库的 acc 分支（第 9.2 节第 4 条）。
  * 分支不存在、或 impl 已 done（测试单独合并，基准只有集成分支）时从集成分支 HEAD 重建。返回 acc 分支的新提交；没有改动时返回 null。
  */
-export function applyToAccBranch(root: string, ws: string, base: string, flowId: string, taskId: string, impl: string, integration: string, implDone: boolean): string | null {
-  const dirs = [`tests/acceptance/${impl}`, `tests/acceptance/_support/${impl}`];
+export function applyToAccBranch(root: string, ws: string, base: string, flowId: string, taskId: string, impl: string, integration: string, implDone: boolean, writes: readonly string[] = acctestDirs(impl)): string | null {
+  // 目录取自 task 的 writes（tests/acceptance/<x>/** → tests/acceptance/<x>）；改旧流程测试的一轮会多出旧目录（偏离 90）
+  const dirs = writes.map((w) => w.replace(/\/\*\*$/, ''));
   const patch = execFileSync('git', ['diff', '--binary', '--no-renames', base, 'HEAD', '--', ...dirs], { cwd: ws, maxBuffer: 256 * 1024 * 1024 });
   if (!patch.length) return null;
   const branch = accBranch(flowId, impl);

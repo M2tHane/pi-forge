@@ -152,3 +152,32 @@ test('第 9.4 节：合并时别的 task 的验收测试失败 → 为它建 .at
     assert.deepEqual([fix.status, fix.acctest_round?.kind, fix.acctest_round?.from_task], ['done', 'foreign', 'T-001']);
   } finally { p.cleanup(); }
 });
+
+test('偏离 90：合并时此前流程留下的验收测试失败（目录不属于本流程）→ 给本 task 建一轮 legacy .at-n 按新需求改旧测试，改完再合并、不计失败', async () => {
+  const p = await setupProject({ yaml: YAML.replace(/  test:      ".*"/, '  test:      "true"'), files: {
+    ...FILES,
+    // 此前流程（例如 B-001 的 T-009）留在主分支上的验收测试：T-001 的实现落地后它就失败
+    'tests/acceptance/T-009/old.test.ts': "test('[REQ-001.AC1] BRITTLE 旧行为', () => {});\n",
+  }, tasks: [mkTask('T-001', { ac: ['REQ-001.AC1'] }), at('T-001')] });
+  const e = engineEnv(p, async (role, _nth, a) => {
+    const id = a.env.task;
+    await a.call('forge_claim');
+    if (role === 'worker') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n' }); return submitWork(a, `${id} 完成`); }
+    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': "test('[REQ-001.AC1] ok', () => {});\n" }); return submitWork(a, 'AC1'); }
+    const t = p.store.readTask(p.flowId, id);
+    assert.equal(t.acctest_round?.kind, 'legacy');
+    assert.ok(t.writes.includes('tests/acceptance/T-009/**'), t.writes.join());
+    assert.match(p.store.readHandoff(p.flowId, id), /旧的验收测试与本次需求冲突[\s\S]*FAIL tests\/acceptance\/T-009\/old\.test\.ts/);
+    await writeFiles(a, { 'tests/acceptance/T-009/old.test.ts': "test('[REQ-001.AC1] 按新需求调整', () => {});\n" });
+    await submitWork(a, '旧测试按新需求调整');
+  });
+  try {
+    await drive(e, p.flowId, 20);
+    assert.deepEqual(e.errors, []);
+    const t1 = p.store.readTask(p.flowId, 'T-001');
+    assert.equal(t1.status, 'done');
+    assert.equal(t1.merge_failures ?? 0, 0, '不计入当前 task 的失败');
+    assert.ok(p.store.readEvents().some((ev) => ev.task === 'T-001' && ev.trigger === 'foreign_tests_broken'));
+    assert.doesNotMatch(p.git('show', `${p.store.readFlow(p.flowId).integration_branch}:tests/acceptance/T-009/old.test.ts`), /BRITTLE/);
+  } finally { p.cleanup(); }
+});

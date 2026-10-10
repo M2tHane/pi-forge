@@ -174,7 +174,8 @@
             "foreign",
             "decide",
             "coverage",
-            "change"
+            "change",
+            "legacy"
           ]
         },
         "test": {

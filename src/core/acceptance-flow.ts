@@ -10,6 +10,7 @@ import { headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { resourceOptions, withResources } from './resources.ts';
 import { prepareWorkspaceRecorded } from './workspace.ts';
+import { isSettled } from './state-machine.ts';
 
 const roundOf = (id: string) => Number(/\.at-(\d+)$/.exec(id)?.[1] ?? 1);
 
@@ -192,9 +193,10 @@ export async function handleForeignBreak(root: string, store: StateStore, flowId
   const cur = store.readTask(flowId, t.id);
   const contracts = cur.worktree && cur.base_sha && gitOk(cur.worktree, ['rev-parse', '--verify', '-q', 'HEAD'])
     ? git(cur.worktree, ['diff', cur.base_sha, 'HEAD', '--', 'docs/contracts']).slice(0, 6000) : '';
+  const legacy: string[] = [];
   for (const impl of dirs) {
     const tasks = store.listTasks(flowId);
-    if (!tasks.some((x) => x.id === impl)) continue;
+    if (!tasks.some((x) => x.id === impl)) { legacy.push(impl); continue; }
     const pending = latestAcctest(tasks, impl);
     if (pending && pending.status !== 'done' && pending.acctest_round?.kind === 'foreign') { created.push(pending.id); continue; }
     const at = await createAcctestRound(store, flowId, impl, { kind: 'foreign', from_task: t.id }, [
@@ -205,6 +207,34 @@ export async function handleForeignBreak(root: string, store: StateStore, flowId
     ].filter(Boolean).join('\n\n'), actor);
     created.push(at.id);
   }
+  // 此前流程留下的验收测试（目录不属于本流程的任何 task，偏离 90）：由本 task 的 test-author 按最新规格改旧测试里与新需求冲突的断言
+  const impl = cur.for_task ?? cur.id;
+  if (legacy.length && store.listTasks(flowId).some((x) => x.id === impl)) {
+    const tasks = store.listTasks(flowId);
+    const open = tasks.find((x) => x.kind === 'acctest' && x.for_task === impl && x.acctest_round?.kind === 'legacy' && !isSettled(x));
+    if (open) created.push(open.id);
+    else {
+      const input: TaskInput = {
+        ...acctestRoundInput(tasks, store.readFlow(flowId).stage, impl, { kind: 'legacy', from_task: t.id }),
+        // 不等本 task 还没开始的 .at（S0 的 .at 硬依赖 impl 合入），否则互等；不要求覆盖本 task 的 AC（只改旧测试）
+        depends_on: [], ac: [],
+        writes: [...acctestDirs(impl), ...legacy.map((d) => `tests/acceptance/${d}/**`)],
+        title: `按新需求调整旧验收测试：${legacy.join('、')}`,
+      };
+      const [at] = await store.addTasks(flowId, [input], actor);
+      await store.appendHandoff(flowId, input.id, [
+        `# 旧的验收测试与本次需求冲突：${legacy.map((d) => `tests/acceptance/${d}/`).join('、')}`,
+        `这些测试来自此前的流程。${t.id} 按本流程的增量规格（docs/spec/features/）改了行为，合并验证时它们失败了。`,
+        '对照基线规格与增量规格，只改与新需求冲突的断言（新需求明确改变了的状态码、字段、列表内容等），其余断言保持不变，不要删用例。',
+        `如果失败与新需求无关（是 ${t.id} 引入的回归），不要改测试，用 forge_block 写明是哪条断言、为什么属于回归。`,
+        `失败输出：\n${failureSummary(output, 3000)}`,
+        contracts ? `${t.id} 对契约的改动：\n${contracts}` : '',
+      ].filter(Boolean).join('\n\n'), actor);
+      created.push(at!.id);
+    }
+  }
+  // 一个负责的 task 都没有：不转移（调用方按本 task 的合并验证失败处理）
+  if (!created.length) return created;
   await store.transitionTask(flowId, t.id, { to: 'awaiting_inputs', trigger: 'foreign_tests_broken', actor,
     facts: { foreign_acceptance_failed: true, waits_for: created, reason: `等 ${created.join('、')} 修好被破坏的验收测试` } });
   return created;

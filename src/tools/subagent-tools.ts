@@ -117,14 +117,15 @@ async function submitAcctest(ctx: ToolContext, t: TaskFile, summary: string): Pr
   const base = t.base_sha!;
   const impl = t.for_task ?? t.id;
   const flow = ctx.store.readFlow(ctx.env.flow);
-  cleanStrayUntracked(ws, acctestDirs(impl));
+  const dirs = t.writes.length ? t.writes : acctestDirs(impl);
+  cleanStrayUntracked(ws, dirs);
   snapshot(ws, `[${ctx.env.flow}/${t.id}] ${summary.split('\n')[0]}`);
   const changed = changedFiles(ws, base);
   const files = testFilesIn(ws, impl);
-  const check = checkAcctestSubmit(changed, impl, t.ac ?? [], scanAcCoverage(files));
+  const check = checkAcctestSubmit(changed, impl, t.ac ?? [], scanAcCoverage(files), dirs);
   if (check.outside.length) {
     revertOutside(ws, base, check.outside);
-    throw new FlowToolError(`只能改 ${acctestDirs(impl).join('、')}。程序已把这些越界改动还原：${check.outside.join('、')}。需要的辅助代码放进 tests/acceptance/_support/${impl}/ 后再提交。`);
+    throw new FlowToolError(`只能改 ${dirs.join('、')}。程序已把这些越界改动还原：${check.outside.join('、')}。需要的辅助代码放进 tests/acceptance/_support/${impl}/ 后再提交。`);
   }
   if (check.missing.length) {
     throw new FlowToolError(`这些 AC 还没有测试（测试名要以 AC 编号开头，例如 [${check.missing[0]}] …）：${check.missing.join('、')}。补上后再提交；确实无法自动验证的写进 handoff 并用 forge_block 说明。`);
@@ -136,7 +137,7 @@ async function submitAcctest(ctx: ToolContext, t: TaskFile, summary: string): Pr
   const implDone = implTask?.status === 'done';
   if (!(ctx.store.readHandoff(ctx.env.flow, t.id) ?? '').trim()) throw new FlowToolError('尚未写 handoff，请先调用 forge_note（覆盖了哪些 AC、规格没说清而没有断言的地方）。');
   if (implDone && !changed.length) throw new FlowToolError('实现已经合入，这一轮需要修改测试后单独合并；确实不需要改，用 forge_block 写明理由，交给用户决定。');
-  const sha = applyToAccBranch(ctx.env.root, ws, base, ctx.env.flow, t.id, impl, flow.integration_branch, implDone);
+  const sha = applyToAccBranch(ctx.env.root, ws, base, ctx.env.flow, t.id, impl, flow.integration_branch, implDone, dirs);
   const coverage = Object.fromEntries([...scanAcCoverage(files)].map(([k, v]) => [k, v]));
   await ctx.store.saveEvidence(ctx.env.flow, t.id, 'coverage.json', JSON.stringify({ ac: t.ac ?? [], coverage, unknown: check.unknown, acc_commit: sha }, null, 2), actor(ctx));
   if (check.unknown.length) await ctx.store.appendHandoff(ctx.env.flow, t.id, `测试名里出现了不属于本 task 的 AC 编号：${check.unknown.join('、')}`, 'forge-submit');

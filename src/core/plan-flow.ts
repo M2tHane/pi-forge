@@ -63,6 +63,19 @@ export interface P1Result {
 }
 
 /** 契约检查 + plan 校验 + 术语表只能追加；errors 为空才算通过 */
+/**
+ * 规划时已经用掉的 task 编号：本流程的 task，加上此前各流程的 task 与主分支 tests/acceptance/ 下的目录名。
+ * 验收测试目录全仓库共用，feature 流程的编号不能和以前的流程重复（偏离 89）；只取 T-xxx 的主编号。
+ */
+export function usedTaskIds(root: string, store: StateStore, flowId: string, config: FlowConfig): string[] {
+  const ids = new Set(store.listTasks(flowId).map((t) => t.id));
+  for (const f of store.listFlows()) if (f !== flowId) for (const t of store.listTasks(f)) ids.add(t.id.split('.')[0]!);
+  try {
+    for (const d of git(root, ['ls-tree', '-d', '--name-only', `${config.raw.main_branch}:tests/acceptance`]).split('\n')) if (/^T-\d+$/.test(d.trim())) ids.add(d.trim());
+  } catch { /* 主分支上还没有验收目录 */ }
+  return [...ids];
+}
+
 export function checkP1(root: string, src: Source, flow: FlowFile, existingTaskIds: readonly string[], config: FlowConfig): P1Result {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -142,7 +155,7 @@ export async function ensureArchitectTask(store: StateStore, config: FlowConfig,
   const p1 = all.filter((t) => t.stage === flow.stage);
   if (p1.some((t) => !isSettled(t))) return null;
   if (p1.length && !flow.plan_rework) return null;
-  const ids = all.map((t) => t.id);
+  const ids = usedTaskIds(root, store, flowId, config);
   const id = nextPlanTaskId(ids);
   const role = config.role('architect');
   const prev = p1.filter((t) => t.status === 'done').at(-1);
@@ -171,7 +184,7 @@ export function docPrecheck(root: string, store: StateStore, config: FlowConfig,
   if (task.kind === 'doc' && task.stage === ADOPT_STAGE) return adoptPrecheck(root, store.readFlow(flowId), task);
   if (task.kind !== 'doc' || task.stage !== P1_STAGE || !task.branch) return null;
   const flow = store.readFlow(flowId);
-  const r = checkP1(root, { root, ref: task.branch }, flow, store.listTasks(flowId).map((t) => t.id), config);
+  const r = checkP1(root, { root, ref: task.branch }, flow, usedTaskIds(root, store, flowId, config), config);
   const problems = [...r.errors, ...commandsDraftProblems(root, task.branch)];
   const proposal = proposalProblem(store, flowId, r.planText);
   if (proposal) problems.push(proposal);
@@ -181,7 +194,7 @@ export function docPrecheck(root: string, store: StateStore, config: FlowConfig,
 /** P1 闸门：集成分支上的契约、计划、草案都要通过，并且提交过计划提案 */
 export function p1GateProblems(root: string, store: StateStore, config: FlowConfig, flowId: string): string[] {
   const flow = store.readFlow(flowId);
-  const r = checkP1(root, { root, ref: flow.integration_branch }, flow, store.listTasks(flowId).map((t) => t.id), config);
+  const r = checkP1(root, { root, ref: flow.integration_branch }, flow, usedTaskIds(root, store, flowId, config), config);
   const problems = [...r.errors, ...commandsDraftProblems(root, flow.integration_branch)];
   const proposal = proposalProblem(store, flowId, r.planText);
   if (proposal) problems.push(proposal);
@@ -221,7 +234,7 @@ export function initialNotes(tasks: readonly TaskInput[], spec: ReturnType<typeo
 export async function materializePlan(root: string, store: StateStore, config: FlowConfig, flowId: string): Promise<string[]> {
   const flow = store.readFlow(flowId);
   if (flow.s_stages?.length) return [];
-  const r = checkP1(root, { root, ref: flow.integration_branch }, flow, store.listTasks(flowId).map((t) => t.id), config);
+  const r = checkP1(root, { root, ref: flow.integration_branch }, flow, usedTaskIds(root, store, flowId, config), config);
   const problems = [...r.errors, ...commandsDraftProblems(root, flow.integration_branch)];
   const proposal = proposalProblem(store, flowId, r.planText);
   if (proposal) problems.push(proposal);
@@ -245,7 +258,7 @@ export async function proposePlan(root: string, store: StateStore, config: FlowC
   input: { assumptions: PlanProposalInput['assumptions']; extras: PlanProposalInput['extras'] }, actor: string): Promise<{ ok: boolean; text: string }> {
   if (task.kind !== 'doc' || task.stage !== P1_STAGE || !task.worktree) return { ok: false, text: '只有 P1 的 architect task 可以提交计划。' };
   const flow = store.readFlow(flowId);
-  const r = checkP1(root, { dir: task.worktree }, flow, store.listTasks(flowId).map((t) => t.id), config);
+  const r = checkP1(root, { dir: task.worktree }, flow, usedTaskIds(root, store, flowId, config), config);
   if (r.errors.length || !r.check?.report || r.planText === null) {
     return { ok: false, text: `计划未通过校验（共 ${r.errors.length} 处），改了再提交：\n${r.errors.map((e) => `- ${e}`).join('\n')}${r.warnings.length ? `\n\n提醒：\n${r.warnings.map((w) => `- ${w}`).join('\n')}` : ''}` };
   }

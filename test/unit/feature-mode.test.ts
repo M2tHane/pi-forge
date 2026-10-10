@@ -10,7 +10,7 @@ import { lintSpec, effectiveSpec } from '../../src/core/spec.ts';
 import { FEATURES_DIR, featureFileName, featurePermissionSummary, featurePrecondition, formatPermissionChanges, lockedContractProblems, permissionChanges, readSpecAt, scopeSpecToFeature, submitFeatureSpec } from '../../src/core/feature-spec.ts';
 import { startFlow } from '../../src/core/stages.ts';
 import { runStageGate } from '../../src/core/gates.ts';
-import { architectBrief, checkP1 } from '../../src/core/plan-flow.ts';
+import { architectBrief, checkP1, usedTaskIds } from '../../src/core/plan-flow.ts';
 import { nextStep } from '../../src/core/context-injector.ts';
 import { flowSpec } from '../../src/tools/orchestrator-tools.ts';
 import { runFlowBuild, runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
@@ -246,4 +246,13 @@ test('/forge-add：交给主会话写 forge_spec_amend；没有流程、仍在 P
     await idle.store.transitionStage(idle.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
     assert.match(await runFlowCommand('add "x"', env(idle)), /当前没有进行中的流程/);
   } finally { idle.cleanup(); }
+});
+
+test('feature 流程的 task 编号避开此前流程的 task 与主分支 tests/acceptance/ 下的目录（验收目录全仓库共用，偏离 89）', async () => {
+  const p = await setupProject({ files: { ...BASELINE_FILES, 'tests/acceptance/T-007/a.test.ts': 'x\n', 'tests/acceptance/_support/h.ts': 'x\n' } });
+  try {
+    const ids = usedTaskIds(p.dir, p.store, p.flowId, p.config);
+    assert.ok(ids.includes('T-007'), ids.join());
+    assert.ok(!ids.includes('_support'));
+  } finally { p.cleanup(); }
 });

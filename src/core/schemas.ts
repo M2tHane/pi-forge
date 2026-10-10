@@ -175,7 +175,7 @@ export const TaskFile = Type.Object({
   for_task: Type.Optional(TaskId),
   /** 验收测试的返工轮次（.at-n，第 9.3–9.5 节）：争议、被别的 task 的契约追加破坏、用户裁决改测试 */
   acctest_round: Type.Optional(Type.Object({
-    kind: Type.Enum(['dispute', 'foreign', 'decide', 'coverage', 'change']),
+    kind: Type.Enum(['dispute', 'foreign', 'decide', 'coverage', 'change', 'legacy']),
     /** 争议的测试标识 */
     test: Type.Optional(Type.String()),
     /** 引发这一轮的 task（争议的 worker 或破坏测试的 task） */

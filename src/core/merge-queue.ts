@@ -413,6 +413,8 @@ export class MergeQueue {
     // test_author 为 false（偏离 81）：没有 test-author 修测试，破坏别人验收测试的按本 task 合并后验证失败处理
     if (kind !== 'foreign' || !this.config.testAuthor) return null;
     const waits = await handleForeignBreak(this.root, this.store, flowId, t, dirs, v.output ?? '', 'merge-queue');
+    // 找不到负责修测试的 task（偏离 90）：按本 task 的合并验证失败处理
+    if (!waits.length) return null;
     return { kind: 'verify_failed', task: t.id, reason: `别的 task 的验收测试被破坏，等 ${waits.join('、')} 修好` };
   }
 

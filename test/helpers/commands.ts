@@ -4,6 +4,7 @@ import type { CommandEnv } from '../../src/commands/forge.ts';
 import type { MergeHooks } from '../../src/core/merge-queue.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { ALL_FAKE, makeEngine, type RoleScript } from './engine.ts';
+import { formatStalls, stalls } from '../../src/core/waits.ts';
 import type { Project } from './project.ts';
 
 export const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
@@ -43,6 +44,9 @@ export async function drive(e: ReturnType<typeof makeEngine>, flowId: string, ro
     const before = e.launcher.launched.length;
     await e.engine.next(flowId);
     await e.engine.idle();
+    // 停滞（互相等待、等到 blocked / cancelled）立即失败，不等超时
+    const stalled = stalls(e.store.listTasks(flowId));
+    if (stalled.length) throw new Error(`drive 第 ${i + 1} 轮后出现停滞：${formatStalls(stalled)}`);
     if (e.launcher.launched.length === before && i > 2) break;
   }
 }

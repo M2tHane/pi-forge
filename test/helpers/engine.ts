@@ -27,7 +27,7 @@ export function makeEngine(p: Project, scripts: RoleScript, settings = ALL_FAKE,
     packageAgentsDir: AGENTS, subagentExtension: '/dev/null/subagent.ts',
     onError: (e) => errors.push(e), onMerge: (r) => merges.push(r), ...(mergeHooks ? { mergeHooks } : {}), ...extra,
   });
-  return { engine, launcher, errors, merges };
+  return { engine, launcher, errors, merges, store: p.store };
 }
 
 /** 模拟他人直接向某分支提交（不切换主工作区） */

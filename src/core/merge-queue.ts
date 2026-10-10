@@ -15,6 +15,7 @@ import { mergeContractThreeWay } from './contract-merge.ts';
 import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { testAdjustEnabled } from './test-adjust.ts';
+import { softDepsDone } from './waits.ts';
 import { cleanTreeOf, recordVerified, reusableRuns, reuseText } from './verify-cache.ts';
 import { resourceOptions, withResources } from './resources.ts';
 import { classifyAcceptanceFailure, failingAcceptanceDirs, handOffToFix, handleForeignBreak } from './acceptance-flow.ts';
@@ -87,8 +88,8 @@ export class MergeQueue {
     try {
       if (this.hooks.beforeMerge) await this.hooks.beforeMerge();
       const mq = this.store.readMergeQueue();
-      const head = mq.queue.find((e) => e.flow === flowId && this.store.readTask(e.flow, e.task).depends_on
-        .filter((d) => d.type === 'soft').every((d) => this.store.readTask(e.flow, d.task).status === 'done'));
+      const flowTasks = this.store.listTasks(flowId);
+      const head = mq.queue.find((e) => e.flow === flowId && softDepsDone(this.store.readTask(e.flow, e.task), flowTasks));
       if (mq.merging || !head) return null;
       const batch = head === mq.queue[0] ? await this.mergeBatch(flowId) : null;
       if (batch) return batch;
@@ -115,7 +116,7 @@ export class MergeQueue {
     for (const e of this.store.readMergeQueue().queue) {
       if (e.flow !== flowId || candidates.length >= limit) break;
       const t = tasks.find((x) => x.id === e.task);
-      if (!t || t.status !== 'queued_merge' || t.depends_on.some((d) => d.type === 'soft' && tasks.find((v) => v.id === d.task)?.status !== 'done') || t.sync_main || t.kind === 'merge-fix' || t.kind === 'acctest' || !t.worktree || !existsSync(t.worktree)) break;
+      if (!t || t.status !== 'queued_merge' || !softDepsDone(t, tasks) || t.sync_main || t.kind === 'merge-fix' || t.kind === 'acctest' || !t.worktree || !existsSync(t.worktree)) break;
       candidates.push(t);
     }
     if (candidates.length < 2) return null;

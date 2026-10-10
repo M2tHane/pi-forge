@@ -96,3 +96,34 @@ test('状态栏一行：流程、高层阶段、进度、进行中的任务、�
     assert.equal(statusLine(p.store, p.config), null);
   } finally { p.cleanup(); }
 });
+
+test('需要你处理：停滞按引擎的等待规则（偏离 72）报告——fix 的 impl 不等硬依赖它的 .at，即使 .at 已阻塞', async () => {
+  const at = mkTask('T-001.at', { kind: 'acctest', role: 'test-author', for_task: 'T-001', deps: [hard('T-001')] });
+  const p = await setupProject({ tasks: [mkTask('T-001'), at, mkTask('T-001.fx-1', { kind: 'fix', for_task: 'T-001' })] });
+  const force = (id: string, patch: Record<string, unknown>) => p.store.transaction((tx) => { tx.putTask(p.flowId, { ...tx.readTask(p.flowId, id), ...patch } as never); tx.event({ flow: p.flowId, task: id, actor: 't', type: 'note', reason: 'test' }); });
+  try {
+    await force('T-001', { status: 'done' });
+    await force('T-001.at', { status: 'blocked', blocked_by: 'agent', blocked_reason: '测试写不出来' });
+    await force('T-001.fx-1', { status: 'awaiting_inputs' });
+    const waits = () => actionsNeeded(p.store, p.config).filter((a) => /在等/.test(a.text));
+    assert.deepEqual(waits(), [], 'T-001.at 硬依赖 T-001：不是 fx-1 等的对象，不该报"在等它"');
+    await force('T-001', { status: 'in_progress' });
+    assert.deepEqual(waits(), [], 'T-001 没 done 时也一样');
+    // 软依赖已阻塞才是真的在等：要报，并给出 unblock 命令
+    await force('T-001.fx-1', { depends_on: [{ task: 'T-001.at', type: 'soft' }] });
+    const w = waits();
+    assert.equal(w.length, 1);
+    assert.match(w[0]!.text, /T-001\.fx-1 在等 T-001\.at，但 T-001\.at 已阻塞：测试写不出来/);
+    assert.equal(w[0]!.command, '/forge unblock T-001.at');
+  } finally { p.cleanup(); }
+});
+
+test('需要你处理：互相等待报一项，建议先看等待关系', async () => {
+  const p = await setupProject({ tasks: [mkTask('T-001', { deps: [hard('T-002')] }), mkTask('T-002', { deps: [hard('T-001')] })] });
+  try {
+    const a = actionsNeeded(p.store, p.config).filter((x) => /互相等待/.test(x.text));
+    assert.equal(a.length, 1);
+    assert.match(a[0]!.text, /T-001、T-002 互相等待/);
+    assert.match(a[0]!.command, /forge-status --detail/);
+  } finally { p.cleanup(); }
+});

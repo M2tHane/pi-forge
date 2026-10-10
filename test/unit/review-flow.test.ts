@@ -198,6 +198,21 @@ test('推导：S 且没有追加契约不审查；risk=high 是 strong，审查�
   } finally { p.cleanup(); }
 });
 
+test('精简模式不做逐任务审查（strong 的也不做），由阶段审查负责（偏离 84）', async () => {
+  const p = await setupProject({ yaml: YAML, files: FILES, stages: ['S1'], tasks: [derived('T-002', { stage: 'S1', size: 'M', risk: 'high' })] });
+  await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }], 'lean');
+  const e = makeEngine(p, async (role, _nth, a) => {
+    if (role === 'worker') return implement(a, 't-002', 'export const a = 1;\n');
+    await a.call('forge_review_report', { verdict: 'pass', issues: [] });
+  }, SETTINGS);
+  try {
+    await drive(p, e);
+    assert.deepEqual(e.errors, []);
+    assert.equal(p.store.readTask(p.flowId, 'T-002').status, 'done');
+    assert.equal(p.store.listTasks(p.flowId).some((t) => t.id === 'T-002.rv'), false);
+  } finally { p.cleanup(); }
+});
+
 test('审查者调用 forge_block：原 task 一并阻塞，等用户处理', async () => {
   const p = await setupProject({ yaml: YAML, files: FILES, tasks: [mkTask('T-001', { review: 'auto' })] });
   const e = makeEngine(p, async (role, _nth, a) => {

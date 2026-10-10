@@ -64,7 +64,9 @@ export function decideReview(store: StateStore, config: FlowConfig, flowId: stri
     const left = unresolvedAfter(store, flowId, prior.id);
     return left && left.length === 0 ? 'skip' : prior.review ?? 'auto';
   }
-  return reviewMode(t, tasks, reviewPolicy(config), appendedContracts(t));
+  // 精简模式不做逐任务审查，改为阶段审查（第 7.6 节；workflow.yaml 的 review.per_task 注释"精简模式自动为 false"，偏离 84）
+  const policy = store.readFlow(flowId).plan_mode === 'lean' ? { ...reviewPolicy(config), perTask: false } : reviewPolicy(config);
+  return reviewMode(t, tasks, policy, appendedContracts(t));
 }
 
 function showAt(wt: string, rel: string): string {

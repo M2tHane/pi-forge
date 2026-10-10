@@ -3,7 +3,7 @@
 记录已核实的事实（版本、Pi API）、偏离规格（`docs/BUILD_PROMPT.md`）的决定、真实模型实验的结论。实现细节以代码与测试为准，这里只写"为什么这样做"。
 偏离记录的编号不变；新增条目往后追加，一条 1–3 行，被后来的条目修订时注明。代码注释里的"第 N 条"在 M0 迁入的文件中指 pi-flow `NOTES.md` 的编号，改编时逐步换成本文的编号。
 
-目录：[已验证版本](#已验证版本) · [Pi API（已核实）](#pi-api已核实) · [待确认与已知局限](#待确认与已知局限) · [偏离记录](#偏离记录)（第 1–79 条，按里程碑 M0–M8.5 分组） · [M1 删除、由 Mx 重建](#m1-删除由-mx-重建) · [M2 删除按层角色](#m2-删除按层角色) · [真实模型实验](#真实模型实验) · [缓存提醒](#缓存提醒)。用户文档见 `README.md`，流程图见 `docs/flow.md`。
+目录：[已验证版本](#已验证版本) · [Pi API（已核实）](#pi-api已核实) · [待确认与已知局限](#待确认与已知局限) · [偏离记录](#偏离记录)（第 1–80 条，按里程碑 M0–M8.5 分组） · [M1 删除、由 Mx 重建](#m1-删除由-mx-重建) · [M2 删除按层角色](#m2-删除按层角色) · [真实模型实验](#真实模型实验) · [缓存提醒](#缓存提醒)。用户文档见 `README.md`，流程图见 `docs/flow.md`。
 
 ## 已验证版本
 
@@ -65,8 +65,9 @@
 - M6 的 e2e（`test/e2e/stage-acceptance.test.ts`）只写了，没有运行。旧的 `test/e2e/gates.test.ts` 按模块生成 `T-NNN` 修复任务；现在改为按 task 生成 `.fx-n`，需要在统一 e2e 时更新。测试项目的 `PROJECT_YAML` 默认 `qa: false`，M6 的测试显式打开。
 - 阶段被打回（stage_reopened）后，再跑 stage-qa 与阶段审查时，旧的轮次仍计入 `qa.max_rounds` 和 `review.max_rounds`。M7 没有处理，留作已知局限：签收被打回后，用户可以用 `/forge accept` 放行。
 - M7 的 e2e（`change-request`、`fix`）只写了，没有运行。没有为 feature 和 adopt 写 e2e，它们由单元测试覆盖。提示词已按用户决定在 M8 补上 `modifies`、adopt 与 feature 的写法（见缓存提醒 10-10）。
-- 契约追加检查有两层（提交时、预检时）。e2e 只走得到提交那一层，预检那一层由单元测试 `test/unit/precheck.test.ts` 覆盖（M8.5 消融）。
-- M8.5 未覆盖：merge-fix 与 `.fx` 的 install 失败路径没有 e2e；S0 没有清单时跳过 install，由 worker 自己装。
+- 契约追加检查有两层（提交时、预检时）。e2e 只走得到提交那一层，预检那一层由单元测试 `test/unit/precheck.test.ts` 覆盖（M8.5 消融）。M9 之后如果只保留预检那一层：先给预检那一层补 e2e，再删提交时那一层，顺序不能反。
+- merge-fix 与 `.fx` 的 install 失败路径没有 e2e（用户确认先不补）：失败原因会写进 handoff，问题看得见。
+- 验收测试的隔离工作区按只读处理，用硬链接缓存。test-author 的 bash 只能跑验收命令，不会改依赖。剩下的风险是测试工具往依赖目录里写缓存：新建文件没问题，原地改已有文件会污染共享缓存。M9 期间遇到无法解释的依赖错误时，先怀疑这一点。
 - 变更请求的 `cancelled` 状态在 store 里有（`StateStore.cancelChange`），但没有接命令，也没有调用者（M8 文档阶段核对：仍然如此）。
 - 流程图按用户要求延后（含 drawio）：`docs/flow.md` 是 M8 subagent 写的 mermaid 草稿，未审阅，之后再整理。
 - 工作流视图（`scripts/forge-view.*`）按用户要求延后：M8 subagent 的改编已合入，只做过渲染冒烟（能打开、无脚本错误），界面与数据未审阅，之后再整理。
@@ -164,6 +165,7 @@
 77. "任务在等谁"收成一处（F4，`src/core/waits.ts`）：dispatcher、state-store、合并队列、status-view 共用 `waitsOn`/`softDepsDone`/`awaitedAcctestDone`；`stalls` 找出环、等待已阻塞或已取消的任务。status-view 报停滞，doctor 按 `actionableStalls`（不含等待 pending 的情况）报错。
 78. 预检与合并后验证失败时，失败信息列出任务 writes 之外被改的文件，并提示用 `forge_request_scope`（F7 第 1 步，`src/core/scope-hint.ts`）。`tests/acceptance`、`docs/spec`、`docs/contracts` 不提示（不能申请）。F7 第 2 步（快用完时生成修复任务而不是阻塞）留到 M9 之后。
 79. stage-qa 也用隔离工作区规则（`isolatedWorkspace`）；隔离模式下 bash 的任何参数引用主工作区路径（带边界匹配）直接拒绝。补上了"已知局限"里 full bash 写主工作区绝对路径的缺口，e2e 断言写入被拦且文件不存在。
+80. 有 install 命令、但工作区里还没有依赖清单时，派发跳过 install，并在任务的 handoff（用户消息，不进系统提示前缀）里提示 worker：建好依赖清单后自己运行 install，再跑测试。
 
 ## M1 删除、由 Mx 重建
 

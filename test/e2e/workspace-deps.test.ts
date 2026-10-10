@@ -50,6 +50,27 @@ test('(a) 门禁：任务 worktree 在派发时装好依赖（worker 不用自�
   } finally { p.cleanup(); }
 });
 
+test('(a0) 还没有依赖清单（S0 之前）：不 install，任务说明提示 worker 建好清单后自己运行 install', async () => {
+  const yaml = withDeps(PROJECT_YAML, 'true').replace(/^  coverage: true/m, '  coverage: false');
+  const p = await setupProject({ yaml, files: { ...SPEC }, stages: ['S1'], tasks: [mkTask('T-001', { stage: 'S1', ac: ['REQ-001.AC1'] })] });
+  await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }], 'standard');
+  let prompt = '';
+  const e = engineEnv(p, async (_role, _n, a) => {
+    if (!prompt) prompt = a.spec.prompt;
+    await a.call('forge_claim');
+    const r = await a.call('bash', { command: 'test -f .deps-installed && echo HAS || echo MISSING' });
+    assert.match(r.text, /MISSING/, '没有清单时程序不 install');
+    await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n' });
+    return submitWork(a, '实现');
+  });
+  try {
+    await drive(e, p.flowId);
+    assert.deepEqual(e.errors, []);
+    assert.match(prompt, /项目还没有依赖清单[\s\S]*自己运行 install（`touch \.deps-installed`），再跑测试/);
+    assert.ok(prepared(p).some((x) => x.data!['skipped'] === true));
+  } finally { p.cleanup(); }
+});
+
 test('(a2) 门禁的工作区准备失败 → 不生成 fix，直接 needs_human 并带着原因', async () => {
   // 任务 worktree 的 install 能过，门禁的 install 失败（标记文件存在于主分支提交里则跳过失败：用"第二次起失败"模拟）
   const yaml = withDeps(PROJECT_YAML, 'true').replace('install:   "touch .deps-installed"', 'install:   "test ! -f ../install-ran-once && touch ../install-ran-once && touch .deps-installed"');

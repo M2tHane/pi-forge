@@ -34,6 +34,8 @@ test('test_author: false：worker 自己提交 src 与验收测试，预检跑�
     assert.equal(role, 'worker');
     assert.equal(a.env.task, 'T-001');
     assert.match(p.store.readTask(p.flowId, 'T-001').writes.join(), /tests\/acceptance\/T-001\/\*\*/);
+    const d = await a.call('forge_dispute', { test: 'tests/acceptance/T-001/a.test.ts', reason: 'x', evidence: 'docs/spec/requirements.md#REQ-001' });
+    assert.ok(!d.ok && /没有争议流程/.test(d.text), d.text);
     await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST });
     return submitWork(a, '实现并写验收测试');
   });

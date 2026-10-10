@@ -191,6 +191,7 @@ test('createCoverageGapRound：selfTest（test_author: false）给 impl 建 .fx-
     const t = p.store.readTask(p.flowId, 'T-001.fx-1');
     assert.deepEqual([t.kind, t.role, t.for_task, t.title, t.fork_from_task], ['fix', 'worker', 'T-001', '补齐 AC 编号的验收测试', 'T-001']);
     assert.ok(t.writes.includes('tests/acceptance/T-001/**'));
+    assert.ok(t.writes.includes('src/server/t-001/**'), '补测时也可以改实现：writes 同 impl');
     assert.deepEqual(t.ac, ['REQ-001.AC2']);
     assert.match(p.store.readHandoff(p.flowId, 'T-001.fx-1'), /补齐验收测试[\s\S]*REQ-001\.AC2：密码错误/);
     assert.ok(!p.store.listTasks(p.flowId).some((x) => x.kind === 'acctest'));

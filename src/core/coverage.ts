@@ -100,13 +100,13 @@ export async function createCoverageRounds(store: StateStore, flowId: string, ga
       const id = nextFixId(all, owner);
       const input: TaskInput = {
         id, stage: store.readFlow(flowId).stage, kind: 'fix', role: impl.role, scopes: [...impl.scopes], depends_on: [], inputs: [],
-        writes: [ownAcceptanceGlob(owner)], verify: [...impl.verify], for_task: owner, fork_from_task: lastWorkerTask(owner, all),
+        writes: [...new Set([...impl.writes, ownAcceptanceGlob(owner)])], verify: [...impl.verify], for_task: owner, fork_from_task: lastWorkerTask(owner, all),
         title: '补齐 AC 编号的验收测试', ac: rows.map((r) => r.ac),
         ...(impl.module ? { module: impl.module } : {}),
         ...(impl.layers?.length ? { layers: [...impl.layers] } : {}),
       };
       await store.addTasks(flowId, [input], actor);
-      await store.appendHandoff(flowId, id, ['## 补齐验收测试（程序生成）', '', `下面这些 AC 在 tests/acceptance/${owner}/ 里还没有带编号的测试。请补充，测试名里带 \`[REQ-xxx.ACn]\` 编号，只能写在 ${ownAcceptanceGlob(owner)}：`, '',
+      await store.appendHandoff(flowId, id, ['## 补齐验收测试（程序生成）', '', `下面这些 AC 在 tests/acceptance/${owner}/ 里还没有带编号的测试。请补充，测试名里带 \`[REQ-xxx.ACn]\` 编号，写在 ${ownAcceptanceGlob(owner)}；测试暴露出实现缺漏时也可以改实现：`, '',
         ...rows.map((r) => `- ${r.ac}${r.text ? `：${r.text}` : ''}`)].join('\n'), actor);
       tasks.push(id);
       continue;

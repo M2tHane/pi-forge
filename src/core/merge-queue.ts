@@ -410,7 +410,8 @@ export class MergeQueue {
         facts: { post_verify_ok: false, failed_tests_own_directory: false, reason: `只合入验收测试，本目录之外的测试失败（${dirs.filter((d) => d !== impl).join('、')}），集成分支本身已坏：${v.reason}` } });
       return { kind: 'blocked', task: t.id, reason: v.reason };
     }
-    if (kind !== 'foreign') return null;
+    // test_author 为 false（偏离 81）：没有 test-author 修测试，破坏别人验收测试的按本 task 合并后验证失败处理
+    if (kind !== 'foreign' || !this.config.testAuthor) return null;
     const waits = await handleForeignBreak(this.root, this.store, flowId, t, dirs, v.output ?? '', 'merge-queue');
     return { kind: 'verify_failed', task: t.id, reason: `别的 task 的验收测试被破坏，等 ${waits.join('、')} 修好` };
   }

@@ -32,6 +32,7 @@ import { SyncParams, flowSync } from './module-tools.ts';
 import { proposePlan } from '../core/plan-flow.ts';
 import { ChangeError, changeOfTask, proposeChange, requestChange } from '../core/change-flow.ts';
 import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/review.ts';
+import { writesOwnAcceptance } from '../core/paths.ts';
 import { REVIEW_FILES, SUGGESTIONS_PATH, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/review-flow.ts';
 import { QA_FILES } from '../core/stage-qa.ts';
 
@@ -240,6 +241,7 @@ export const DisputeParams = Type.Object({
 export async function flowDispute(ctx: ToolContext, p: Static<typeof DisputeParams>): Promise<ToolResult> {
   const t = checkRun(ctx);
   if (t.status !== 'in_progress' || !t.worktree) throw new FlowToolError(`任务当前是 ${t.status}，不能提出争议。`);
+  if (writesOwnAcceptance(t)) throw new FlowToolError('本任务的验收测试由你自己编写，没有争议流程：测试写错了直接修改测试。');
   const impl = t.for_task ?? t.id;
   const test = p.test.trim();
   const ownTest = test.startsWith(`tests/acceptance/${impl}/`) ? existsSync(path.join(t.worktree, test)) : (t.ac ?? []).some((a) => test.includes(a));

@@ -168,6 +168,8 @@ test('派生 task：impl 归 worker，S0 多两个验收目录；.at 归 test-au
   const softOnly = deriveAcctest({ id: 'T-009', stage: 'S2', title: 'x', depends_on: [{ task: 'T-003', type: 'soft' }], ac: [], test_interface: [] }, ['acctest']);
   assert.deepEqual(softOnly.depends_on, [], '软依赖不影响 .at 就绪');
   assert.deepEqual(deriveTasks(plan, r.deps, { worker: ['code'], testAuthor: ['acctest'] }, { acctest: false }).map((x) => x.id), ['T-002', 'T-003']);
+  const withVerify = deriveTasks(plan, r.deps, { worker: ['code'], testAuthor: ['acctest'] }, { acctest: true, verify: ['typecheck', 'test'] });
+  assert.deepEqual(withVerify.map((x) => [x.id, x.verify]), [['T-002', ['typecheck', 'test']], ['T-002.at', []], ['T-003', ['typecheck', 'test']], ['T-003.at', []]], 'impl 合并时跑全量，.at 不跑');
 });
 
 test('plan.yaml：YAML 语法错误与形状错误', () => {

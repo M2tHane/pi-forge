@@ -255,13 +255,14 @@ export function deriveAcctest(impl: Pick<TaskInput, 'id' | 'stage' | 'title' | '
 }
 
 /** 计划批准时生成的 task：每个 plan task 一个 impl（worker），以及它的 .at（test-author） */
-export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['depends_on']>, scopes: { worker: string[]; testAuthor: string[] }, opts: { acctest: boolean }): TaskInput[] {
+export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['depends_on']>, scopes: { worker: string[]; testAuthor: string[] }, opts: { acctest: boolean; verify?: string[] }): TaskInput[] {
   const out: TaskInput[] = [];
   for (const t of plan.tasks) {
     const impl: TaskInput = {
       id: t.id, stage: t.stage, kind: 'impl', role: 'worker', title: t.title, scopes: [...scopes.worker],
       depends_on: (deps.get(t.id) ?? []).map((d) => ({ ...d })), inputs: [],
-      writes: [...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : [])], verify: [],
+      // verify 非空的任务合并时跑全量 typecheck、lint、test（merge-queue）
+      writes: [...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : [])], verify: [...(opts.verify ?? [])],
       module: t.module, size: t.size, layers: [...t.layers], ac: [...t.ac], produces: [...t.produces], requires: [...t.requires],
       test_interface: [...t.test_interface],
       ...(t.shared?.length ? { shared: [...t.shared] } : {}),

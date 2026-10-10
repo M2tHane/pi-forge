@@ -1,5 +1,6 @@
 // 来源：pi-flow src/core/status-view.ts @ 31f3f15（M1 改编）
 // 用户界面只显示规格、契约与计划、实施、交付；内部状态保留在 --detail。
+import { latestAcctest } from './acceptance-flow.ts';
 import { specStatus, amendSummary } from './spec-flow.ts';
 import { planStatus } from './plan-flow.ts';
 import type { FlowConfig } from './config.ts';
@@ -49,10 +50,15 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
     if (flow.stage_status === 'active' && gate?.to === 'active' && gate.data?.['stage'] === flow.stage && !tasks.some((t) => t.stage === flow.stage && !['done', 'cancelled'].includes(t.status))) out.push({ key: `${flow.id}:gatefail:${gate.seq}`, text: `阶段检查未通过：${short(gate.reason ?? '')}`, command: '处理后执行 /forge gate 重跑' });
     for (const t of tasks.filter(awaitingReview)) out.push({ key: `${flow.id}:timeout:${t.id}:${t.timeout_review!.run}`, text: `${t.id} 运行超时，等主会话复核`, command: '主会话调用 forge_resolve_timeout；查看材料：/forge-status --detail' });
     for (const t of tasks.filter((x) => x.scope_request)) out.push({ key: `${flow.id}:scope:${t.id}:${t.scope_request!.at}`, text: `${t.id} 申请扩大可写范围：${t.scope_request!.paths.join('、')}`, command: '主会话调用 forge_resolve_scope；查看材料：/forge-status --detail' });
-    for (const t of tasks.filter((x) => x.status === 'blocked')) out.push({ key: `${flow.id}:blocked:${t.id}:${t.version}`, text: `${t.id}「${short(t.title, 40)}」阻塞：${short(t.blocked_reason ?? '')}`, command: `/forge answer ${t.id}` });
+    for (const t of tasks.filter((x) => x.status === 'blocked')) {
+      const command = t.blocked_by === 'dispute' ? `/forge-decide ${t.id} keep-test 或 /forge-decide ${t.id} fix-test "<说明>"`
+        : t.blocked_by === 'integration_broken' ? '集成分支本身已坏：修好后 /forge unblock ' + t.id
+        : `/forge answer ${t.id}`;
+      out.push({ key: `${flow.id}:blocked:${t.id}:${t.version}`, text: `${t.id}「${short(t.title, 40)}」阻塞：${short(t.blocked_reason ?? '')}`, command });
+    }
     for (const t of tasks.filter((x) => x.status === 'awaiting_inputs')) {
-      const latest = tasks.filter((a) => a.kind === 'acctest' && a.for_task === (t.for_task ?? t.id)).sort((a, b) => Number(a.id.match(/\.at-(\d+)$/)?.[1] ?? 1) - Number(b.id.match(/\.at-(\d+)$/)?.[1] ?? 1)).at(-1);
-      const deps = tasks.filter((a) => a.status === 'blocked' && (a.id === latest?.id || t.depends_on.some((d) => d.type === 'soft' && d.task === a.id)));
+      const latest = latestAcctest(tasks, t.for_task ?? t.id);
+      const deps = tasks.filter((a) => a.status === 'blocked' && (a.id === latest?.id || (t.waits_for ?? []).includes(a.id) || t.depends_on.some((d) => d.type === 'soft' && d.task === a.id)));
       for (const dep of deps) out.push({ key: `${flow.id}:inputs:${t.id}:${dep.id}:${dep.version}`, text: `${t.id} 在等 ${dep.id}；${dep.id} 已阻塞：${short(dep.blocked_reason ?? '')}`, command: `/forge unblock ${dep.id}` });
     }
     const stuck = stuckTasks(flow, tasks);

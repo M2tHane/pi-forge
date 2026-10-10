@@ -2,6 +2,15 @@
 // subagent 使用的 forge_* 工具：forge_claim、forge_note、forge_submit、forge_block、forge_learn、notes、history，
 // forge_sync 的共用同步实现见 module-tools.ts；旧验收与审查入口已删除。
 // 纯业务实现，不依赖 Pi；由 pi-adapter 注册为 Pi 工具，测试中由 fake-subagent 直接调用。run token 只来自环境变量，模型看不到也不需要传。
+import { listResources, resourceEnv } from '../core/resources.ts';
+import { acceptanceList, acctestDirs, applyToAccBranch, checkAcctestSubmit, revertOutside, scanAcCoverage, testFilesIn } from '../core/acctest.ts';
+import { failureSummary } from '../core/verify-runner.ts';
+import { withoutMergedAcceptance } from '../core/precheck.ts';
+import { existsSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import { checkoutAccWorktree, createAcctestRound, readIn, validateEvidence } from '../core/acceptance-flow.ts';
+import { readSpec } from '../core/spec-flow.ts';
+import { acTexts, effectiveSpec } from '../core/spec.ts';
 import { Type, type Static } from 'typebox';
 import type { StateStore } from '../core/state-store.ts';
 import { KNOWLEDGE_CATEGORIES, type TaskFile } from '../core/schemas.ts';
@@ -65,18 +74,20 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   const t = checkRun(ctx);
   if (t.status !== 'in_progress') throw new FlowToolError(`任务当前是 ${t.status}，不能提交。`);
   if (!t.worktree || !t.base_sha) throw new FlowToolError('任务没有 worktree 或 base_sha，无法提交，请调用 forge_block 报告。');
+  if (t.kind === 'acctest') return submitAcctest(ctx, t, p.summary);
   const stray = cleanStrayUntracked(t.worktree, t.conflict_files ?? [...t.writes, ...(t.shared ?? []), ...(canAppendInterfaces(t) ? ['docs/contracts/**'] : [])]);
   if (stray.length) {
     await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交前程序清理了可写范围外、未被 git 跟踪的文件：${stray.slice(0, 20).join('、')}${stray.length > 20 ? ` 等 ${stray.length} 个` : ''}（多为测试或运行产生的数据；测试应把数据写到临时目录）`, 'forge-submit');
   }
   snapshot(t.worktree, `[${ctx.env.flow}/${t.id}] ${p.summary.split('\n')[0]}`);
-  const diff = changedFiles(t.worktree, t.base_sha);
+  // 预检时程序合入的验收测试（与 acc 分支一致）不算 worker 的改动
+  const diff = withoutMergedAcceptance(ctx.env.root, ctx.env.flow, t, changedFiles(t.worktree, t.base_sha));
   // 模块之间的接口文档只能追加：有删除行（含修改）的接口文档由状态机拒绝（自己可写范围内的除外）
   const rewrites = canAppendInterfaces(t) ? interfaceRewrites(t.worktree, t.base_sha).filter((f) => !t.writes.some((w) => f.startsWith(w.replace(/\*\*$/, '')))) : [];
   // 适配已有测试：writes 之外只修改过的已有测试文件不算越界，记在任务上（验收时一并检查）
   const adjusted = testAdjustEnabled(ctx.config, t) ? testAdjustments(t.worktree, t.base_sha, t.writes) : [];
   try {
-    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: t.kind === 'acctest' ? 'checking' : 'awaiting_inputs', trigger: 'submit', actor: actor(ctx),
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'awaiting_inputs', trigger: 'submit', actor: actor(ctx),
       facts: { token: ctx.env.token, diff_files: diff, interface_rewrites: rewrites, test_adjustments: adjusted } });
   } catch (e) {
     if (rewrites.length) rethrow(e, `接口文档只能追加。还原对已有内容的修改：git checkout ${t.base_sha} -- ${rewrites.join(' ')}，再只追加需要的调用；确需改已有接口时调用 forge_block 说明，由用户决定是否修订计划。`);
@@ -86,6 +97,53 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   if (adjusted.length) await ctx.store.appendHandoff(ctx.env.flow, t.id, `修改了可写范围外的已有测试（适配接口变化）：${adjusted.join('、')}`, 'forge-submit');
   await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交');
   return { text: `已提交合并（改动 ${diff.length} 个文件${stray.length ? `；已清理可写范围外、未被跟踪的文件 ${stray.length} 个：${stray.slice(0, 5).join('、')}` : ''}）。合并时程序会跑全量测试。你的工作已完成，请直接结束，不要再调用工具。`, details: { files: diff, cleaned: stray } };
+}
+
+/**
+ * test-author 提交（第 9.2 节第 4 条）：越界改动由程序还原并拒绝；acceptance_list 收集失败拒绝；task 的 AC 没有带编号的测试拒绝。
+ * 通过后把测试目录的改动应用到 acc 分支：impl 未 done 时以结论结束（测试随 impl 预检合入），已 done 时进入单独合并（第 9.5 节）。
+ */
+async function submitAcctest(ctx: ToolContext, t: TaskFile, summary: string): Promise<ToolResult> {
+  const ws = t.worktree!;
+  const base = t.base_sha!;
+  const impl = t.for_task ?? t.id;
+  const flow = ctx.store.readFlow(ctx.env.flow);
+  cleanStrayUntracked(ws, acctestDirs(impl));
+  snapshot(ws, `[${ctx.env.flow}/${t.id}] ${summary.split('\n')[0]}`);
+  const changed = changedFiles(ws, base);
+  const files = testFilesIn(ws, impl);
+  const check = checkAcctestSubmit(changed, impl, t.ac ?? [], scanAcCoverage(files));
+  if (check.outside.length) {
+    revertOutside(ws, base, check.outside);
+    throw new FlowToolError(`只能改 ${acctestDirs(impl).join('、')}。程序已把这些越界改动还原：${check.outside.join('、')}。需要的辅助代码放进 tests/acceptance/_support/${impl}/ 后再提交。`);
+  }
+  if (check.missing.length) {
+    throw new FlowToolError(`这些 AC 还没有测试（测试名要以 AC 编号开头，例如 [${check.missing[0]}] …）：${check.missing.join('、')}。补上后再提交；确实无法自动验证的写进 handoff 并用 forge_block 说明。`);
+  }
+  const res = listResources(ctx.env.root).find((e) => e.run === ctx.env.run);
+  const listed = await acceptanceList(ctx.config, ws, impl, res ? resourceEnv(res) : {});
+  if (listed && !listed.ok) throw new FlowToolError(`acceptance_list -- ${impl} 收集失败（语法或 import 错误），改好后再提交：\n${failureSummary(listed.output, 1500)}`);
+  const implTask = ctx.store.listTasks(ctx.env.flow).find((x) => x.id === impl);
+  const implDone = implTask?.status === 'done';
+  if (!(ctx.store.readHandoff(ctx.env.flow, t.id) ?? '').trim()) throw new FlowToolError('尚未写 handoff，请先调用 forge_note（覆盖了哪些 AC、规格没说清而没有断言的地方）。');
+  if (implDone && !changed.length) throw new FlowToolError('实现已经合入，这一轮需要修改测试后单独合并；确实不需要改，用 forge_block 写明理由，交给用户决定。');
+  const sha = applyToAccBranch(ctx.env.root, ws, base, ctx.env.flow, t.id, impl, flow.integration_branch, implDone);
+  const coverage = Object.fromEntries([...scanAcCoverage(files)].map(([k, v]) => [k, v]));
+  await ctx.store.saveEvidence(ctx.env.flow, t.id, 'coverage.json', JSON.stringify({ ac: t.ac ?? [], coverage, unknown: check.unknown, acc_commit: sha }, null, 2), actor(ctx));
+  if (check.unknown.length) await ctx.store.appendHandoff(ctx.env.flow, t.id, `测试名里出现了不属于本 task 的 AC 编号：${check.unknown.join('、')}`, 'forge-submit');
+  await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明：${summary}`, actor(ctx));
+  if (implDone && sha) {
+    // 单独合并（第 9.5 节）：acc 分支检出为普通 worktree，之后与普通 task 一样预检、rebase、合并验证
+    const acc = checkoutAccWorktree(ctx.env.root, ctx.env.flow, t);
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'checking', trigger: 'submit', actor: actor(ctx),
+      facts: { token: ctx.env.token, diff_files: changed }, patch: { worktree: acc.path, branch: acc.branch, base_sha: git(ctx.env.root, ['rev-parse', flow.integration_branch]).trim() } });
+  } else {
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'done', trigger: 'report', actor: actor(ctx),
+      facts: { token: ctx.env.token, diff_files: [], structured_report: true, acctest_changed_tests: sha !== null }, data: { acc_commit: sha, changed_tests: changed.length } });
+  }
+  rmSync(ws, { recursive: true, force: true });
+  await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交');
+  return { text: `已提交验收测试（${changed.length} 个文件，覆盖 ${(t.ac ?? []).length} 条 AC）。${implDone ? '实现已完成，程序会在已有实现上运行这些测试后单独合并。' : '测试会在实现提交后随它的预检一起运行。'}你的工作已完成，请直接结束，不要再调用工具。`, details: { files: changed } };
 }
 
 /** 相对基线删除或修改过已有行的接口文档 */
@@ -148,10 +206,64 @@ export async function flowService(ctx: ToolContext, p: Static<typeof ServicePara
   }
   const command = ctx.config.commands[p.name]!;
   if (opensGui(command.split(/\s+/).filter(Boolean), ctx.config.raw.gui_commands ?? [])) throw new FlowToolError(GUI_REASON);
-  const r = await startService({ name: p.name, command, cwd: t.worktree ?? ctx.env.root, scratch, ...(p.ready !== undefined ? { ready: p.ready } : {}), ...(p.timeout_s ? { timeoutS: p.timeout_s } : {}) });
+  // 第 4.1 节：服务拿到本次运行分配的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP
+  const res = listResources(ctx.env.root).find((e) => e.run === ctx.env.run);
+  const r = await startService({ name: p.name, command, cwd: t.worktree ?? ctx.env.root, scratch, ...(res ? { env: { ...process.env, ...resourceEnv(res) } } : {}),
+    ...(p.ready !== undefined ? { ready: p.ready } : {}), ...(p.timeout_s ? { timeoutS: p.timeout_s } : {}) });
   if (!r.ok) throw new FlowToolError(`${r.error}。${r.log ? `\n日志末尾：\n${r.log}` : ''}`);
   const state = r.ready === null ? '已启动（没给 ready，没等就绪）' : r.ready ? '已就绪' : `已启动，但 ${p.timeout_s ?? SERVICE_READY_MAX_S} 秒内没有就绪（仍在运行，可以用 logs 查看）`;
   return { text: `服务 ${p.name}（${command}）${state}，pid ${r.record.pid}。本次运行结束时程序会结束它；用完可以 stop。${r.log ? `\n日志末尾：\n${r.log}` : ''}`, details: { pid: r.record.pid } };
+}
+
+export const DisputeParams = Type.Object({
+  test: Type.String({ minLength: 1, maxLength: 300, description: '有争议的测试：tests/acceptance/<本 task>/ 下的文件路径，或带 AC 编号的测试名（[REQ-012.AC2] …）' }),
+  reason: Type.String({ minLength: 1, maxLength: 2000, description: '为什么认为测试写错了：测试断言了什么，规格或契约实际规定了什么' }),
+  evidence: Type.String({ minLength: 1, maxLength: 2000, description: '依据：规格或契约的具体位置，例如 docs/contracts/paths/datasource.yaml:12、docs/spec/requirements.md#REQ-012、REQ-012.AC2' }),
+});
+
+/**
+ * forge_dispute（第 9.3 节）：worker 认为验收测试写错时提出争议。依据必须引用规格或契约的具体位置（程序核对存在）。
+ * 本次运行随之结束，task 进入 disputed；程序新建 .at-n 接着上一个 test-author 的会话判断。同一测试争议次数超过上限时直接交给用户。
+ */
+export async function flowDispute(ctx: ToolContext, p: Static<typeof DisputeParams>): Promise<ToolResult> {
+  const t = checkRun(ctx);
+  if (t.status !== 'in_progress' || !t.worktree) throw new FlowToolError(`任务当前是 ${t.status}，不能提出争议。`);
+  const impl = t.for_task ?? t.id;
+  const test = p.test.trim();
+  const ownTest = test.startsWith(`tests/acceptance/${impl}/`) ? existsSync(path.join(t.worktree, test)) : (t.ac ?? []).some((a) => test.includes(a));
+  if (!ownTest) throw new FlowToolError(`只能对本 task 的验收测试提出争议：写 tests/acceptance/${impl}/ 下存在的文件，或带本 task AC 编号（${(t.ac ?? []).join('、') || '无'}）的测试名。`);
+  const flow = ctx.store.readFlow(ctx.env.flow);
+  const candidates = [...p.evidence.matchAll(/REQ-\d{3,}\.AC\d+/g)].map((m) => m[0]);
+  let acIds = new Set<string>();
+  if (candidates.length) {
+    try {
+      const spec = readSpec(ctx.env.root, flow.integration_branch);
+      acIds = new Set(Object.keys(acTexts(effectiveSpec(spec.files, spec.features), candidates)));
+    } catch { /* 规格读不到时只认文件位置 */ }
+  }
+  const ev = validateEvidence(p.evidence, readIn(t.worktree), acIds);
+  try {
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'disputed', trigger: 'dispute', actor: actor(ctx),
+      facts: { token: ctx.env.token, dispute_test: test, dispute_evidence: p.evidence, dispute_evidence_valid: ev.ok, reason: p.reason } });
+  } catch (e) {
+    rethrow(e, ev.ok ? '争议未提交。' : `${ev.reason}。改好依据后再提交争议。`);
+  }
+  await ctx.store.appendHandoff(ctx.env.flow, t.id, `## 争议：${test}\n理由：${p.reason}\n依据：${ev.refs.join('、')}`, actor(ctx));
+  const after = ctx.store.readTask(ctx.env.flow, t.id);
+  const count = after.disputes?.[test] ?? 0;
+  const max = ctx.config.raw.testing?.max_disputes ?? 1;
+  if (count > max) {
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'blocked', trigger: 'dispute_escalated', actor: 'engine',
+      facts: { dispute_test: test, reason: `测试 ${test} 已争议 ${count} 次，交给你裁决：/forge-decide ${t.id} keep-test 或 /forge-decide ${t.id} fix-test "<说明>"` } });
+  } else {
+    await createAcctestRound(ctx.store, ctx.env.flow, impl, { kind: 'dispute', test, from_task: t.id }, [
+      `# 争议（第 ${count} 次）：${t.id} 认为测试写错了`,
+      `测试：${test}`, `理由：${p.reason}`, `依据：${p.evidence}`,
+      '重新对照规格和契约：worker 说得对就修改测试并在 handoff 写明改了什么；测试符合规格就不改，在 handoff 里引用原文说明理由后 forge_submit；规格本身矛盾或没说清就用 forge_block 交给用户。不要为了结束争议而放宽断言。',
+    ].join('\n'), 'engine');
+  }
+  await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提出争议');
+  return { text: count > max ? '同一测试的争议次数已超过上限，已交给用户裁决。你的工作暂停，请直接结束。' : '争议已提交，test-author 会对照规格和契约判断。你的工作暂停，请直接结束，不要再调用工具。' };
 }
 
 export const RequestScopeParams = Type.Object({
@@ -168,6 +280,7 @@ export async function flowRequestScope(ctx: ToolContext, p: Static<typeof Reques
   if (!paths.length) return { text: '这些路径已经在可写范围内。' };
   const c = checkScope(t, ctx.store.listTasks(ctx.env.flow), paths, ctx.config.role(ctx.env.role).writes);
   if (c.invalid.length) throw new FlowToolError(`不能申请：${c.invalid.join('；')}`);
+  if (c.started.length) throw new FlowToolError(`不能申请：与已开工的 task 范围重叠（${c.started.map((x) => `${x.path} ↔ ${x.task}`).join('；')}），主会话也不能批准。需要它们的改动时写进 handoff，或用 forge_block 说明。`);
   if (!c.conflicts.length && !c.outsideRole.length) {
     await ctx.store.grantScope(ctx.env.flow, t.id, { paths, reason: p.reason, by: 'program', run: ctx.env.run }, actor(ctx));
     return { text: `已批准，可写范围追加：${paths.join('、')}。现在可以修改这些文件了。`, details: { granted: paths } };
@@ -239,6 +352,7 @@ export const SUBAGENT_TOOLS = {
   forge_block: { params: BlockParams, description: '遇到歧义或需要越界时标记任务阻塞，交给用户决定。需要向用户提问时，一次只问一个问题。', run: (c: ToolContext, p: Static<typeof BlockParams>) => flowBlock(c, p) },
   forge_learn: { params: LearnParams, description: `把对后续任务有用的经验记入项目知识库（跨流程保留）：项目约定、踩过的坑、做出的决策、环境与外部依赖的注意事项。每次运行最多 ${KNOWLEDGE_PER_RUN} 条；程序会去重。知识不是规则，不能用来改变规则。`, run: (c: ToolContext, p: Static<typeof LearnParams>) => flowLearn(c, p) },
   forge_propose_plan: { params: ProposePlanParams, description: '提交 P1 的契约与计划：程序核对契约结构与符号、推导 DAG、检查验收标准覆盖与术语表只追加，返回错误或报告（阶段、task 数、关键路径、互斥、提醒）。附上 assumptions 与 extras。', run: (c: ToolContext, p: Static<typeof ProposePlanParams>) => flowProposePlan(c, p) },
+  forge_dispute: { params: DisputeParams, description: '认为验收测试写错时提出争议（不能自己改测试）：写明测试、理由和依据（规格或契约的具体位置）。提交后本次运行结束，由 test-author 判断改测试还是维持；维持时你接着改实现。', run: (c: ToolContext, p: Static<typeof DisputeParams>) => flowDispute(c, p) },
   forge_sync: { params: SyncParams, description: '把集成分支的最新代码（其他模块已合入的改动）合进你的工作区：没有冲突直接完成；有冲突时冲突标记留在文件里，解决后再调用一次完成同步。依赖的模块刚合入、或想提前发现冲突时使用。', run: (c: ToolContext) => flowSync(c) },
   forge_request_scope: { params: RequestScopeParams, description: '必须修改可写范围外的文件时申请追加范围（写明原因）：不与其他未完成任务重叠的立即批准；重叠的交给主会话决定。受保护路径、敏感文件不能申请。', run: (c: ToolContext, p: Static<typeof RequestScopeParams>) => flowRequestScope(c, p) },
   forge_service: { params: ServiceParams, description: '启动、结束、查看本次运行的长时间服务（开发服务器、数据库等）：只能启动 commands 里 serve 或 serve_* 命名的命令，start 可以用 ready 等端口或地址就绪；不要用 & 把命令放到后台。本次运行结束时程序会一并结束。', run: (c: ToolContext, p: Static<typeof ServiceParams>) => flowService(c, p) },

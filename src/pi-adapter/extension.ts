@@ -443,7 +443,7 @@ export default function piFlow(pi: ExtensionAPI): void {
 
   pi.registerCommand('forge', {
     description: 'pi-forge 管理：status、next、resume、approve、reject、unblock、gate、doctor、init',
-    getArgumentCompletions: (prefix) => ['status', 'next', 'resume', 'answer', 'accept', 'add', 'rules', 'knowledge', 'run', 'sync', 'budget', 'models', 'off', 'approve', 'reject', 'unblock', 'gate', 'abort', 'doctor', 'init', 'help']
+    getArgumentCompletions: (prefix) => ['status', 'next', 'resume', 'answer', 'accept', 'add', 'rules', 'knowledge', 'run', 'sync', 'budget', 'models', 'off', 'approve', 'reject', 'unblock', 'decide', 'gate', 'abort', 'doctor', 'init', 'help']
       .filter((x) => x.startsWith(prefix.trim())).map((x) => ({ value: x, label: x })),
     handler: async (args, ctx) => {
       try {
@@ -461,6 +461,7 @@ export default function piFlow(pi: ExtensionAPI): void {
     ['forge-add', 'add', 'pi-forge：中途追加需求，送到正在做的模块或交给主 agent 安排'],
     ['forge-resume', 'resume', 'pi-forge：会话丢失或进程被杀后恢复流程，并进入调度模式'],
     ['forge-status', 'status', 'pi-forge：当前阶段、进度、正在做什么、需要你处理什么（--detail 看完整任务列表）'],
+    ['forge-decide', 'decide', 'pi-forge：裁决交给你的验收测试争议（keep-test 维持测试 / fix-test "<说明>" 按说明改测试）'],
   ];
   for (const [name, sub, description] of shortcuts) {
     pi.registerCommand(name, {

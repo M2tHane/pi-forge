@@ -37,6 +37,11 @@ export interface GuardContext {
   scratchDir?: string;
   /** 给 orchestrator 的指引中填入的 ready 任务 */
   readyTaskId?: string;
+  /**
+   * test-author 的隔离工作区（第 9.2 节第 5 条，第二道防线）：读写与 bash 参数都不能越出 workspaceRoot（临时目录除外），
+   * 不能碰 .forge/，git 不能用 remote、fetch、clone、worktree
+   */
+  isolatedWorkspace?: boolean;
   homeDir?: string;
 }
 
@@ -262,6 +267,17 @@ class Evaluator {
     return ok;
   }
 
+  /** 隔离工作区：绝对路径、~、含 .. 的路径必须仍在工作区（或临时目录）内；任何位置的 .forge/ 都不允许 */
+  checkIsolatedPath(text: string, cwd = this.ctx.cwd): GuardDecision {
+    if (!text || /^[a-z][a-z0-9+.-]*:\/\//i.test(text) && !text.startsWith('file://')) return ok;
+    const pathLike = text.startsWith('/') || text.startsWith('~') || text.startsWith('file://') || /(^|\/)\.\.(\/|$)/.test(text) || /(^|\/)\.forge(\/|$)/.test(text);
+    if (!pathLike) return ok;
+    const a = this.classify(this.resolveToolPath(text, cwd));
+    if (a.area !== 'workspace' && a.area !== 'scratch') return deny('read_paths', `隔离工作区之外的路径不能访问：${text}。验收测试只依据规格、契约与工作区内的文件编写。`);
+    if (a.area === 'workspace' && /(^|\/)\.forge(\/|$)/.test(a.rel)) return deny('read_paths', `不能访问 .forge/：${text}`);
+    return ok;
+  }
+
   checkReadPaths(rawPath: string | undefined): GuardDecision {
     const allowed = this.role.readPaths;
     if (!allowed) return ok;
@@ -283,6 +299,12 @@ class Evaluator {
     const builtin = (BUILTIN_READ_TOOLS as readonly string[]).includes(tool) || (BUILTIN_WRITE_TOOLS as readonly string[]).includes(tool);
     const paths = extractPaths(input, builtin ? ['path'] : DEFAULT_PATH_KEYS);
 
+    if (this.ctx.isolatedWorkspace) {
+      for (const p of paths) {
+        const d = this.checkIsolatedPath(p.startsWith('/') || p.startsWith('~') || p.startsWith('file://') ? p : `./${p}`);
+        if (!d.allow) return d;
+      }
+    }
     if (kind === 'read' || kind === 'ext-read') {
       if (kind === 'read') {
         const rp = this.checkReadPaths(paths[0]);
@@ -325,7 +347,14 @@ class BashChecker {
 
   constructor(ev: Evaluator) {
     this.ev = ev;
-    this.readonly = ev.role.bash === 'readonly';
+    this.readonly = ev.role.bash === 'readonly' || ev.role.bash === 'allowlist';
+  }
+
+  private allowedCache: string[][] | null = null;
+  /** bash_allow 引用的命令拆成的简单命令（词序列，{files} 占位及之后的部分去掉） */
+  private allowed(): string[][] {
+    if (!this.allowedCache) this.allowedCache = allowlistPrefixes(this.ev.role.bashAllow.map((n) => this.ev.ctx.config.commands[n] ?? '').filter(Boolean));
+    return this.allowedCache;
   }
 
   check(command: string, startCwd: string, depth = 0): GuardDecision {
@@ -397,11 +426,21 @@ class BashChecker {
       if (!s.allow) return { decision: s };
     }
 
+    // 隔离工作区：参数里的路径不能越出工作区，也不能碰 .forge/（第 9.2 节第 5 条）
+    if (this.ev.ctx.isolatedWorkspace) {
+      for (const w of args) {
+        const d = this.ev.checkIsolatedPath(w.text.includes('=') && w.text.startsWith('-') ? w.text.slice(w.text.indexOf('=') + 1) : w.text, cwd);
+        if (!d.allow) return { decision: d };
+      }
+    }
+
     if (name === 'cd' || name === 'pushd') return this.checkCd(args, cwd);
 
     const texts = words.map((w) => w.text);
     if (opensGui(texts, this.ev.ctx.config.raw.gui_commands ?? []) || scriptOpensGui(texts, cwd, this.ev.ws)) return { decision: deny('bash', GUI_REASON) };
 
+    // allowlist 档位：bash_allow 引用的项目命令按前缀匹配放行（第 14.1 节）
+    if (this.ev.role.bash === 'allowlist' && allowedByList(words, this.allowed())) return { decision: ok };
     if (this.readonly) return { decision: this.checkReadonly(name, args) };
 
     // 4. 实施类角色的 bash 约束；rm、mv、cp、rmdir 只能作用于临时目录与本任务 writes 内的文件
@@ -503,6 +542,8 @@ class BashChecker {
       if (g.sub === 'branch' && g.rest.some((w) => !['-a', '-r', '-v', '-vv', '--list', '-l', '--show-current', '--all', '--remotes'].includes(w.text))) {
         return no('git branch 只能列出分支');
       }
+      const history = gitReadsOtherCommits(g.sub, g.rest.map((w) => w.text));
+      if (history) return deny('bash', `只读与白名单档位不能读取其他提交的内容（${history}）。需要的上下文在任务说明、输入文件和工作区里；比较工作区改动用 git diff -- <路径>。`);
     }
     return ok;
   }
@@ -609,6 +650,57 @@ function stripWrapper(name: string, rest: Word[]): Word[] {
     default: skipOpts(new Set());
   }
   return rest.slice(k);
+}
+
+/** bash_allow 的命令拆成简单命令的词序列；{files} 等占位与之后的词去掉（调用时由 agent 补参数） */
+export function allowlistPrefixes(commands: readonly string[]): string[][] {
+  const out: string[][] = [];
+  for (const c of commands) {
+    const parsed = parseShell(c);
+    if (parsed.errors.length) continue;
+    for (const sc of parsed.commands) {
+      if (sc.nested) continue;
+      const words = sc.words.map((w) => w.text);
+      const cut = words.findIndex((w) => /\{[a-z_]+\}/.test(w));
+      const prefix = cut >= 0 ? words.slice(0, cut) : words;
+      if (prefix.length) out.push([...sc.assignments.map((a) => a.text), ...prefix]);
+    }
+  }
+  return out;
+}
+
+/** 调用的词序列以某个允许的前缀开头（逐词相等） */
+export function allowedByList(words: readonly Word[], prefixes: readonly string[][]): boolean {
+  const texts = words.map((w) => w.text);
+  return prefixes.some((p) => p.length <= texts.length && p.every((w, i) => texts[i] === w));
+}
+
+/** 能读出其他提交内容的 git 用法（第 14.1 节）；返回说明，不是则 null */
+export function gitReadsOtherCommits(sub: string | null, rest: readonly string[]): string | null {
+  if (!sub) return null;
+  if (sub === 'show' || sub === 'cat-file' || sub === 'archive') return `git ${sub}`;
+  const dd = rest.indexOf('--');
+  const before = dd >= 0 ? rest.slice(0, dd) : rest;
+  const positional = before.filter((a) => !a.startsWith('-'));
+  if (sub === 'log' || sub === 'whatchanged' || sub === 'shortlog') {
+    const bad = rest.find((a) => /^(-p|-u|--patch|--patch-with-stat|--patch-with-raw|--cc|--word-diff.*|-L.*|--full-diff|-c|-m)$/.test(a) || /^-[a-zA-Z]*p[a-zA-Z]*$/.test(a) && !a.startsWith('--'));
+    return bad ? `git ${sub} ${bad}` : null;
+  }
+  if (sub === 'diff' || sub === 'difftool') {
+    const rev = positional.find((a) => a !== '.');
+    return rev ? `git diff ${rev}（带版本参数）` : null;
+  }
+  if (sub === 'grep') {
+    // -e/-f 的值不是版本参数
+    const pos = before.filter((a, i) => !a.startsWith('-') && !['-e', '-f', '--regexp', '--file'].includes(before[i - 1] ?? ''));
+    const explicit = before.some((a) => a === '-e' || a === '-f' || /^--(regexp|file)/.test(a));
+    const revs = explicit ? pos : pos.slice(1);
+    return revs.length ? `git grep … ${revs[0]}（带版本参数）` : null;
+  }
+  if (sub === 'blame' || sub === 'annotate') {
+    return positional.length > 1 || (dd >= 0 && positional.length > 0) ? `git ${sub} ${positional[0]}（带版本参数）` : null;
+  }
+  return null;
 }
 
 function parseGit(args: Word[]): { globals: string[]; sub: string | null; rest: Word[] } {

@@ -204,9 +204,9 @@ for (const tool of ['bash', 'bash_readonly']) {
   });
 }
 
-test('allowlist 必须有命令名数组，命令必须存在；解析成 readonly 并保留 bashAllow', () => {
+test('allowlist 必须有命令名数组，命令必须存在；解析为 allowlist 并保留 bashAllow', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
-  assert.equal(c.role('test-author').bash, 'readonly');
+  assert.equal(c.role('test-author').bash, 'allowlist');
   assert.deepEqual(c.role('test-author').bashAllow, ['acceptance_list', 'acceptance']);
   assert.ok(c.role('test-author').tools.has('bash'));
   assert.deepEqual(c.role('worker').bashAllow, []);

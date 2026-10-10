@@ -72,6 +72,10 @@ export interface Facts {
   acctest_escalated?: boolean;
   /** 失败是否涉及另一个任务的验收目录；M4 校验契约追加后提供 */
   foreign_acceptance_failed?: boolean;
+  /** foreign_tests_broken：当前 task 要等的 .at-n（第 9.4 节） */
+  waits_for?: string[];
+  /** inputs_ready：waits_for 里的 task 都已 done */
+  waits_for_done?: boolean;
   /** 失败测试是否全部在当前 .at 所属任务的验收目录；false 表示含目录外失败 */
   failed_tests_own_directory?: boolean;
   /** 程序验证为本模块契约的纯追加文件，可以越出 writes */
@@ -231,7 +235,9 @@ export const TRANSITIONS: readonly Rule[] = [
       ...pipelineOnly(t), ...need(f.actor === 'engine', '只有 engine 可以开始预检'),
       ...need(f.latest_acctest_done, '最新验收测试尚未 done'), ...need(softDone(t, f), '软依赖生产方尚未 done'),
       ...need(f.inputs_synced, '输入尚未同步成功'), ...need(!f.conflict_files?.length, '输入同步仍有冲突'),
+      ...need(!t.waits_for?.length || f.waits_for_done === true, `还在等 ${t.waits_for?.join('、')} 修好被破坏的验收测试`),
     ],
+    effect: (t) => { delete t.waits_for; },
   },
   {
     from: ['awaiting_inputs'], to: 'in_progress', trigger: 'sync_conflict',
@@ -299,7 +305,8 @@ export const TRANSITIONS: readonly Rule[] = [
   { from: ['merging'], to: 'queued_merge', trigger: 'merge_requeue', check: (t) => mergeOnly(t) },
   {
     from: ['checking', 'merging'], to: 'awaiting_inputs', trigger: 'foreign_tests_broken',
-    check: (t, f) => [...pipelineOnly(t), ...need(f.foreign_acceptance_failed === true, '没有其他任务的验收测试失败')], effect: clearRun,
+    check: (t, f) => [...pipelineOnly(t), ...need(f.foreign_acceptance_failed === true, '没有其他任务的验收测试失败'), ...need(!!f.waits_for?.length, '缺少要等待的 .at-n')],
+    effect: (t, f) => { clearRun(t); t.waits_for = [...f.waits_for!]; },
   },
   {
     from: ['in_progress'], to: 'disputed', trigger: 'dispute',
@@ -346,7 +353,10 @@ export const TRANSITIONS: readonly Rule[] = [
       ...need(t.kind !== 'acctest' || f.impl_done === false, '原 impl 已 done 或状态未知，acctest 应单独合并'),
       ...need(!!f.diff_files && f.diff_files.length === 0, '只读任务不得有改动，且必须提供 diff'),
       ...need(f.handoff_written, '尚未写 handoff，请先调用 forge_note'), ...need(f.structured_report, '缺少结构化结论'),
-    ], effect: (t) => { t.impl_run = t.lease!.run_id; t.lease = null; t.worktree = null; },
+    ], effect: (t, f) => {
+      t.impl_run = t.lease!.run_id; t.lease = null; t.worktree = null;
+      if (t.kind === 'acctest') t.changed_tests = f.acctest_changed_tests === true;
+    },
   },
   {
     from: ['pending', 'ready', 'blocked'], to: 'cancelled', trigger: 'cancel',

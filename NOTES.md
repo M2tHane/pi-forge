@@ -48,6 +48,7 @@
 
 - 继承自 pi-flow：serena 的 `prepareArguments` 在 `tool_call` 之前还是之后未核实；guard 管不到脚本文件内部（`bash x.sh`、`npm run`），兜底是提交时的 diff 检查；打码只认识常见密钥形态。
 - Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。
+- M4 已接上资源隔离、bash 白名单、test-author 隔离工作区与 .at、真实预检、争议、验收测试单独合并与范围申请规则；e2e 按用户要求留到全部开发完统一运行。
 - M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；M3 已接上 P1：architect 起草契约与计划、forge_propose_plan 校验、doc 预检、P1 闸门、批准后生成 S 阶段与 task 并进入 S0。真实预检、验收测试 task、审查与契约锁定检查、阶段验收分别由 M4/M5/M6 接入。主会话角色按用户决定沿用 orchestrator。
 - stage-qa 的 bash 是 full，现有 guard 拦不住 shell 重定向改源码，而规格第 14 节要求 stage-qa 不能写（临时目录除外）。M6 实现 stage-qa 时在 guard 里补上，并加测试。
 
@@ -92,7 +93,7 @@
 29. P0 的 spec-lint 错误整体拒绝且不落文件/事件；通过后独立索引提交，闸门重读集成分支并必须人工批准；P1 只留 M3 占位，不派发（已被 33 修订）。恢复 awaiting_gate 时由引擎重跑闸门。
 30. 修订先只保存提案与 AC/task 影响，批准才提交 feature；批准前重新 lint 并对比影响，变化时要求打回重提。日期回拨时不早于已有 feature 的日期，保持文件名叠加顺序；architect 变更请求留 M7。
 31. AC 的全局编号统一为 `REQ-001.AC1`（规格第 7.1 节、acceptance-tests 技能的写法），task.ac、spec 的 diffAcs/acTexts、修订影响分析都用它，不做转换。规格文件/修订内容单份限 120000 字符，修订名最多 80 字且只含文字、数字、下划线、短横线。
-32. 验收测试 task（`.at`）的推导已实现（`deriveTasks` 的 `acctest` 开关），但 M3 不创建（`ACCTEST_TASKS_M4 = false`）：独立工作区、同步进 impl 预检和报告路径在 M4，现在创建会让 impl 的输入一直不就绪。M4 打开并补 e2e。
+32. 验收测试 task（`.at`）的推导已实现（`deriveTasks` 的 `acctest` 开关），但 M3 不创建（`ACCTEST_TASKS_M4 = false`）：独立工作区、同步进 impl 预检和报告路径在 M4，现在创建会让 impl 的输入一直不就绪。M4 打开并补 e2e。（M4 第 3 步已打开，常量删除。）
 33. P1 由程序驱动：进入 P1、打回或闸门失败时引擎新建 architect 的 doc task（接着上一个 task 的会话，`fork_from_task`），不经主会话、不受 auto_dispatch 影响，直接派发（与 merge-fix 同路径）。返工原因存在 `flow.plan_rework`，写进新 task 的 handoff，派发后清除。
 34. task 编号全流程连续：architect 的 doc task 也占编号，plan.yaml 从下一个空号起（brief 写明起始号，冲突时校验给出建议编号）。不用临时编号再映射。
 35. `forge_propose_plan` 在 architect 的 worktree 上跑完整 P1 校验（契约结构、术语表只追加、计划），通过后保存 `plan-proposal.json`（含 plan 的 sha256、assumptions、extras、报告）。doc 预检要求提案存在且 plan.yaml 未再改；闸门在集成分支上重跑同样的校验。
@@ -100,6 +101,20 @@
 37. 契约锁定只记录 `flow.contracts_base`（批准 P1 时集成分支的提交）。实施阶段对契约只能追加的强制检查放在 M5（审查/契约检查）。
 38. 批准 P1 时先在主工作区应用规则与命令草案（单独提交，包括 `acctest_workspace`），并同步更新运行中的配置，再生成 S 阶段与 task。P1 不算最后阶段，不提示合入主分支。
 39. 规则文件除按 scope 选择外，还按 task 的 `layers` 附上 `rules/<layer>.md`（存在时）。architect 写的规则草案按层命名，worker 就能拿到。
+40. 资源端口段在 41000–60000 内按 10 对齐，从随机位置开始找，登记前逐个端口探测能否监听。程序步骤（预检、门禁、合并验证）用带前缀的标签（`pc-`、`gate-`、`merge-`）代替 run id；条目的 pid 记分配它的引擎进程，回收条件是 run 已结束或该进程已不存在。
+41. bash 白名单：`bash_allow` 引用的命令拆成简单命令，`{files}` 占位及其后的词去掉，调用时逐词前缀匹配；其余按只读档位处理。"读其他提交"的拦截范围是：`git show`、`cat-file`、`archive`，`log` 的 `-p`/`-L` 等，`diff`/`blame`/`grep` 在 `--` 之前带版本参数。只读档位比较工作区改动要写成 `git diff -- <路径>`；reviewer 的 diff 按第 10.2 节附在提示里（M5）。
+42. 隔离工作区的 guard 由 `GuardContext.isolatedWorkspace` 打开（第 3 步对 acctest task 设置），不按角色名判断。
+43. 验收测试分支名用 `flow/<流程>/acc/<impl>`（规格写 `acc/<task>`），与任务分支同一命名空间，按流程清理；`.at` 与 `.at-n` 都写进原 impl 的目录和分支。
+44. test-author 提交时，task 的每条 AC 都要有以 `[REQ-xxx.ACn]` 开头的测试，否则拒绝（规格只说"统计覆盖率"，这里按"能用程序判断的不交给 LLM"直接检查）；覆盖情况存为 evidence `coverage.json`。越界改动由程序还原后拒绝（test-author 的 bash 不能用 git 还原）。
+45. 隔离工作区的基线提交包含导出文件与 codegen 产物，依赖目录写进 `.git/info/exclude`；缓存命中时用 Node 逐文件硬链接（macOS 的 cp 没有 -l）。准备失败时 task 转 blocked 交给用户，不反复重试。工作区目录名取首次派发的 run id，返工派发复用。
+46. 资源端口段长度取 `limits.port_block`（默认 10），已登记区间按重叠判断。
+47. 预检第 3 步（diff 越界、验收测试未改）沿用 forge_submit 时的状态机检查，预检不再重复；程序合入、内容与 acc 分支一致的本 task 测试文件不算 worker 的改动。"契约只能追加"留了 `contractAppendCheck` 接入点，M5 实现。逐任务审查在 M5 接入，M4 预检通过一律 `precheck_pass_skip`。
+48. 预检在后台运行（与合并一样被跟踪），同一 task 不并发；resume 后 checking 的 task 由下一次 pump 重新预检（第 8.3 节"丢弃结果重跑"）。计划派生的 impl 带 `verify: [typecheck, lint, test]`（已定义的），合并时据此跑全量。
+49. 争议依据的核对：`docs/spec/…`、`docs/contracts/…` 的文件存在（`:行号` 在范围内、`#标题` 能在文件中找到），或规格中存在的 AC 编号；实现代码不算。同一测试争议次数超过 `testing.max_disputes` 时 forge_dispute 直接转用户裁决，不再建 .at-n。
+50. 验收测试在合并验证时全量运行（加到 typecheck、lint、test、merge_check 之后），失败按输出里出现的 `tests/acceptance/<task>/` 目录归属：全在别的 task → 第 9.4 节；acctest 单独合并时全在本目录或认不出 → .fx-n，有目录外的 → integration_broken。认不出目录的普通 task 失败按原来的合并失败处理。
+51. 新 task 字段：`acctest_round`（.at-n 的来由）、`changed_tests`（report 时记录）、`waits_for`（第 9.4 节等待的 .at-n，由 foreign_tests_broken 写入、inputs_ready 清除）。.at-n、.fx-n 的 stage 取当前阶段，保证可调度。"最新验收测试"一律忽略已取消的轮次。
+52. impl 已 done、test-author 没改测试时提交被拒（没有可单独合并的内容），需要 forge_block 说明。验收测试 task 不参与批量合并。
+53. 范围申请（第 14 节）：硬限制在 `checkScope` 里直接拒绝；与已开工 task 重叠的 forge_request_scope 直接拒绝，forge_resolve_scope 批准时再查一次（申请后才开工的也拒绝）。`forge_service` 与范围申请的授予在 M1 配置里已限定为 worker、stage-qa / worker。
 
 ## M1 删除、由 Mx 重建
 

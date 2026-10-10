@@ -22,6 +22,8 @@ export interface ResumeDecision {
 
 export type DecisionAnswer = 'continue' | 'discard';
 
+import { isStaleResource, reclaimResources } from './resources.ts';
+
 export interface ResumeDeps {
   root: string;
   store: StateStore;
@@ -91,6 +93,10 @@ export async function resume(d: ResumeDeps, decide?: (q: ResumeDecision) => Prom
     }
     await store.updateRun(r.run_id, { ended_at: now().toISOString(), ...(r.outcome ? {} : { outcome: 'killed' }) }, 'resume', '恢复：run 已中断');
   }
+  // 3b. 残留的运行资源（第 4.1 节）：run 已结束或分配它的进程已不存在
+  const ended = new Set(store.listRuns().filter((r) => r.ended_at).map((r) => r.run_id));
+  const reclaimed = await reclaimResources(d.root, (e) => isStaleResource(e, ended, isAlive, active), d.config.commands);
+  if (reclaimed.length) actions.push(`回收 ${reclaimed.length} 份残留的运行资源（端口、数据库、临时目录）`);
   if (!flowId) return { ok: true, integrityErrors: [], replayedJournal, actions, pending, brief: '当前没有进行中的流程。' };
 
   // 4. 租约

@@ -1,5 +1,6 @@
 // 来源：pi-flow src/tools/orchestrator-tools.ts @ 31f3f15
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
+import { checkScope } from '../core/scope.ts';
 import { submitSpec, proposeSpecAmend, amendSummary, specStatus } from '../core/spec-flow.ts';
 import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan-flow.ts';
 import { runStageGate } from '../core/gates.ts';
@@ -87,6 +88,9 @@ export async function flowResolveScope(store: StateStore, p: Static<typeof Resol
   if (!req) throw new FlowToolError(`任务 ${t.id} 没有等待决定的范围申请。`);
   const note = p.note?.trim();
   if (p.decision === 'approve') {
+    // 申请之后可能有 task 开工了：与已开工的 task 重叠时不能批准（第 14 节）
+    const started = checkScope(t, store.listTasks(flowId), req.paths, []).started;
+    if (started.length) throw new FlowToolError(`不能批准：${started.map((x) => `${x.path} 与已开工的 ${x.task} 重叠`).join('；')}。用 reject 写明原因。`);
     await store.grantScope(flowId, t.id, { paths: req.paths, reason: `${req.reason}${note ? `（主会话：${note}）` : ''}`, by: 'orchestrator', run: req.run }, 'orchestrator');
     if (note) await store.appendHandoff(flowId, t.id, `主会话批准了范围申请（${req.paths.join('、')}）：${note}`, 'orchestrator');
     return { text: `已批准，${t.id} 的可写范围追加：${req.paths.join('、')}。` };

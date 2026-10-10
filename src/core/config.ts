@@ -48,8 +48,8 @@ export interface ResolvedRole {
   tools: Set<string>;
   /** 有序的工具列表，用于动态启用 */
   toolList: string[];
-  bash: 'none' | 'full' | 'readonly';
-  /** allowlist 引用的命令名；M4 实现白名单，M1 的 bash 保守解析为 readonly */
+  bash: 'none' | 'full' | 'readonly' | 'allowlist';
+  /** allowlist 档位额外允许的命令名（引用 commands，按前缀匹配，第 14.1 节） */
   bashAllow: string[];
   writes: string[];
   /** null 表示读不受路径限制（敏感文件除外） */
@@ -207,8 +207,7 @@ export function parseConfig(source: string): FlowConfig {
     }
 
     const toolList: string[] = [];
-    // M4 实现白名单；M1 的 allowlist 使用 readonly 防止过度放行。
-    const bash: ResolvedRole['bash'] = def.bash === 'allowlist' ? 'readonly' : def.bash ?? 'none';
+    const bash: ResolvedRole['bash'] = def.bash ?? 'none';
     if (def.bash === 'allowlist' && !def.bash_allow?.length) {
       errors.push(`${at(['roles', name, 'bash_allow'])}: bash: allowlist 必须配置 bash_allow 命令名数组`);
     }

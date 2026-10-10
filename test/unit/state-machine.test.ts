@@ -61,7 +61,7 @@ const cases: Case[] = [
   { from: 'checking', to: 'queued_merge', trigger: 'precheck_pass', task: { kind: 'acctest' }, facts: { impl_done: true, precheck_ok: true }, reject: { precheck_ok: false } },
   ...(['checking', 'merging'] as const).map((from): Case => ({ from, to: 'done', trigger: 'precheck_fail_handoff', task: { kind: 'acctest' }, facts: { impl_done: true, precheck_ok: false, post_verify_ok: false, failed_tests_own_directory: true }, reject: from === 'checking' ? { precheck_ok: true } : { failed_tests_own_directory: false }, rejectTask: { kind: 'impl' } })),
   { from: 'merging', to: 'blocked', trigger: 'merge_blocked', task: { kind: 'acctest' }, facts: { impl_done: true, post_verify_ok: false, failed_tests_own_directory: false }, reject: { failed_tests_own_directory: true } },
-  ...(['checking', 'merging'] as const).map((from): Case => ({ from, to: 'awaiting_inputs', trigger: 'foreign_tests_broken', facts: { foreign_acceptance_failed: true }, reject: { foreign_acceptance_failed: false }, rejectTask: { kind: 'acctest' } })),
+  ...(['checking', 'merging'] as const).map((from): Case => ({ from, to: 'awaiting_inputs', trigger: 'foreign_tests_broken', facts: { foreign_acceptance_failed: true, waits_for: ['T-002.at-2'] }, reject: { foreign_acceptance_failed: false }, rejectTask: { kind: 'acctest' } })),
   { from: 'ready', to: 'blocked', trigger: 'block', facts: { actor: 'dispatcher' }, reject: { actor: 'orchestrator' } },
   ...(['in_progress', 'awaiting_inputs', 'checking', 'in_review', 'disputed', 'queued_merge', 'merging'] as const).map((from): Case => ({ from, to: 'blocked', trigger: 'block', reject: { reason: '' } })),
   ...(['run_failed', 'run_interrupted', 'run_paused', 'run_timeout'] as const).map((trigger): Case => ({ from: 'in_progress', to: 'in_progress', trigger, task: trigger === 'run_timeout' ? { timeout_review: { run: 'r-1', at: NOW.toISOString(), minutes: 30 } } : {}, reject: { reason: '' }, rejectTask: { lease: null } })),
@@ -181,7 +181,7 @@ test('计数独立、预算耗尽设置对应 blocked_by，foreign_tests_broken 
   assert.deepEqual(counts(d.task), [0, 0, 0, 0, { other: 2, 'test-a': 1 }]);
   for (const from of ['checking', 'merging'] as const) {
     const t = task(from, { ...baseline, attempts: 2, precheck_failures: 1 });
-    const r = ok(planTransition(t, 'awaiting_inputs', 'foreign_tests_broken', facts({ foreign_acceptance_failed: true })));
+    const r = ok(planTransition(t, 'awaiting_inputs', 'foreign_tests_broken', facts({ foreign_acceptance_failed: true, waits_for: ['T-002.at-2'] })));
     assert.deepEqual(counts(r.task), counts(t)); assert.equal(r.task.lease, null);
   }
   const at = task('merging', { kind: 'acctest' });
@@ -258,4 +258,20 @@ test('阶段状态 × 触发 × 目标穷举，只允许阶段清单内的组合
     if (allowed.has(`${from}/${trigger}/${to}`)) continue;
     assert.ok(planStageTransition(from, to, trigger, { actor: 'human', reason: 'x', needs_human: true }).length);
   }
+});
+
+test('第 9.4 节：foreign_tests_broken 记下要等的 .at-n；inputs_ready 要等它们 done，之后清除', () => {
+  bad(planTransition(task('checking'), 'awaiting_inputs', 'foreign_tests_broken', facts({ foreign_acceptance_failed: true })));
+  const waiting = ok(planTransition(task('merging'), 'awaiting_inputs', 'foreign_tests_broken', facts({ foreign_acceptance_failed: true, waits_for: ['T-002.at-2'] }))).task;
+  assert.deepEqual(waiting.waits_for, ['T-002.at-2']);
+  assert.equal(waiting.merge_failures ?? 0, 0);
+  bad(planTransition(waiting, 'checking', 'inputs_ready', facts()));
+  const r = ok(planTransition(waiting, 'checking', 'inputs_ready', facts({ waits_for_done: true })));
+  assert.equal(r.task.waits_for, undefined);
+});
+
+test('acctest 以结论结束时记下是否改了测试（争议裁决据此区分改测试与维持）', () => {
+  const at = task('in_progress', { id: 'T-001.at-2', kind: 'acctest', role: 'test-author', for_task: 'T-001' });
+  assert.equal(ok(planTransition(at, 'done', 'report', facts({ diff_files: [], impl_done: false, acctest_changed_tests: true }))).task.changed_tests, true);
+  assert.equal(ok(planTransition(at, 'done', 'report', facts({ diff_files: [], impl_done: false }))).task.changed_tests, false);
 });

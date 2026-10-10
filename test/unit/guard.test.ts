@@ -118,7 +118,7 @@ test('reviewer：任何写入都被阻断', () => {
 
 test('reviewer：只读命令放行', () => {
   const c = ctx('reviewer');
-  for (const cmd of ['git diff main...HEAD', 'git log --oneline -5', 'cat src/server/a.ts | grep -n x', 'ls -la 2>/dev/null',
+  for (const cmd of ['git diff -- src', 'git diff --cached', 'git log --oneline -5', 'git log --stat -3', 'cat src/server/a.ts | grep -n x', 'ls -la 2>/dev/null',
     'rg foo src', 'find src -name "*.ts"', 'wc -l src/server/a.ts && head -20 src/server/a.ts', 'cd src && ls']) {
     allowed(checkToolCall(bash(cmd), c));
   }
@@ -414,4 +414,62 @@ test('package.json 脚本会打开界面时也拦下：看脚本本身、调用�
     for (const c of ['npm run dev:app', 'pnpm desktop', 'npm start', 'yarn tauri:dev', 'pnpm run web']) assert.equal(scriptOpensGui(c.split(' '), dir, dir), true, c);
     for (const c of ['pnpm serve', 'pnpm build', 'pnpm test', 'npm run e2e', 'pnpm install', 'pnpm nope']) assert.equal(scriptOpensGui(c.split(' '), dir, dir), false, c);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('allowlist（test-author）：bash_allow 引用的命令按前缀放行，其余只读；重定向与写操作被拦', () => {
+  const c = ctx('test-author', { writes: ['tests/acceptance/T-001/**'] });
+  for (const cmd of ['pnpm test:acceptance -- T-001', 'pnpm test:acceptance --list -- T-001', 'pnpm test:acceptance', 'ls tests/acceptance && cat package.json',
+    'cd tests && pnpm test:acceptance -- T-001']) allowed(checkToolCall(bash(cmd), c));
+  for (const cmd of ['pnpm install', 'pnpm test', 'node tests/x.js', 'npx playwright test', 'pnpm test:acceptance -- T-001 > out.txt',
+    'pnpm test:acceptance; rm -rf src', 'sh -c "pnpm build"']) blocked(checkToolCall(bash(cmd), c), 'bash');
+});
+
+test('allowlistPrefixes / allowedByList：{files} 占位与之后的词去掉；多段命令拆开；逐词前缀匹配', async () => {
+  const { allowlistPrefixes, allowedByList } = await import('../../src/core/guard.ts');
+  const { parseShell } = await import('../../src/core/shell.ts');
+  const p = allowlistPrefixes(['pnpm vitest run {files} --reporter dot', 'cd web && npm run e2e --', 'CI=1 pnpm acc']);
+  assert.deepEqual(p, [['pnpm', 'vitest', 'run'], ['cd', 'web'], ['npm', 'run', 'e2e', '--'], ['CI=1', 'pnpm', 'acc']]);
+  const words = (s: string) => parseShell(s).commands[0]!.words;
+  assert.equal(allowedByList(words('pnpm vitest run a.test.ts'), p), true);
+  assert.equal(allowedByList(words('pnpm vitest'), p), false);
+  assert.equal(allowedByList(words('npm run e2e -- --grep x'), p), true);
+  assert.equal(allowedByList(words('npm run e2e'), p), false);
+});
+
+test('只读与白名单档位：能读出其他提交内容的 git 用法被拦，工作区内的 diff、log、blame 放行', async () => {
+  const { gitReadsOtherCommits } = await import('../../src/core/guard.ts');
+  for (const role of ['reviewer', 'test-author']) {
+    const c = ctx(role, role === 'test-author' ? { writes: ['tests/acceptance/T-001/**'] } : {});
+    for (const cmd of ['git show HEAD~1:src/a.ts', 'git show abc123', 'git cat-file -p HEAD:src/a.ts', 'git log -p', 'git log --patch -1 -- src',
+      'git log -L 1,5:src/a.ts', 'git diff HEAD~1', 'git diff main...HEAD -- src', 'git diff src/a.ts', 'git grep foo HEAD~2', 'git grep -e foo main',
+      'git blame HEAD~1 -- src/a.ts', 'git archive HEAD', 'git remote -v', 'git fetch', 'git clone ../x', 'git worktree list']) {
+      blocked(checkToolCall(bash(cmd), c), 'bash');
+    }
+    for (const cmd of ['git diff', 'git diff -- src', 'git diff --stat', 'git diff --cached', 'git log --oneline -5', 'git log --stat', 'git grep foo', 'git grep -e foo -- src',
+      'git blame src/a.ts', 'git status', 'git ls-files']) allowed(checkToolCall(bash(cmd), c));
+  }
+  assert.equal(gitReadsOtherCommits('log', ['--oneline', '--pretty=%h']), null);
+  assert.match(gitReadsOtherCommits('show', [])!, /git show/);
+  // 实施档位不受影响（worker 自己的 worktree）
+  allowed(checkToolCall(bash('git show HEAD:src/server/a.ts'), ctx('worker', { writes: ['src/server/**'] })));
+});
+
+test('隔离工作区（第 9.2 节第 5 条）：读写与 bash 参数不能越出工作区，不能碰 .forge/', () => {
+  const c = ctx('test-author', { writes: ['tests/acceptance/T-001/**'], isolatedWorkspace: true });
+  for (const d of [
+    checkToolCall(call('read', { path: path.join(main, 'src/server/a.ts') }), c),
+    checkToolCall(call('read', { path: '../proj/src/server/a.ts' }), c),
+    checkToolCall(call('read', { path: '.forge/state.json' }), c),
+    checkToolCall(call('read', { path: '~/x' }), c),
+    checkToolCall(bash(`cat ${main}/src/server/a.ts`), c),
+    checkToolCall(bash('cat ../../proj/src/server/a.ts'), c),
+    checkToolCall(bash('ls .forge'), c),
+    checkToolCall(bash(`pnpm test:acceptance --config=${main}/x.ts`), c),
+    checkToolCall(bash('grep -r foo /etc'), c),
+  ]) blocked(d, 'read_paths');
+  allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), c));
+  allowed(checkToolCall(call('read', { path: path.join(wt, 'src/server/a.ts') }), c));
+  allowed(checkToolCall(bash('cat src/server/../server/a.ts && ls tests'), c));
+  allowed(checkToolCall(bash('pnpm test:acceptance -- T-001'), c));
+  allowed(checkToolCall(bash('curl http://localhost:3000/x'), ctx('worker', { writes: ['src/**'], isolatedWorkspace: true })));
 });

@@ -14,11 +14,6 @@ import { SPEC_PATHS } from './spec-flow.ts';
 import { isSettled } from './state-machine.ts';
 import { applyDrafts, commandsDraftProblems, formatDrafts, listDrafts } from './rules-draft.ts';
 
-/**
- * M4 打开：test-author 的隔离工作区、impl 预检时带入验收测试、acctest 的提交与单独合并都在 M4 实现。
- * 在那之前不创建 .at task（否则 impl 会一直等它），派生规则（deriveAcctest）已经实现并有测试。
- */
-export const ACCTEST_TASKS_M4 = false;
 export const P1_STAGE = 'P1';
 
 /** 从 git 引用（分支）或目录（worktree，含未提交的改动）读取文件 */
@@ -204,7 +199,7 @@ export async function materializePlan(root: string, store: StateStore, config: F
   const proposal = proposalProblem(store, flowId, r.planText);
   if (proposal) problems.push(proposal);
   if (problems.length || !r.plan || !r.check || !r.spec) throw new Error(`计划未通过校验，不能批准：\n${problems.map((p) => `- ${p}`).join('\n')}`);
-  const tasks = deriveTasks(r.plan, r.check.deps, { worker: config.role('worker').scopes, testAuthor: config.role('test-author').scopes }, { acctest: ACCTEST_TASKS_M4 });
+  const tasks = deriveTasks(r.plan, r.check.deps, { worker: config.role('worker').scopes, testAuthor: config.role('test-author').scopes }, { acctest: true, verify: ['typecheck', 'lint', 'test'].filter((c) => config.commands[c]?.trim()) });
   const drafts = listDrafts(root, flow.integration_branch);
   const applied = applyDrafts(root, drafts, flowId);
   if (applied.commands) Object.assign(config.raw.commands, applied.commands);
@@ -215,7 +210,6 @@ export async function materializePlan(root: string, store: StateStore, config: F
     `已生成 ${r.plan.stages.length} 个 S 阶段（${r.plan.stages.map((s) => s.id).join('、')}，${r.plan.mode === 'lean' ? '精简模式' : '标准模式'}）与 ${tasks.length} 个 task。`,
     `契约已锁定（${contractsBase.slice(0, 8)}），之后只能追加。`,
     ...(applied.applied.length ? [`已应用规则与命令草案：${applied.applied.join('、')}（子进程提示的稳定前缀变化，提示缓存会失效一次）。`] : []),
-    ...(ACCTEST_TASKS_M4 ? [] : ['验收测试 task（.at）在 M4 接入，本阶段先不创建。']),
   ];
 }
 

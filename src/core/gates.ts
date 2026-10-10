@@ -10,6 +10,7 @@ import type { StateStore } from './state-store.ts';
 import { git } from './git.ts';
 import { worktreesRoot, removeWorktree } from './worktree.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
+import { resourceOptions, withResources } from './resources.ts';
 
 import type { StageDeps } from './stages.ts';
 import type { TaskFile } from './schemas.ts';
@@ -72,16 +73,19 @@ export async function runStageGate(root: string, store: StateStore, config: Flow
     removeWorktree(root, wt);
     git(root, ['worktree', 'add', '-q', '--detach', wt, flow.integration_branch]);
     try {
-      for (const name of def.gate.auto) {
-        const shell = config.commands[name]!;
-        const r = { command: name, ...(await runShell(shell.replace('{files}', '').trim(), wt, timeoutMs)) };
-        await store.saveStageEvidence(flowId, flow.stage, `gate-${name}.log`, evidenceText(r, shell), 'gate');
-        if (r.exit_code !== 0) {
-          reasons.push(`闸门命令 ${name} 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1200)}`);
-          failed = { command: name, output: r.output };
-          break;
+      // 第 4.1 节：门禁同样带本次分配的资源运行
+      await withResources(root, `gate-${flowId}-${flow.stage}`, resourceOptions(config), async (env) => {
+        for (const name of def.gate.auto!) {
+          const shell = config.commands[name]!;
+          const r = { command: name, ...(await runShell(shell.replace('{files}', '').trim(), wt, timeoutMs, env)) };
+          await store.saveStageEvidence(flowId, flow.stage, `gate-${name}.log`, evidenceText(r, shell), 'gate');
+          if (r.exit_code !== 0) {
+            reasons.push(`闸门命令 ${name} 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1200)}`);
+            failed = { command: name, output: r.output };
+            break;
+          }
         }
-      }
+      });
     } finally {
       removeWorktree(root, wt);
     }

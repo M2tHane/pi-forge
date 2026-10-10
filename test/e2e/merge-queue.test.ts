@@ -7,7 +7,6 @@ import path from 'node:path';
 import { setupProject, PROJECT_YAML, DIRECT_YAML } from '../helpers/project.ts';
 import { makeEngine, commitToBranch } from '../helpers/engine.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-import { passthroughPrecheck } from '../../src/core/dispatcher.ts';
 import { mkTask } from '../helpers/tasks.ts';
 
 const withTest = (cmd: string) => PROJECT_YAML.replace(/  test:      ".*"/, `  test:      "${cmd}"`);
@@ -118,7 +117,7 @@ test('文本冲突在 writes 内：生成 merge-fix，原任务挂起让出名�
     const { engine, merges, errors } = makeEngine(p, async (_role, _n, a) => {
       if (a.env.task === 'T-001') {
         await implement(a, { 'src/server/t-001/a.ts': 'line1\ntask\nline3\n' });
-        await passthroughPrecheck(p.store, p.flowId);
+        await engine.precheck(p.flowId);
         // 制造预检之后才出现的竞争，验证合并队列的冲突修复路径。
         commitToBranch(p.dir, `flow/${p.flowId}/integration`, { 'src/server/t-001/a.ts': 'line1\nhuman\nline3\n' }, '他人修改');
         return;
@@ -162,7 +161,7 @@ test('merge-fix 残留冲突标记：合并后检查拦下，回到 in_progress�
     const { engine, merges } = makeEngine(p, async (_role, _n, a) => {
       if (a.env.task === 'T-001') {
         await implement(a, { 'src/server/t-001/a.ts': 'task\n' });
-        await passthroughPrecheck(p.store, p.flowId);
+        await engine.precheck(p.flowId);
         commitToBranch(p.dir, `flow/${p.flowId}/integration`, { 'src/server/t-001/a.ts': 'human\n' }, '他人修改');
         return;
       }

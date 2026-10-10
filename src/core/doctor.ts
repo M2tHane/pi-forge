@@ -6,6 +6,7 @@ import type { StateStore } from './state-store.ts';
 import { git } from './git.ts';
 import { worktreesRoot, removeWorktree } from './worktree.ts';
 import { processAlive } from './resume.ts';
+import { isStaleResource, listResources, reclaimResources } from './resources.ts';
 import { preflight, formatPreflight, type PreflightDeps } from './preflight.ts';
 import { readEngineLock } from './engine-lock.ts';
 import { IN_FLIGHT } from './state-machine.ts';
@@ -14,7 +15,7 @@ import { MISSING_TOOLS_REASON } from './dependencies.ts';
 
 export interface DoctorReport { errors: string[]; warnings: string[]; fixed: string[]; preflight: string }
 
-export async function doctor(root: string, store: StateStore, opts: { fix?: boolean; preflight?: Omit<PreflightDeps, 'root'>; now?: () => Date; sessionRetentionDays?: number } = {}): Promise<DoctorReport> {
+export async function doctor(root: string, store: StateStore, opts: { fix?: boolean; commands?: Record<string, string>; preflight?: Omit<PreflightDeps, 'root'>; now?: () => Date; sessionRetentionDays?: number } = {}): Promise<DoctorReport> {
   const errors: string[] = [];
   const warnings: string[] = [];
   const fixed: string[] = [];
@@ -80,6 +81,17 @@ export async function doctor(root: string, store: StateStore, opts: { fix?: bool
       fixed.push(`删除未被引用的 worktree ${w}`);
     } else {
       warnings.push(`未被任何任务引用的 worktree：${w}（/forge doctor --fix 清理）`);
+    }
+  }
+  // 残留的运行资源（第 4.1 节）
+  const endedRuns = new Set(store.listRuns().filter((r) => r.ended_at).map((r) => r.run_id));
+  const staleRes = listResources(root).filter((e) => isStaleResource(e, endedRuns, processAlive));
+  if (staleRes.length) {
+    if (opts.fix) {
+      const runs = await reclaimResources(root, (e) => isStaleResource(e, endedRuns, processAlive), opts.commands);
+      fixed.push(`回收 ${runs.length} 份残留的运行资源（端口、数据库、临时目录）`);
+    } else {
+      warnings.push(`${staleRes.length} 份运行资源已无人使用（${staleRes.map((e) => e.run).join('、')}），可回收（/forge doctor --fix）`);
     }
   }
   // 已结束 run 的提示文件

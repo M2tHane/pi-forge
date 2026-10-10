@@ -13,6 +13,8 @@ import { matchesAny, isProtected } from './paths.ts';
 import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { testAdjustEnabled } from './test-adjust.ts';
+import { resourceOptions, withResources } from './resources.ts';
+import { classifyAcceptanceFailure, failingAcceptanceDirs, handOffToFix, handleForeignBreak } from './acceptance-flow.ts';
 
 
 export interface MergeHooks {
@@ -86,7 +88,7 @@ export class MergeQueue {
     for (const e of this.store.readMergeQueue().queue) {
       if (e.flow !== flowId || candidates.length >= limit) break;
       const t = tasks.find((x) => x.id === e.task);
-      if (!t || t.status !== 'queued_merge' || t.depends_on.some((d) => d.type === 'soft' && tasks.find((v) => v.id === d.task)?.status !== 'done') || t.sync_main || t.kind === 'merge-fix' || !t.worktree || !existsSync(t.worktree)) break;
+      if (!t || t.status !== 'queued_merge' || t.depends_on.some((d) => d.type === 'soft' && tasks.find((v) => v.id === d.task)?.status !== 'done') || t.sync_main || t.kind === 'merge-fix' || t.kind === 'acctest' || !t.worktree || !existsSync(t.worktree)) break;
       candidates.push(t);
     }
     if (candidates.length < 2) return null;
@@ -120,14 +122,18 @@ export class MergeQueue {
       // 2. 只跑一次全量验证（任一任务有 verify 时）
       if (applied.some((a) => a.t.verify.length)) {
         if (this.hooks.beforeVerify) await this.hooks.beforeVerify();
-        for (const c of this.mergeVerifyPlan(applied.find((a) => a.t.verify.length)!.t)) {
-          const r = await runShell(c.shell, temp, this.hooks.verifyTimeoutMs);
-          for (const a of applied) await this.store.saveEvidence(flowId, a.t.id, `merge-a${a.t.merge_failures ?? 0}-batch-${c.name}.log`, evidenceText({ command: c.name, ...r }, c.shell), 'merge-queue');
-          if (r.exit_code !== 0) {
-            await this.store.recordEvent({ flow: flowId, actor: 'merge-queue', type: 'note', reason: `批量合并 ${applied.map((a) => a.t.id).join('、')} 的全量 ${c.name} 失败，改为逐个合并`, data: { tasks: applied.map((a) => a.t.id), summary: failureSummary(r.output, 800) } });
-            return null;
+        const ok = await withResources(this.root, `merge-${flowId}-batch`, resourceOptions(this.config), async (env) => {
+          for (const c of this.mergeVerifyPlan(applied.find((a) => a.t.verify.length)!.t)) {
+            const r = await runShell(c.shell, temp, this.hooks.verifyTimeoutMs, env);
+            for (const a of applied) await this.store.saveEvidence(flowId, a.t.id, `merge-a${a.t.merge_failures ?? 0}-batch-${c.name}.log`, evidenceText({ command: c.name, ...r }, c.shell), 'merge-queue');
+            if (r.exit_code !== 0) {
+              await this.store.recordEvent({ flow: flowId, actor: 'merge-queue', type: 'note', reason: `批量合并 ${applied.map((a) => a.t.id).join('、')} 的全量 ${c.name} 失败，改为逐个合并`, data: { tasks: applied.map((a) => a.t.id), summary: failureSummary(r.output, 800) } });
+              return false;
+            }
           }
-        }
+          return true;
+        });
+        if (!ok) return null;
       }
       // 3. 逐个转 merging → done，集成分支依次快进（CAS）
       let prev = integHead;
@@ -197,6 +203,8 @@ export class MergeQueue {
     if (marked.length) return this.verifyFailed(flowId, t, `文件中残留冲突标记：${marked.join('、')}`, []);
     const verify = await this.postMergeVerify(flowId, t, wt);
     if (!verify.ok) {
+      const routed = await this.routeAcceptanceFailure(flowId, t, verify);
+      if (routed) return routed;
       // 合并后验证失败多半是与已合入任务的语义冲突：提炼为知识候选，用户确认后才生效
       await proposeCandidate(this.store, this.config, t, flowId, verify.reason);
       return this.verifyFailed(flowId, t, verify.reason, verify.results);
@@ -297,26 +305,62 @@ export class MergeQueue {
   /** 全量 typecheck、lint、test；merge_check（第五轮，可选）是一起跑的额外检查，例如迁移只能有一个 head。没有 verify 的任务（文档类）不跑 */
   private mergeVerifyPlan(t: TaskFile): { name: string; shell: string }[] {
     const cmds = this.config.commands;
-    if (!t.verify.length) return [];
-    return ['typecheck', 'lint', 'test', 'merge_check'].filter((name) => cmds[name]?.trim()).map((name) => ({ name, shell: cmds[name]! }));
+    // 单独合并的验收测试（第 9.5 节）与普通 task 一样跑全量
+    if (!t.verify.length && t.kind !== 'acctest') return [];
+    // 验收测试在合并时全量运行（第 9.1 节）；放在最后，失败时按目录归属处理（第 9.4、9.5 节）
+    return ['typecheck', 'lint', 'test', 'merge_check', 'acceptance'].filter((name) => cmds[name]?.trim()).map((name) => ({ name, shell: cmds[name]! }));
   }
 
   private async postMergeVerify(flowId: string, t: TaskFile, wt: string) {
     if (this.hooks.beforeVerify) await this.hooks.beforeVerify();
     const plan = this.mergeVerifyPlan(t);
     const results: { command: string; exit_code: number }[] = [];
-    for (const c of plan) {
-      const r = { command: c.name, ...(await runShell(c.shell, wt, this.hooks.verifyTimeoutMs)) };
-      results.push({ command: c.name, exit_code: r.exit_code });
-      await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-${c.name}.log`, evidenceText(r, c.shell), 'merge-queue');
-      if (r.exit_code !== 0) {
-        // 全量验证的失败多半是任务自己的问题，日志多给一些
-        const why = `已 rebase 到集成分支最新，全量 ${plan.map((x) => x.name).join('、')} 中 `;
-        const adjust = testAdjustEnabled(this.config, t) ? '\n失败的如果是别的模块已有的测试、原因是本任务改了接口，可以直接修改那些测试来适配（不删用例、不放宽断言）。' : '';
-        return { ok: false as const, results, reason: `合并后验证失败（${why}${c.name} 退出码 ${r.exit_code}）\n${failureSummary(r.output)}${adjust}` };
+    if (!plan.length) return { ok: true as const, results, reason: '' };
+    // 第 4.1 节：合并验证带本次分配的资源运行
+    return withResources(this.root, `merge-${flowId}-${t.id}`, resourceOptions(this.config), async (env) => {
+      for (const c of plan) {
+        const r = { command: c.name, ...(await runShell(c.shell, wt, this.hooks.verifyTimeoutMs, env)) };
+        results.push({ command: c.name, exit_code: r.exit_code });
+        await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-${c.name}.log`, evidenceText(r, c.shell), 'merge-queue');
+        if (r.exit_code !== 0) {
+          // 全量验证的失败多半是任务自己的问题，日志多给一些
+          const why = `已 rebase 到集成分支最新，全量 ${plan.map((x) => x.name).join('、')} 中 `;
+          const adjust = testAdjustEnabled(this.config, t) ? '\n失败的如果是别的模块已有的测试、原因是本任务改了接口，可以直接修改那些测试来适配（不删用例、不放宽断言）。' : '';
+          return { ok: false as const, results, reason: `合并后验证失败（${why}${c.name} 退出码 ${r.exit_code}）\n${failureSummary(r.output)}${adjust}`, command: c.name, output: r.output };
+        }
       }
+      return { ok: true as const, results, reason: '' };
+    });
+  }
+
+  /**
+   * 合并验证中验收测试失败时按目录归属处理：
+   * acctest（第 9.5 节）——都在本目录 → 交给原 impl 的 .fx-n；有目录外的失败 → 集成分支本身坏了（integration_broken）。
+   * impl / fix（第 9.4 节）——都在别的 task 的目录 → 为它们建 .at-n，本 task 回 awaiting_inputs 等待，不计失败。
+   */
+  private async routeAcceptanceFailure(flowId: string, t: TaskFile, v: { reason: string; command?: string; output?: string }): Promise<MergeResult | null> {
+    const impl = t.for_task ?? t.id;
+    if (v.command !== 'acceptance') {
+      // 只加了测试的合并，其他命令失败说明集成分支本身坏了
+      if (t.kind !== 'acctest') return null;
+      await this.store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'merge_blocked', actor: 'merge-queue',
+        facts: { post_verify_ok: false, failed_tests_own_directory: false, reason: `只合入验收测试，${v.reason}` } });
+      return { kind: 'blocked', task: t.id, reason: v.reason };
     }
-    return { ok: true as const, results, reason: '' };
+    const dirs = failingAcceptanceDirs(v.output ?? '');
+    const kind = classifyAcceptanceFailure(impl, dirs);
+    if (t.kind === 'acctest') {
+      if (kind === 'own' || kind === 'unknown') {
+        const fx = await handOffToFix(this.root, this.store, flowId, t, v.reason, 'merge-queue');
+        return { kind: 'verify_failed', task: t.id, reason: `${v.reason}\n已交给 ${fx}` };
+      }
+      await this.store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'merge_blocked', actor: 'merge-queue',
+        facts: { post_verify_ok: false, failed_tests_own_directory: false, reason: `只合入验收测试，本目录之外的测试失败（${dirs.filter((d) => d !== impl).join('、')}），集成分支本身已坏：${v.reason}` } });
+      return { kind: 'blocked', task: t.id, reason: v.reason };
+    }
+    if (kind !== 'foreign') return null;
+    const waits = await handleForeignBreak(this.root, this.store, flowId, t, dirs, v.output ?? '', 'merge-queue');
+    return { kind: 'verify_failed', task: t.id, reason: `别的 task 的验收测试被破坏，等 ${waits.join('、')} 修好` };
   }
 
   private async verifyFailed(flowId: string, t: TaskFile, reason: string, _results: unknown[], alreadyRequeued = false): Promise<MergeResult> {

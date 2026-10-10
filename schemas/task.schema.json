@@ -162,6 +162,38 @@
       "type": "string",
       "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
     },
+    "acctest_round": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "dispute",
+            "foreign",
+            "decide"
+          ]
+        },
+        "test": {
+          "type": "string"
+        },
+        "from_task": {
+          "type": "string",
+          "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
+        }
+      }
+    },
+    "changed_tests": {
+      "type": "boolean"
+    },
+    "waits_for": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
+      }
+    },
     "deviations": {
       "type": "array",
       "items": {

@@ -169,6 +169,18 @@ export const TaskFile = Type.Object({
   risk: Type.Optional(TaskRisk),
   /** 派生任务所属的原任务 */
   for_task: Type.Optional(TaskId),
+  /** 验收测试的返工轮次（.at-n，第 9.3–9.5 节）：争议、被别的 task 的契约追加破坏、用户裁决改测试 */
+  acctest_round: Type.Optional(Type.Object({
+    kind: Type.Enum(['dispute', 'foreign', 'decide']),
+    /** 争议的测试标识 */
+    test: Type.Optional(Type.String()),
+    /** 引发这一轮的 task（争议的 worker 或破坏测试的 task） */
+    from_task: Type.Optional(TaskId),
+  })),
+  /** acctest 提交时是否改动了测试（争议裁决：改了 → dispute_fixed，没改 → dispute_upheld） */
+  changed_tests: Type.Optional(Type.Boolean()),
+  /** 在等别的 task 的 .at-n 修好被破坏的验收测试（第 9.4 节），这些 task done 后才能继续预检 */
+  waits_for: Type.Optional(Type.Array(TaskId)),
   /** worker 提交的偏离说明，供审查与签收使用 */
   deviations: Type.Optional(StringList),
   verify: Type.Array(Type.String()),

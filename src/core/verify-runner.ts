@@ -17,10 +17,11 @@ export function scrubbedEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-export function runShell(command: string, cwd: string, timeoutMs = DEFAULT_VERIFY_TIMEOUT_MS): Promise<Omit<CommandRun, 'command'>> {
+/** extraEnv：第 4.1 节分配的资源变量等，叠加在清理过密钥的环境上 */
+export function runShell(command: string, cwd: string, timeoutMs = DEFAULT_VERIFY_TIMEOUT_MS, extraEnv: Record<string, string> = {}): Promise<Omit<CommandRun, 'command'>> {
   const started = Date.now();
   return new Promise((resolve) => {
-    const child = spawn('sh', ['-c', command], { cwd, env: scrubbedEnv(), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const child = spawn('sh', ['-c', command], { cwd, env: { ...scrubbedEnv(), ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     let out = '';
     const take = (b: Buffer) => { out = (out + b.toString('utf8')).slice(-OUTPUT_LIMIT); };
     child.stdout.on('data', take);

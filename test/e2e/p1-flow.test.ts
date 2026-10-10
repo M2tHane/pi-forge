@@ -104,7 +104,7 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     const integrationHead = p.git('rev-parse', p.store.readFlow(p.flowId).integration_branch);
     const out = await runFlowCommand('approve', e.cmd);
     assert.doesNotMatch(out, /合入/, 'P1 批准不会合入主分支');
-    assert.match(out, /已生成 2 个 S 阶段（S0、S1，标准模式）与 2 个 task[\s\S]*契约已锁定[\s\S]*已应用规则与命令草案[\s\S]*进入阶段 S0/);
+    assert.match(out, /已生成 2 个 S 阶段（S0、S1，标准模式）与 4 个 task[\s\S]*契约已锁定[\s\S]*已应用规则与命令草案[\s\S]*进入阶段 S0/);
     const after = p.store.readFlow(p.flowId);
     assert.deepEqual(after.stages, ['P0', 'P1', 'S0', 'S1']);
     assert.deepEqual(after.s_stages!.map((s) => [s.id, s.exit]), [['S0', ['REQ-002']], ['S1', ['REQ-001']]]);
@@ -112,14 +112,18 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     assert.equal(after.contracts_base, integrationHead, '契约锁定在批准时集成分支的提交上');
     assert.equal(after.stage, 'S0');
     assert.ok(p.store.readEvents().some((ev) => ev.type === 'stages_planned'));
-    // task：impl 归 worker；依赖由符号推导；S0 多两个验收目录；.at 在 M4 接入
+    // task：impl 归 worker；依赖由符号推导；S0 多两个验收目录
     const t2 = p.store.readTask(p.flowId, 'T-002');
     const t3 = p.store.readTask(p.flowId, 'T-003');
     assert.deepEqual([t2.kind, t2.role, t2.stage, t2.module], ['impl', 'worker', 'S0', 'team']);
     assert.ok(t2.writes.includes('tests/acceptance/_support/**') && t2.writes.includes('tests/acceptance/S0-smoke/**'));
     assert.deepEqual(t3.depends_on, [{ task: 'T-002', type: 'hard', reason: 'table:teams、api:GET /api/teams、fn:team#currentTeam' }]);
     assert.deepEqual(t3.ac, ['REQ-001.AC1', 'REQ-001.AC2']);
-    assert.ok(!p.store.listTasks(p.flowId).some((t) => t.kind === 'acctest'));
+    // .at：S0 的在骨架合并后编写（硬依赖 impl），S1 的继承 impl 的硬依赖、与 impl 同时就绪
+    const at2 = p.store.readTask(p.flowId, 'T-002.at');
+    const at3 = p.store.readTask(p.flowId, 'T-003.at');
+    assert.deepEqual([at2.kind, at2.role, at2.for_task, at2.depends_on.map((d) => [d.task, d.type])], ['acctest', 'test-author', 'T-002', [['T-002', 'hard']]]);
+    assert.deepEqual([at3.for_task, at3.depends_on.map((d) => d.task), at3.writes], ['T-003', ['T-002'], ['tests/acceptance/T-003/**', 'tests/acceptance/_support/T-003/**']]);
     const notes = p.store.readNotes(`flows/${p.flowId}/notes/T-003.json`)!;
     assert.match(notes.goal.join('\n'), /REQ-001\.AC2：Given 已有同名数据源 When 再次创建 Then 失败[\s\S]*manual/);
     // 规则与命令应用到主分支（单独一个提交），运行中的配置同步更新

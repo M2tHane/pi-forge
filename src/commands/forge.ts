@@ -1,5 +1,6 @@
 // 来源：pi-flow src/commands/flow.ts @ 31f3f15（改名）
 // /forge 子命令的业务实现（不依赖 Pi）：init、doctor、resume、status、next。M6、M7 在此扩展 approve、unblock、--cost。
+import { decideDispute } from '../core/acceptance-flow.ts';
 import { formatTiming, timingReport } from '../core/timing.ts';
 import { DEFAULT_CHECKPOINT_MINUTES, listCheckpoints, restoreCheckpoint } from '../core/checkpoints.ts';
 import type { FlowConfig } from '../core/config.ts';
@@ -76,6 +77,7 @@ export const FLOW_USAGE = [
   '  /forge-reject [stage:<id>|amend:<id>] "<意见>"   打回对象并记录意见',
   '  /forge-add "<需求>"       规格修订在 M7 实现',
   '  /forge accept <阶段或任务> --note "<说明>"   接受耗尽轮数的阶段门禁或任务审查',
+  '  /forge-decide <任务> keep-test ["<说明>"] | fix-test "<说明>"   裁决交给你的验收测试争议',
   '  /forge answer [<任务>]   回答阻塞任务提出的问题（弹出输入框），回答后任务继续',
   '  /forge unblock <任务> ["<回答>"] [--reset]   解除阻塞；--reset 清零对应失败计数',
   '  /forge gate              闸门失败并修复后，重跑当前阶段闸门',
@@ -145,8 +147,13 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
     }
     case 'doctor': {
       let days: number | undefined;
-      try { days = loadConfig(path.join(env.root, 'workflow.yaml')).limits.session_retention_days; } catch { /* 配置错误由前置条件检查报告 */ }
-      const r = await doctor(env.root, env.store(), { fix: argv.includes('--fix'), preflight: { roleSettings: env.roleSettings(), availableModels: env.availableModels(), ...env.dependencies?.() },
+      let commands: Record<string, string> | undefined;
+      try {
+        const c = loadConfig(path.join(env.root, 'workflow.yaml'));
+        days = c.limits.session_retention_days;
+        commands = c.commands;
+      } catch { /* 配置错误由前置条件检查报告 */ }
+      const r = await doctor(env.root, env.store(), { fix: argv.includes('--fix'), ...(commands ? { commands } : {}), preflight: { roleSettings: env.roleSettings(), availableModels: env.availableModels(), ...env.dependencies?.() },
         ...(days ? { sessionRetentionDays: days } : {}) });
       return formatDoctor(r);
     }
@@ -272,6 +279,17 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         return text;
       }
       const text = await unblockTask({ root: env.root, store: h.store, config: h.config }, flowId, taskId, answer, argv.includes('--reset'));
+      await h.engine.pump(flowId);
+      if (h.store.readFlow(flowId).mode !== 'fix') await h.engine.next(flowId);
+      if (env.waitForIdle) await h.engine.idle();
+      return text;
+    }
+    case 'decide': {
+      const h = env.engine();
+      const flowId = currentFlowId(h.store);
+      const [, taskId, choice, note] = positional(argv);
+      if (!taskId || (choice !== 'keep-test' && choice !== 'fix-test')) throw new Error('用法：/forge-decide <任务> keep-test ["<说明>"] | /forge-decide <任务> fix-test "<说明>"');
+      const text = await decideDispute(h.store, flowId, taskId, choice, note ?? '');
       await h.engine.pump(flowId);
       if (h.store.readFlow(flowId).mode !== 'fix') await h.engine.next(flowId);
       if (env.waitForIdle) await h.engine.idle();

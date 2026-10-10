@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { Type } from 'typebox';
 import { Value } from 'typebox/value';
 import { getAgentDir, VERSION, type ExtensionAPI, type ExtensionContext, type PiModel } from '@earendil-works/pi-coding-agent';
+import { tolerantArgs } from './tool-args.ts';
+import { withoutPlaceholders } from '../core/tool-params.ts';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { loadConfig, type FlowConfig } from '../core/config.ts';
 import { ROLE_SETTINGS_FILENAME, loadRoleSettings, resolveRoleModel } from '../core/role-settings.ts';
@@ -74,7 +76,8 @@ function report(ctx: ExtensionContext, message: string, level: 'info' | 'warning
 
 const toolResult = (text: string, details: unknown = {}) => ({ content: [{ type: 'text' as const, text }], details });
 
-function checked<T>(schema: unknown, params: unknown, name: string): T {
+function checked<T>(schema: unknown, raw: unknown, name: string): T {
+  const params = withoutPlaceholders(schema, raw);
   if (!Value.Check(schema as never, params)) throw new Error(`${name} 参数不合法：${[...Value.Errors(schema as never, params)].map((e) => `${e.instancePath || '/'} ${e.message}`).join('；')}`);
   return params as T;
 }
@@ -265,7 +268,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       offset: Type.Optional(Type.Integer({ minimum: 1, description: '起始行号，从 1 开始' })),
       limit: Type.Optional(Type.Integer({ minimum: 1, description: '最多读取的行数' })),
     }, { additionalProperties: false });
-    pi.registerTool({
+    pi.registerTool(tolerantArgs({
       name: 'forge_read', label: 'forge_read', description: '从集成分支读取 PRD、原型与产物；目录列出内容，图片作为附件，文本上限为 2000 行或 50 KiB，截断时给出下一次 offset。',
       parameters: readParams,
       async execute(_id, p, _s, _u, ctx) {
@@ -276,8 +279,8 @@ export default function piFlow(pi: ExtensionAPI): void {
         }
         return toolResult(r.text, { ref: r.ref, path: r.path, kind: r.kind, ...(r.nextOffset !== undefined ? { nextOffset: r.nextOffset } : {}) });
       },
-    });
-    pi.registerTool({
+    }));
+    pi.registerTool(tolerantArgs({
       name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交 requirements、screens、permissions、glossary 四份完整规格；feature 流程改为提交增量规格 feature_name + feature（需求、页面、权限三节，基线已存在时不传四份）。spec-lint 拒绝时修正重提；通过后等待用户批准。',
       parameters: SpecParams,
       async execute(_id, p, _s, _u, ctx) {
@@ -285,8 +288,8 @@ export default function piFlow(pi: ExtensionAPI): void {
         const r = await flowSpec(ctx.cwd, h.store, h.config, checked(SpecParams, p, 'forge_spec'));
         return toolResult(r.text, r.details);
       },
-    });
-    pi.registerTool({
+    }));
+    pi.registerTool(tolerantArgs({
       name: 'forge_spec_amend', label: 'forge_spec_amend', description: 'P0 批准后提交增量规格修订（需求、页面、权限三节），列出变化 AC 与受影响 task，等待用户批准。',
       parameters: SpecAmendParams,
       async execute(_id, p, _s, _u, ctx) {
@@ -294,8 +297,8 @@ export default function piFlow(pi: ExtensionAPI): void {
         const r = await flowSpecAmend(ctx.cwd, h.store, checked(SpecAmendParams, p, 'forge_spec_amend'));
         return toolResult(r.text, r.details);
       },
-    });
-    pi.registerTool({
+    }));
+    pi.registerTool(tolerantArgs({
       name: 'forge_change_request', label: 'forge_change_request', description: '计划批准后需要修改已有契约或计划时提交变更请求（what、why、impact）：程序派 architect 起草修订，用户批准后落地。同一时间只能有一个未结束的变更请求。',
       parameters: ChangeRequestParams,
       async execute(_id, p, _s, _u, ctx) {
@@ -303,16 +306,16 @@ export default function piFlow(pi: ExtensionAPI): void {
         const r = await flowChangeRequestMain(ctx.cwd, h.store, h.config, checked(ChangeRequestParams, p, 'forge_change_request'));
         return toolResult(r.text, r.details);
       },
-    });
-    pi.registerTool({
+    }));
+    pi.registerTool(tolerantArgs({
       name: 'forge_status', label: 'forge_status', description: '只读：当前流程、阶段、任务计数、可派发与失败任务摘要、等待用户处理的事项。',
       parameters: Type.Object({}),
       async execute(_id, _p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
         return toolResult(statusText(h.store, h.engine, activeFlowId(h.store)));
       },
-    });
-    pi.registerTool({
+    }));
+    pi.registerTool(tolerantArgs({
       name: 'forge_resolve_timeout', label: 'forge_resolve_timeout', description: '任务运行超过时间预算被结束后，看过 forge_status 里的材料再调用：continue 接着原会话做，restart 换个思路从头做（保留工作区），block 交给用户。',
       parameters: ResolveTimeoutParams,
       async execute(_id, p, _s, _u, ctx) {
@@ -320,8 +323,8 @@ export default function piFlow(pi: ExtensionAPI): void {
         const r = await flowResolveTimeout(h.store, h.engine, checked(ResolveTimeoutParams, p, 'forge_resolve_timeout'));
         return toolResult(r.text, r.details);
       },
-    });
-    pi.registerTool({
+    }));
+    pi.registerTool(tolerantArgs({
       name: 'forge_resolve_scope', label: 'forge_resolve_scope', description: '子进程申请追加的可写范围与其他未完成任务重叠时调用：approve 追加，reject 不追加（写明原因与做法）。',
       parameters: ResolveScopeParams,
       async execute(_id, p, _s, _u, ctx) {
@@ -329,8 +332,8 @@ export default function piFlow(pi: ExtensionAPI): void {
         const r = await flowResolveScope(h.store, checked(ResolveScopeParams, p, 'forge_resolve_scope'));
         return toolResult(r.text, r.details);
       },
-    });
-    pi.registerTool({
+    }));
+    pi.registerTool(tolerantArgs({
       name: 'forge_wait', label: 'forge_wait', description: '等待任务状态变化或超时，返回精简摘要（不含 subagent 的对话）。',
       parameters: WaitParams,
       async execute(_id, p, _s, _u, ctx) {
@@ -338,10 +341,10 @@ export default function piFlow(pi: ExtensionAPI): void {
         const r = await flowWait(h.store, h.engine, checked(WaitParams, p, 'forge_wait'), h.config);
         return toolResult(r.text, r.details);
       },
-    });
+    }));
 
     // 主 agent 的结构化笔记与历史检索（第五轮）：笔记跨流程保留在 .forge/notes/main.json
-    pi.registerTool({
+    pi.registerTool(tolerantArgs({
       name: 'notes', label: 'notes', description: `${NOTES_DESCRIPTION} 主会话的笔记跨流程保留：记录用户的偏好、讨论的结论、进行中的事项。`,
       parameters: NotesParams,
       async execute(_id, p, _s, _u, ctx) {
@@ -357,15 +360,15 @@ export default function piFlow(pi: ExtensionAPI): void {
           throw e;
         }
       },
-    });
-    pi.registerTool({
+    }));
+    pi.registerTool(tolerantArgs({
       name: 'history', label: 'history', description: HISTORY_DESCRIPTION,
       parameters: HistoryParams,
       async execute(_id, p, _s, _u, ctx) {
         const file = ctx.sessionManager.getSessionFile();
         return toolResult(historyTool(file ? [file] : [], checked(HistoryParams, p, 'history')).text);
       },
-    });
+    }));
   };
   const mainStore = (cwd: string) => sessions.get(cwd)?.handle?.store ?? new StateStore(cwd);
   if (initialized(process.cwd())) registerFlowTools();

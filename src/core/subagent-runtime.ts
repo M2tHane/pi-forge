@@ -12,6 +12,7 @@ import { matchesAny, INTERFACES_PATH } from './paths.ts';
 import { enforceToolCall, type GuardContext, type ToolCall } from './guard.ts';
 import { failureSignature, failureSummary } from './verify-runner.ts';
 import { FlowToolError, SUBAGENT_TOOLS, type RunEnv, type SubagentToolName, type ToolResult } from '../tools/subagent-tools.ts';
+import { withoutPlaceholders } from './tool-params.ts';
 
 export type GateResult = { block: false } | { block: true; reason: string; terminate: boolean };
 
@@ -221,8 +222,9 @@ export class SubagentRuntime {
     return name in SUBAGENT_TOOLS;
   }
 
-  async callFlowTool(name: SubagentToolName, params: unknown): Promise<ToolResult> {
+  async callFlowTool(name: SubagentToolName, raw: unknown): Promise<ToolResult> {
     const def = SUBAGENT_TOOLS[name];
+    const params = withoutPlaceholders(def.params, raw);
     if (!Value.Check(def.params, params)) {
       const errs = [...Value.Errors(def.params, params)].map((e) => `${e.instancePath || '/'} ${e.message}`);
       throw new FlowToolError(`${name} 参数不合法：${errs.join('；')}`);

@@ -3,6 +3,7 @@
 // 只在 PI_FORGE_* 环境变量齐全时生效：注册本角色可用的 forge_* 工具、收窄启用的工具、拦截所有工具调用。
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { tolerantArgs } from './tool-args.ts';
 import { loadConfig } from '../core/config.ts';
 import { StateStore } from '../core/state-store.ts';
 import { SubagentRuntime } from '../core/subagent-runtime.ts';
@@ -35,13 +36,13 @@ export default function piFlowSubagent(pi: ExtensionAPI): void {
 
   for (const [name, def] of Object.entries(SUBAGENT_TOOLS) as [SubagentToolName, (typeof SUBAGENT_TOOLS)[SubagentToolName]][]) {
     if (!allowed.has(name)) continue;
-    pi.registerTool({
+    pi.registerTool(tolerantArgs({
       name, label: name, description: def.description, parameters: def.params,
       async execute(_id, params) {
         const r = await rt.callFlowTool(name, params);
         return { content: [{ type: 'text', text: r.text }], details: r.details ?? {} };
       },
-    });
+    }));
   }
 
   // forge_service 启动的服务随本次运行结束（第六轮 D2）；引擎回收运行时也会按记录再结束一次

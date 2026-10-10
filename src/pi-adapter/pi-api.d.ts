@@ -51,6 +51,8 @@ declare module '@earendil-works/pi-coding-agent' {
     label: string;
     description: string;
     parameters: unknown;
+    /** 校验参数之前调用，用来整理模型给的原始参数（Pi 1.1.0 types.d.ts:466） */
+    prepareArguments?: (args: unknown) => unknown;
     /** false 时注册后不激活（需 setActiveTools 激活） */
     defaultActive?: boolean;
     execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, ctx: ExtensionContext): Promise<AgentToolResult>;

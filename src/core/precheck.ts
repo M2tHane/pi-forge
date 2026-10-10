@@ -7,6 +7,7 @@ import type { TaskFile } from './schemas.ts';
 import type { StateStore } from './state-store.ts';
 import { contractViolationsAt } from './contract-diff.ts';
 import { accBranch } from './acctest.ts';
+import { withScopeHint } from './scope-hint.ts';
 import { branchExists } from './worktree.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { resourceOptions, withResources } from './resources.ts';
@@ -84,7 +85,7 @@ export async function runPrecheck(root: string, store: StateStore, config: FlowC
       if (r.exit_code === 0) passed.push({ name: c.name, shell: c.shell, evidence: ev });
       if (r.exit_code !== 0) {
         const what = c.name === 'acceptance' ? `验收测试（tests/acceptance/${impl}/）` : c.name;
-        return { ok: false, reason: `预检未通过：${what} 退出码 ${r.exit_code}${r.timed_out ? '（超时）' : ''}\n${failureSummary(r.output)}`, command: c.name, output: r.output };
+        return { ok: false, reason: withScopeHint(`预检未通过：${what} 退出码 ${r.exit_code}${r.timed_out ? '（超时）' : ''}\n${failureSummary(r.output)}`, r.output, t, wt), command: c.name, output: r.output };
       }
     }
     const stat = t.base_sha ? git(wt, ['diff', '--stat', t.base_sha, 'HEAD']) : '';

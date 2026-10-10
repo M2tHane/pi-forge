@@ -39,6 +39,7 @@ import { changeDocPrecheck, changeOfTask, ensureChangeTask } from './change-flow
 import { pausedByChange } from './change-request.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions } from './resources.ts';
 import { prepareAcctestWorkspace } from './acctest.ts';
+import { prepareWorkspaceRecorded } from './workspace.ts';
 import { runPrecheck } from './precheck.ts';
 import { awaitedAcctest, handOffToFix, precheckAcctest, resolveDisputes } from './acceptance-flow.ts';
 import { REVIEW_INPUT, decideReview, readReviewEvidence, resolveReviews, reviewWorktreeOf, type ReviewInputFile } from './review-flow.ts';
@@ -241,6 +242,7 @@ export class Engine {
         : task.worktree && task.branch && task.base_sha
           ? { path: task.worktree, branch: task.branch, base_sha: task.base_sha }
           : createTaskWorktree(root, flowId, taskId, flow.integration_branch, flow.integration_branch);
+      await this.prepareDeps(flowId, task, wt.path);
       // 修复任务接着写过这些代码的任务的对话继续（第四轮后续）
       const forkFrom = task.fork_from_task ?? leanForkFrom(flow.plan_mode, task, flow.stages, store.listTasks(flowId));
       if (forkFrom && tasksHas(store, flowId, forkFrom)) fork = this.forkSource(flowId, store.readTask(flowId, forkFrom), role, model);
@@ -306,6 +308,7 @@ export class Engine {
     try {
       const ws = await prepareAcctestWorkspace(root, config, flowId, flow.integration_branch, task, runId, implDone);
       if (ws.log.length) await store.recordEvent({ flow: flowId, task: task.id, actor: 'dispatcher', type: 'note', reason: `隔离工作区：${ws.log.map((l) => `${l.step}${l.detail ? `（${l.detail}）` : ''}`).join('，')}`, data: { workspace: ws.path } });
+      if (ws.prepared) await store.recordEvent({ flow: flowId, task: task.id, actor: 'dispatcher', type: 'note', reason: `工作区准备（readonly）：${ws.prepared.skipped ? '跳过' : ws.prepared.cached ? '命中缓存' : '已安装'}，${ws.prepared.ms}ms`, data: { kind: 'workspace_prepare', mode: 'readonly', cached: !!ws.prepared.cached, skipped: !!ws.prepared.skipped, ok: true, ms: ws.prepared.ms } });
       return ws;
     } catch (e) {
       const why = `准备验收测试的隔离工作区失败：${(e as Error).message}`;
@@ -313,6 +316,19 @@ export class Engine {
       this.notify();
       throw new HandedToUser(why);
     }
+  }
+
+  /**
+   * 新建的工作区准备依赖（F1）：任务 worktree 可写（直接 install，失败写进 handoff 让 worker 自己修）；
+   * 阶段级只读任务（stage-qa、阶段审查）的临时 worktree 走缓存，失败只记事件。其余（含 merge-fix、.fx-n、审查者共用的 worktree）在创建处或不需要，这里不处理。
+   */
+  private async prepareDeps(flowId: string, task: TaskFile, wt: string): Promise<void> {
+    const { store, root, config } = this.d;
+    const stageLevel = isStageLevelTask(task);
+    if (task.kind === 'acctest' || task.kind === 'review' && !stageLevel) return;
+    if (!stageLevel && task.worktree && task.branch && task.base_sha) return;
+    const r = await prepareWorkspaceRecorded(store, root, config, wt, stageLevel ? 'readonly' : 'writable', { flow: flowId, task: task.id, actor: 'dispatcher' });
+    if (!r.ok && !stageLevel) await store.appendHandoff(flowId, task.id, `依赖准备失败（程序在创建工作区后运行 install 的结果）：${r.reason ?? ''}\n需要依赖的命令在修好之前都会失败；请检查包清单与 install 命令，必要时自己运行 install。`, 'dispatcher');
   }
 
   /** 派发这个任务会用的角色与模型：同一任务失败达到次数后（或被很多任务依赖的底座），实施换成升级模型 */
@@ -610,7 +626,7 @@ export class Engine {
       const r = await precheckAcctest(root, store, config, flowId, t, this.d.mergeHooks?.verifyTimeoutMs);
       if (store.readTask(flowId, taskId).status !== 'checking') return;
       if (r.ok) await store.transitionTask(flowId, taskId, { to: 'queued_merge', trigger: 'precheck_pass', actor: 'engine', facts: { precheck_ok: true } });
-      else await handOffToFix(root, store, flowId, t, r.reason, 'engine');
+      else await handOffToFix(root, store, this.d.config, flowId, t, r.reason, 'engine');
       return;
     }
     let failure: string | null;

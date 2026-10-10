@@ -10,6 +10,7 @@ import type { StateStore } from './state-store.ts';
 import { git } from './git.ts';
 import { worktreesRoot, removeWorktree } from './worktree.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
+import { prepareWorkspaceRecorded } from './workspace.ts';
 import { resourceOptions, withResources } from './resources.ts';
 
 import type { StageDeps } from './stages.ts';
@@ -118,8 +119,10 @@ export async function runImplementationChecks(root: string, store: StateStore, c
     removeWorktree(root, wt);
     git(root, ['worktree', 'add', '-q', '--detach', wt, startHead]);
     try {
-      // 第 4.1 节：门禁同样带本次分配的资源运行
-      await withResources(root, `gate-${flowId}-${flow.stage}`, resourceOptions(config), async (env) => {
+      // F1：新 worktree 里没有依赖，先准备（readonly，走缓存）。失败不设 failed：不是某个 task 的问题，交给人
+      const prep = await prepareWorkspaceRecorded(store, root, config, wt, 'readonly', { flow: flowId, actor: 'gate' }, timeoutMs);
+      if (!prep.ok) reasons.push(`工作区准备失败：${prep.reason ?? ''}`);
+      else await withResources(root, `gate-${flowId}-${flow.stage}`, resourceOptions(config), async (env) => {
         const passed: { name: string; shell: string; evidence: string }[] = [];
         for (const { name, shell } of plan) {
           const r = { command: name, ...(await runShell(shell, wt, timeoutMs, env)) };

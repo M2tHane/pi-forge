@@ -1,24 +1,24 @@
 // test-author 的隔离工作区（规格第 9.2 节）：不用 git worktree，而是导出允许的路径到一个独立仓库（不共享对象库，读不到实现代码），
 // 先 install 再 codegen（依赖目录按锁文件哈希缓存，命中时硬链接复制）；提交时只取本 task 的测试目录，以补丁形式应用到主仓库的 acc 分支。
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from './config.ts';
 import type { TaskFile } from './schemas.ts';
 import { git, gitOk } from './git.ts';
 import { isSensitive, matchesAny } from './paths.ts';
 import { branchExists, headSha, removeWorktree, taskBranch, worktreesRoot } from './worktree.ts';
-import { failureSummary, runShell } from './verify-runner.ts';
+import { runShell } from './verify-runner.ts';
+import { acctestCacheRoot, cacheDirsOf, hardlinkTree, lockHash, LOCKFILES, prepareWorkspace, type SetupLog, type WorkspaceResult } from './workspace.ts';
+
+// 这些原本定义在本文件，抽到 workspace.ts 后在此再导出，保持原有引用不变
+export { acctestCacheRoot, hardlinkTree, lockHash, LOCKFILES, type SetupLog };
 
 /** 第 9.2 节第 1 条：总是导出的路径；acctest_workspace.include 追加在后 */
 export const ACCTEST_BASE_PATHS = [
   'docs/spec/**', 'docs/contracts/**', 'docs/arch/overview.md', 'AGENTS.md', 'tests/acceptance/**',
   'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'bun.lock', 'bun.lockb',
 ];
-/** 计算缓存键的锁文件名（任意目录层级） */
-export const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'Cargo.lock', 'poetry.lock', 'uv.lock', 'go.sum', 'Gemfile.lock', 'composer.lock'];
-const SETUP_TIMEOUT_MS = 15 * 60_000;
 const LIST_TIMEOUT_MS = 5 * 60_000;
 const ARCHIVE_CHUNK = 500;
 
@@ -27,7 +27,6 @@ export const acctestDirs = (impl: string) => [`tests/acceptance/${impl}/**`, `te
 /** 主仓库中保存某个 impl 的验收测试的分支 */
 export const accBranch = (flow: string, impl: string) => `flow/${flow}/acc/${impl}`;
 export const acctestWorkspacePath = (root: string, run: string) => path.join(worktreesRoot(root), `${run}-at`);
-export const acctestCacheRoot = (root: string) => path.join(worktreesRoot(root), '.acctest-cache');
 
 export function exportPatterns(config: FlowConfig): string[] {
   return [...ACCTEST_BASE_PATHS, ...(config.raw.acctest_workspace?.include ?? [])];
@@ -67,64 +66,15 @@ export function exportLayers(root: string, config: FlowConfig, flowId: string, i
   return layers.filter((l) => l.files.length);
 }
 
-/** 锁文件哈希（纯函数）：按路径排序后把路径与内容一起哈希；没有锁文件时为 null，不缓存 */
-export function lockHash(files: readonly { path: string; content: Buffer | string }[]): string | null {
-  const locks = files.filter((f) => LOCKFILES.includes(path.posix.basename(f.path)) && !f.path.split('/').includes('node_modules'))
-    .sort((a, b) => a.path.localeCompare(b.path));
-  if (!locks.length) return null;
-  const h = createHash('sha256');
-  for (const f of locks) h.update(f.path).update('\0').update(f.content).update('\0');
-  return h.digest('hex').slice(0, 32);
+/** 隔离工作区的 install 与 codegen：复用 prepareWorkspace（readonly：依赖目录按锁文件与 install 命令缓存）；失败时抛错，说明在哪一步 */
+async function installAndCodegen(root: string, config: FlowConfig, ws: string, log: SetupLog[]): Promise<WorkspaceResult> {
+  const r = await prepareWorkspace(root, config, ws, { mode: 'readonly' });
+  log.push(...r.log);
+  if (!r.ok) throw new Error(`隔离工作区的 ${r.reason}`);
+  return r;
 }
 
-/** 硬链接复制目录树（cp -al 的等价做法）：文件硬链接，符号链接照抄，目录新建 */
-export function hardlinkTree(src: string, dst: string): void {
-  const st = lstatSync(src);
-  if (st.isSymbolicLink()) { symlinkSync(readlinkSync(src), dst); return; }
-  if (st.isDirectory()) {
-    mkdirSync(dst, { recursive: true });
-    for (const name of readdirSync(src)) hardlinkTree(path.join(src, name), path.join(dst, name));
-    return;
-  }
-  linkSync(src, dst);
-}
-
-/** 缓存目录只接受工作区内的相对路径 */
-const cacheDirsOf = (config: FlowConfig) => (config.raw.acctest_workspace?.cache ?? []).filter((d) => d && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
-
-export interface SetupLog { step: string; ok: boolean; detail?: string }
-
-/** install（命中缓存时跳过）与 codegen；失败时抛错，说明在哪一步 */
-async function installAndCodegen(root: string, config: FlowConfig, ws: string, hash: string | null, log: SetupLog[]): Promise<void> {
-  const dirs = cacheDirsOf(config);
-  const cached = hash ? path.join(acctestCacheRoot(root), hash) : null;
-  const install = config.commands['install']?.trim();
-  if (cached && dirs.length && existsSync(path.join(cached, '.complete'))) {
-    for (const d of dirs) if (existsSync(path.join(cached, d))) hardlinkTree(path.join(cached, d), path.join(ws, d));
-    log.push({ step: 'install', ok: true, detail: `命中缓存 ${hash}` });
-  } else if (install) {
-    const r = await runShell(install, ws, SETUP_TIMEOUT_MS);
-    if (r.exit_code !== 0) throw new Error(`隔离工作区的 install 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1500)}`);
-    log.push({ step: 'install', ok: true });
-    if (cached && dirs.length) {
-      const tmp = `${cached}.tmp-${process.pid}-${Date.now()}`;
-      try {
-        for (const d of dirs) if (existsSync(path.join(ws, d))) hardlinkTree(path.join(ws, d), path.join(tmp, d));
-        mkdirSync(tmp, { recursive: true });
-        writeFileSync(path.join(tmp, '.complete'), new Date().toISOString());
-        if (!existsSync(cached)) renameSync(tmp, cached);
-      } catch { /* 缓存失败不影响本次 */ } finally { rmSync(tmp, { recursive: true, force: true }); }
-    }
-  }
-  const codegen = config.commands['codegen']?.trim();
-  if (codegen) {
-    const r = await runShell(codegen, ws, SETUP_TIMEOUT_MS);
-    if (r.exit_code !== 0) throw new Error(`隔离工作区的 codegen 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1500)}`);
-    log.push({ step: 'codegen', ok: true });
-  }
-}
-
-export interface AcctestWorkspace { path: string; branch: string; base_sha: string; log: SetupLog[] }
+export interface AcctestWorkspace { path: string; branch: string; base_sha: string; log: SetupLog[]; /** 本次 install/codegen 的结果（复用已有工作区时没有） */ prepared?: WorkspaceResult }
 
 /** 建立隔离工作区（已存在时复用）；基线提交包含导出的文件与 codegen 生成的代码，依赖目录不提交 */
 export async function prepareAcctestWorkspace(root: string, config: FlowConfig, flowId: string, integration: string, task: TaskFile, runId: string, implDone: boolean): Promise<AcctestWorkspace> {
@@ -144,11 +94,10 @@ export async function prepareAcctestWorkspace(root: string, config: FlowConfig, 
     git(ws, ['init', '-q', '-b', 'main']);
     const exclude = ['node_modules/', ...cacheDirsOf(config).map((d) => `/${d.replace(/\/+$/, '')}/`)];
     writeFileSync(path.join(ws, '.git', 'info', 'exclude'), `${[...new Set(exclude)].join('\n')}\n`);
-    const exported = layers.flatMap((l) => l.files).map((f) => ({ path: f, content: existsSync(path.join(ws, f)) ? readFileSync(path.join(ws, f)) : '' }));
-    await installAndCodegen(root, config, ws, lockHash(exported), log);
+    const prepared = await installAndCodegen(root, config, ws, log);
     git(ws, ['add', '-A']);
     git(ws, ['commit', '-q', '--no-verify', '--allow-empty', '-m', `[${flowId}/${task.id}] 隔离工作区基线`], { engineIdentity: true });
-    return { path: ws, branch, base_sha: headSha(ws), log };
+    return { path: ws, branch, base_sha: headSha(ws), log, prepared };
   } catch (e) {
     rmSync(ws, { recursive: true, force: true });
     throw e;

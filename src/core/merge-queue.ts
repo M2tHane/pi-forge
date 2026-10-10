@@ -16,6 +16,7 @@ import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { testAdjustEnabled } from './test-adjust.ts';
 import { cleanTreeOf, recordVerified, reusableRuns, reuseText } from './verify-cache.ts';
+import { prepareWorkspaceRecorded } from './workspace.ts';
 import { resourceOptions, withResources } from './resources.ts';
 import { classifyAcceptanceFailure, failingAcceptanceDirs, handOffToFix, handleForeignBreak } from './acceptance-flow.ts';
 
@@ -125,6 +126,8 @@ export class MergeQueue {
     mkdirSync(path.dirname(temp), { recursive: true });
     git(this.root, ['worktree', 'add', '-q', '--detach', temp, integHead]);
     try {
+      // F1：临时 worktree 没有依赖，先准备（readonly，走缓存）；失败则退回逐个合并（任务自己的 worktree 里有依赖）
+      if (!(await prepareWorkspaceRecorded(this.store, this.root, this.config, temp, 'readonly', { flow: flowId, actor: 'merge-queue' }, this.hooks.verifyTimeoutMs)).ok) return null;
       // 1. 依次叠加：每个任务 squash 成一个提交，cherry-pick 到临时 worktree；冲突则到此为止
       const applied: { t: TaskFile; sha: string; msg: string }[] = [];
       for (const t of candidates) {
@@ -396,7 +399,7 @@ export class MergeQueue {
     const kind = classifyAcceptanceFailure(impl, dirs);
     if (t.kind === 'acctest') {
       if (kind === 'own' || kind === 'unknown') {
-        const fx = await handOffToFix(this.root, this.store, flowId, t, v.reason, 'merge-queue');
+        const fx = await handOffToFix(this.root, this.store, this.config, flowId, t, v.reason, 'merge-queue');
         return { kind: 'verify_failed', task: t.id, reason: `${v.reason}\n已交给 ${fx}` };
       }
       await this.store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'merge_blocked', actor: 'merge-queue',
@@ -458,6 +461,8 @@ export class MergeQueue {
     const fixBranch = taskBranch(flowId, fixId);
     mkdirSync(path.dirname(fixWt), { recursive: true });
     git(this.root, ['worktree', 'add', '-q', '-b', fixBranch, fixWt, integHead]);
+    // F1：merge-fix 的 worktree 可写，直接 install（在应用冲突改动之前，树是干净的集成分支 HEAD）
+    const prep = await prepareWorkspaceRecorded(this.store, this.root, this.config, fixWt, 'writable', { flow: flowId, actor: 'merge-queue' }, this.hooks.verifyTimeoutMs);
     try {
       git(fixWt, ['cherry-pick', '--no-commit', squashed], { engineIdentity: true, allowFail: true });
     } catch {
@@ -481,6 +486,7 @@ export class MergeQueue {
       verify: [...t.verify], worktree: fixWt, branch: fixBranch, base_sha: base, merge_fix_for: t.id, conflict_files: conflicts,
     }, conflicts);
     await this.store.appendHandoff(flowId, fixId, `合并冲突（程序生成）：${t.id} rebase 到集成分支时冲突。\n冲突文件当前内容：\n\n${excerpt}`, 'merge-queue');
+    if (!prep.ok) await this.store.appendHandoff(flowId, fixId, `依赖准备失败（程序在创建工作区后运行 install 的结果）：${prep.reason ?? ''}\n需要依赖的命令在修好之前都会失败；请检查包清单与 install 命令。`, 'merge-queue');
     return { kind: 'merge_fix', task: t.id, mergeFix: fixId, conflicts };
   }
 
@@ -576,6 +582,7 @@ export class MergeQueue {
       const fixWt = worktreePath(this.root, flowId, fixId);
       const fixBranch = taskBranch(flowId, fixId);
       git(this.root, ['worktree', 'add', '-q', '-b', fixBranch, fixWt, merged]);
+      const prep = await prepareWorkspaceRecorded(this.store, this.root, this.config, fixWt, 'writable', { flow: flowId, actor: 'merge-queue' }, this.hooks.verifyTimeoutMs);
       const verify = [...new Set(owners.filter((t) => conflicts.some((f) => matchesAny(f, t.writes))).flatMap((t) => t.verify))];
       const r = this.config.roles[role]!;
       await this.store.addTasks(flowId, [{
@@ -586,6 +593,7 @@ export class MergeQueue {
       }], 'merge-queue');
       const excerpt = conflicts.map((f) => `${f}：\n${existsSync(path.join(fixWt, f)) ? readFileSync(path.join(fixWt, f), 'utf8').slice(0, 1500) : '（已删除）'}`).join('\n\n');
       await this.store.appendHandoff(flowId, fixId, `同步冲突（程序生成）：把 ${main} 合并进集成分支时冲突。当前工作区是这次合并的结果，冲突文件含冲突标记。\n冲突文件当前内容：\n\n${excerpt}`, 'merge-queue');
+      if (!prep.ok) await this.store.appendHandoff(flowId, fixId, `依赖准备失败（程序在创建工作区后运行 install 的结果）：${prep.reason ?? ''}\n需要依赖的命令在修好之前都会失败；请检查包清单与 install 命令。`, 'merge-queue');
       await this.store.setFlowSync(flowId, { stage: flow.stage, status: 'fixing', main_sha: mainSha, at, task: fixId, files: conflicts }, 'engine', `同步 ${main} 冲突，生成 ${fixId} 解决`);
       return { kind: 'merge_fix', task: fixId, conflicts };
     } finally {

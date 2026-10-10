@@ -207,11 +207,28 @@ export interface StageSpeed {
 }
 export interface TaskSpeed { task: string; stage: string; run_min: number | null; queue_min: number | null }
 
+export interface WorkspaceStats { count: number; total_ms: number; cache_hits: number; skipped: number; failed: number }
+
+/** 工作区准备的汇总（纯函数）：数据来自 prepareWorkspaceRecorded 记的 note 事件 */
+export function workspaceStats(events: readonly Pick<FlowEvent, 'flow' | 'type' | 'data'>[], flowId: string): WorkspaceStats {
+  const mine = events.filter((e) => e.flow === flowId && e.type === 'note' && e.data?.['kind'] === 'workspace_prepare');
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    count: mine.length,
+    total_ms: mine.reduce((n, e) => n + num(e.data?.['ms']), 0),
+    cache_hits: mine.filter((e) => e.data?.['cached'] === true).length,
+    skipped: mine.filter((e) => e.data?.['skipped'] === true).length,
+    failed: mine.filter((e) => e.data?.['ok'] === false).length,
+  };
+}
+
 export interface Metrics {
   flow: string;
   stages: StageSpeed[];
   tasks: TaskSpeed[];
   queue_avg_min: number | null;
+  /** 工作区准备（install → codegen）的次数、总耗时与缓存命中次数 */
+  workspace: WorkspaceStats;
   rework: Rework;
   rework_by_stage: Record<string, Rework>;
   quality: {
@@ -282,6 +299,7 @@ export function computeMetrics(i: MetricsInput): Metrics {
     flow: flow.id,
     stages: stageSpeed,
     tasks: taskSpeed,
+    workspace: workspaceStats(i.events, flow.id),
     queue_avg_min: queues.length ? ratio1(queues.reduce((a, b) => a + b, 0) / queues.length) : null,
     rework: reworkCounts(i.events, tasks, flow),
     rework_by_stage: Object.fromEntries(stages.map((s) => [s, reworkCounts(i.events, tasks, flow, s)])),
@@ -345,6 +363,7 @@ export function renderMetrics(m: Metrics): string {
     '## 速度（agent 时间 = 墙钟时间 − 等你处理的时间）',
     ...(m.stages.length ? m.stages.map((s) => `- ${s.stage}：agent ${s.agent_min} 分钟 / 墙钟 ${s.wall_min} 分钟（等你 ${s.human_min}）；完成 ${s.tasks_done} 个任务${s.tasks_cancelled ? `，取消 ${s.tasks_cancelled}` : ''}；关键路径 实际 ${fmtMin(s.critical_actual_min)} / 理论 ${fmtMin(s.critical_theory_min)}${s.critical_ratio === null ? '' : `（${s.critical_ratio} 倍）`}`) : ['（还没有实施阶段）']),
     `- 任务排队等待（就绪到派发）平均 ${fmtMin(m.queue_avg_min)}；任务从派发到完成最长：${longest}`,
+    `- 工作区准备 ${m.workspace.count} 次（跳过 ${m.workspace.skipped}，失败 ${m.workspace.failed}），总耗时 ${(m.workspace.total_ms / 1000).toFixed(1)} 秒，缓存命中 ${m.workspace.cache_hits} 次`,
     '## 返工',
     `- ${renderRework(m.rework)}`,
     '## 质量',

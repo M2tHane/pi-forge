@@ -1,6 +1,6 @@
 // 来源：pi-flow src/core/status-view.ts @ 31f3f15（M1 改编）
 // 用户界面只显示规格、契约与计划、实施、交付；内部状态保留在 --detail。
-import { latestAcctest } from './acceptance-flow.ts';
+import { stalls } from './waits.ts';
 import { pendingChanges } from './change-flow.ts';
 import { planStatus } from './plan-flow.ts';
 import type { FlowConfig } from './config.ts';
@@ -82,12 +82,16 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
     for (const t of tasks.filter((x) => x.status === 'blocked')) {
       out.push({ key: `${flow.id}:blocked:${t.id}:${t.version}`, text: `${t.id}「${short(t.title, 40)}」${BLOCKED_LABEL[t.blocked_by ?? ''] ?? '阻塞'}：${short(t.blocked_reason ?? '')}`, command: blockedCommand(t) });
     }
-    for (const t of tasks.filter((x) => x.status === 'awaiting_inputs')) {
-      const latest = latestAcctest(tasks, t.for_task ?? t.id);
-      const deps = tasks.filter((a) => a.status === 'blocked' && (a.id === latest?.id || (t.waits_for ?? []).includes(a.id) || t.depends_on.some((d) => d.type === 'soft' && d.task === a.id)));
-      for (const dep of deps) out.push({ key: `${flow.id}:inputs:${t.id}:${dep.id}:${dep.version}`, text: `${t.id} 在等 ${dep.id}；${dep.id} 已阻塞：${short(dep.blocked_reason ?? '')}`, command: `/forge unblock ${dep.id}` });
-    }
     const stuck = stuckTasks(flow, tasks);
+    // 停滞（waits.ts 的等待图）：每条一项。pending 的 task 等在 blocked 的硬依赖上不另报：那是排队的常态，blocked 的 task 自己有一条带解除命令的项，
+    // 全都被挡住时还有下面的"流程卡住"；其余——awaiting_inputs / disputed 在等已阻塞的 task、环、等到已取消——只有这里会报
+    for (const s of stalls(tasks)) {
+      const waiter = s.kind === 'cycle' ? undefined : tasks.find((x) => x.id === s.tasks[0]);
+      if (s.kind === 'blocked' && waiter?.status === 'pending') continue;
+      const target = s.target ? tasks.find((x) => x.id === s.target) : undefined;
+      out.push({ key: `${flow.id}:stall-wait:${s.kind}:${s.tasks.join(',')}${s.target ? `:${s.target}@${target?.version ?? 0}` : ''}`, text: s.reason,
+        command: s.kind === 'blocked' ? `/forge unblock ${s.target}` : '/forge-status --detail 查看等待关系；无法自行恢复时 /forge abort' });
+    }
     if (stuck?.length) out.push({ key: `${flow.id}:stuck:${stuck.map((t) => `${t.id}@${t.version}`).join(',')}`, text: `流程卡住：剩下的任务都被 ${stuck.map((t) => t.id).join('、')} 挡住`, command: '/forge unblock <任务>' });
     const budget = budgetState(store, config, flow, now);
     // 预算用尽、同步冲突本身就是停下来的原因，下面各有一条；不再重复报"停滞"

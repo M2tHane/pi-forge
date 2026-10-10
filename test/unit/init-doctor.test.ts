@@ -147,3 +147,11 @@ test('引擎锁：另一个存活进程持有时拒绝；持有者退出后可�
     assert.equal(readEngineLock(p.dir), null);
   } finally { p.cleanup(); }
 });
+
+test('/forge doctor：互相等待的任务列为问题（停滞）', async () => {
+  const p = await setupProject({ tasks: [mkTask('T-001', { deps: [hard('T-002')] }), mkTask('T-002', { deps: [hard('T-001')] })] });
+  try {
+    const r = await doctor(p.dir, p.store);
+    assert.ok(r.errors.some((e) => /停滞：T-001、T-002 互相等待/.test(e)), r.errors.join('\n'));
+  } finally { p.cleanup(); }
+});

@@ -183,7 +183,7 @@ export interface CreateFlowInput {
   actor?: string;
 }
 
-import { awaitedAcctest } from './acceptance-flow.ts';
+import { awaitedAcctestDone, softDepsDone } from './waits.ts';
 
 export type TaskInput = Pick<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify'>
   & Partial<Omit<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify' | 'status' | 'lease' | 'created_by' | 'version'>>;
@@ -587,12 +587,10 @@ export class StateStore {
       const me = `${flowId}/${taskId}`;
       const merging = mq.merging ? key(mq.merging) : null;
 
-      const latestAcctest = awaitedAcctest(others, task.for_task ?? task.id);
       const statusOf = new Map(others.map((t) => [t.id, depStatus(t)]));
-      const softDone = (t: TaskFile) => t.depends_on.filter((d) => d.type === 'soft').every((d) => statusOf.get(d.task) === 'done');
       const eligible = mq.queue.find((e) => {
         const candidate = e.flow === flowId ? (e.task === taskId ? task : others.find((t) => t.id === e.task)) : this.readTask(e.flow, e.task);
-        return candidate?.status === 'queued_merge' && (e.flow === flowId ? softDone(candidate) : candidate.depends_on.filter((d) => d.type === 'soft').every((d) => this.readTask(e.flow, d.task).status === 'done'));
+        return candidate?.status === 'queued_merge' && softDepsDone(candidate, e.flow === flowId ? [task, ...others] : this.listTasks(e.flow));
       });
       const facts: Facts = {
         ...req.facts,
@@ -603,8 +601,8 @@ export class StateStore {
         // stage-qa 在门禁进行中（awaiting_gate）运行（第 11 节第 3 步），其余 task 只在阶段 active 时派发
         stage_active: flow.stage === task.stage && (flow.stage_status === 'active' || (task.kind === 'qa' && flow.stage_status === 'awaiting_gate')),
         status_of: statusOf,
-        latest_acctest_done: !latestAcctest || latestAcctest.status === 'done',
-        soft_deps_done: softDone(task),
+        latest_acctest_done: awaitedAcctestDone(task, others),
+        soft_deps_done: softDepsDone(task, others),
         impl_done: task.kind === 'acctest' && !!task.for_task && others.some((t) => t.id === task.for_task && t.status === 'done'),
         running_count: others.filter((t) => t.status === 'in_progress').length,
         conflicting_running: others.filter((t) => IN_FLIGHT.includes(t.status) && t.id !== task.merge_fix_for && conflictsWith(t, task)).map((t) => t.id),

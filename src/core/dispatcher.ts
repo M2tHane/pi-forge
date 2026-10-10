@@ -41,7 +41,8 @@ import { allocateResources, releaseResources, resourceEnv, resourceOptions } fro
 import { prepareAcctestWorkspace } from './acctest.ts';
 import { prepareWorkspaceRecorded } from './workspace.ts';
 import { runPrecheck } from './precheck.ts';
-import { awaitedAcctest, handOffToFix, precheckAcctest, resolveDisputes } from './acceptance-flow.ts';
+import { handOffToFix, precheckAcctest, resolveDisputes } from './acceptance-flow.ts';
+import { waitsOn } from './waits.ts';
 import { REVIEW_INPUT, decideReview, readReviewEvidence, resolveReviews, reviewWorktreeOf, type ReviewInputFile } from './review-flow.ts';
 import { QA_INPUT, stageWorktreeFor } from './stage-qa.ts';
 import { isStageLevelTask } from './stage-worktree.ts';
@@ -60,10 +61,7 @@ export async function advanceInputs(store: StateStore, flowId: string): Promise<
   for (const listed of tasks) {
     const t = store.readTask(flowId, listed.id);
     if (t.status !== 'awaiting_inputs') continue;
-    const latest = awaitedAcctest(tasks, t.for_task ?? t.id);
-    if (latest && store.readTask(flowId, latest.id).status !== 'done') continue;
-    if (!t.depends_on.filter((d) => d.type === 'soft').every((d) => store.readTask(flowId, d.task).status === 'done')) continue;
-    if (t.waits_for?.some((id) => store.readTask(flowId, id).status !== 'done')) continue;
+    if (waitsOn(t, store.listTasks(flowId)).length) continue;
     const synced = await syncTaskInputs(store, flowId, t);
     if (synced.conflicts.length) {
       await store.transitionTask(flowId, t.id, { to: 'in_progress', trigger: 'sync_conflict', actor: 'engine', facts: { conflict_files: synced.conflicts } });

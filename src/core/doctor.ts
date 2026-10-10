@@ -10,6 +10,7 @@ import { isStaleResource, listResources, reclaimResources } from './resources.ts
 import { preflight, formatPreflight, type PreflightDeps } from './preflight.ts';
 import { readEngineLock } from './engine-lock.ts';
 import { IN_FLIGHT } from './state-machine.ts';
+import { stalls } from './waits.ts';
 import { cleanupSessions, DEFAULT_SESSION_RETENTION_DAYS } from './session-log.ts';
 import { MISSING_TOOLS_REASON } from './dependencies.ts';
 
@@ -44,6 +45,11 @@ export async function doctor(root: string, store: StateStore, opts: { fix?: bool
       }
       if (t.lease && now >= Date.parse(t.lease.expires_at)) warnings.push(`${flowId}/${t.id} 的租约已过期（run ${t.lease.run_id}）：执行 /forge-resume`);
     }
+  }
+
+  // 互相等待、或等到已阻塞 / 已取消的 task（第 8.1 节"卡住时必须能被看见"）
+  for (const flowId of flowIds) {
+    for (const s of stalls(store.listTasks(flowId))) errors.push(`${flowId} 停滞：${s.reason}`);
   }
 
   const mq = store.readMergeQueue();

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  accBranch, applyToAccBranch, checkAcctestSubmit, exportLayers, filesAt, lockHash, prepareAcctestWorkspace, revertOutside, scanAcCoverage, testFilesIn,
+  accBranch, applyToAccBranch, checkAcctestSubmit, exportLayers, exportPatterns, filesAt, lockHash, prepareAcctestWorkspace, revertOutside, scanAcCoverage, testFilesIn,
 } from '../../src/core/acctest.ts';
 import { parseConfig } from '../../src/core/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
@@ -167,4 +167,10 @@ test('提交：越界改动由程序还原；测试目录的改动以补丁应�
     assert.equal(git(p.root, 'rev-list', '--count', `flow/B-001/integration..${branch}`), '1');
     assert.equal(git(p.root, 'worktree', 'list').split('\n').length, 1, '临时 worktree 已清理');
   } finally { p.cleanup(); }
+});
+
+test('导出路径默认含 scripts/** 与根目录 tsconfig（S0 的验收运行器与 codegen 常放在 scripts/，偏离 85）；不含实现目录', () => {
+  const pats = exportPatterns({ raw: {} } as unknown as Parameters<typeof exportPatterns>[0]);
+  for (const p of ['scripts/**', 'tsconfig.json', 'tsconfig.*.json', 'tests/acceptance/**']) assert.ok(pats.includes(p), p);
+  assert.ok(!pats.some((p) => p.startsWith('src')));
 });

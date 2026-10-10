@@ -14,9 +14,13 @@ import { acctestCacheRoot, cacheDirsOf, hardlinkTree, lockHash, LOCKFILES, prepa
 // 这些原本定义在本文件，抽到 workspace.ts 后在此再导出，保持原有引用不变
 export { acctestCacheRoot, hardlinkTree, lockHash, LOCKFILES, type SetupLog };
 
-/** 第 9.2 节第 1 条：总是导出的路径；acctest_workspace.include 追加在后 */
+/**
+ * 第 9.2 节第 1 条：总是导出的路径；acctest_workspace.include 追加在后。
+ * 另加 scripts/** 与根目录 tsconfig（偏离 85）：S0 常把验收测试的运行器、codegen 放在 scripts/，不导出时隔离工作区里
+ * install 后的 codegen 与 acceptance 都跑不起来（第 7.5 节 S0 完成标准第 5 条），而 worker 改不了 workflow.yaml 的 include。工具脚本不是业务实现。
+ */
 export const ACCTEST_BASE_PATHS = [
-  'docs/spec/**', 'docs/contracts/**', 'docs/arch/overview.md', 'AGENTS.md', 'tests/acceptance/**',
+  'docs/spec/**', 'docs/contracts/**', 'docs/arch/overview.md', 'AGENTS.md', 'tests/acceptance/**', 'scripts/**', 'tsconfig.json', 'tsconfig.*.json',
   'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'bun.lock', 'bun.lockb',
 ];
 const LIST_TIMEOUT_MS = 5 * 60_000;

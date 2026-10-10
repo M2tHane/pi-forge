@@ -23,7 +23,7 @@ import { StateStore } from '../src/core/state-store.ts';
 import { worktreesRoot } from '../src/core/worktree.ts';
 import { packageRoots, pluginExtensionsFor } from '../src/pi-adapter/plugins.ts';
 import {
-  agentTime, parseTestSummary, runHidden, scoreRun, sessionUsage, toMin,
+  agentTime, parseTestSummary, runHidden, runProjectTests, scoreRun, sessionUsage, toMin,
   type HiddenResult, type Interval, type PhaseSummary, type RunStatus, type Summary, type TestSummary,
 } from './m9/common.ts';
 import { RpcProcess, type RpcRecord } from './m9/rpc.ts';
@@ -402,7 +402,7 @@ export async function main(argv: string[]): Promise<number> {
       writeFileSync(path.join(out, `hidden-${p.name}.json`), `${JSON.stringify({ phase: p.name, scored_on: which, head, uncommitted_files: dirtyFiles, result: p.hidden }, null, 2)}\n`);
     }
     // 项目自带测试：单独列出，不进入判定
-    const t = runShell(dir, 'npm', ['test', '--silent'], 10 * 60_000);
+    const t = await runProjectTests(dir);
     p.tests = parseTestSummary(t.out, t.code);
     p.hiddenMeta = { scored_on: which, head, uncommitted_files: dirtyFiles };
     scoringMs += Date.now() - t0;

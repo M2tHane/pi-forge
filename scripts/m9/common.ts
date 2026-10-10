@@ -140,9 +140,10 @@ export function blockedIntervals(events: readonly EventLike[], flowId: string, e
 }
 
 /** 流程到达 done 的时刻（最后一个转入 done 的阶段事件）；没有为 null */
-export function flowDoneMs(events: readonly EventLike[], flowId: string): number | null {
+/** 流程交付的时刻：最后一个阶段转为 done（P0、P1 等前面阶段的 done 不算） */
+export function flowDoneMs(events: readonly EventLike[], flowId: string, lastStage: string): number | null {
   let at: number | null = null;
-  for (const e of events) if (e.flow === flowId && e.data?.['entity'] === 'stage' && typeof e.data['stage'] === 'string' && e.to === 'done') at = Date.parse(e.ts);
+  for (const e of events) if (e.flow === flowId && e.data?.['entity'] === 'stage' && e.data['stage'] === lastStage && e.to === 'done') at = Date.parse(e.ts);
   return at;
 }
 
@@ -165,7 +166,7 @@ export interface AgentTime {
  * 轮询状态的几秒落在 awaiting_human / blocked 区间里，已一并扣除。
  */
 export function agentTime(events: readonly FlowEvent[], flow: Pick<FlowFile, 'id' | 'stages' | 'created_at'>, startMs: number, fallbackEndMs: number, p0Intervals: readonly Interval[]): AgentTime {
-  const endMs = flowDoneMs(events, flow.id) ?? fallbackEndMs;
+  const endMs = flowDoneMs(events, flow.id, flow.stages.at(-1)!) ?? fallbackEndMs;
   const wall = Math.max(0, endMs - startMs);
   const dur = stageDurations(events, flow.id, flow.stages[0]!, flow.created_at, endMs);
   let human = 0;
@@ -283,4 +284,25 @@ export function sessionUsage(dir: string): Record<string, number | null> {
     }
   }
   return { session_files: files.length, ...sum };
+}
+
+/**
+ * 在独立进程组里跑项目自带测试，超时结束整个进程组（M9 冒烟：模型写的测试起了服务不退出，
+ * spawnSync 超时只结束 npm，孙进程占着输出管道，计分一直卡住）。
+ */
+export function runProjectTests(cwd: string, timeoutMs = 5 * 60_000): Promise<{ code: number | null; out: string }> {
+  return new Promise((resolve) => {
+    const c = spawn('npm', ['test', '--silent'], { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let done = false;
+    const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); resolve({ code, out: out.slice(-200_000) }); };
+    c.stdout!.setEncoding('utf8').on('data', (d: string) => { out += d; });
+    c.stderr!.setEncoding('utf8').on('data', (d: string) => { out += d; });
+    const timer = setTimeout(() => {
+      out += `\n[超过 ${Math.round(timeoutMs / 1000)} 秒，结束测试进程组]`;
+      try { process.kill(-c.pid!, 'SIGKILL'); } catch { /* 已退出 */ }
+      finish(null);
+    }, timeoutMs);
+    c.on('exit', (code) => { try { process.kill(-c.pid!, 'SIGKILL'); } catch { /* 进程组已空 */ } finish(code); });
+  });
 }

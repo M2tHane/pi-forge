@@ -216,6 +216,7 @@ test('agentTime：墙钟 − 等人工 − blocked − P0 等待；与 --metrics
   // P0 活动 0–10（其中 P0 提问等待 2 分钟），P0 等批准 10–15，P1 活动 15–40（其中 task blocked 20–26），P1 等批准 40–45，S1 活动 45–60，S1 等签收 60–65 → done
   const events = [
     stageEv(1, 10, 'awaiting_human', true, 'P0'),
+    stageEv(1, 15, 'done', true, 'P0'), // 前面阶段的 done 不是交付（M9 冒烟里曾被当成交付，墙钟只算到 P1）
     stageEv(2, 15, 'P1', false), // 进入 P1，active
     ev(3, 15, { to: 'active', data: { entity: 'stage', stage: 'P1' } }),
     taskEv(4, 20, 'T-001', 'in_progress', 'blocked'),
@@ -227,7 +228,7 @@ test('agentTime：墙钟 − 等人工 − blocked − P0 等待；与 --metrics
   ];
   const flow = { id: 'B-001', stages: ['P0', 'P1', 'S1'], created_at: T(0) };
   const t = agentTime(events, flow, ms(0), ms(100), [[ms(3), ms(5)]]);
-  assert.equal(flowDoneMs(events, 'B-001'), ms(65));
+  assert.equal(flowDoneMs(events, 'B-001', 'S1'), ms(65));
   assert.equal(t.wall_ms / 60_000, 65);
   assert.equal(t.human_ms / 60_000, 5 + 5 + 5);
   assert.equal(t.blocked_ms / 60_000, 6);

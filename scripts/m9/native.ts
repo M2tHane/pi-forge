@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import {
-  looksLikeQuestion, nativeAgentMs, parseTestSummary, runHidden, scoreRun, sessionUsage, toMin,
+  looksLikeQuestion, nativeAgentMs, parseTestSummary, runHidden, runProjectTests, scoreRun, sessionUsage, toMin,
   type HiddenResult, type Interval, type PhaseSummary, type RunStatus, type Summary, type TestSummary,
 } from './common.ts';
 
@@ -167,8 +167,8 @@ export async function main(argv: string[]): Promise<number> {
       rec.hidden = await runHidden(o.hidden, project, name === 'change');
       writeFileSync(path.join(out!, `hidden-${name}.json`), `${JSON.stringify({ phase: name, head: rec.scoredOn, uncommitted_files: (gitTry(project, ['status', '--porcelain']) ?? '').split('\n').filter(Boolean).length, result: rec.hidden }, null, 2)}\n`);
     }
-    const t = spawnSync('npm', ['test', '--silent'], { cwd: project, encoding: 'utf8', timeout: 10 * 60_000, maxBuffer: 64 * 1024 * 1024 });
-    rec.tests = parseTestSummary(`${t.stdout ?? ''}${t.stderr ?? ''}`, t.status);
+    const t = await runProjectTests(project);
+    rec.tests = parseTestSummary(t.out, t.code);
     phases.push(rec);
     scoringMs += Date.now() - t0;
   };

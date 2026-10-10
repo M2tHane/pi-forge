@@ -361,3 +361,8 @@ export function acTexts(spec: EffectiveSpec, ids: readonly string[]): Record<str
   const all = acMap(spec);
   return Object.fromEntries(ids.filter((id) => all.has(id)).map((id) => [id, all.get(id)!.text]));
 }
+
+/** 只解析术语表（P1 起 architect 只能追加条目，比较前后两版时用） */
+export function glossaryTerms(md: string, file = `${SPEC_DIR}glossary.md`): GlossaryTerm[] {
+  return parseGlossary(md, file, []);
+}

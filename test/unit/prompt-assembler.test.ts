@@ -46,6 +46,18 @@ test('规则按 global + 任务 scopes 选择，缺失的文件报告出来', ()
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('按 task 的 layers 附上 rules/<层>.md：存在才附上，不存在不算缺失；非法层名忽略', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'pi-forge-rules-'));
+  try {
+    mkdirSync(path.join(dir, 'rules'));
+    writeFileSync(path.join(dir, 'rules/global.md'), 'G1');
+    writeFileSync(path.join(dir, 'rules/backend.md'), 'B1');
+    const r = ruleFilesFor(config, dir, ['code'], ['backend', 'frontend', '../secret']);
+    assert.deepEqual(r.rules.map((x) => x.path), ['rules/global.md', 'rules/backend.md']);
+    assert.deepEqual(r.missing, []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('提示组装顺序：角色提示 → 规则 → 任务与输入 → handoff 与打回意见；稳定前缀与任务无关', () => {
   const agent = { name: 'worker', tier: 'strong', thinking: null, description: '', prompt: 'ROLE-PROMPT' };
   const rules = [{ path: 'rules/global.md', content: 'RULE-G' }, { path: 'rules/backend.md', content: 'RULE-B' }];

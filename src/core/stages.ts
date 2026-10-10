@@ -6,6 +6,7 @@ import type { FlowFile } from './schemas.ts';
 import { git, gitOk } from './git.ts';
 import { ensureIntegrationBranch } from './worktree.ts';
 import { mergeToMain } from './release.ts';
+import { materializePlan, P1_STAGE } from './plan-flow.ts';
 
 export interface StageDeps { root: string; store: StateStore; config: FlowConfig }
 
@@ -27,16 +28,21 @@ export async function startFlow(d: StageDeps, mode: 'build' | 'feature', descrip
 
 /** 最后阶段先以 --no-ff 合入主分支，成功后才批准。 */
 export async function approveStage(d: StageDeps, flowId: string, note?: string): Promise<string> {
-  const flow = d.store.readFlow(flowId);
+  let flow = d.store.readFlow(flowId);
   if (flow.stage_status !== 'awaiting_human') throw new Error(`阶段 ${flow.stage} 当前是 ${flow.stage_status}，没有等待批准的闸门。`);
   const lines: string[] = [];
+  // P1：先落地计划（追加 S 阶段），P1 才不再是最后一个阶段
+  if (flow.stage === P1_STAGE) {
+    lines.push(...await materializePlan(d.root, d.store, d.config, flowId));
+    flow = d.store.readFlow(flowId);
+  }
   if (flow.stage === flow.stages.at(-1)) {
     const sha = await mergeToMain(d.root, d.store, d.config, flowId);
     lines.push(`已把 ${flow.integration_branch} 合入 ${d.config.raw.main_branch}（${sha.slice(0, 8)}）。`);
   }
   await d.store.transitionStage(flowId, { to: 'done', trigger: 'approve', actor: 'human', ...(note ? { note } : {}) });
   const next = await d.store.advanceStage(flowId, 'human');
-  lines.push(`已批准阶段 ${flow.stage}。`, next.stage !== flow.stage ? `进入阶段 ${next.stage}。${next.stage === 'P1' ? 'P1（契约与计划）在 M3 实现。' : ''}` : `流程 ${flow.id} 已完成。`);
+  lines.push(`已批准阶段 ${flow.stage}。`, next.stage !== flow.stage ? `进入阶段 ${next.stage}。${next.stage === P1_STAGE ? '程序将派 architect 起草契约与计划。' : ''}` : `流程 ${flow.id} 已完成。`);
   return lines.join('\n');
 }
 
@@ -45,6 +51,10 @@ export async function rejectStage(d: StageDeps, flowId: string, feedback: string
   if (!['awaiting_human', 'needs_human'].includes(flow.stage_status)) throw new Error(`阶段 ${flow.stage} 当前是 ${flow.stage_status}，没有等待批准的闸门。`);
   if (!feedback.trim()) throw new Error('打回必须写明意见：/forge-reject "<意见>"');
   await d.store.transitionStage(flowId, { to: 'active', trigger: 'reject', actor: 'human', reason: feedback });
+  if (flow.stage === P1_STAGE) {
+    await d.store.setPlanRework(flowId, `用户打回：${feedback}`, 'human');
+    return `已打回阶段 ${flow.stage}，程序将派 architect 按意见返工。`;
+  }
   return `已打回阶段 ${flow.stage}，意见已记录。`;
 }
 

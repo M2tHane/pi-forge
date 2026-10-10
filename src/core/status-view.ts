@@ -1,6 +1,7 @@
 // 来源：pi-flow src/core/status-view.ts @ 31f3f15（M1 改编）
 // 用户界面只显示规格、契约与计划、实施、交付；内部状态保留在 --detail。
 import { specStatus, amendSummary } from './spec-flow.ts';
+import { planStatus } from './plan-flow.ts';
 import type { FlowConfig } from './config.ts';
 import { isFinished, type StateStore } from './state-store.ts';
 import { budgetState, formatBudget } from './cost-control.ts';
@@ -81,7 +82,7 @@ export function renderFlow(store: StateStore, config: FlowConfig, flow: FlowFile
   const cur = currentPhase(config, flow, tasks);
   const counted = tasks.filter((t) => t.status !== 'cancelled' && (flow.mode === 'fix' || cur === 'done' || phaseOfStage(config, flow.mode, t.stage) === cur));
   const active = tasks.filter((t) => INFLIGHT.has(t.status));
-  return [`${flow.id}「${short(flow.title, 60)}」`, phaseBar(config, flow, cur), `${PHASE_LABEL[cur]}阶段：${cur === 'spec' ? '整理可验证的规格' : cur === 'plan' ? '制定契约与计划（M3 实现）' : cur === 'implementation' ? '按任务实施并运行全量验证' : '已合入主分支'}`, `进度：${counted.filter((t) => t.status === 'done').length} / ${counted.length} 个任务完成`, specStatus(store, flow.id), active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${flow.stage_status === 'awaiting_human' ? '无（等待你审批）' : flow.stage_status === 'awaiting_gate' ? '阶段检查中' : '无'}`, `阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、') || '无'}`].join('\n');
+  return [`${flow.id}「${short(flow.title, 60)}」`, phaseBar(config, flow, cur), `${PHASE_LABEL[cur]}阶段：${cur === 'spec' ? '整理可验证的规格' : cur === 'plan' ? '制定契约与计划' : cur === 'implementation' ? '按任务实施并运行全量验证' : '已合入主分支'}`, `进度：${counted.filter((t) => t.status === 'done').length} / ${counted.length} 个任务完成`, specStatus(store, flow.id), ...[planStatus(store, flow.id)].filter(Boolean), active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${flow.stage_status === 'awaiting_human' ? '无（等待你审批）' : flow.stage_status === 'awaiting_gate' ? '阶段检查中' : '无'}`, `阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、') || '无'}`].join('\n');
 }
 export function renderStatus(store: StateStore, config: FlowConfig): string {
   const flows = visibleFlows(store);

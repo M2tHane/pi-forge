@@ -31,12 +31,13 @@ function lineDiff(cur: string | null, next: string): string {
   return add || del ? `+${add} 行，-${del} 行` : '与现有内容相同';
 }
 
-/** 命令草案：commands（名称 → 命令）与 gui_commands（会打开桌面应用或浏览器窗口的项目命令，agent 不能运行） */
-function parseCommands(text: string, file: string): { commands: Record<string, string>; gui: string[] } {
+type AcctestWorkspace = { include?: string[]; cache?: string[] };
+/** 命令草案：commands（名称 → 命令）、gui_commands（会打开桌面应用或浏览器窗口的项目命令，agent 不能运行）与 acctest_workspace（规格第 15 节） */
+function parseCommands(text: string, file: string): { commands: Record<string, string>; gui: string[]; acctestWorkspace: AcctestWorkspace | null } {
   let raw: unknown;
   try { raw = parseYaml(text); } catch (e) { throw new Error(`${file} 不是合法 YAML：${(e as Error).message}`); }
-  const obj = raw as { commands?: unknown; gui_commands?: unknown } | null;
-  const structured = !!obj && typeof obj === 'object' && ('commands' in obj || 'gui_commands' in obj);
+  const obj = raw as { commands?: unknown; gui_commands?: unknown; acctest_workspace?: unknown } | null;
+  const structured = !!obj && typeof obj === 'object' && ('commands' in obj || 'gui_commands' in obj || 'acctest_workspace' in obj);
   const cmds = structured ? obj!.commands ?? {} : raw;
   if (!cmds || typeof cmds !== 'object' || Array.isArray(cmds)) throw new Error(`${file} 应为 commands: { 名称: "命令" } 的映射`);
   const out: Record<string, string> = {};
@@ -46,10 +47,16 @@ function parseCommands(text: string, file: string): { commands: Record<string, s
   }
   const g = structured ? obj!.gui_commands ?? [] : [];
   if (!Array.isArray(g) || g.some((x) => typeof x !== 'string' || !x.trim())) throw new Error(`${file} 中 gui_commands 应为非空字符串的列表`);
-  return { commands: out, gui: (g as string[]).map((x) => x.trim()) };
+  const ws = structured ? obj!.acctest_workspace : undefined;
+  const list = (v: unknown) => v === undefined || Array.isArray(v) && v.every((x) => typeof x === 'string' && x.trim());
+  if (ws !== undefined && (!ws || typeof ws !== 'object' || Array.isArray(ws) || Object.keys(ws).some((k) => k !== 'include' && k !== 'cache')
+    || !list((ws as AcctestWorkspace).include) || !list((ws as AcctestWorkspace).cache))) {
+    throw new Error(`${file} 中 acctest_workspace 应为 { include: [路径], cache: [目录] }`);
+  }
+  return { commands: out, gui: (g as string[]).map((x) => x.trim()), acctestWorkspace: (ws as AcctestWorkspace | undefined) ?? null };
 }
 
-const currentWorkflow = (root: string) => (parseYaml(readFileSync(path.join(root, 'workflow.yaml'), 'utf8')) ?? {}) as { commands?: Record<string, string>; gui_commands?: string[] };
+const currentWorkflow = (root: string) => (parseYaml(readFileSync(path.join(root, 'workflow.yaml'), 'utf8')) ?? {}) as { commands?: Record<string, string>; gui_commands?: string[]; acctest_workspace?: AcctestWorkspace };
 
 /** 列出某个 git 引用（通常是集成分支）上的草案，并与主工作区现状比较 */
 export function listDrafts(root: string, ref: string): Draft[] {
@@ -66,6 +73,9 @@ export function listDrafts(root: string, ref: string): Draft[] {
       const changes = Object.entries(next.commands).filter(([k, v]) => cur[k] !== v).map(([k, v]) => `${k}：${cur[k] ? `"${cur[k]}" → ` : '新增 '}"${v}"`);
       const gui = next.gui.filter((c) => !(wf.gui_commands ?? []).includes(c));
       if (gui.length) changes.push(`agent 不能运行（会打开界面）：${gui.map((c) => `"${c}"`).join('、')}`);
+      if (next.acctestWorkspace && JSON.stringify(next.acctestWorkspace) !== JSON.stringify(wf.acctest_workspace ?? null)) {
+        changes.push(`验收测试工作区：include ${(next.acctestWorkspace.include ?? []).join('、') || '无'}；cache ${(next.acctestWorkspace.cache ?? []).join('、') || '无'}`);
+      }
       out.push({ kind: 'commands', file, target: 'workflow.yaml', content, current: null, summary: changes.length ? changes.join('；') : '与现有命令相同' });
     } else if (base.endsWith('.md')) {
       const target = `rules/${base}`;
@@ -91,6 +101,7 @@ export function commandsDraftProblems(root: string, ref: string): string[] {
     try { draft = parseCommands(git(root, ['show', `${ref}:${file}`]), file); } catch (e) { out.push((e as Error).message); continue; }
     const doc = parseDocument(readFileSync(path.join(root, 'workflow.yaml'), 'utf8'));
     for (const [k, v] of Object.entries(draft.commands)) doc.setIn(['commands', k], v);
+    if (draft.acctestWorkspace) doc.set('acctest_workspace', draft.acctestWorkspace);
     const merged = (doc.toJS() as { commands?: Record<string, string> }).commands ?? {};
     if (!merged['test']?.trim()) out.push(`${file} 缺少 test 命令（合并时要跑全量测试）`);
     try { parseConfig(doc.toString()); } catch (e) { out.push(`${file} 合并进 workflow.yaml 后校验不通过：${(e as Error).message.slice(0, 500)}`); }
@@ -99,10 +110,11 @@ export function commandsDraftProblems(root: string, ref: string): string[] {
 }
 
 /** 写入选中的草案并提交；返回新的命令表（若命令有变化），供运行中的引擎更新配置 */
-export function applyDrafts(root: string, drafts: Draft[], flowId: string): { applied: string[]; commands: Record<string, string> | null } {
-  if (!drafts.length) return { applied: [], commands: null };
+export function applyDrafts(root: string, drafts: Draft[], flowId: string): { applied: string[]; commands: Record<string, string> | null; acctestWorkspace: AcctestWorkspace | null } {
+  if (!drafts.length) return { applied: [], commands: null, acctestWorkspace: null };
   const touched: string[] = [];
   let commands: Record<string, string> | null = null;
+  let acctestWorkspace: AcctestWorkspace | null = null;
   for (const d of drafts.filter((x) => x.kind === 'commands')) {
     const file = path.join(root, 'workflow.yaml');
     const doc = parseDocument(readFileSync(file, 'utf8'));
@@ -113,6 +125,7 @@ export function applyDrafts(root: string, drafts: Draft[], flowId: string): { ap
     // gui_commands 只增不减：草案里列出的会打开界面的命令加进去
     const gui = [...new Set([...((doc.toJS() as { gui_commands?: string[] }).gui_commands ?? []), ...draft.gui])];
     if (gui.length) doc.set('gui_commands', gui);
+    if (draft.acctestWorkspace) { doc.set('acctest_workspace', draft.acctestWorkspace); acctestWorkspace = draft.acctestWorkspace; }
     const text = doc.toString();
     parseConfig(text);
     writeFileSync(file, text);
@@ -129,7 +142,7 @@ export function applyDrafts(root: string, drafts: Draft[], flowId: string): { ap
   if (!gitOk(root, ['diff', '--cached', '--quiet', '--', ...touched])) {
     git(root, ['commit', '-q', '--no-verify', '-m', `pi-forge: 应用 ${flowId} 的规则与命令草案`, '--', ...touched], { engineIdentity: true });
   }
-  return { applied: touched, commands };
+  return { applied: touched, commands, acctestWorkspace };
 }
 
 export function formatDrafts(drafts: Draft[]): string {

@@ -48,7 +48,7 @@
 
 - 继承自 pi-flow：serena 的 `prepareArguments` 在 `tool_call` 之前还是之后未核实；guard 管不到脚本文件内部（`bash x.sh`、`npm run`），兜底是提交时的 diff 检查；打码只认识常见密钥形态。
 - Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。
-- M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；批准后停在 P1 active，契约与计划由 M3 实现，真实预检、审查和阶段验收分别由 M4/M5/M6 接入。主会话角色按用户决定沿用 orchestrator。
+- M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；M3 已接上 P1：architect 起草契约与计划、forge_propose_plan 校验、doc 预检、P1 闸门、批准后生成 S 阶段与 task 并进入 S0。真实预检、验收测试 task、审查与契约锁定检查、阶段验收分别由 M4/M5/M6 接入。主会话角色按用户决定沿用 orchestrator。
 - stage-qa 的 bash 是 full，现有 guard 拦不住 shell 重定向改源码，而规格第 14 节要求 stage-qa 不能写（临时目录除外）。M6 实现 stage-qa 时在 guard 里补上，并加测试。
 
 ## 偏离记录
@@ -89,9 +89,17 @@
 26. 删除的 REQ 编号不得复用，仍计入历史最大编号；额外拒绝不可解析的需求/AC/术语、空基线、删除标题带 AC、重复 feature 文件名或小节，避免静默猜测。
 27. intake 清单持久化为 `{ prd, prototype_path?, files }`，替换第 20 条的兼容投影；TypeBox 1.3.27 的 Memory.Clone 会剔除 `prototype` 键，故内部改名，公开 intake 接口仍为 `{ prd, prototype?, files }`。
 28. 输入入库保留原件字节、相对目录和可执行位；拒绝空目录、符号链接、敏感/状态路径，保留 500 文件/30 MiB 上限；forge_read 沿用 2000 行/50 KiB 完整行分页，超长单行明确提示。
-29. P0 的 spec-lint 错误整体拒绝且不落文件/事件；通过后独立索引提交，闸门重读集成分支并必须人工批准；P1 只留 M3 占位，不派发。恢复 awaiting_gate 时由引擎重跑闸门。
+29. P0 的 spec-lint 错误整体拒绝且不落文件/事件；通过后独立索引提交，闸门重读集成分支并必须人工批准；P1 只留 M3 占位，不派发（已被 33 修订）。恢复 awaiting_gate 时由引擎重跑闸门。
 30. 修订先只保存提案与 AC/task 影响，批准才提交 feature；批准前重新 lint 并对比影响，变化时要求打回重提。日期回拨时不早于已有 feature 的日期，保持文件名叠加顺序；architect 变更请求留 M7。
 31. AC 的全局编号统一为 `REQ-001.AC1`（规格第 7.1 节、acceptance-tests 技能的写法），task.ac、spec 的 diffAcs/acTexts、修订影响分析都用它，不做转换。规格文件/修订内容单份限 120000 字符，修订名最多 80 字且只含文字、数字、下划线、短横线。
+32. 验收测试 task（`.at`）的推导已实现（`deriveTasks` 的 `acctest` 开关），但 M3 不创建（`ACCTEST_TASKS_M4 = false`）：独立工作区、同步进 impl 预检和报告路径在 M4，现在创建会让 impl 的输入一直不就绪。M4 打开并补 e2e。
+33. P1 由程序驱动：进入 P1、打回或闸门失败时引擎新建 architect 的 doc task（接着上一个 task 的会话，`fork_from_task`），不经主会话、不受 auto_dispatch 影响，直接派发（与 merge-fix 同路径）。返工原因存在 `flow.plan_rework`，写进新 task 的 handoff，派发后清除。
+34. task 编号全流程连续：architect 的 doc task 也占编号，plan.yaml 从下一个空号起（brief 写明起始号，冲突时校验给出建议编号）。不用临时编号再映射。
+35. `forge_propose_plan` 在 architect 的 worktree 上跑完整 P1 校验（契约结构、术语表只追加、计划），通过后保存 `plan-proposal.json`（含 plan 的 sha256、assumptions、extras、报告）。doc 预检要求提案存在且 plan.yaml 未再改；闸门在集成分支上重跑同样的校验。
+36. 术语表在 P1 只能追加：对比 `flow.spec.sha` 时的版本，已有术语的定义不能改、不能删。
+37. 契约锁定只记录 `flow.contracts_base`（批准 P1 时集成分支的提交）。实施阶段对契约只能追加的强制检查放在 M5（审查/契约检查）。
+38. 批准 P1 时先在主工作区应用规则与命令草案（单独提交，包括 `acctest_workspace`），并同步更新运行中的配置，再生成 S 阶段与 task。P1 不算最后阶段，不提示合入主分支。
+39. 规则文件除按 scope 选择外，还按 task 的 `layers` 附上 `rules/<layer>.md`（存在时）。architect 写的规则草案按层命名，worker 就能拿到。
 
 ## M1 删除、由 Mx 重建
 
@@ -107,9 +115,9 @@
 
 **M3：契约与计划**
 
-- `test/e2e/commands.test.ts`：「renumber：临时编号映射到流程内新编号，依赖一起改写」。
-- `test/e2e/rules-draft.test.ts`：「批准规划阶段（D2）时：规划时写的项目专属规则草案在无界面时自动应用」。
-- `test/unit/prompt-assembler.test.ts`：「规划模块时附上实现者的模型（第六轮注入主会话）：强模型时模块可以大一些，否则要小一些」。
+- `test/e2e/commands.test.ts`：「renumber：临时编号映射到流程内新编号，依赖一起改写」。**M3 不再适用：计划直接用流程编号（偏离 34），冲突与建议编号由 `plan.test.ts` 覆盖。**
+- `test/e2e/rules-draft.test.ts`：「批准规划阶段（D2）时：规划时写的项目专属规则草案在无界面时自动应用」。**M3 已重建：`p1-flow.test.ts` 批准 P1 时应用规则与命令草案（含 acctest_workspace）并同步运行中的配置。**
+- `test/unit/prompt-assembler.test.ts`：「规划模块时附上实现者的模型（第六轮注入主会话）：强模型时模块可以大一些，否则要小一些」。**M3 已替换：worker 的模型写进 architect 的 brief，`p1-flow.test.ts` 断言。**
 
 **M4：输入同步与流水线**
 

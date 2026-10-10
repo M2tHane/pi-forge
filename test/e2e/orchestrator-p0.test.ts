@@ -68,7 +68,8 @@ test('真实 pi print：forge_read 读 PRD；不合格规格被拒，合格规�
     const resumed = readFileSync(LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'orch-p0').slice(previousCount);
     assert.match(resumed[0].system.join('\n'), /增加唯一性说明[\s\S]*docs\/spec\/inputs\/prd\/prd.md/);
     assert.match(JSON.stringify(resumed[1].last), /PRD 原文/);
-    assert.equal(store.listTasks(id).length, 0);
+    // 进入 P1 后程序建了 architect 的 doc task（P1 的流程见 p1-flow）
+    assert.deepEqual(store.listTasks(id).map((t) => [t.id, t.kind, t.role, t.stage]), [['T-001', 'doc', 'architect', 'P1']]);
     assert.ok((await store.verifyIntegrity()).ok);
   } finally { p.cleanup(); rmSync(agentDir, { recursive: true, force: true }); }
 });

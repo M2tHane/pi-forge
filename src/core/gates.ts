@@ -16,6 +16,7 @@ import type { TaskFile } from './schemas.ts';
 import type { TaskInput } from './state-store.ts';
 import { nextTaskId } from './stages.ts';
 import { matchesAny } from './paths.ts';
+import { P1_STAGE, p1GateProblems } from './plan-flow.ts';
 
 const nextIds = (tasks: readonly TaskFile[], n: number) => {
   const first = Math.max(0, ...tasks.map((t) => Number(t.id.match(/^T-(\d+)/)?.[1] ?? 0))) + 1;
@@ -47,6 +48,13 @@ export async function runStageGate(root: string, store: StateStore, config: Flow
       ...(reasons.length ? { reason: reasons.join('\n') } : {}),
       spec: { ...flow.spec, submitted: passed, errors: reasons, warnings: lint.warnings.map((i) => i.message) } });
     return { stage: 'P0', passed, needsHuman: true, reasons };
+  }
+  if (flow.stage === P1_STAGE) {
+    const reasons = p1GateProblems(root, store, config, flowId);
+    const passed = reasons.length === 0;
+    await store.transitionStage(flowId, { to: passed ? 'awaiting_human' : 'active', trigger: passed ? 'gate_passed' : 'gate_failed', actor: 'gate', needs_human: true,
+      ...(reasons.length ? { reason: reasons.join('\n').slice(0, 4000) } : {}) });
+    return { stage: P1_STAGE, passed, needsHuman: true, reasons };
   }
   const def = stageDef(config, flow.mode, flow.stage);
   const isLast = flow.stage === flow.stages.at(-1);

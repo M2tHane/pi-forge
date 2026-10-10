@@ -15,15 +15,20 @@ const HANDOFF_TAIL = 6000;
 export const UPSTREAM_TAIL = 8000;
 export const UPSTREAM_TOTAL = 16000;
 
-/** global.md 加上任务 scopes 对应的规则文件（按 scope 顺序去重）；路径相对项目根。缺失的文件跳过（例如规划阶段之前还没有 rules/project.md） */
-export function ruleFilesFor(config: FlowConfig, projectRoot: string, scopes: readonly string[]): { rules: RuleFile[]; missing: string[] } {
+/**
+ * global.md、任务 scopes 对应的规则文件、task 的 layers 对应的 rules/<layer>.md（第 16 节：按 layers 选规则），按顺序去重；路径相对项目根。
+ * 缺失的文件跳过（例如 P1 批准之前还没有分层规则）。
+ */
+export function ruleFilesFor(config: FlowConfig, projectRoot: string, scopes: readonly string[], layers: readonly string[] = []): { rules: RuleFile[]; missing: string[] } {
   const wanted = [GLOBAL_RULES, ...scopes.flatMap((s) => config.raw.scopes[s]?.rules ?? [])];
+  // 按层的规则（architect 的规则草案按层命名）可有可无，不存在时不算缺失
+  const optional = layers.filter((l) => /^[\w-]+$/.test(l)).map((l) => `rules/${l}.md`);
   const rules: RuleFile[] = [];
   const missing: string[] = [];
-  for (const rel of [...new Set(wanted)]) {
+  for (const rel of [...new Set([...wanted, ...optional])]) {
     const abs = path.join(projectRoot, rel);
     if (existsSync(abs)) rules.push({ path: rel, content: readFileSync(abs, 'utf8').trim() });
-    else missing.push(rel);
+    else if (wanted.includes(rel)) missing.push(rel);
   }
   return { rules, missing };
 }

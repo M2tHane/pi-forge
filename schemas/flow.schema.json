@@ -244,6 +244,28 @@
         "lean"
       ]
     },
+    "contracts_base": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plan_rework": {
+      "type": "object",
+      "required": [
+        "reason",
+        "at"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "intake": {
       "type": "object",
       "required": [

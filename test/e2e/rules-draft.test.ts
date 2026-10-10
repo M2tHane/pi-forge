@@ -66,3 +66,17 @@ test('不合法的草案被拒绝且不写入任何文件', async () => {
     assert.ok(!existsSync(path.join(p.dir, 'rules/x.md')));
   } finally { p.cleanup(); }
 });
+
+test('acctest_workspace 草案：列出摘要；格式不对时拒绝且不写入', async () => {
+  const p = await setupProject({ yaml: TEMPLATE_YAML });
+  try {
+    const { engine } = makeEngine(p, async () => {});
+    const ref = `flow/${p.flowId}/integration`;
+    commitToBranch(p.dir, ref, { 'docs/rules-draft/commands.yaml': 'commands:\n  test: "npm test"\nacctest_workspace:\n  include: [package.json]\n  cache: [node_modules]\n' }, '草案');
+    assert.match(listDrafts(p.dir, ref)[0]!.summary, /验收测试工作区：include package\.json；cache node_modules/);
+    const before = readFileSync(path.join(p.dir, 'workflow.yaml'), 'utf8');
+    commitToBranch(p.dir, ref, { 'docs/rules-draft/commands.yaml': 'commands:\n  test: "npm test"\nacctest_workspace:\n  include: package.json\n' }, '坏草案');
+    await assert.rejects(runFlowCommand('rules apply all', env(p, engine)), /acctest_workspace 应为/);
+    assert.equal(readFileSync(path.join(p.dir, 'workflow.yaml'), 'utf8'), before);
+  } finally { p.cleanup(); }
+});

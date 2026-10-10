@@ -1,6 +1,7 @@
 // 来源：pi-flow src/core/context-injector.ts @ 31f3f15（M1 改编）
 // 每轮注入程序状态与主会话可执行的下一步；主工作区改动检测保留。
 import { approvalTargets, specStatus } from './spec-flow.ts';
+import { P1_STAGE, planApprovalSummary } from './plan-flow.ts';
 import type { StateStore } from './state-store.ts';
 import type { FlowConfig } from './config.ts';
 import { budgetState } from './cost-control.ts';
@@ -24,7 +25,13 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
     if (flow.stage_status === 'awaiting_human') return { summary, next: '规格已提交，spec-lint 通过。向用户概述规格，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。', tool: 'none' };
     return { summary, next: `用 forge_read 阅读集成分支 docs/spec/inputs/ 的 PRD 与可选原型，和用户讨论需求；确认后用 forge_spec 提交四份规格。${flow.spec?.feedback ? `\n规格被打回或检查失败，意见：${flow.spec.feedback}` : ''}`, tool: 'forge_spec' };
   }
-  if (flow.stage === 'P1') return { summary, next: 'P1（契约与计划）在 M3 实现。', tool: 'none' };
+  if (flow.stage === P1_STAGE) {
+    if (flow.stage_status === 'awaiting_human') return { summary, next: `契约与计划已通过程序检查。用 forge_read 阅读 docs/plan/plan.yaml、docs/arch/overview.md 与 docs/contracts/，向用户概述：阶段与每个阶段交付什么、task 数与并行度、报告里的提醒；assumptions 与 extras 逐条列给用户确认。然后等待用户 /forge-approve stage:P1 或 /forge-reject stage:P1 "<意见>"。\n${planApprovalSummary(store, flowId)}`, tool: 'none' };
+    if (flow.stage_status === 'awaiting_gate') return { summary, next: '程序正在检查集成分支上的契约与计划，等待闸门结果。', tool: 'none' };
+    const stuck = tasks.filter((t) => t.stage === P1_STAGE && t.status === 'blocked');
+    if (flow.stage_status === 'active' && stuck.length) return { summary, next: `向用户报告阻塞：${stuck.map((t) => `${t.id}（${t.blocked_reason ?? ''}）`).join('；')}；请其 /forge unblock <任务>，或 /forge-reject stage:P1 "<意见>" 让 architect 重做。`, tool: 'none' };
+    if (flow.stage_status === 'active') return { summary, next: `architect 正在起草契约与计划，调用 forge_wait 等待。${flow.plan_rework ? `\n返工原因：${flow.plan_rework.reason}` : ''}`, tool: 'forge_wait' };
+  }
   if (flow.stage_status === 'awaiting_human') return { summary, next: `阶段 ${flow.stage} 等待用户签收，请其 /forge-approve 或 /forge-reject "<意见>"。`, tool: 'none' };
   if (flow.stage_status === 'needs_human') return { summary, next: `阶段 ${flow.stage} 门禁用尽，请用户处理后 /forge gate 重跑，或 /forge-reject "<意见>"。`, tool: 'none' };
   const scope = tasks.find((t) => t.scope_request);

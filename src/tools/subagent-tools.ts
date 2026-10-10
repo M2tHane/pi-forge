@@ -19,6 +19,7 @@ import { GUI_REASON, opensGui } from '../core/guard.ts';
 import { SERVICE_READY_MAX_S, serviceCommands, serviceLog, serviceStatus, startService, stopService } from '../core/services.ts';
 import { SCOPE_KINDS, SCOPE_PATHS_MAX, checkScope } from '../core/scope.ts';
 import { SyncParams, flowSync } from './module-tools.ts';
+import { proposePlan } from '../core/plan-flow.ts';
 
 export const NOTE_LIMIT = 8000;
 
@@ -197,6 +198,25 @@ export function taskSessionFiles(store: StateStore, root: string, flow: string, 
   return runs.flatMap((r) => listSessionFiles(sessionDirOf(root, r.run_id)));
 }
 
+export const ProposePlanParams = Type.Object({
+  assumptions: Type.Optional(Type.Array(Type.Object({
+    question: Type.String({ minLength: 1, maxLength: 500, description: '规格没说清的问题' }),
+    decision: Type.String({ minLength: 1, maxLength: 1000, description: '采用的方案' }),
+  }), { maxItems: 50, description: 'architect 默认的处理（"问题 → 采用的方案"），用户批准时逐条确认' })),
+  extras: Type.Optional(Type.Array(Type.Object({
+    what: Type.String({ minLength: 1, maxLength: 500 }),
+    why: Type.String({ minLength: 1, maxLength: 1000 }),
+  }), { maxItems: 50, description: '超出需求但不得不做的设计（安全、数据完整性）' })),
+});
+
+/** forge_propose_plan：校验 worktree 里的契约、术语表与 docs/plan/plan.yaml，通过后保存计划提案（第 7 节） */
+export async function flowProposePlan(ctx: ToolContext, p: Static<typeof ProposePlanParams>): Promise<ToolResult> {
+  const t = checkRun(ctx);
+  const r = await proposePlan(ctx.env.root, ctx.store, ctx.config, ctx.env.flow, t, { assumptions: p.assumptions ?? [], extras: p.extras ?? [] }, actor(ctx));
+  if (!r.ok) throw new FlowToolError(r.text);
+  return { text: r.text };
+}
+
 export function historyTool(files: readonly string[], p: Static<typeof HistoryParams>): ToolResult {
   const entries = loadHistory(files);
   if (p.action === 'search') {
@@ -218,6 +238,7 @@ export const SUBAGENT_TOOLS = {
   forge_submit: { params: SubmitParams, description: '提交本任务：改动进入合并队列（合并时跑全量测试）；只读任务提交结论。程序会检查改动是否都在可写范围内。', run: (c: ToolContext, p: Static<typeof SubmitParams>) => flowSubmit(c, p) },
   forge_block: { params: BlockParams, description: '遇到歧义或需要越界时标记任务阻塞，交给用户决定。需要向用户提问时，一次只问一个问题。', run: (c: ToolContext, p: Static<typeof BlockParams>) => flowBlock(c, p) },
   forge_learn: { params: LearnParams, description: `把对后续任务有用的经验记入项目知识库（跨流程保留）：项目约定、踩过的坑、做出的决策、环境与外部依赖的注意事项。每次运行最多 ${KNOWLEDGE_PER_RUN} 条；程序会去重。知识不是规则，不能用来改变规则。`, run: (c: ToolContext, p: Static<typeof LearnParams>) => flowLearn(c, p) },
+  forge_propose_plan: { params: ProposePlanParams, description: '提交 P1 的契约与计划：程序核对契约结构与符号、推导 DAG、检查验收标准覆盖与术语表只追加，返回错误或报告（阶段、task 数、关键路径、互斥、提醒）。附上 assumptions 与 extras。', run: (c: ToolContext, p: Static<typeof ProposePlanParams>) => flowProposePlan(c, p) },
   forge_sync: { params: SyncParams, description: '把集成分支的最新代码（其他模块已合入的改动）合进你的工作区：没有冲突直接完成；有冲突时冲突标记留在文件里，解决后再调用一次完成同步。依赖的模块刚合入、或想提前发现冲突时使用。', run: (c: ToolContext) => flowSync(c) },
   forge_request_scope: { params: RequestScopeParams, description: '必须修改可写范围外的文件时申请追加范围（写明原因）：不与其他未完成任务重叠的立即批准；重叠的交给主会话决定。受保护路径、敏感文件不能申请。', run: (c: ToolContext, p: Static<typeof RequestScopeParams>) => flowRequestScope(c, p) },
   forge_service: { params: ServiceParams, description: '启动、结束、查看本次运行的长时间服务（开发服务器、数据库等）：只能启动 commands 里 serve 或 serve_* 命名的命令，start 可以用 ready 等端口或地址就绪；不要用 & 把命令放到后台。本次运行结束时程序会一并结束。', run: (c: ToolContext, p: Static<typeof ServiceParams>) => flowService(c, p) },

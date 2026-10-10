@@ -1,6 +1,7 @@
 // 来源：pi-flow src/tools/orchestrator-tools.ts @ 31f3f15
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
 import { submitSpec, proposeSpecAmend, amendSummary, specStatus } from '../core/spec-flow.ts';
+import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan-flow.ts';
 import { runStageGate } from '../core/gates.ts';
 import { activePauses, describePause } from '../core/model-pause.ts';
 import { Type, type Static } from 'typebox';
@@ -114,6 +115,9 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
   ];
   const spec = specStatus(store, flowId);
   if (spec) lines.push(spec);
+  const plan = planStatus(store, flowId);
+  if (plan) lines.push(plan);
+  if (flow.stage === P1_STAGE && flow.stage_status === 'awaiting_human') lines.push(planApprovalSummary(store, flowId));
   const running = engine?.activeRuns().filter((r) => r.flow === flowId) ?? [];
   const leased = tasks.filter((t) => t.lease);
   if (leased.length) lines.push(`运行中：${leased.map((t) => `${t.id}（${t.lease!.role}，run ${t.lease!.run_id}${running.some((r) => r.run_id === t.lease!.run_id) ? '' : '，不在本会话'}）`).join('；')}`);

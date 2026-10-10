@@ -14,6 +14,7 @@ import { activeFlowId, statusText } from '../tools/orchestrator-tools.ts';
 import { splitArgs } from './args.ts';
 import { approvalTargets, approveSpecAmend, amendSummary } from '../core/spec-flow.ts';
 import { approveStage, rejectStage, unblockTask, startFlow } from '../core/stages.ts';
+import { P1_STAGE } from '../core/plan-flow.ts';
 import { importInputs, prepareInputs, type IntakeInput, type PreparedIntake } from '../core/intake.ts';
 import { readFileSync } from 'node:fs';
 import { costReport, formatCost } from '../core/cost.ts';
@@ -220,14 +221,14 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       if (!target || !targets.some((t) => t.object === target)) throw new Error(`没有等待批准的闸门或修订 ${target ?? ''}。`);
       if (target.startsWith('amend:')) return approveSpecAmend(env.root, h.store, flowId, target.slice(6));
       const flow = h.store.readFlow(flowId);
-      if (flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && !argv.includes('--yes')) {
+      // P1 批准前还是最后一个阶段；批准时先落地计划、追加 S 阶段，不会合入主分支
+      if (flow.stage !== P1_STAGE && flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && !argv.includes('--yes')) {
         const msg = `批准阶段 ${flow.stage} 将把 ${flow.integration_branch} 合入 ${h.config.raw.main_branch}，流程随之结束。`;
         if (!env.ui) return `${msg}\n确认请执行 /forge-approve --yes`;
         const ok = await env.ui.select(`${msg}确认？`, ['确认合入并结束流程', '取消']);
         if (ok !== '确认合入并结束流程') return '已取消。';
       }
       let text = await approveStage({ root: env.root, store: h.store, config: h.config }, flowId, option(argv, '--note'));
-      if (flow.stage === 'P0') return `${text}\n\n${renderStatus(h.store, h.config)}`;
       if (h.store.readState().active_flow) {
         await h.engine.pump(flowId);
         const d = await h.engine.next(flowId);
@@ -253,7 +254,8 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         return `已打回 amend:${a.id}，意见已记录。`;
       }
       const text = await rejectStage({ root: env.root, store: h.store, config: h.config }, flowId, feedback);
-      env.startConversation?.(`阶段被打回，请带着意见继续讨论：${feedback}`);
+      // P1 的返工由 architect 完成，主会话只需等待
+      if (target !== `stage:${P1_STAGE}`) env.startConversation?.(`阶段被打回，请带着意见继续讨论：${feedback}`);
       await h.engine.pump(flowId);
       return text;
     }

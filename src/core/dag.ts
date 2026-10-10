@@ -63,7 +63,7 @@ export function validateDag(tasks: readonly DagTask[], catalog: DagCatalog): Dag
 }
 
 /** 返回环上的任务 id 序列（首尾相同），无环返回 null。所有依赖类型都参与环检测。 */
-export function findCycle(tasks: readonly DagTask[]): string[] | null {
+export function findCycle(tasks: readonly Pick<TaskFile, 'id' | 'depends_on'>[]): string[] | null {
   const deps = new Map(tasks.map((t) => [t.id, t.depends_on.map((d) => d.task)]));
   const color = new Map<string, 0 | 1 | 2>();
   const stack: string[] = [];

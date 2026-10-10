@@ -111,6 +111,10 @@ export const FlowFile = Type.Object({
   /** P1 批准时由程序写入的有序实施阶段 */
   s_stages: Type.Optional(Type.Array(PlanStage)),
   plan_mode: Type.Optional(PlanMode),
+  /** P1 批准时集成分支的提交：此后契约只能追加（M5 判定） */
+  contracts_base: Type.Optional(Type.String({ minLength: 1 })),
+  /** P1 被打回或闸门未通过：引擎据此新建 architect task，原因写进它的 handoff */
+  plan_rework: Type.Optional(Type.Object({ reason: Type.String({ minLength: 1 }), at: IsoTime }, { additionalProperties: false })),
   /** PRD 与可选原型原件的位置及恢复会话所需的文件清单 */
   intake: Type.Optional(Type.Object({
     prd: Type.String({ minLength: 1 }),
@@ -617,8 +621,27 @@ export const AmendFile = Type.Object({
 }, { additionalProperties: false });
 export type AmendFile = Static<typeof AmendFile>;
 
+// —— P1 计划提案（.forge/flows/<流程>/plan-proposal.json）：architect 经 forge_propose_plan 提交，只由程序写入 ——
+
+export const PlanProposalFile = Type.Object({
+  version: Type.Integer({ minimum: 1 }),
+  task: TaskId,
+  /** 提交时 docs/plan/plan.yaml 的 sha256；预检与闸门核对它与分支上的计划一致 */
+  plan_hash: Type.String({ pattern: '^[0-9a-f]{64}$' }),
+  /** architect 默认的处理：规格没说清时采用的方案，用户批准时逐条确认 */
+  assumptions: Type.Array(Type.Object({ question: Type.String({ minLength: 1 }), decision: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
+  /** 超出需求但不得不做的设计（安全、数据完整性） */
+  extras: Type.Array(Type.Object({ what: Type.String({ minLength: 1 }), why: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
+  /** 程序生成的报告（阶段、task 数、关键路径、互斥、提醒） */
+  report: Type.String(),
+  warnings: Type.Array(Type.String()),
+  created_at: IsoTime,
+}, { additionalProperties: false });
+export type PlanProposalFile = Static<typeof PlanProposalFile>;
+
 export const SCHEMAS = {
   amend: AmendFile,
+  'plan-proposal': PlanProposalFile,
   state: StateFile,
   flow: FlowFile,
   task: TaskFile,

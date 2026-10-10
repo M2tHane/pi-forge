@@ -17,10 +17,15 @@ import { renderStatus } from '../../src/core/status-view.ts';
 import { StateStore } from '../../src/core/state-store.ts';
 const ROOT = path.join(import.meta.dirname, '../..');
 function env(p: Project): { cmd: CommandEnv; engine: ReturnType<typeof makeEngine>['engine']; launched: () => number } {
-  const { engine, launcher } = makeEngine(p, async () => { throw new Error('P0/P1 不派发子进程'); });
+  // P0 不派发子进程；进入 P1 后 architect 被派发（这里只计数，P1 的流程见 p1-flow）
+  const { engine, launcher } = makeEngine(p, async (role, _nth, a) => {
+    assert.equal(role, 'architect');
+    await a.call('forge_claim');
+    await a.call('forge_block', { reason: '测试到此为止' });
+  });
   return { cmd: { root: p.dir, packageRoot: ROOT, ui: null, engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store, roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true }, engine, launched: () => launcher.launched.length };
 }
-test('P0 不合格规格零写入；合格规格独立索引提交，打回带意见，批准后进入 P1 占位', async () => {
+test('P0 不合格规格零写入；合格规格独立索引提交，打回带意见，批准后进入 P1 并派发 architect', async () => {
   const p = await setupProject({ stages: ['P0', 'P1'] });
   const e = env(p);
   try {
@@ -53,11 +58,12 @@ test('P0 不合格规格零写入；合格规格独立索引提交，打回带�
     assert.match(turnContext(restored, 3, 0, p.config), /名称要唯一[\s\S]*docs\/spec\/inputs\/prd\/prd.md/);
     assert.equal(nextStep(restored, 3).tool, 'forge_spec');
     await flowSpec(p.dir, p.store, p.config, { ...P0_SPEC, requirements: P0_SPEC.requirements.replace('返回看板编号', '返回唯一看板编号') });
-    assert.match(await runFlowCommand('approve', e.cmd), /P1（契约与计划）在 M3 实现/);
+    assert.match(await runFlowCommand('approve', e.cmd), /进入阶段 P1/);
     assert.deepEqual([p.store.readFlow(p.flowId).stage, p.store.readFlow(p.flowId).stage_status], ['P1', 'active']);
-    await e.engine.pump(p.flowId); await e.engine.next(p.flowId);
-    assert.equal(e.launched(), 0);
-    assert.equal(nextStep(p.store, 3).tool, 'none');
+    await e.engine.idle();
+    assert.equal(e.launched(), 1);
+    assert.equal(p.store.readTask(p.flowId, 'T-001').role, 'architect');
+    assert.match(nextStep(p.store, 3).next, /向用户报告阻塞：T-001（测试到此为止）/);
     assert.deepEqual(readSpec(p.dir, ref).files.screens, P0_SPEC.screens);
     await assert.rejects(submitSpec(p.dir, p.store, p.flowId, P0_SPEC), /只能在/);
     assert.ok((await p.store.verifyIntegrity()).ok);
@@ -141,7 +147,7 @@ test('修订校验零写入；批准时发现规格/任务影响变化会拒绝�
     assert.deepEqual(p.store.readState(), state);
     assert.deepEqual(p.store.listAmends(p.flowId), []);
     await proposeSpecAmend(p.dir, p.store, p.flowId, { content: P0_AMEND, reason: '变更' });
-    await p.store.addTasks(p.flowId, [mkTask('T-001', { ac: ['REQ-001.AC1'] })], 'architect');
+    await p.store.addTasks(p.flowId, [mkTask('T-009', { ac: ['REQ-001.AC1'] })], 'architect');
     const ref = p.store.readFlow(p.flowId).integration_branch;
     const before = p.git('rev-parse', ref);
     await assert.rejects(approveSpecAmend(p.dir, p.store, p.flowId, 'A-001'), /影响清单已变化/);

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SCOPE_HINT_MAX_FILES, scopeHint } from '../../src/core/scope-hint.ts';
 
-const tracked = new Set(['src/a/x.ts', 'src/b/y.ts', 'src/c/z.ts', 'tests/acceptance/T-009/a.test.ts', 'tests/unit/old.test.ts', 'src/shared/routes.ts']);
+const tracked = new Set(['docs/contracts/paths/b.yaml', 'docs/spec/requirements.md', 'src/a/x.ts', 'src/b/y.ts', 'src/c/z.ts', 'tests/acceptance/T-009/a.test.ts', 'tests/unit/old.test.ts', 'src/shared/routes.ts']);
 const task = { writes: ['src/a/**'], shared: ['src/shared/routes.ts'], test_adjustments: [] as string[] };
 
 test('scopeHint：有越界文件时列出文件并说明 forge_request_scope 的三种结果', () => {
@@ -41,4 +41,8 @@ test('scopeHint：最多列 10 个文件，其余只给个数', () => {
   assert.match(h, /还有 5 个/);
   assert.match(h, /src\/o\/f09\.ts/);
   assert.doesNotMatch(h, /src\/o\/f10\.ts/);
+});
+
+test('scopeHint：契约与规格申请不了（走变更请求、规格修订），不列出', () => {
+  assert.equal(scopeHint('error in docs/contracts/paths/b.yaml\nsee docs/spec/requirements.md', task, tracked), '');
 });

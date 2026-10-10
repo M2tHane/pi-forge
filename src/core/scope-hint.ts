@@ -7,6 +7,7 @@ import { matchesAny } from './paths.ts';
 import type { TaskFile } from './schemas.ts';
 
 export const SCOPE_HINT_MAX_FILES = 10;
+const UNREQUESTABLE = ['tests/acceptance/**', 'docs/spec/**', 'docs/contracts/**'];
 
 /**
  * 失败输出里出现的、不在本 task 可写范围内的仓库文件（writes、shared、test_adjustments 之内的不算；
@@ -14,7 +15,8 @@ export const SCOPE_HINT_MAX_FILES = 10;
  */
 export function scopeHint(output: string, t: Pick<TaskFile, 'writes' | 'shared' | 'test_adjustments'>, tracked: ReadonlySet<string>): string {
   const own = [...t.writes, ...(t.shared ?? []), ...(t.test_adjustments ?? [])];
-  const outside = failingFiles(output, tracked).filter((f) => !matchesAny(f, own) && !matchesAny(f, ['tests/acceptance/**']));
+  // 申请不了的路径（scope.ts 的硬限制：验收测试另走第 9.4 节、规格走规格修订、契约走变更请求）不列出，免得误导
+  const outside = failingFiles(output, tracked).filter((f) => !matchesAny(f, own) && !matchesAny(f, UNREQUESTABLE));
   if (!outside.length) return '';
   const shown = outside.slice(0, SCOPE_HINT_MAX_FILES).map((f) => `- ${f}`).join('\n');
   const more = outside.length > SCOPE_HINT_MAX_FILES ? `\n……还有 ${outside.length - SCOPE_HINT_MAX_FILES} 个` : '';

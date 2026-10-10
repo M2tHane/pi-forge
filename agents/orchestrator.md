@@ -1,5 +1,5 @@
 ---
-name: main
+name: orchestrator
 description: 主会话：接收 PRD 与原型，和用户沟通，把需求整理成可验证的规格；之后汇报进度、转达用户的决定
 tier: strong
 ---

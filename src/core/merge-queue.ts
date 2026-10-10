@@ -56,11 +56,12 @@ export class MergeQueue {
   async processNext(flowId: string): Promise<MergeResult | null> {
     if (this.running) return null;
     const mq = this.store.readMergeQueue();
-    const head = mq.queue[0];
-    if (mq.merging || !head || head.flow !== flowId) return null;
+    const head = mq.queue.find((e) => e.flow === flowId && this.store.readTask(e.flow, e.task).depends_on
+      .filter((d) => d.type === 'soft').every((d) => this.store.readTask(e.flow, d.task).status === 'done'));
+    if (mq.merging || !head) return null;
     this.running = true;
     try {
-      const batch = await this.mergeBatch(flowId);
+      const batch = head === mq.queue[0] ? await this.mergeBatch(flowId) : null;
       if (batch) return batch;
       await this.store.transitionTask(flowId, head.task, { to: 'merging', trigger: 'merge_start', actor: 'merge-queue' });
       return await this.merge(flowId, this.store.readTask(flowId, head.task));
@@ -85,7 +86,7 @@ export class MergeQueue {
     for (const e of this.store.readMergeQueue().queue) {
       if (e.flow !== flowId || candidates.length >= limit) break;
       const t = tasks.find((x) => x.id === e.task);
-      if (!t || t.status !== 'queued_merge' || t.sync_main || t.kind === 'merge-fix' || !t.worktree || !existsSync(t.worktree)) break;
+      if (!t || t.status !== 'queued_merge' || t.depends_on.some((d) => d.type === 'soft' && tasks.find((v) => v.id === d.task)?.status !== 'done') || t.sync_main || t.kind === 'merge-fix' || !t.worktree || !existsSync(t.worktree)) break;
       candidates.push(t);
     }
     if (candidates.length < 2) return null;
@@ -121,7 +122,7 @@ export class MergeQueue {
         if (this.hooks.beforeVerify) await this.hooks.beforeVerify();
         for (const c of this.mergeVerifyPlan(applied.find((a) => a.t.verify.length)!.t)) {
           const r = await runShell(c.shell, temp, this.hooks.verifyTimeoutMs);
-          for (const a of applied) await this.store.saveEvidence(flowId, a.t.id, `merge-a${a.t.attempts}-batch-${c.name}.log`, evidenceText({ command: c.name, ...r }, c.shell), 'merge-queue');
+          for (const a of applied) await this.store.saveEvidence(flowId, a.t.id, `merge-a${a.t.merge_failures ?? 0}-batch-${c.name}.log`, evidenceText({ command: c.name, ...r }, c.shell), 'merge-queue');
           if (r.exit_code !== 0) {
             await this.store.recordEvent({ flow: flowId, actor: 'merge-queue', type: 'note', reason: `批量合并 ${applied.map((a) => a.t.id).join('、')} 的全量 ${c.name} 失败，改为逐个合并`, data: { tasks: applied.map((a) => a.t.id), summary: failureSummary(r.output, 800) } });
             return null;
@@ -307,7 +308,7 @@ export class MergeQueue {
     for (const c of plan) {
       const r = { command: c.name, ...(await runShell(c.shell, wt, this.hooks.verifyTimeoutMs)) };
       results.push({ command: c.name, exit_code: r.exit_code });
-      await this.store.saveEvidence(flowId, t.id, `merge-a${t.attempts}-${c.name}.log`, evidenceText(r, c.shell), 'merge-queue');
+      await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-${c.name}.log`, evidenceText(r, c.shell), 'merge-queue');
       if (r.exit_code !== 0) {
         // 全量验证的失败多半是任务自己的问题，日志多给一些
         const why = `已 rebase 到集成分支最新，全量 ${plan.map((x) => x.name).join('、')} 中 `;
@@ -365,9 +366,9 @@ export class MergeQueue {
     await this.store.suspendMerge(flowId, t.id, {
       id: fixId, stage: t.stage, kind: 'merge-fix', title: `解决 ${t.id} 合并冲突：${conflicts.join('、')}`.slice(0, 120),
       role: t.role, scopes: [...t.scopes], depends_on: [], inputs: [...conflicts], writes: [...conflicts],
-      acceptance: [
+      ac: [
         `删除 ${conflicts.join('、')} 中的全部冲突标记，同时保留集成分支与 ${t.id} 双方的意图`,
-        ...t.acceptance.map((a) => `（${t.id}）${a}`),
+        ...(t.ac ?? []).map((a) => `（${t.id}）${a}`),
       ],
       verify: [...t.verify], worktree: fixWt, branch: fixBranch, base_sha: base, merge_fix_for: t.id, conflict_files: conflicts,
     }, conflicts);
@@ -472,7 +473,7 @@ export class MergeQueue {
       await this.store.addTasks(flowId, [{
         id: fixId, stage: flow.stage, kind: 'merge-fix', title: `解决同步 ${main} 的冲突：${conflicts.join('、')}`.slice(0, 120),
         role, scopes: [...r.scopes], depends_on: [], inputs: [...conflicts], writes: [...conflicts],
-        acceptance: [`删除 ${conflicts.join('、')} 中的全部冲突标记，同时保留 ${main} 与集成分支双方的意图`],
+        ac: [`删除 ${conflicts.join('、')} 中的全部冲突标记，同时保留 ${main} 与集成分支双方的意图`],
         verify, worktree: fixWt, branch: fixBranch, base_sha: merged, conflict_files: conflicts, sync_main: mainSha,
       }], 'merge-queue');
       const excerpt = conflicts.map((f) => `${f}：\n${existsSync(path.join(fixWt, f)) ? readFileSync(path.join(fixWt, f), 'utf8').slice(0, 1500) : '（已删除）'}`).join('\n\n');

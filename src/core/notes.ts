@@ -72,9 +72,9 @@ export function renderNotes(n: NotesFile | null, title = '笔记'): string {
 }
 
 /** 任务第一次运行前由程序填入的初始笔记：目标是任务说明与验收标准，待完成是验收标准逐条 */
-export function seedTaskNotes(t: Pick<TaskFile, 'title' | 'acceptance'>, extraGoal: readonly string[] = []): Pick<NotesFile, 'goal' | 'todo'> {
-  const goal = [`任务：${t.title}`, ...extraGoal, ...t.acceptance.map((a) => `验收：${a}`)].map(clip);
-  return { goal: goal.slice(0, NOTE_SECTION_MAX_ITEMS), todo: t.acceptance.map(clip).slice(0, NOTE_SECTION_MAX_ITEMS) };
+export function seedTaskNotes(t: Pick<TaskFile, 'title' | 'ac'>, extraGoal: readonly string[] = []): Pick<NotesFile, 'goal' | 'todo'> {
+  const goal = [`任务：${t.title}`, ...extraGoal, ...(t.ac ?? []).map((a) => `验收：${a}`)].map(clip);
+  return { goal: goal.slice(0, NOTE_SECTION_MAX_ITEMS), todo: (t.ac ?? []).map(clip).slice(0, NOTE_SECTION_MAX_ITEMS) };
 }
 
 const clip = (s: string) => (s.length > NOTE_ITEM_MAX ? `${s.slice(0, NOTE_ITEM_MAX - 1)}…` : s);

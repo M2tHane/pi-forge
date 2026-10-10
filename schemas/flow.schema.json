@@ -55,6 +55,7 @@
       "enum": [
         "active",
         "awaiting_gate",
+        "needs_human",
         "awaiting_human",
         "done",
         "aborted"
@@ -161,7 +162,7 @@
         },
         "task": {
           "type": "string",
-          "pattern": "^T-[0-9]{3,}$"
+          "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
         },
         "files": {
           "type": "array",
@@ -197,7 +198,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^T-[0-9]{3,}$"
+              "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
             }
           },
           "at": {
@@ -208,35 +209,40 @@
         "additionalProperties": false
       }
     },
-    "skip_stages": {
+    "s_stages": {
       "type": "array",
       "items": {
-        "type": "string",
-        "minLength": 1
+        "type": "object",
+        "required": [
+          "id",
+          "goal",
+          "exit"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1
+          },
+          "exit": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
       }
     },
-    "requirements": {
-      "type": "object",
-      "required": [
-        "submitted",
-        "rounds"
-      ],
-      "properties": {
-        "submitted": {
-          "type": "boolean"
-        },
-        "rounds": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "path": {
-          "type": "string"
-        },
-        "feedback": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false
+    "plan_mode": {
+      "enum": [
+        "standard",
+        "lean"
+      ]
     },
     "intake": {
       "type": "object",
@@ -262,47 +268,6 @@
         },
         "design_doc": {
           "type": "boolean"
-        }
-      },
-      "additionalProperties": false
-    },
-    "planning": {
-      "type": "object",
-      "required": [
-        "submitted",
-        "rounds"
-      ],
-      "properties": {
-        "submitted": {
-          "type": "boolean"
-        },
-        "rounds": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "feedback": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false
-    },
-    "replan_request": {
-      "type": "object",
-      "required": [
-        "reason",
-        "at"
-      ],
-      "properties": {
-        "reason": {
-          "type": "string",
-          "minLength": 1
-        },
-        "at": {
-          "type": "string",
-          "minLength": 1
-        },
-        "feedback": {
-          "type": "string"
         }
       },
       "additionalProperties": false

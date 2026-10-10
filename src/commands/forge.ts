@@ -2,7 +2,6 @@
 // /forge 子命令的业务实现（不依赖 Pi）：init、doctor、resume、status、next。M6、M7 在此扩展 approve、unblock、--cost。
 import { formatTiming, timingReport } from '../core/timing.ts';
 import { DEFAULT_CHECKPOINT_MINUTES, listCheckpoints, restoreCheckpoint } from '../core/checkpoints.ts';
-import { finishReport } from '../core/finish-report.ts';
 import type { FlowConfig } from '../core/config.ts';
 import type { StateStore } from '../core/state-store.ts';
 import type { Engine } from '../core/dispatcher.ts';
@@ -15,17 +14,12 @@ import { activeFlowId, statusText } from '../tools/orchestrator-tools.ts';
 import { splitArgs } from './args.ts';
 import { approveStage, rejectStage, unblockTask, startFlow } from '../core/stages.ts';
 import { importInputs, intakeBrief, type IntakeInput } from '../core/intake.ts';
-import { DESIGN_STAGES } from '../modes/plan.ts';
-import { FINAL_REVIEW_DOC, FinalReviewError, describeReview, finishReview, fixFindings } from '../core/final-review.ts';
-import { addRequirement } from '../core/additions.ts';
-import { acceptManually } from '../core/acceptance.ts';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { costReport, formatCost } from '../core/cost.ts';
 import { renderStatus, visibleFlows } from '../core/status-view.ts';
 import { applyDrafts, formatDrafts, listDrafts, type Draft } from '../core/rules-draft.ts';
 import { findSessionFile, formatRunDetail, summarizeSession } from '../core/session-log.ts';
 import { budgetState, formatBudget } from '../core/cost-control.ts';
-import { RevisionError, approveRevision, rejectRevision, requestReplan } from '../core/revision.ts';
 import { KnowledgeError, acceptCandidate, formatKnowledgeList, markPromoted, promoteToDraft, retireEntries, searchKnowledge } from '../core/knowledge.ts';
 import { loadConfig } from '../core/config.ts';
 import { checkDependencies } from '../core/dependencies.ts';
@@ -67,7 +61,7 @@ export interface CommandEnv {
 
 export const FLOW_USAGE = [
   '用法：',
-  '  /forge-status            当前处于哪个阶段（接收或需求 → 规划 → 实施 → 完成）、进度、正在做什么、需要你处理什么',
+  '  /forge-status            当前阶段（规格 → 契约与计划 → 实施 → 交付）、进度、需要你处理的事项',
   '  /forge-status --detail   完整的任务列表与内部状态',
   '  /forge next              由程序选择 ready 任务并派发',
   '  /forge-resume            会话丢失后恢复，并进入调度模式',
@@ -75,20 +69,16 @@ export const FLOW_USAGE = [
   '  /forge doctor [--fix]    状态完整性与前置条件检查；--fix 清理残留 worktree 与提示文件',
   '  /forge init              初始化项目骨架（可重复执行，不覆盖）',
   '  /forge-approve [--yes]   批准当前阶段（仅用户）；实施阶段批准时把集成分支合入主分支',
-  '                          规划阶段批准时应用项目专属规则（--rules none 不应用）',
-  '  /forge-reject "<意见>"   打回需求或规划（或待批准的计划修订）：主 agent 带着意见修改后重新提交',
-  '  /forge-add "<需求>" [--task <任务>]   中途追加需求：送到正在做的模块；有多个模块时交给主 agent 安排',
-  '  /forge accept <任务>     验收"需要你处理"时人工放行这个模块',
-  '  /forge review [fix <R-编号>... | done]   最终代码审查（review.final 开启时）：查看结论；挑选要修的建议；其余不修、结束审查',
+  '  /forge-reject "<意见>"   打回等待签收或需要人工处理的阶段，意见写入 stage_reopened 事件',
+  '  /forge-add "<需求>"       规格修订在 M7 实现',
+  '  /forge accept <阶段或任务> --note "<说明>"   接受耗尽轮数的阶段门禁或任务审查',
   '  /forge answer [<任务>]   回答阻塞任务提出的问题（弹出输入框），回答后任务继续',
-  '  /forge unblock <任务> ["<回答>"] [--attempts N]   解除阻塞（无界面时用它回答）',
+  '  /forge unblock <任务> ["<回答>"] [--reset]   解除阻塞；--reset 清零对应失败计数',
   '  /forge gate              闸门失败并修复后，重跑当前阶段闸门',
   '  /forge rules [apply [all|<草案文件>...]]   查看或应用规则与命令草案（docs/rules-draft/，来自规划或知识提升）',
   '  /forge models [resume <模型>|all]   查看因额度用完、限流而暂停的模型；resume 立即恢复派发',
   '  /forge budget [tokens|cost|minutes <数值>]   查看或设置本流程的预算（minutes 不含等你的时间）；超出后暂停派发新任务',
   '  /forge checkpoint [restore <任务>]  列出运行中自动拍的工作区检查点；工作区被改坏时恢复',
-  '  /forge report                      收尾汇报：做了什么、各模块结果、要你打开查看的条目、需要确认的地方、用时与用量',
-  '  /forge replan "<要改什么>"   执行中修订计划：主 agent 起草（新增模块、调整或取消未开始的模块），你批准后生效',
   '  /forge sync              把主分支同步进集成分支（每个阶段开始时自动执行）',
   '  /forge run [<run_id>]    某次子进程运行的工具调用摘要与最后的回复（会话留档）；不给 id 时列出最近的运行',
   '  /forge knowledge [...]   项目知识库：列出、搜索、确认候选、废弃、提升为规则草案（/forge knowledge help）',
@@ -218,13 +208,6 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       const h = env.engine();
       const flowId = currentFlowId(h.store);
       if (h.store.readFlow(flowId).mode === 'fix') return '修复不需要批准：合并后由验收者确认，通过即合入主分支。验收"需要你处理"时用 /forge accept <任务> 放行。';
-      if (h.store.readRevision(flowId)?.status === 'proposed') {
-        const text = await approveRevision({ root: env.root, store: h.store, config: h.config }, flowId);
-        await h.engine.pump(flowId);
-        const d = await h.engine.next(flowId);
-        if (env.waitForIdle) await h.engine.idle();
-        return `${text}${d.length ? `\n已派发：${d.map((x) => `${x.task} → ${x.role}`).join('；')}` : ''}\n\n${renderStatus(h.store, h.config)}`;
-      }
       const flow = h.store.readFlow(flowId);
       if (flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && !argv.includes('--yes')) {
         const msg = `批准阶段 ${flow.stage} 将把 ${flow.integration_branch} 合入 ${h.config.raw.main_branch}，流程随之结束。`;
@@ -232,10 +215,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         const ok = await env.ui.select(`${msg}确认？`, ['确认合入并结束流程', '取消']);
         if (ok !== '确认合入并结束流程') return '已取消。';
       }
-      const stageBefore = h.store.readFlow(flowId).stage;
       let text = await approveStage({ root: env.root, store: h.store, config: h.config }, flowId, option(argv, '--note'));
-      // 规划阶段批准时应用项目专属规则与命令（没有界面时默认全部应用）
-      if (stageBefore === 'D2') text += `\n${await offerDrafts(env, h, flowId, option(argv, '--rules') ?? (env.ui ? undefined : 'all'))}`;
       if (h.store.readState().active_flow) {
         await h.engine.pump(flowId);
         const d = await h.engine.next(flowId);
@@ -247,34 +227,43 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
     case 'reject': {
       const h = env.engine();
       const flowId = activeFlowId(h.store);
-      if (h.store.readRevision(flowId)?.status === 'proposed') {
-        const text = await rejectRevision({ root: env.root, store: h.store, config: h.config }, flowId, argv.slice(1).join(' '));
-        env.startConversation?.('我打回了计划修订，请按下一步指引重新起草。');
-        return text;
-      }
       const text = await rejectStage({ root: env.root, store: h.store, config: h.config }, flowId, argv.slice(1).join(' '));
       await h.engine.pump(flowId);
-      env.startConversation?.(`我打回了${h.store.readFlow(flowId).stage === 'D0' ? '需求说明' : '规划'}，请按下一步指引修改。`);
       return text;
     }
     case 'unblock': {
       const h = env.engine();
       const flowId = currentFlowId(h.store);
       const [, taskId, answer] = positional(argv);
-      if (!taskId) throw new Error('用法：/forge unblock <任务> ["<回答>"] [--attempts N]');
+      if (!taskId) throw new Error('用法：/forge unblock <任务> ["<回答>"] [--reset]');
       const owner = [h.store.readState().active_flow, h.store.openFixFlow()?.id].filter((x): x is string => !!x)
         .find((f) => h.store.listTasks(f).some((t) => t.id === taskId && t.status === 'blocked'));
       if (owner && owner !== flowId) {
-        const text = await unblockTask({ root: env.root, store: h.store, config: h.config }, owner, taskId, answer, option(argv, '--attempts') !== undefined ? Number(option(argv, '--attempts')) : undefined);
+        const text = await unblockTask({ root: env.root, store: h.store, config: h.config }, owner, taskId, answer, argv.includes('--reset'));
         await h.engine.pump(owner);
         return text;
       }
-      const att = option(argv, '--attempts');
-      const text = await unblockTask({ root: env.root, store: h.store, config: h.config }, flowId, taskId, answer, att !== undefined ? Number(att) : undefined);
+      const text = await unblockTask({ root: env.root, store: h.store, config: h.config }, flowId, taskId, answer, argv.includes('--reset'));
       await h.engine.pump(flowId);
       if (h.store.readFlow(flowId).mode !== 'fix') await h.engine.next(flowId);
       if (env.waitForIdle) await h.engine.idle();
       return text;
+    }
+    case 'accept': {
+      const h = env.engine();
+      const flowId = currentFlowId(h.store);
+      const target = argv[1];
+      const note = option(argv, '--note')?.trim();
+      if (!target || !note) throw new Error('用法：/forge accept <阶段或任务> --note "<说明>"');
+      const flow = h.store.readFlow(flowId);
+      if (target === flow.stage) {
+        await h.store.transitionStage(flowId, { to: 'awaiting_human', trigger: 'accept', actor: 'human', reason: note });
+        return `已接受阶段 ${target} 的门禁例外（${note}）；仍需 /forge-approve 签收。`;
+      }
+      await h.store.transitionTask(flowId, target, { to: 'queued_merge', trigger: 'accept', actor: 'human', facts: { reason: note } });
+      await h.engine.pump(flowId);
+      if (env.waitForIdle) await h.engine.idle();
+      return `已接受 ${target} 的审查例外（${note}），程序继续合并验证。`;
     }
     case 'gate': {
       const h = env.engine();
@@ -313,10 +302,6 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       const list = listCheckpoints(env.root).filter((c) => c.flow === flowId);
       return list.length ? `检查点（运行中每 ${h.config.limits.checkpoint_minutes ?? DEFAULT_CHECKPOINT_MINUTES} 分钟自动拍一次，任务结束后删除）：\n${list.map((c) => `- ${c.task}：${c.at}（${c.sha.slice(0, 8)}）`).join('\n')}\n工作区被改坏时用 /forge checkpoint restore <任务> 恢复。` : `${flowId} 没有检查点。`;
     }
-    case 'report': {
-      const h = env.engine();
-      return finishReport(h.store, currentFlowId(h.store));
-    }
     case 'budget': {
       const h = env.engine();
       const flowId = currentFlowId(h.store);
@@ -350,67 +335,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       if (argv[1]) return '用法：/forge models（查看）、/forge models resume <模型>|all';
       return formatPauses(env.store());
     }
-    case 'add': {
-      const h = env.engine();
-      const flowId = currentFlowId(h.store);
-      const task = option(argv, '--task');
-      const text = positional(argv).slice(1).join(' ');
-      const r = await addRequirement({ root: env.root, store: h.store, config: h.config, steer: (f, t, m) => h.engine.steer(f, t, m) }, flowId, text, task);
-      await h.engine.pump(flowId);
-      // 交给主 agent 的（需求、规划阶段的意见，或实施阶段的修订请求）：让它这一轮就处理
-      const f = h.store.readFlow(flowId);
-      if (f.mode !== 'fix' && !task && (DESIGN_STAGES.has(f.stage) || f.replan_request)) env.startConversation?.(`我追加了需求：${text}`);
-      if (env.waitForIdle) await h.engine.idle();
-      return r;
-    }
-    case 'accept': {
-      const h = env.engine();
-      const flowId = currentFlowId(h.store);
-      const [, taskId] = positional(argv);
-      if (!taskId) throw new Error('用法：/forge accept <任务> [--note "<说明>"]（只能放行验收"需要你处理"的模块）');
-      const r = await acceptManually(h.store, flowId, taskId, option(argv, '--note') ?? '');
-      await h.engine.pump(flowId);
-      if (env.waitForIdle) await h.engine.idle();
-      return r;
-    }
-    case 'review': {
-      const h = env.engine();
-      const flowId = currentFlowId(h.store);
-      const sub = positional(argv)[1];
-      if (!sub) {
-        const r = h.store.readFinalReview(flowId);
-        return r ? `${describeReview(r)}\n（完整内容见集成分支上的 ${FINAL_REVIEW_DOC}）` : h.config.raw.review?.final ? '最终代码审查还没开始（所有模块验收通过后开始）。' : '最终代码审查没有开启（在 workflow.yaml 中设置 review.final: true 开启）。';
-      }
-      let text: string;
-      try {
-        if (sub === 'fix') {
-          const ids = positional(argv).slice(2);
-          if (!ids.length) throw new FinalReviewError('用法：/forge review fix R-3 R-5（/forge review 查看条目）');
-          text = await fixFindings(h.store, flowId, ids);
-        } else if (sub === 'done') text = await finishReview(h.store, flowId);
-        else throw new FinalReviewError('用法：/forge review、/forge review fix <R-编号>...、/forge review done');
-      } catch (e) {
-        if (e instanceof FinalReviewError) throw new Error(e.message);
-        throw e;
-      }
-      await h.engine.pump(flowId);
-      await h.engine.next(flowId);
-      if (env.waitForIdle) await h.engine.idle();
-      return text;
-    }
-    case 'replan': {
-      const h = env.engine();
-      const flowId = activeFlowId(h.store);
-      try {
-        const reason = argv.slice(1).join(' ');
-        await requestReplan({ root: env.root, store: h.store, config: h.config }, flowId, reason, 'human');
-        env.startConversation?.(`我要修订计划：${reason}`);
-        return '已交给主 agent 起草计划修订（其他任务照常进行）。起草后用 /forge-approve 批准，或 /forge-reject "<意见>" 打回。';
-      } catch (e) {
-        if (e instanceof RevisionError) return `未发起：${e.message}`;
-        throw e;
-      }
-    }
+    case 'add': return '规格修订在 M7 实现。';
     case 'sync': {
       const h = env.engine();
       const flowId = activeFlowId(h.store);
@@ -452,8 +377,8 @@ export const BUILD_USAGE = [
   '用法：',
   '  /forge-build --prd <文件或目录> [--arch <文件或目录>] [--design <目录>]',
   '                                          从零建新项目：带上写好的 PRD、技术架构与原型（例如 Claude Design 的导出目录）；',
-  '                                          主 agent 只就缺口提问，然后直接规划给你审，再按模块实施（--from 等同 --prd）',
-  '  /forge-build "<想法>"                    没有 PRD 时：主 agent 先和你逐轮讨论需求，再规划、实施',
+  '                                          创建流程与集成分支，停在 P0（规格）；P0 在 M2 实现（--from 等同 --prd）',
+  '  /forge-build "<想法>"                    没有 PRD 时也先创建流程、停在 P0',
   '  /forge-build --feature ...               在已有项目上加功能，参数相同',
   '小改动（单文件、几十行以内）直接用 pi 更划算；缺陷修复用 /forge-fix。',
 ].join('\n');
@@ -544,56 +469,18 @@ async function startBuildFlow(env: CommandEnv, mode: 'build' | 'feature', title:
   // 先检查输入是否存在，避免建了流程才发现路径写错
   if (intake) for (const [label, p] of [['PRD', intake.prd], ['技术架构', intake.arch], ['原型', intake.design]] as const) if (p && !existsSync(path.resolve(env.root, p))) throw new Error(`找不到${label} ${p}`);
   const flow = await startFlow({ root: env.root, store: h.store, config: h.config }, mode, title);
-  await env.activateOrchestrator();
   if (intake) {
     const r = await importInputs(env.root, h.store, flow.id, intake);
     lines.push(`已接收 PRD（${r.prd}）${r.arch ? `、技术架构（${r.arch}）` : ''}${r.pages.length ? `、原型 ${r.pages.length} 页` : ''}${r.design_doc ? '、设计规范 DESIGN.md' : ''}，放在集成分支 ${flow.integration_branch} 上。`);
   }
-  await h.engine.pump(flow.id);
-  const d = await h.engine.next(flow.id);
   lines.push(`已创建流程 ${flow.id}（${flow.mode}），阶段：${flow.stages.join(' → ')}；集成分支 ${flow.integration_branch}。`);
-  if (d.length) lines.push(`已派发 ${d.map((x) => `${x.task} → ${x.role}（${x.model}）`).join('；')}。`);
-  if (env.waitForIdle) await h.engine.idle();
-  lines.push('', renderStatus(h.store, h.config));
-  env.startConversation?.(intake ? `我带来了 PRD${intake.arch ? '、技术架构' : ''}${intake.design ? '与原型' : ''}，请检查后开始。\n\n${intakeBrief(env.root, h.store.readFlow(flow.id))}` : `开始需求讨论：${title}`);
+  lines.push('P0（规格）在 M2 实现。', '', renderStatus(h.store, h.config));
   return lines.join('\n');
 }
 
 /** /forge-fix */
-export async function runFlowFix(args: string, env: CommandEnv): Promise<string> {
-  const argv = splitArgs(args);
-  if (argv[0] === 'help' || argv[0] === '--help') return FIX_USAGE;
-  const lines: string[] = [];
-  await ensureInitialized(env, lines);
-  const h = env.engine();
-  const fromFile = readFromFile(env, argv);
-  const desc = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--from').join(' ').trim();
-  const description = fromFile ? fromFile.split('\n')[0]!.replace(/^#+\s*/, '').slice(0, 120) : desc;
-  const brief = fromFile ?? '';
-  if (!description) throw new Error(`请描述问题：现象、复现步骤、期望结果。\n${FIX_USAGE}`);
-
-  const active = h.store.readState().active_flow;
-  if (active) {
-    const f = h.store.readFlow(active);
-    if (f.stage_status !== 'awaiting_human') {
-      throw new Error(`进行中的流程 ${f.id} 正在阶段 ${f.stage} 运行（${f.stage_status}），不能同时修复。等它进入等待审批时再修复，或把问题作为该流程的一部分处理。`);
-    }
-    if (!argv.includes('--yes')) {
-      const msg = `流程 ${f.id} 正在等待审批（阶段 ${f.stage}）。修复会直接合入 ${h.config.raw.main_branch}，与该流程并行。`;
-      if (!env.ui) return `${msg}\n确认请在原命令后加 --yes`;
-      if ((await env.ui.select(`${msg}继续？`, ['继续修复', '取消'])) !== '继续修复') return '已取消。';
-    }
-  }
-  const main = h.config.raw.main_branch;
-  dependencyGate(env, h.config, lines);
-  const fix = await h.store.createFixFlow(description, main, git(env.root, ['rev-parse', main]).trim());
-  if (brief) await h.store.saveFlowBrief(fix.id, brief);
-  await env.activateOrchestrator();
-  await h.engine.pump(fix.id);
-  lines.push(`已创建修复 ${fix.id}，实现者开始定位并修复。`);
-  if (env.waitForIdle) await h.engine.idle();
-  lines.push('', renderStatus(h.store, h.config));
-  return lines.join('\n');
+export async function runFlowFix(_args: string, _env: CommandEnv): Promise<string> {
+  return 'fix 模式在 M7 实现。';
 }
 
 /** /forge answer：回答阻塞任务提出的问题（答案来自用户输入，不经模型转述） */
@@ -697,22 +584,4 @@ async function runKnowledge(argv: string[], env: CommandEnv): Promise<string> {
       return `项目知识（${hits.length} 条${cand ? `，其中 ${cand} 条候选待确认` : ''}）：\n${formatKnowledgeList(hits)}\n\n${KNOWLEDGE_USAGE}`;
     }
   }
-}
-
-/** 规划阶段（D2）批准后：应用规划时写的项目专属规则与命令草案（按 --rules all|none；有界面时让用户选择） */
-async function offerDrafts(env: CommandEnv, h: EngineHandle, flowId: string, flag: string | undefined): Promise<string> {
-  const drafts = listDrafts(env.root, h.store.readFlow(flowId).integration_branch);
-  if (!drafts.length) return '';
-  const list = `规划时写了规则与命令草案：\n${formatDrafts(drafts)}`;
-  if (flag === 'all') return `${list}\n${await applyAndReport(env, h, flowId, drafts)}`;
-  if (flag === 'none') return `${list}\n未应用（之后可用 /forge rules apply）。`;
-  if (!env.ui) return `${list}\n建议应用：/forge rules apply all（或逐个指定文件）；不应用时实现者只按通用规则，可能与规划冲突。`;
-  const pick = await env.ui.select(`${list}\n\n是否应用？草案是按本项目技术栈写的，通常建议全部应用；不应用时实现者只按通用规则，可能与规划冲突。`, ['全部应用（推荐）', '逐个选择', '暂不应用']);
-  if (pick === '全部应用（推荐）') return applyAndReport(env, h, flowId, drafts);
-  if (pick !== '逐个选择') return '规则草案暂未应用（之后可用 /forge rules apply）。';
-  const chosen: Draft[] = [];
-  for (const d of drafts) {
-    if ((await env.ui.select(`${d.file} → ${d.target}\n${d.summary}\n\n${d.content.slice(0, 1500)}`, ['应用', '跳过'])) === '应用') chosen.push(d);
-  }
-  return chosen.length ? applyAndReport(env, h, flowId, chosen) : '没有选择任何草案。';
 }

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { minimatch } from 'minimatch';
 import { BUILTIN_READ_TOOLS, BUILTIN_WRITE_TOOLS, type FlowConfig, type ResolvedRole } from './config.ts';
-import { INTERFACES_PATH, globsOverlap, isProtected, matchesAny, protectedGlobs } from './paths.ts';
+import { INTERFACES_PATH, globsOverlap, isProtected, matchesAny, matchesReadPaths, protectedGlobs } from './paths.ts';
 import { parseShell, type SimpleCommand, type Word } from './shell.ts';
 
 export type GuardRule = 'tool_whitelist' | 'read_paths' | 'write_paths' | 'protected' | 'bash' | 'sensitive';
@@ -29,7 +29,7 @@ export interface GuardContext {
   writes?: string[];
   /** 运行中追加批准的可写范围（第六轮 D3，任务的 scope_grants）：经程序或主会话批准，不受角色 writes 限制 */
   granted?: readonly string[];
-  /** 实现类任务（第五轮）：可以在模块之间的接口文档（docs/interfaces/）里追加（只能新增，提交时由程序检查），不受任务可写范围限制 */
+  /** 实现类任务（第五轮）：可以在契约文档（docs/contracts/）里追加（只能新增，提交时由程序检查），不受任务可写范围限制 */
   interfaceAdditions?: boolean;
   /** 可以修改的已有测试文件（testing.adjust_tests，第四轮后续）：基线上已有、writes 之外；新增删除由 forge_submit 拒绝 */
   adjustableTests?: readonly string[];
@@ -203,10 +203,9 @@ class Evaluator {
   hint(): string {
     if (this.isOrchestrator) {
       return this.ctx.readyTaskId
-        ? `你是调度者，不能直接修改代码。请调用 forge_dispatch(${this.ctx.readyTaskId}) 交给对应 subagent。`
+        ? `你是调度者，不能直接修改代码。请用户执行 /forge next，或调用 forge_wait 等待结果。`
         : '你是调度者，不能直接修改代码。任务由程序派发给对应 subagent，用 forge_wait 等待结果。';
     }
-    if (this.role.name === 'acceptor') return '你是独立验收者，不能修改仓库里的文件（临时文件放在临时目录）；结论用 forge_accept（复查用 forge_accept_confirm）提交。';
     if (this.isReadonlyRole) return `你是只读角色（${this.role.name}），不能修改任何文件；结论请写进 forge_note 并 forge_submit。`;
     // 第六轮 D1：拒绝时给出可行的做法
     return this.role.tools.has('forge_request_scope')
@@ -267,8 +266,8 @@ class Evaluator {
     const allowed = this.role.readPaths;
     if (!allowed) return ok;
     const a = this.classify(this.resolveToolPath(rawPath ?? '.'));
-    // 工作区根目录（grep、find、ls 不给路径时）：只有 read_paths 含 ** 时允许
-    if (a.area !== 'workspace' || !matchesAny(a.rel === '.' ? '' : a.rel, allowed)) {
+    // 工作区根目录按空路径匹配；有序 read_paths 后面的允许或排除覆盖前面的。
+    if (a.area !== 'workspace' || !matchesReadPaths(a.rel === '.' ? '' : a.rel, allowed)) {
       return deny('read_paths', `${this.role.name} 只能读取 ${allowed.join('、')}，${a.rel} 不在其中。${this.hint()}`);
     }
     return ok;

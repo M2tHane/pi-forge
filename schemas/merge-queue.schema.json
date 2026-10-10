@@ -23,7 +23,7 @@
           },
           "task": {
             "type": "string",
-            "pattern": "^T-[0-9]{3,}$"
+            "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
           },
           "enqueued_at": {
             "type": "string",
@@ -48,7 +48,7 @@
             },
             "task": {
               "type": "string",
-              "pattern": "^T-[0-9]{3,}$"
+              "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
             },
             "started_at": {
               "type": "string",
@@ -78,11 +78,11 @@
           },
           "task": {
             "type": "string",
-            "pattern": "^T-[0-9]{3,}$"
+            "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
           },
           "merge_fix": {
             "type": "string",
-            "pattern": "^T-[0-9]{3,}$"
+            "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
           },
           "since": {
             "type": "string",

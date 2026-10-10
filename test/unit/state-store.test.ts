@@ -47,8 +47,14 @@ async function toInProgress(store: StateStore, flow: string, id: string, run = '
 async function toQueued(store: StateStore, flow: string, id: string, run: string, token: string) {
   await toInProgress(store, flow, id, run, token);
   await store.appendHandoff(flow, id, '完成', `run:${run}`);
-  await store.transitionTask(flow, id, { to: 'queued_merge', trigger: 'submit', actor: `run:${run}`,
+  await store.transitionTask(flow, id, { to: 'awaiting_inputs', trigger: 'submit', actor: `run:${run}`,
     facts: { token, diff_files: [`src/server/${id.toLowerCase()}/a.ts`] } });
+  await queueSubmitted(store, flow, id);
+}
+
+async function queueSubmitted(store: StateStore, flow: string, id: string) {
+  await store.transitionTask(flow, id, { to: 'checking', trigger: 'inputs_ready', actor: 'engine', facts: { inputs_synced: true } });
+  await store.transitionTask(flow, id, { to: 'queued_merge', trigger: 'precheck_pass_skip', actor: 'engine', facts: { precheck_ok: true, review_required: false } });
 }
 
 test('init 生成骨架且可重复执行', async () => {
@@ -102,8 +108,10 @@ test('完整闭环：pending 到 done，合并队列同步，每次转移都提�
     const headBefore = git('rev-parse', 'HEAD');
     await toInProgress(store, flow.id, 'T-001');
     await store.appendHandoff(flow.id, 'T-001', '做完了 A，下一步无', 'run:r-1');
-    await store.transitionTask(flow.id, 'T-001', { to: 'queued_merge', trigger: 'submit', actor: 'run:r-1',
+    await store.transitionTask(flow.id, 'T-001', { to: 'awaiting_inputs', trigger: 'submit', actor: 'run:r-1',
       facts: { token: 'tok', diff_files: ['src/server/t-001/a.ts'] } });
+    assert.equal(store.readTask(flow.id, 'T-001').lease, null);
+    await queueSubmitted(store, flow.id, 'T-001');
     assert.deepEqual(store.readMergeQueue().queue.map((e) => e.task), ['T-001']);
     await store.transitionTask(flow.id, 'T-001', { to: 'merging', trigger: 'merge_start', actor: 'merge-queue' });
     assert.equal(store.readMergeQueue().merging?.task, 'T-001');
@@ -145,7 +153,7 @@ test('程序可推导的 facts 不采信调用方', async () => {
     await assert.rejects(store.transitionTask(flow.id, 'T-002', { to: 'ready', trigger: 'schedule', actor: 'scheduler',
       facts: { status_of: new Map([['T-001', 'done']]), stage_active: true } }), /T-001/);
     await toInProgress(store, flow.id, 'T-001');
-    await assert.rejects(store.transitionTask(flow.id, 'T-001', { to: 'queued_merge', trigger: 'submit', actor: 'run:r-1',
+    await assert.rejects(store.transitionTask(flow.id, 'T-001', { to: 'awaiting_inputs', trigger: 'submit', actor: 'run:r-1',
       facts: { token: 'tok', diff_files: ['src/server/t-001/a.ts'], handoff_written: true } }), /handoff/);
   } finally { cleanup(); }
 });
@@ -167,7 +175,7 @@ test('同一时间只有一个 merging，且按队列顺序', async () => {
     await store.addTasks(flow.id, [mkTask('T-001'), mkTask('T-002')], 'architect');
     await toQueued(store, flow.id, 'T-001', 'r-1', 't1');
     await toQueued(store, flow.id, 'T-002', 'r-3', 't2');
-    await assert.rejects(store.transitionTask(flow.id, 'T-002', { to: 'merging', trigger: 'merge_start', actor: 'mq' }), /轮到/);
+    await assert.rejects(store.transitionTask(flow.id, 'T-002', { to: 'merging', trigger: 'merge_start', actor: 'mq' }), /第一个合格任务/);
     await store.transitionTask(flow.id, 'T-001', { to: 'merging', trigger: 'merge_start', actor: 'mq' });
     await assert.rejects(store.transitionTask(flow.id, 'T-002', { to: 'merging', trigger: 'merge_start', actor: 'mq' }), /T-001/);
     await store.transitionTask(flow.id, 'T-001', { to: 'queued_merge', trigger: 'merge_requeue', actor: 'resume' });

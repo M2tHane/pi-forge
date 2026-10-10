@@ -51,7 +51,29 @@
           "type": "integer",
           "minimum": 1
         },
+        "max_parallel_aux": {
+          "type": "integer",
+          "minimum": 1
+        },
         "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_precheck_failures": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3
+        },
+        "max_merge_failures": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 2
+        },
+        "lean_below_loc": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "port_block": {
           "type": "integer",
           "minimum": 1
         },
@@ -121,7 +143,7 @@
             },
             {
               "type": "string",
-              "const": "main"
+              "const": "orchestrator"
             }
           ]
         },
@@ -177,9 +199,9 @@
                   },
                   "phase": {
                     "enum": [
-                      "requirements",
-                      "planning",
-                      "execution"
+                      "spec",
+                      "plan",
+                      "implementation"
                     ]
                   },
                   "gate": {
@@ -195,6 +217,12 @@
                         }
                       },
                       "all_tasks_done": {
+                        "type": "boolean"
+                      },
+                      "coverage": {
+                        "type": "boolean"
+                      },
+                      "qa": {
                         "type": "boolean"
                       }
                     },
@@ -234,9 +262,9 @@
                   },
                   "phase": {
                     "enum": [
-                      "requirements",
-                      "planning",
-                      "execution"
+                      "spec",
+                      "plan",
+                      "implementation"
                     ]
                   },
                   "gate": {
@@ -253,6 +281,12 @@
                       },
                       "all_tasks_done": {
                         "type": "boolean"
+                      },
+                      "coverage": {
+                        "type": "boolean"
+                      },
+                      "qa": {
+                        "type": "boolean"
                       }
                     },
                     "additionalProperties": false
@@ -264,6 +298,57 @@
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "implementation_gate": {
+      "type": "object",
+      "properties": {
+        "human": {
+          "type": "boolean"
+        },
+        "auto": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "all_tasks_done": {
+          "type": "boolean"
+        },
+        "coverage": {
+          "type": "boolean"
+        },
+        "qa": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "generated_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "acctest_workspace": {
+      "type": "object",
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "cache": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "additionalProperties": false
@@ -344,6 +429,21 @@
                 "minLength": 1
               }
             },
+            "bash": {
+              "enum": [
+                "full",
+                "readonly",
+                "allowlist"
+              ]
+            },
+            "bash_allow": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
             "read_paths": {
               "type": "array",
               "items": {
@@ -395,6 +495,20 @@
       "properties": {
         "adjust_tests": {
           "type": "boolean"
+        },
+        "max_disputes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "qa": {
+      "type": "object",
+      "properties": {
+        "max_rounds": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false
@@ -411,8 +525,22 @@
     "review": {
       "type": "object",
       "properties": {
-        "final": {
+        "per_task": {
           "type": "boolean"
+        },
+        "max_rounds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "skip_sizes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ]
+          }
         }
       },
       "additionalProperties": false

@@ -38,7 +38,7 @@ test('notes：渲染带分区与序号；空笔记不放回上下文，接近阈
 });
 
 test('notes：初始笔记由任务说明与验收标准生成', () => {
-  const s = seedTaskNotes({ title: '知识库模块', acceptance: ['上传文档返回 201', '检索按相关度排序'] });
+  const s = seedTaskNotes({ title: '知识库模块', ac: ['上传文档返回 201', '检索按相关度排序'] });
   assert.deepEqual(s.goal, ['任务：知识库模块', '验收：上传文档返回 201', '验收：检索按相关度排序']);
   assert.deepEqual(s.todo, ['上传文档返回 201', '检索按相关度排序']);
 });

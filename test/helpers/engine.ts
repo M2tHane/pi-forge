@@ -9,12 +9,12 @@ import type { MergeHooks, MergeResult } from '../../src/core/merge-queue.ts';
 import type { RoleSettingsFile } from '../../src/core/schemas.ts';
 import { FakeLauncher, type FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import type { Project } from './project.ts';
-import { PKG_CONTENT } from './package.ts';
+const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 /** 包内角色（agents/）加上测试夹具里只用于运行时机制测试的旧角色 */
-export const AGENTS = [path.join(PKG_CONTENT, 'agents'), path.join(import.meta.dirname, '../fixtures/agents')].join(path.delimiter);
+export const AGENTS = [path.join(PACKAGE_ROOT, 'agents'), path.join(import.meta.dirname, '../fixtures/agents')].join(path.delimiter);
 export const ALL_FAKE: RoleSettingsFile = { version: 1, roles: Object.fromEntries(
-  ['backend-engineer', 'frontend-engineer', 'architect', 'test-engineer', 'implementer', 'acceptor'].map((r) => [r, { model: 'fake/model', thinking: 'low' as const }])) };
+  ['backend-engineer', 'frontend-engineer', 'architect', 'test-engineer', 'worker', 'test-author', 'reviewer', 'stage-qa', 'orchestrator'].map((r) => [r, { model: 'fake/model', thinking: 'low' as const }])) };
 
 export type RoleScript = (role: string, nth: number, a: FakeAgent) => Promise<void>;
 

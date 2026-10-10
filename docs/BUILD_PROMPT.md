@@ -1,4 +1,4 @@
-# pi-forge 构建提示词（给 Claude Code）· v3.1
+# pi-forge 构建提示词（给 Claude Code）· v3.2
 
 > 本文是新工作流 `pi-forge` 的完整规格。pi-flow 仓库是复用来源，不是要修改的对象。
 > 名字 `pi-forge`、命令前缀 `/forge-`、工具前缀 `forge_` 都是占位，可以整体替换。
@@ -106,7 +106,7 @@ S0 的完成标准包括：`acceptance`、`e2e`、`serve` 都遵守这四个变�
 
 ## 5. 阶段与闸门
 
-用户界面上只显示：**规格 → 契约与计划 → 实施（S0 骨架、S1…Sn）→ 交付**。
+用户界面上只显示：**规格 → 契约与计划 → 实施（S0 骨架、S1…Sn）→ 交付**。高层阶段（`phases`）为 `spec`、`plan`、`implementation`。
 
 | 阶段 | 由谁做 | 产出 | 程序检查 | 闸门 |
 |---|---|---|---|---|
@@ -114,11 +114,21 @@ S0 的完成标准包括：`acceptance`、`e2e`、`serve` 都遵守这四个变�
 | **P1 契约与计划** | architect | 契约、架构、计划、规则与命令草案、AGENTS.md | 契约检查、计划校验、DAG 推导、覆盖检查 | 用户批准；程序生成 S 阶段记录与派生 task，契约变为只能追加，应用规则与命令 |
 | **S0 骨架** | 1 个 worker；test-author 在 worker 之后 | 端到端最薄链路与全部基础设施 | 第 8 节 | 第 11 节 |
 | **S1…Sn** | worker、test-author、reviewer | 每个阶段的需求切片 | 第 8 节 | 第 11 节 |
-| **交付** | engine | 集成分支 `--no-ff` 合入主分支 | 全量命令 | 用户批准 |
+| **交付** | engine | 不是独立阶段：用户批准最后一个 S 阶段的签收时，程序把集成分支 `--no-ff` 合入主分支 | 最后一个 S 阶段的全量命令 | 交付汇报作为这次签收的汇总内容（M6 实现） |
 
 - **S 阶段是动态的。** P1 批准时，程序根据 `plan.yaml` 在流程状态里写入 S 阶段记录（事件 `stages_planned`）。每个阶段的闸门取自 `workflow.yaml` 的 `implementation_gate`（第 15 节）。变更请求可以在当前阶段**新增 task**，可以新增或调整当前阶段**之后**的阶段；不能修改已完成的阶段，也不能修改当前阶段里已开始的 task（事件 `stages_revised`）。
 - **S0 的特殊规则：** 只有 1 个 impl task。它的 worker 可以写 `tests/acceptance/_support/**` 和一个冒烟测试 `tests/acceptance/S0-smoke/**`（唯一的例外，见第 7.5 节）。S0 的 `.at` 在 impl 合并之后才派发，按第 9.5 节单独合并。
 - 阶段之间是串行屏障；同一阶段内按 DAG 并行。
+
+阶段的待人工状态为 `needs_human`，相关转移如下（只有用户能执行 accept、重跑门禁和打回）：
+
+| 从 | 到 | 触发 | 条件或作用 |
+|---|---|---|---|
+| awaiting_gate | needs_human | gate_exhausted | 门禁修复轮数用尽 |
+| needs_human | awaiting_human | accept | `/forge accept <阶段> --note "<说明>"`：人工放行，进入签收 |
+| needs_human | awaiting_gate | `/forge gate` | 重跑门禁 |
+| needs_human | active | `/forge-reject` | 打回，记 `stage_reopened` 事件 |
+| awaiting_human | active | `/forge-reject` | 打回，记 `stage_reopened` 事件 |
 
 ## 6. 产物与目录
 
@@ -258,35 +268,42 @@ tasks:
 
 在 pi-flow 的状态集合（`pending、ready、in_progress、queued_merge、merging、done、blocked、cancelled`）上新增：
 
-- `awaiting_inputs`：worker 已提交，在等 `.at` 完成或软依赖的生产方 done。
+- `awaiting_inputs`：impl、fix 或 doc 已提交，在等 `.at` 完成或软依赖的生产方 done。
 - `checking`：程序正在跑预检。
 - `in_review`：在等 reviewer。
 - `disputed`：worker 提出了争议，等待裁决；此时没有运行中的 worker，也没有租约。
+
+新增 task 字段 `blocked_by`，记录阻塞原因，取值为 `dispute`、`review_exhausted`、`precheck_exhausted`、`merge_exhausted`、`attempts`、`agent`、`dispatcher`、`user`、`integration_broken`；分别表示争议、审查轮数用尽、预检次数用尽、合并失败次数用尽、运行失败次数用尽、agent 阻塞、调度器阻塞、用户阻塞、集成分支已坏。
 
 | 从 | 到 | 触发 | 条件或作用 |
 |---|---|---|---|
 | pending | ready | schedule | 硬依赖都已 done；本阶段处于 active |
 | ready | in_progress | dispatch | 并发未满；不与运行中的 task 互斥 |
-| in_progress | awaiting_inputs | submit | 本次运行结束，释放租约 |
+| in_progress | awaiting_inputs | submit | impl、fix、doc：本次运行结束，释放租约 |
 | awaiting_inputs | checking | inputs_ready | 最新的 `.at-*` 已 done，且软依赖的生产方都已 done；程序把集成分支合进任务分支（同 `forge_sync`）。有冲突时转 `in_progress`（`sync_conflict`，fork，交给 worker 解决） |
-| checking | in_progress | precheck_fail | `precheck_failures` 加 1；达到 `limits.max_precheck_failures` 时转 blocked |
+| checking | awaiting_inputs | foreign_tests_broken | 别的 task 的验收测试失败，按第 9.4 节处理；不计入当前 task 的任何计数 |
+| checking | in_progress | precheck_fail | `precheck_failures` 加 1；达到 `limits.max_precheck_failures` 时转 blocked，`blocked_by = precheck_exhausted` |
 | checking | in_review | precheck_pass | 需要审查 |
 | checking | queued_merge | precheck_pass_skip | 不需要审查 |
 | in_review | in_progress | review_changes | 有 must；`review_rounds` 加 1 |
 | in_review | queued_merge | review_pass | — |
-| in_review | blocked | review_exhausted | 已到 `review.max_rounds` 仍未解决 |
+| in_review | blocked | review_exhausted | 已到 `review.max_rounds` 仍未解决；`blocked_by = review_exhausted` |
 | queued_merge | merging | merge_start | 选队列里**第一个合格**的 task（软依赖的生产方都已 done），不是严格的队首 |
 | merging | done | merge_done | — |
-| merging | in_progress | merge_verify_fail | `merge_failures` 加 1；达到 `limits.max_merge_failures` 时转 blocked |
+| merging | awaiting_inputs | foreign_tests_broken | 别的 task 的验收测试失败，按第 9.4 节处理；不计入当前 task 的任何计数 |
+| merging | in_progress | merge_verify_fail | `merge_failures` 加 1；达到 `limits.max_merge_failures` 时转 blocked，`blocked_by = merge_exhausted` |
 | in_progress | disputed | dispute | worker 调用 `forge_dispute`，本次运行结束；程序创建 `.at-n` |
 | disputed | checking | dispute_fixed | `.at-n` 修改了测试：直接重跑预检，不需要再派 worker |
 | disputed | in_progress | dispute_upheld | `.at-n` 维持了测试；fork worker 的会话，附上 test-author 的理由 |
-| disputed | blocked | dispute_escalated | 同一个测试的争议次数超过 `testing.max_disputes`，或 `.at-n` 用 forge_block 交给用户 |
-| blocked | in_progress | decide_keep | `/forge-decide <task> keep-test`（仅限因争议而 blocked 的 task）；fork worker，附上用户的说明 |
-| blocked | disputed | decide_fix | `/forge-decide <task> fix-test "<说明>"`：创建 `.at-n` 并附上用户的说明；`.at-n` done 后走 dispute_fixed |
-| blocked | queued_merge | accept | `/forge accept <task>`：**只用于**因 review_exhausted 而 blocked 的 task（代码已通过预检，只是审查意见没谈拢） |
-| blocked | in_progress | unblock | `/forge unblock <task> [--reset]`：因预检或合并失败次数用完而 blocked 的 task 不能 accept（代码没有通过验证），只能 unblock；`--reset` 把对应计数清零 |
-| 以及 pi-flow 的 block、unblock、lease_expired、run_failed、run_interrupted、run_paused、run_timeout、cancel | | | 原样保留；`attempts` 只计运行失败（崩溃、超时等），不计预检、审查、合并失败 |
+| disputed | blocked | dispute_escalated | 同一个测试的争议次数超过 `testing.max_disputes`，或 `.at-n` 用 forge_block 交给用户；`blocked_by = dispute` |
+| blocked | in_progress | decide_keep | 仅限用户执行，且 `blocked_by = dispute`；`/forge-decide <task> keep-test`：fork worker，附上用户的说明 |
+| blocked | disputed | decide_fix | 仅限用户执行，且 `blocked_by = dispute`；`/forge-decide <task> fix-test "<说明>"`：创建 `.at-n` 并附上用户的说明；`.at-n` done 后走 dispute_fixed |
+| blocked | queued_merge | accept | 仅限用户执行，且 `blocked_by = review_exhausted`；`/forge accept <task>`：代码已通过预检，只是审查意见没谈拢 |
+| blocked | in_progress | unblock | 仅限用户执行，且 task 已开工；`/forge unblock <task> [--reset]`：保留 worktree，`--reset` 把对应计数清零；预检或合并失败次数用尽的 task 不能 accept，只能 unblock |
+| blocked | ready | unblock | 仅限用户执行，且 task 尚未开工；无需 worktree，`--reset` 把对应计数清零 |
+| 以及 pi-flow 的 block、lease_expired、run_failed、run_interrupted、run_paused、run_timeout、cancel | | | 原样保留；`attempts` 只计运行失败（崩溃、超时等），不计预检、审查、合并失败 |
+
+`doc`（architect 的 P1 task）与 impl 一样走 `awaiting_inputs → checking`，等待条件自然满足；M3 将契约检查和计划校验接入它的预检。
 
 `review`、`qa` 只走 `ready → in_progress → done（report）`。`acctest` 有两条路径：impl 尚未 done 时，提交即 done（测试随 impl 的预检合入）；impl 已 done 时，走第 9.5 节的单独合并。
 
@@ -355,9 +372,11 @@ impl 已经 done 的 `.at` / `.at-n`（S0 的 `.at`、覆盖率缺口、被契�
 | in_progress | checking | submit | 程序在集成分支 HEAD 的临时 worktree 中合入测试补丁，带资源运行 `acceptance -- <task>` |
 | checking | queued_merge | precheck_pass | 测试在已有实现上通过：按普通 task 进入合并队列（合并时照常跑全量） |
 | checking | done | precheck_fail_handoff | 测试在已有实现上失败：`.at-n` 以 report 结束，程序为原 impl task 创建 `.fx-n`，它的分支基于"集成分支 + 这批测试补丁"，附上失败输出。`.fx-n` 中的 worker 可以修实现，也可以对测试 forge_dispute（走第 9.3 节）；测试随 `.fx-n` 一起合并 |
+| merging | done | precheck_fail_handoff | 合并验证失败，且失败的测试都在本 `.at` 自己的目录里：测试不合入，按预检失败的方式交给原 impl 的 `.fx-n` |
+| merging | blocked | merge_blocked | 合并验证有测试在本 `.at` 的目录之外失败：这次合并只加了测试，说明集成分支本身已经坏了；`blocked_by = integration_broken`，列进"需要你处理"，不生成 `.fx-n` |
 
-- S0 的 `.at` 失败时同样生成 `S0` impl 的 `.fx-n`。
-- 这条路径的预检失败不计入任何 impl task 的计数。
+- S0 的 `.at` 自己的测试失败时同样生成 `S0` impl 的 `.fx-n`。
+- 这条路径的预检失败与上述合并验证失败不计入任何 impl task 的计数。
 
 ## 10. 审查（reviewer）
 
@@ -586,7 +605,7 @@ guard 在 readonly 与 allowlist 档位下都拦截能读出其他提交内容�
 | **M1 Schema 与状态机** | 第 8.1、9.5 节的状态与转移；分开的失败计数；新字段；plan 的 schema；动态 S 阶段的记录与事件；`.forge` 格式版本 1；config 改为解析 v3 模板（`bash:`、有序 read_paths、`implementation_gate`、`acctest_workspace`、新角色），夹具模板随之迁移 | 每条转移都有正例和反例；`done` 没有出边；不在表中的转移被拒绝 |
 | **M2 P0 规格** | intake；`forge_read`；spec-lint；`forge_spec`、`forge_spec_amend`；main 的提示与技能注入；`/forge-build --prd [--prototype]` | spec-lint 每条规则都有正反用例；fake-llm 跑完 P0（main 用 `forge_read` 读到 PRD；不合格被拒 → 修正 → 批准）；修订流程走通 |
 | **M3 P1 契约与计划** | contract-check（结构解析、符号核对）；plan；DAG 推导；覆盖检查；`forge_propose_plan`；批准时生成 S 阶段与派生 task、锁定契约、应用规则与命令 | 第 7.3 节每类错误都有测试；软依赖与硬依赖正确；S0 多于一个 task 时报错；S0 的 `.at` 在 impl 之后 |
-| **M4 流水线一** | 资源分配与回收（第 4.1 节）；acctest 隔离工作区（导出基准、install 后 codegen、缓存）；第 9.5 节的单独合并；bash allowlist；impl 与 `.at` 并行；`awaiting_inputs`（含软依赖与同步）；预检；争议与 `/forge-decide`；第 9.4 节 | e2e：隔离工作区里 `git show <实现提交>` 失败，读取绝对路径被拦截；`_support/` 的修改被拒；两个并行预检的端口不冲突；软依赖的消费方在生产方 done 前停在 awaiting_inputs；争议的三种结果都正确；别的 task 的验收测试被破坏时生成 `.at-n`；`forge_service` 启动的服务拿到本次运行分配的 `PORT`、`FORGE_DB_NAME` 等变量；范围申请与已开始的 task 重叠时被拒绝、只与 pending/ready 重叠时可以批准 |
+| **M4 流水线一** | 资源分配与回收（第 4.1 节）；acctest 隔离工作区（导出基准、install 后 codegen、缓存）；第 9.5 节的单独合并；bash allowlist；impl 与 `.at` 并行；`awaiting_inputs`（含软依赖与同步）；预检；争议与 `/forge-decide`；第 9.4 节 | e2e：隔离工作区里 `git show <实现提交>` 失败，读取绝对路径被拦截；`_support/` 的修改被拒；两个并行预检的端口不冲突；软依赖的消费方在生产方 done 前停在 awaiting_inputs；争议的三种结果都正确；别的 task 的验收测试被破坏时生成 `.at-n`；`forge_service` 启动的服务拿到本次运行分配的 `PORT`、`FORGE_DB_NAME` 等变量；范围申请与已开始的 task 重叠时被拒绝、只与 pending/ready 重叠时可以批准；M1 的临时直通预检代码已删除 |
 | **M5 流水线二** | reviewer 的输入组装；`review` 的推导；report 与 confirm；出处校验与降级；合并队列选第一个合格的 task；契约追加判定与结构化三方合并 | e2e：第二轮不能新增问题；没有出处的 must 被降级；队首不合格时后面的 task 能先合并；两个 task 并行追加契约自动合并；修改已有契约被拒 |
 | **M6 阶段验收与交付** | 门禁；覆盖率矩阵；`forge_service` 与 stage-qa；fix task（按 task 分组）；精简模式的阶段审查；`/forge accept`；交付 | e2e：覆盖缺口生成 `.at-n`；stage-qa 的 must 生成 fix 并走流水线；超出轮数后进入 needs_human，可以用 accept 放行；没有 worktree 的 stage-qa 用 `forge_service` 启动服务时，服务运行在集成分支 HEAD 的临时 worktree 里，主工作区没有任何进程和文件改动 |
 | **M7 变更与模式** | `forge_change_request`；`/forge-add` → 规格修订；feature 模式与增量规格；`/forge init --adopt`；fix 模式 | e2e：变更请求批准后任务图、S 阶段与 `.at-n` 都正确更新 |
@@ -661,3 +680,14 @@ v2（第一次核对之后，逐条决定见 `DECISIONS-R1.md`）：
 - 补全 feature 模式的增量规格。
 - main 的工具补上 notes、history；采用 HEAD 的 scope 工具与 `forge_service`。
 - 修正 pi-flow 的路径。
+
+v3.2（M1 计划评审后的决定）：
+
+- 第 5 节：交付不做独立阶段，`phases` 为 `spec`、`plan`、`implementation`；用户批准最后一个 S 阶段的签收时，程序将集成分支 `--no-ff` 合入主分支，交付汇报作为这次签收的汇总内容（M6 实现）。
+- 第 5 节：补阶段的 `needs_human` 转移；门禁用尽后待人工，用户可以 accept 进入签收、用 `/forge gate` 重跑门禁，或 `/forge-reject` 打回 active；签收时打回也回到 active，两种打回都记 `stage_reopened` 事件。
+- 第 8.1 节：新增 `checking → awaiting_inputs`、`merging → awaiting_inputs`，触发 `foreign_tests_broken`，不计入当前 task 的任何计数。
+- 第 8.1 节：新增 `blocked_by`，取值为 `dispute`、`review_exhausted`、`precheck_exhausted`、`merge_exhausted`、`attempts`、`agent`、`dispatcher`、`user`、`integration_broken`；`decide_*` 仅接受 `dispute`，`accept` 仅接受 `review_exhausted`。
+- 第 8.1 节：unblock 分两种，已开工的回到 `in_progress` 并保留 worktree，没开工的回到 `ready`。
+- 第 8.1 节：doc 与 impl 一样走 `awaiting_inputs → checking`，等待条件自然满足，M3 接入契约检查与计划校验。
+- 第 18 节：M4 的验收加一条"M1 的临时直通预检代码已删除"。
+- 第 9.5 节：单独合并的验收测试在合并验证时失败，若失败的测试都在本 `.at` 目录里，走 `merging → done（precheck_fail_handoff）`，测试不合入，交给 `.fx-n`；若有测试在本目录之外失败，走 `merge_blocked`，`blocked_by = integration_broken`，列进"需要你处理"，不生成 `.fx-n`。

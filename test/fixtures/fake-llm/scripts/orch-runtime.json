@@ -1,0 +1,7 @@
+{ "steps": [
+  { "tool_calls": [{ "name": "write", "arguments": { "path": "src/server/hack.ts", "content": "越权" } }] },
+  { "tool_calls": [{ "name": "read", "arguments": { "path": "README.md" } }] },
+  { "tool_calls": [{ "name": "forge_wait", "arguments": { "timeout_s": 120 } }] },
+  { "tool_calls": [{ "name": "forge_status", "arguments": {} }] },
+  { "text": "任务由程序派发并完成。" }
+] }

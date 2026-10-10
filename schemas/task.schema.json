@@ -12,7 +12,6 @@
     "depends_on",
     "inputs",
     "writes",
-    "acceptance",
     "verify",
     "status",
     "attempts",
@@ -31,7 +30,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^T-[0-9]{3,}$"
+      "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
     },
     "stage": {
       "type": "string",
@@ -41,9 +40,11 @@
       "enum": [
         "impl",
         "doc",
-        "review-fix",
-        "merge-fix",
-        "analysis"
+        "acctest",
+        "review",
+        "qa",
+        "fix",
+        "merge-fix"
       ]
     },
     "title": {
@@ -71,7 +72,7 @@
         "properties": {
           "task": {
             "type": "string",
-            "pattern": "^T-[0-9]{3,}$"
+            "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
           },
           "type": {
             "anyOf": [
@@ -104,10 +105,68 @@
         "type": "string"
       }
     },
-    "acceptance": {
+    "module": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ac": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "produces": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "test_interface": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "review": {
+      "enum": [
+        "skip",
+        "auto",
+        "strong"
+      ]
+    },
+    "risk": {
+      "enum": [
+        "low",
+        "normal",
+        "high"
+      ]
+    },
+    "for_task": {
+      "type": "string",
+      "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
+    },
+    "deviations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "verify": {
@@ -121,6 +180,10 @@
         "pending",
         "ready",
         "in_progress",
+        "awaiting_inputs",
+        "checking",
+        "in_review",
+        "disputed",
         "queued_merge",
         "merging",
         "done",
@@ -131,6 +194,47 @@
     "attempts": {
       "type": "integer",
       "minimum": 0
+    },
+    "precheck_failures": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "review_rounds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "merge_failures": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "disputes": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "blocked_by": {
+      "anyOf": [
+        {
+          "enum": [
+            "dispute",
+            "review_exhausted",
+            "precheck_exhausted",
+            "merge_exhausted",
+            "attempts",
+            "agent",
+            "dispatcher",
+            "user",
+            "integration_broken"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "violations": {
       "type": "integer",
@@ -431,13 +535,9 @@
         }
       ]
     },
-    "replan": {
-      "type": "string",
-      "minLength": 1
-    },
     "merge_fix_for": {
       "type": "string",
-      "pattern": "^T-[0-9]{3,}$"
+      "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
     },
     "conflict_files": {
       "type": "array",
@@ -451,7 +551,7 @@
     },
     "fork_from_task": {
       "type": "string",
-      "pattern": "^T-[0-9]{3,}$"
+      "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
     },
     "test_adjustments": {
       "type": "array",
@@ -464,31 +564,6 @@
       "items": {
         "type": "string"
       }
-    },
-    "needs_acceptance": {
-      "type": "boolean"
-    },
-    "accepted": {
-      "type": "boolean"
-    },
-    "accept_of": {
-      "type": "string",
-      "pattern": "^T-[0-9]{3,}$"
-    },
-    "accept_kind": {
-      "anyOf": [
-        {
-          "type": "string",
-          "const": "check"
-        },
-        {
-          "type": "string",
-          "const": "confirm"
-        }
-      ]
-    },
-    "final_review": {
-      "type": "boolean"
     },
     "created_by": {
       "type": "string",

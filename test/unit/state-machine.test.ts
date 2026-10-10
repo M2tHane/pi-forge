@@ -1,218 +1,261 @@
-// 来源：pi-flow test/unit/state-machine.test.ts @ 31f3f15
+// 来源：pi-flow test/unit/state-machine.test.ts @ 31f3f15；按 M1 批复重写。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTransition, TRANSITIONS, hashToken, type Facts, type Trigger } from '../../src/core/state-machine.ts';
-import { TASK_STATUSES, type TaskFile, type TaskStatus } from '../../src/core/schemas.ts';
-import { mkTask, hard } from '../helpers/tasks.ts';
+import {
+  planTransition, planStageTransition, hashToken, IN_FLIGHT,
+  MAX_INTERRUPTIONS, type Facts, type Trigger, type StageTrigger, type StageFacts,
+} from '../../src/core/state-machine.ts';
+import { TASK_STATUSES, STAGE_STATUSES, validate, type TaskFile, type TaskStatus, type StageStatus } from '../../src/core/schemas.ts';
+import { mkTask, hard, soft } from '../helpers/tasks.ts';
 
 const NOW = new Date('2026-01-01T00:00:00Z');
-const later = (min: number) => new Date(NOW.getTime() + min * 60_000).toISOString();
 const TOKEN = 'tok-impl';
-const lease = (run: string, token: string, min = 30) => ({
-  run_id: run, role: 'backend-engineer', token_hash: hashToken(token), acquired_at: NOW.toISOString(), expires_at: later(min),
-});
+const lease = { run_id: 'r-1', role: 'worker', token_hash: hashToken(TOKEN), acquired_at: NOW.toISOString(), expires_at: '2026-01-01T00:30:00Z' };
 const facts = (over: Partial<Facts> = {}): Facts => ({
-  now: NOW, limits: { max_attempts: 3, max_parallel: 2 }, actor: 'engine', stage_active: true,
-  status_of: new Map(), running_count: 0, conflicting_running: [], merging_other: null, queue_head: true,
-  handoff_written: true, ...over,
+  now: NOW, limits: { max_attempts: 3, max_parallel: 2, max_parallel_aux: 3, max_precheck_failures: 2, max_merge_failures: 2, review_max_rounds: 2, max_disputes: 1 },
+  actor: 'engine', stage_active: true, status_of: new Map(), running_count: 0, conflicting_running: [], queue_head: true,
+  token: TOKEN, handoff_written: true, diff_files: ['src/server/t-001/a.ts'], reason: '测试失败',
+  latest_acctest_done: true, soft_deps_done: true, inputs_synced: true, structured_report: true,
+  ...over,
 });
-const inProgress = (over: Partial<TaskFile> = {}) => mkTask('T-001', {
-  status: 'in_progress', lease: lease('r-1', TOKEN), worktree: '/wt/T-001', branch: 'flow/B-001/T-001', base_sha: 'abc', ...over,
+const task = (status: TaskStatus, over: Partial<TaskFile> = {}) => mkTask('T-001', {
+  status, lease, worktree: '/wt/T-001', branch: 'task/T-001', base_sha: 'abc', ...over,
 });
-const ok = (r: ReturnType<typeof planTransition>) => { assert.ok(r.ok, r.ok ? '' : r.errors.join('\n')); return r; };
-const bad = (r: ReturnType<typeof planTransition>, re: RegExp) => {
-  assert.equal(r.ok, false);
-  if (!r.ok) assert.match(r.errors.join('\n'), re);
-};
+const ok = (r: ReturnType<typeof planTransition>) => { assert.ok(r.ok, r.ok ? '' : r.errors.join('\n')); assert.deepEqual(validate('task', r.task), []); return r; };
+const bad = (r: ReturnType<typeof planTransition>) => assert.equal(r.ok, false, '应拒绝转移');
 
-test('不在转移表中的转移全部被拒', () => {
-  const triggers = [...new Set(TRANSITIONS.map((t) => t.trigger))] as Trigger[];
-  let rejected = 0;
-  for (const from of TASK_STATUSES) {
-    for (const to of TASK_STATUSES) {
-      for (const trig of triggers) {
-        if (TRANSITIONS.some((t) => t.from.includes(from) && t.to === to && t.trigger === trig)) continue;
-        const r = planTransition(mkTask('T-001', { status: from }), to as TaskStatus, trig, facts());
-        assert.equal(r.ok, false, `${from} -> ${to} via ${trig} 应被拒`);
-        rejected++;
-      }
+interface Case {
+  from: TaskStatus; to: TaskStatus; trigger: Trigger;
+  task?: Partial<TaskFile>; facts?: Partial<Facts>; reject: Partial<Facts>;
+  rejectTask?: Partial<TaskFile>;
+}
+// 独立于实现的规格转移清单；每行都运行正例和条件、actor 或 kind 反例。
+const cases: Case[] = [
+  { from: 'pending', to: 'ready', trigger: 'schedule', task: { depends_on: [hard('T-002')] }, facts: { status_of: new Map([['T-002', 'done']]) }, reject: { stage_active: false } },
+  { from: 'ready', to: 'in_progress', trigger: 'dispatch', reject: { running_count: 2 } },
+  ...(['impl', 'fix', 'doc', 'merge-fix'] as const).map((kind): Case => ({ from: 'in_progress', to: 'awaiting_inputs', trigger: 'submit', task: { kind }, reject: { handoff_written: false }, rejectTask: { kind: 'acctest' } })),
+  { from: 'awaiting_inputs', to: 'checking', trigger: 'inputs_ready', reject: { actor: 'orchestrator' } },
+  { from: 'awaiting_inputs', to: 'in_progress', trigger: 'sync_conflict', facts: { conflict_files: ['src/a.ts'] }, reject: { conflict_files: [] } },
+  { from: 'checking', to: 'in_progress', trigger: 'precheck_fail', facts: { precheck_ok: false }, reject: { precheck_ok: true }, rejectTask: { kind: 'acctest' } },
+  { from: 'checking', to: 'in_review', trigger: 'precheck_pass', facts: { precheck_ok: true, review_required: true }, reject: { review_required: false }, rejectTask: { kind: 'qa' } },
+  { from: 'checking', to: 'queued_merge', trigger: 'precheck_pass_skip', facts: { precheck_ok: true, review_required: false }, reject: { review_required: true }, rejectTask: { kind: 'acctest' } },
+  { from: 'in_review', to: 'in_progress', trigger: 'review_changes', facts: { unresolved_must: 1 }, reject: { unresolved_must: 0 } },
+  { from: 'in_review', to: 'queued_merge', trigger: 'review_pass', facts: { unresolved_must: 0 }, reject: { unresolved_must: 1 } },
+  { from: 'in_review', to: 'blocked', trigger: 'review_exhausted', task: { review_rounds: 2 }, facts: { unresolved_must: 1 }, reject: { unresolved_must: 0 }, rejectTask: { review_rounds: 1 } },
+  { from: 'queued_merge', to: 'merging', trigger: 'merge_start', reject: { soft_deps_done: false } },
+  { from: 'merging', to: 'done', trigger: 'merge_done', facts: { rebase_ok: true, post_verify_ok: true, fast_forwarded: true }, reject: { fast_forwarded: false } },
+  { from: 'merging', to: 'in_progress', trigger: 'merge_verify_fail', facts: { post_verify_ok: false }, reject: { post_verify_ok: true }, rejectTask: { kind: 'acctest' } },
+  { from: 'merging', to: 'blocked', trigger: 'merge_blocked', reject: { reason: '' } },
+  { from: 'merging', to: 'queued_merge', trigger: 'merge_requeue', reject: {}, rejectTask: { status: 'checking' } },
+  { from: 'in_progress', to: 'disputed', trigger: 'dispute', facts: { dispute_test: 'test-a', dispute_evidence: 'docs/spec/requirements.md:AC1', dispute_evidence_valid: true }, reject: { dispute_evidence_valid: false }, rejectTask: { kind: 'doc' } },
+  { from: 'disputed', to: 'checking', trigger: 'dispute_fixed', facts: { acctest_changed_tests: true }, reject: { acctest_changed_tests: false } },
+  { from: 'disputed', to: 'in_progress', trigger: 'dispute_upheld', facts: { acctest_changed_tests: false }, reject: { acctest_changed_tests: true } },
+  { from: 'disputed', to: 'blocked', trigger: 'dispute_escalated', task: { disputes: { 'test-a': 2 } }, facts: { dispute_test: 'test-a' }, reject: {}, rejectTask: { disputes: { 'test-a': 1 } } },
+  { from: 'blocked', to: 'in_progress', trigger: 'decide_keep', task: { blocked_by: 'dispute' }, facts: { actor: 'human' }, reject: { actor: 'orchestrator' }, rejectTask: { blocked_by: 'agent' } },
+  { from: 'blocked', to: 'disputed', trigger: 'decide_fix', task: { blocked_by: 'dispute' }, facts: { actor: 'human' }, reject: { actor: 'engine' }, rejectTask: { blocked_by: 'merge_exhausted' } },
+  { from: 'blocked', to: 'queued_merge', trigger: 'accept', task: { blocked_by: 'review_exhausted' }, facts: { actor: 'human' }, reject: { actor: 'orchestrator' }, rejectTask: { blocked_by: 'precheck_exhausted' } },
+  { from: 'blocked', to: 'in_progress', trigger: 'unblock', facts: { actor: 'human' }, reject: { actor: 'engine' }, rejectTask: { worktree: null, branch: null } },
+  { from: 'blocked', to: 'ready', trigger: 'unblock', task: { worktree: null, branch: null }, facts: { actor: 'human' }, reject: { actor: 'orchestrator' }, rejectTask: { branch: 'started' } },
+  ...(['acctest', 'review', 'qa'] as const).map((kind): Case => ({ from: 'in_progress', to: 'done', trigger: 'report', task: { kind }, facts: { diff_files: [], impl_done: false }, reject: { structured_report: false }, rejectTask: { kind: 'impl' } })),
+  { from: 'in_progress', to: 'checking', trigger: 'submit', task: { kind: 'acctest' }, facts: { impl_done: true }, reject: { impl_done: false } },
+  { from: 'checking', to: 'queued_merge', trigger: 'precheck_pass', task: { kind: 'acctest' }, facts: { impl_done: true, precheck_ok: true }, reject: { precheck_ok: false } },
+  ...(['checking', 'merging'] as const).map((from): Case => ({ from, to: 'done', trigger: 'precheck_fail_handoff', task: { kind: 'acctest' }, facts: { impl_done: true, precheck_ok: false, post_verify_ok: false, failed_tests_own_directory: true }, reject: from === 'checking' ? { precheck_ok: true } : { failed_tests_own_directory: false }, rejectTask: { kind: 'impl' } })),
+  { from: 'merging', to: 'blocked', trigger: 'merge_blocked', task: { kind: 'acctest' }, facts: { impl_done: true, post_verify_ok: false, failed_tests_own_directory: false }, reject: { failed_tests_own_directory: true } },
+  ...(['checking', 'merging'] as const).map((from): Case => ({ from, to: 'awaiting_inputs', trigger: 'foreign_tests_broken', facts: { foreign_acceptance_failed: true }, reject: { foreign_acceptance_failed: false }, rejectTask: { kind: 'acctest' } })),
+  { from: 'ready', to: 'blocked', trigger: 'block', facts: { actor: 'dispatcher' }, reject: { actor: 'orchestrator' } },
+  ...(['in_progress', 'awaiting_inputs', 'checking', 'in_review', 'disputed', 'queued_merge', 'merging'] as const).map((from): Case => ({ from, to: 'blocked', trigger: 'block', reject: { reason: '' } })),
+  ...(['run_failed', 'run_interrupted', 'run_paused', 'run_timeout'] as const).map((trigger): Case => ({ from: 'in_progress', to: 'in_progress', trigger, task: trigger === 'run_timeout' ? { timeout_review: { run: 'r-1', at: NOW.toISOString(), minutes: 30 } } : {}, reject: { reason: '' }, rejectTask: { lease: null } })),
+  { from: 'in_progress', to: 'ready', trigger: 'lease_expired', facts: { now: new Date('2026-01-01T00:31:00Z'), worktree_clean: true }, reject: { worktree_clean: false } },
+  ...(['pending', 'ready', 'blocked'] as const).map((from): Case => ({ from, to: 'cancelled', trigger: 'cancel', facts: { actor: 'human' }, reject: { actor: 'engine' } })),
+];
+for (const [i, c] of cases.entries()) test(`转移 ${i + 1}：${c.from} → ${c.to}（${c.trigger}，${c.task?.kind ?? 'impl'}）正反例`, () => {
+  const t = task(c.from, c.task), f = facts(c.facts);
+  const result = ok(planTransition(t, c.to, c.trigger, f));
+  assert.equal(result.to, c.to);
+  bad(planTransition({ ...t, ...c.rejectTask }, c.to, c.trigger, { ...f, ...c.reject }));
+  if (c.rejectTask) bad(planTransition({ ...t, ...c.rejectTask }, c.to, c.trigger, f));
+  // 检查整份任务变化前的形状与 blocked 原因。
+  if (c.to === 'blocked') assert.ok(result.task.blocked_by);
+  if (c.from === 'blocked') assert.equal(result.task.blocked_by, null);
+});
+// 穷举的允许集合来自上面的规格用例，与 TRANSITIONS 无关。
+test('状态 × 触发 × 目标穷举：只有清单中的组合可成功；done、cancelled 没有出边', () => {
+  const triggers = [...new Set(cases.map((c) => c.trigger))];
+  const allowed = new Set(cases.map((c) => `${c.from}/${c.trigger}/${c.to}`));
+  for (const from of TASK_STATUSES) for (const trigger of triggers) for (const to of TASK_STATUSES) {
+    if (allowed.has(`${from}/${trigger}/${to}`)) continue;
+    for (const kind of ['impl', 'acctest', 'review', 'qa'] as const) bad(planTransition(task(from, { kind }), to, trigger, facts()));
+  }
+  assert.deepEqual(IN_FLIGHT, ['in_progress', 'awaiting_inputs', 'checking', 'in_review', 'disputed', 'queued_merge', 'merging']);
+});
+
+test('review 与 qa 的完成只接受 report，不能进入合并；辅助池不占实施池', () => {
+  for (const kind of ['review', 'qa'] as const) {
+    for (const [to, trigger] of [['merging', 'merge_start'], ['done', 'merge_done'], ['blocked', 'merge_blocked'], ['queued_merge', 'merge_requeue']] as const) {
+      bad(planTransition(task(trigger === 'merge_start' ? 'queued_merge' : 'merging', { kind }), to, trigger, facts({ rebase_ok: true, post_verify_ok: true, fast_forwarded: true })));
     }
+    ok(planTransition(task('ready', { kind }), 'in_progress', 'dispatch', facts({ running_count: 2, aux_running_count: 0 })));
   }
-  assert.ok(rejected > 300);
+  ok(planTransition(task('ready'), 'in_progress', 'dispatch', facts({ running_count: 0, aux_running_count: 3 })));
 });
 
-test('pending -> ready：硬依赖 done 且 stage active', () => {
-  const t = mkTask('T-002', { deps: [hard('T-001')] });
-  bad(planTransition(t, 'ready', 'schedule', facts({ status_of: new Map([['T-001', 'accepting']]) })), /T-001/);
-  bad(planTransition(t, 'ready', 'schedule', facts({ status_of: new Map([['T-001', 'done']]), stage_active: false })), /stage/);
-  ok(planTransition(t, 'ready', 'schedule', facts({ status_of: new Map([['T-001', 'done']]) })));
+test('争议需有效租约与具体引用；fix 也可以提出争议；超过单个测试上限才升级', () => {
+  const f = facts({ dispute_test: 'a', dispute_evidence: 'docs/spec/requirements.md:REQ-001.AC1', dispute_evidence_valid: true });
+  ok(planTransition(task('in_progress', { kind: 'fix' }), 'disputed', 'dispute', f));
+  for (const over of [{ token: '伪造' }, { dispute_test: '' }, { dispute_evidence: '' }, { dispute_evidence_valid: false }]) bad(planTransition(task('in_progress'), 'disputed', 'dispute', { ...f, ...over }));
+  bad(planTransition(task('in_progress', { lease: null }), 'disputed', 'dispute', f));
+  bad(planTransition(task('disputed', { disputes: { a: 1, b: 99 } }), 'blocked', 'dispute_escalated', f));
+  const result = ok(planTransition(task('disputed', { disputes: { a: 2, b: 99 } }), 'blocked', 'dispute_escalated', f));
+  assert.equal(result.task.blocked_by, 'dispute');
 });
 
-test('ready -> in_progress：并发、互斥、worktree、租约', () => {
-  const t = mkTask('T-001', { status: 'ready' });
-  const patch = { lease: lease('r-1', TOKEN), worktree: '/wt', branch: 'b', base_sha: 'abc' };
-  bad(planTransition(t, 'in_progress', 'dispatch', facts({ running_count: 2 }), patch), /并发/);
-  bad(planTransition(t, 'in_progress', 'dispatch', facts({ conflicting_running: ['T-009'] }), patch), /T-009/);
-  bad(planTransition(t, 'in_progress', 'dispatch', facts(), { ...patch, base_sha: null }), /base_sha/);
-  bad(planTransition(t, 'in_progress', 'dispatch', facts(), { ...patch, lease: null }), /租约/);
-  const r = ok(planTransition(t, 'in_progress', 'dispatch', facts(), patch));
-  assert.equal(r.task.status, 'in_progress');
-  assert.equal(r.task.worktree, '/wt');
+test('硬依赖只认 done，软依赖不阻塞 schedule；输入与合并必须等待软依赖', () => {
+  const t = task('pending', { depends_on: [hard('T-002'), soft('T-003')] });
+  const f = facts({ status_of: new Map([['T-002', 'done'], ['T-003', 'blocked']]) });
+  ok(planTransition(t, 'ready', 'schedule', f));
+  for (const state of ['pending', 'accepting', 'blocked', 'cancelled']) bad(planTransition(t, 'ready', 'schedule', { ...f, status_of: new Map([['T-002', state]]) }));
+  bad(planTransition({ ...t, status: 'awaiting_inputs' }, 'checking', 'inputs_ready', { ...f, soft_deps_done: false }));
+  bad(planTransition({ ...t, status: 'queued_merge' }, 'merging', 'merge_start', { ...f, soft_deps_done: false }));
 });
 
-test('in_progress -> queued_merge（submit）：token、租约、diff、受保护路径、handoff；提交后直接进入合并队列', () => {
-  const t = inProgress();
-  const good = facts({ token: TOKEN, diff_files: ['src/server/t-001/a.ts'] });
-  bad(planTransition(t, 'queued_merge', 'submit', { ...good, token: undefined }), /token/);
-  bad(planTransition(t, 'queued_merge', 'submit', { ...good, token: 'forged' }), /token/);
-  bad(planTransition(t, 'queued_merge', 'submit', { ...good, now: new Date(later(31)) }), /租约/);
-  bad(planTransition(t, 'queued_merge', 'submit', { ...good, diff_files: ['src/web/x.ts'] }), /src\/web\/x\.ts/);
-  bad(planTransition(inProgress({ writes: ['**'] }), 'queued_merge', 'submit', { ...good, diff_files: ['.forge/state.json'] }), /受保护/);
-  bad(planTransition(inProgress({ writes: ['**'] }), 'queued_merge', 'submit', { ...good, diff_files: ['rules/project.md'] }), /受保护/);
-  bad(planTransition(t, 'queued_merge', 'submit', { ...good, handoff_written: false }), /handoff/);
-  bad(planTransition(t, 'queued_merge', 'submit', { ...good, diff_files: [] }), /没有改动/);
-  const r = ok(planTransition(t, 'queued_merge', 'submit', good));
-  assert.equal(r.task.status, 'queued_merge');
-  assert.equal(r.task.lease, null);
-  assert.equal(r.task.impl_run, 'r-1');
-});
-
-test('登记的公共文件算在可写范围内；实现类任务可以在接口文档里追加，改动已有内容被拒', () => {
-  const t = inProgress({ shared: ['src/routes.ts'] });
-  const good = facts({ token: TOKEN, diff_files: ['src/server/t-001/a.ts', 'src/routes.ts', 'docs/interfaces/kb.md'] });
-  ok(planTransition(t, 'queued_merge', 'submit', good));
-  bad(planTransition(t, 'queued_merge', 'submit', { ...good, interface_rewrites: ['docs/interfaces/kb.md'] }), /只能在接口文档中追加/);
-  bad(planTransition(inProgress({ kind: 'doc' }), 'queued_merge', 'submit', good), /越出/);
-});
-
-test('适配已有测试：forge_submit 算出的 test_adjustments 不算越出 writes，记在任务上；不在其中的仍被拒', () => {
-  const t = inProgress();
-  const good = facts({ token: TOKEN, diff_files: ['src/server/t-001/a.ts', 'tests/acceptance/api.test.js'] });
-  bad(planTransition(t, 'queued_merge', 'submit', good), /越出任务 writes：tests\/acceptance\/api\.test\.js/);
-  const r = ok(planTransition(t, 'queued_merge', 'submit', { ...good, test_adjustments: ['tests/acceptance/api.test.js'] }));
-  assert.deepEqual(r.task.test_adjustments, ['tests/acceptance/api.test.js']);
-  bad(planTransition(t, 'queued_merge', 'submit', { ...good, diff_files: [...good.diff_files!, 'tests/acceptance/b.test.js'], test_adjustments: ['tests/acceptance/api.test.js'] }), /tests\/acceptance\/b\.test\.js/);
-  const again = ok(planTransition({ ...inProgress(), test_adjustments: ['old.test.js'] }, 'queued_merge', 'submit', facts({ token: TOKEN, diff_files: ['src/server/t-001/a.ts'] })));
-  assert.equal(again.task.test_adjustments, undefined, '重新提交时按本次的改动重算');
-});
-
-test('只读任务（验收、计划修订）提交结论：不能有改动，要有 handoff', () => {
-  const a = inProgress({ kind: 'analysis', replan: 'x', writes: [] });
-  ok(planTransition(a, 'done', 'report', facts({ token: TOKEN, diff_files: [] })));
-  bad(planTransition(a, 'done', 'report', facts({ token: TOKEN, diff_files: ['x.ts'] })), /只读任务不得有改动/);
-  bad(planTransition(a, 'done', 'report', facts({ token: TOKEN, handoff_written: false })), /handoff/);
-  bad(planTransition(inProgress({ kind: 'analysis', writes: [] }), 'done', 'report', facts({ token: TOKEN })), /缺少结构化结论/);
-  bad(planTransition(inProgress(), 'done', 'report', facts({ token: TOKEN })), /analysis/);
-});
-
-test('失败达上限自动转 blocked', () => {
-  const t = mkTask('T-001', { status: 'merging', attempts: 2 });
-  const r = ok(planTransition(t, 'in_progress', 'merge_verify_fail', facts({ post_verify_ok: false, reason: 'test 退出码 1' })));
-  assert.equal(r.to, 'blocked');
-  assert.equal(r.task.status, 'blocked');
-  assert.match(r.task.blocked_reason ?? '', /上限/);
-});
-
-test('合并：同一时间只有一个 merging；done 需要 rebase、验证、快进', () => {
-  const q = mkTask('T-001', { status: 'queued_merge' });
-  bad(planTransition(q, 'merging', 'merge_start', facts({ merging_other: 'T-002' })), /T-002/);
-  ok(planTransition(q, 'merging', 'merge_start', facts()));
-  const m = mkTask('T-001', { status: 'merging', worktree: '/wt' });
-  bad(planTransition(m, 'done', 'merge_done', facts({ rebase_ok: true, post_verify_ok: true })), /快进/);
-  const d = ok(planTransition(m, 'done', 'merge_done', facts({ rebase_ok: true, post_verify_ok: true, fast_forwarded: true })));
-  assert.equal(d.task.worktree, null);
-  const back = ok(planTransition(m, 'in_progress', 'merge_verify_fail', facts({ post_verify_ok: false, reason: '语义冲突' })));
-  assert.equal(back.task.attempts, 1);
-  bad(planTransition(m, 'blocked', 'merge_blocked', facts()), /原因/);
-  ok(planTransition(m, 'blocked', 'merge_blocked', facts({ reason: '冲突涉及契约' })));
-  ok(planTransition(m, 'queued_merge', 'merge_requeue', facts()));
-});
-
-test('任一进行中状态可转 blocked，需写明原因', () => {
-  for (const s of ['in_progress', 'queued_merge', 'merging'] as const) {
-    bad(planTransition(mkTask('T-001', { status: s }), 'blocked', 'block', facts()), /原因/);
-    const r = ok(planTransition(mkTask('T-001', { status: s, lease: lease('r-1', TOKEN) }), 'blocked', 'block', facts({ reason: '需求歧义' })));
-    assert.equal(r.task.blocked_reason, '需求歧义');
-    assert.equal(r.task.lease, null);
+test('dispatch：两个池分别限流，worktree、branch、base_sha、租约必需', () => {
+  for (const kind of ['impl', 'acctest', 'review', 'qa'] as const) {
+    const t = task('ready', { kind });
+    const f = facts({ running_count: 0, aux_running_count: 0 });
+    ok(planTransition(t, 'in_progress', 'dispatch', f));
+    bad(planTransition(t, 'in_progress', 'dispatch', { ...f, running_count: 2, aux_running_count: 3 }));
+    bad(planTransition(t, 'in_progress', 'dispatch', { ...f, conflicting_running: ['T-009'] }));
+    for (const key of ['worktree', 'branch', 'base_sha', 'lease'] as const) bad(planTransition(t, 'in_progress', 'dispatch', f, { [key]: null }));
   }
-  bad(planTransition(mkTask('T-001', { status: 'done' }), 'blocked', 'block', facts({ reason: 'x' })), /非法/);
 });
 
-test('blocked -> ready 只能由用户执行', () => {
-  const t = mkTask('T-001', { status: 'blocked', attempts: 3, blocked_reason: 'x' });
-  bad(planTransition(t, 'ready', 'unblock', facts({ actor: 'run:r-1' })), /用户/);
-  const r = ok(planTransition(t, 'ready', 'unblock', facts({ actor: 'human' })));
-  assert.equal(r.task.attempts, 0);
-  assert.equal(r.task.blocked_reason, null);
-  const r2 = ok(planTransition(t, 'ready', 'unblock', facts({ actor: 'human', attempts: 1 })));
-  assert.equal(r2.task.attempts, 1);
+test('submit：鉴权、范围、公共文件、已有测试调整、契约追加与 S0 验收路径例外', () => {
+  const t = task('in_progress', { writes: ['**'] });
+  const f = facts();
+  for (const token of [undefined, 'forged']) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, token }));
+  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, now: new Date('2026-01-01T00:30:00Z') }));
+  for (const path of ['.forge/state.json', 'rules/project.md', 'tests/acceptance/T-002/a.test.ts']) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files: [path], test_adjustments: [path] }));
+  for (const path of ['tests/acceptance/_support/a.ts', 'tests/acceptance/S0-smoke/a.ts']) {
+    ok(planTransition({ ...t, stage: 'S0' }, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
+    for (const kind of ['fix', 'doc'] as const) bad(planTransition({ ...t, stage: 'S0', kind }, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
+  }
+  bad(planTransition({ ...t, stage: 'S0' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.ts'] }));
+  const narrow = task('in_progress', { shared: ['src/routes.ts'] });
+  bad(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['outside.ts'] }));
+  ok(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['src/routes.ts', 'unit/a.test.ts', 'docs/contracts/modules/a.md'], test_adjustments: ['unit/a.test.ts'], contract_additions: ['docs/contracts/modules/a.md'] }));
+  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, interface_rewrites: ['docs/contracts/modules/a.md'] }));
+  for (const diff_files of [undefined, []]) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files }));
+  const submitted = ok(planTransition(narrow, 'awaiting_inputs', 'submit', f));
+  assert.equal(submitted.task.lease, null);
+  assert.equal(submitted.task.impl_run, 'r-1');
 });
 
-test('in_progress -> ready：租约过期且 worktree 干净；第二次过期转 blocked', () => {
-  const expired = { now: new Date(later(31)) };
-  const t = inProgress();
-  bad(planTransition(t, 'ready', 'lease_expired', facts({ worktree_clean: true })), /未过期/);
-  bad(planTransition(t, 'ready', 'lease_expired', facts({ ...expired, worktree_clean: false })), /未提交/);
-  const r = ok(planTransition(t, 'ready', 'lease_expired', facts({ ...expired, worktree_clean: true })));
-  assert.equal(r.task.attempts, 1);
-  assert.equal(r.task.lease_expirations, 1);
-  assert.equal(r.task.worktree, null);
-  const r2 = ok(planTransition(inProgress({ lease_expirations: 1 }), 'ready', 'lease_expired', facts({ ...expired, worktree_clean: true })));
-  assert.equal(r2.to, 'blocked');
+test('输入、审查、争议和合并的独立事实必须满足', () => {
+  for (const key of ['latest_acctest_done', 'soft_deps_done', 'inputs_synced'] as const) bad(planTransition(task('awaiting_inputs'), 'checking', 'inputs_ready', facts({ [key]: false })));
+  bad(planTransition(task('queued_merge'), 'merging', 'merge_start', facts({ merging_other: 'T-002' })));
+  bad(planTransition(task('queued_merge'), 'merging', 'merge_start', facts({ queue_head: false })));
+  for (const key of ['rebase_ok', 'post_verify_ok', 'fast_forwarded'] as const) bad(planTransition(task('merging'), 'done', 'merge_done', facts({ rebase_ok: true, post_verify_ok: true, fast_forwarded: true, [key]: false })));
+  for (const trigger of ['dispute_fixed', 'dispute_upheld'] as const) bad(planTransition(task('disputed'), trigger === 'dispute_fixed' ? 'checking' : 'in_progress', trigger, facts({ latest_acctest_done: false, acctest_changed_tests: trigger === 'dispute_fixed' })));
+  ok(planTransition(task('disputed'), 'blocked', 'dispute_escalated', facts({ acctest_escalated: true })));
+  const a = task('in_progress', { kind: 'acctest' });
+  bad(planTransition(a, 'done', 'report', facts({ diff_files: ['x'] })));
+  bad(planTransition(a, 'done', 'report', facts({ diff_files: [], impl_done: true })));
+  bad(planTransition(a, 'done', 'report', facts({ diff_files: [], handoff_written: false })));
 });
 
-test('planTransition 不修改入参', () => {
-  const t = mkTask('T-001', { status: 'merging' });
-  const snapshot = JSON.stringify(t);
-  planTransition(t, 'in_progress', 'merge_verify_fail', facts({ post_verify_ok: false, reason: 'x' }));
-  assert.equal(JSON.stringify(t), snapshot);
+const counts = (t: TaskFile) => [t.attempts, t.precheck_failures ?? 0, t.review_rounds ?? 0, t.merge_failures ?? 0, t.disputes ?? {}];
+test('计数独立、预算耗尽设置对应 blocked_by，foreign_tests_broken 不动计数', () => {
+  const baseline = { attempts: 0, precheck_failures: 0, review_rounds: 0, merge_failures: 0, disputes: { other: 2 } };
+  const scenarios = [
+    { from: 'checking', to: 'in_progress', trigger: 'precheck_fail', facts: { precheck_ok: false }, expected: [0, 1, 0, 0, { other: 2 }], blocked: 'precheck_exhausted', counter: 'precheck_failures' },
+    { from: 'in_review', to: 'in_progress', trigger: 'review_changes', facts: { unresolved_must: 1 }, expected: [0, 0, 1, 0, { other: 2 }], blocked: 'review_exhausted', counter: 'review_rounds' },
+    { from: 'merging', to: 'in_progress', trigger: 'merge_verify_fail', facts: { post_verify_ok: false }, expected: [0, 0, 0, 1, { other: 2 }], blocked: 'merge_exhausted', counter: 'merge_failures' },
+  ] as const;
+  for (const s of scenarios) {
+    const result = ok(planTransition(task(s.from, baseline), s.to, s.trigger, facts(s.facts)));
+    assert.deepEqual(counts(result.task), s.expected);
+    const capped = ok(planTransition(task(s.from, { ...baseline, [s.counter]: 1 }), s.to, s.trigger, facts(s.facts)));
+    assert.equal(capped.to, 'blocked'); assert.equal(capped.task.blocked_by, s.blocked);
+  }
+  const d = ok(planTransition(task('in_progress', baseline), 'disputed', 'dispute', facts({ dispute_test: 'test-a', dispute_evidence: 'docs/contracts/a.yaml:10', dispute_evidence_valid: true })));
+  assert.deepEqual(counts(d.task), [0, 0, 0, 0, { other: 2, 'test-a': 1 }]);
+  for (const from of ['checking', 'merging'] as const) {
+    const t = task(from, { ...baseline, attempts: 2, precheck_failures: 1 });
+    const r = ok(planTransition(t, 'awaiting_inputs', 'foreign_tests_broken', facts({ foreign_acceptance_failed: true })));
+    assert.deepEqual(counts(r.task), counts(t)); assert.equal(r.task.lease, null);
+  }
+  const at = task('merging', { kind: 'acctest' });
+  const broken = ok(planTransition(at, 'blocked', 'merge_blocked', facts({ impl_done: true, post_verify_ok: false, failed_tests_own_directory: false })));
+  assert.equal(broken.task.blocked_by, 'integration_broken'); assert.deepEqual(counts(broken.task), counts(at));
 });
 
-import { planStageTransition } from '../../src/core/state-machine.ts';
-
-test('阶段闸门：agent 无法批准，用户可以', () => {
-  assert.match(planStageTransition('awaiting_human', 'done', 'approve', { actor: 'run:r-1' }).join(), /用户/);
-  assert.match(planStageTransition('awaiting_human', 'done', 'approve', { actor: 'engine' }).join(), /用户/);
-  assert.deepEqual(planStageTransition('awaiting_human', 'done', 'approve', { actor: 'human' }), []);
-  assert.match(planStageTransition('active', 'done', 'approve', { actor: 'human' }).join(), /非法/);
-  assert.match(planStageTransition('awaiting_gate', 'done', 'gate_passed', { actor: 'engine', needs_human: true }).join(), /人工/);
-  assert.deepEqual(planStageTransition('awaiting_gate', 'awaiting_human', 'gate_passed', { actor: 'engine', needs_human: true }), []);
-  assert.match(planStageTransition('awaiting_gate', 'active', 'gate_failed', { actor: 'engine' }).join(), /原因/);
+test('运行失败、租约过期与超时计 attempts；暂停和中断沿用独立计数', () => {
+  const t = task('in_progress', { timeout_review: { run: 'r-1', at: NOW.toISOString(), minutes: 30 }, precheck_failures: 1, review_rounds: 1, merge_failures: 1 });
+  for (const trigger of ['run_failed', 'run_timeout', 'lease_expired'] as const) {
+    const to = trigger === 'lease_expired' ? 'ready' : 'in_progress';
+    const f = facts({ now: new Date('2026-01-01T00:31:00Z'), worktree_clean: true });
+    const r = ok(planTransition(t, to, trigger, f));
+    assert.equal(r.task.attempts, 1); assert.deepEqual(counts(r.task).slice(1), counts(t).slice(1)); assert.equal(r.task.lease, null);
+    const capped = ok(planTransition({ ...t, attempts: 2 }, to, trigger, f));
+    assert.equal(capped.to, 'blocked'); assert.equal(capped.task.blocked_by, 'attempts');
+  }
+  const expiredTwice = ok(planTransition({ ...t, lease_expirations: 1 }, 'ready', 'lease_expired', facts({ now: new Date('2026-01-01T00:31:00Z'), worktree_clean: true })));
+  assert.equal(expiredTwice.task.blocked_by, 'attempts');
+  for (const trigger of ['run_interrupted', 'run_paused'] as const) assert.equal(ok(planTransition(t, 'in_progress', trigger, facts())).task.attempts, 0);
+  const interrupted = ok(planTransition({ ...t, interruptions: MAX_INTERRUPTIONS - 1 }, 'in_progress', 'run_interrupted', facts()));
+  assert.equal(interrupted.task.blocked_by, 'dispatcher');
+  const timed = ok(planTransition({ ...t, timeouts: 2 }, 'in_progress', 'run_timeout', facts()));
+  assert.equal(timed.to, 'blocked'); assert.equal(timed.task.blocked_by, 'attempts');
 });
 
-test('run_failed：子进程未提交就退出，计一次失败并清空租约；达上限转 blocked', () => {
-  const t = inProgress();
-  bad(planTransition(t, 'in_progress', 'run_failed', facts()), /原因/);
-  const r = ok(planTransition(t, 'in_progress', 'run_failed', facts({ reason: '子进程退出码 1' })));
-  assert.equal(r.task.attempts, 1);
-  assert.equal(r.task.lease, null);
-  assert.equal(r.task.worktree, '/wt/T-001');
-  bad(planTransition(r.task, 'in_progress', 'run_failed', facts({ reason: 'x' })), /没有运行中/);
-  const r2 = ok(planTransition(inProgress({ attempts: 2 }), 'in_progress', 'run_failed', facts({ reason: '又崩溃' })));
-  assert.equal(r2.to, 'blocked');
+test('unblock 默认保留计数与 worktree；reset 只清零阻塞原因对应计数', () => {
+  const baseline = { attempts: 2, precheck_failures: 3, review_rounds: 4, merge_failures: 5, disputes: { a: 2, b: 3 } };
+  const mapping = { attempts: 'attempts', precheck_exhausted: 'precheck_failures', review_exhausted: 'review_rounds', merge_exhausted: 'merge_failures' } as const;
+  for (const [blocked_by, counter] of Object.entries(mapping)) {
+    const t = task('blocked', { ...baseline, blocked_by: blocked_by as TaskFile['blocked_by'] });
+    const kept = ok(planTransition(t, 'in_progress', 'unblock', facts({ actor: 'human' })));
+    assert.deepEqual(counts(kept.task), counts(t)); assert.equal(kept.task.worktree, t.worktree); assert.equal(kept.task.branch, t.branch);
+    const reset = ok(planTransition(t, 'in_progress', 'unblock', facts({ actor: 'human', reset: true })));
+    assert.deepEqual(counts(reset.task), counts({ ...t, [counter]: 0 }));
+  }
+  const disputed = task('blocked', { ...baseline, blocked_by: 'dispute' });
+  const reset = ok(planTransition(disputed, 'in_progress', 'unblock', facts({ actor: 'human', reset: true, dispute_test: 'a' })));
+  assert.deepEqual(reset.task.disputes, { a: 0, b: 3 });
+  for (const actor of ['human', 'orchestrator', 'dispatcher', 'engine', 'run:r-1']) {
+    const r = ok(planTransition(task('checking'), 'blocked', 'block', facts({ actor })));
+    assert.equal(r.task.blocked_by, actor === 'human' || actor === 'orchestrator' ? 'user' : actor === 'run:r-1' ? 'agent' : 'dispatcher');
+  }
 });
 
-test('run_interrupted：会话中断不消耗失败预算，保留 worktree；连续中断达上限转 blocked', async () => {
-  const { MAX_INTERRUPTIONS } = await import('../../src/core/state-machine.ts');
-  const r = ok(planTransition(inProgress({ attempts: 2 }), 'in_progress', 'run_interrupted', facts({ reason: '会话中断' })));
-  assert.equal(r.task.attempts, 2, '不计入失败次数');
-  assert.equal(r.task.interruptions, 1);
-  assert.equal(r.task.lease, null);
-  assert.equal(r.task.worktree, '/wt/T-001');
-  bad(planTransition(r.task, 'in_progress', 'run_interrupted', facts({ reason: 'x' })), /没有运行中/);
-  const many = ok(planTransition(inProgress({ interruptions: MAX_INTERRUPTIONS - 1 }), 'in_progress', 'run_interrupted', facts({ reason: '又中断' })));
-  assert.equal(many.to, 'blocked');
-  assert.match(many.task.blocked_reason ?? '', /连续中断 5 次/);
+test('转移不修改 task、facts、patch，包含 disputes 与 lease 嵌套对象', () => {
+  const t = task('in_progress', { disputes: { a: 1 } }); const patch = { worktree: '/other' }; const f = facts({ dispute_test: 'a', dispute_evidence: 'docs/spec/a.md:1', dispute_evidence_valid: true });
+  const snapshot = structuredClone({ t, patch, f });
+  ok(planTransition(t, 'disputed', 'dispute', f, patch));
+  assert.deepEqual({ t, patch, f }, snapshot);
 });
 
-test('run_paused：模型服务不可用不计失败、不计中断，保留 worktree；不会因次数转 blocked', () => {
-  const r = ok(planTransition(inProgress({ attempts: 2, interruptions: 4 }), 'in_progress', 'run_paused', facts({ reason: '额度用完' })));
-  assert.equal(r.to, 'in_progress');
-  assert.equal(r.task.attempts, 2);
-  assert.equal(r.task.interruptions, 4);
-  assert.equal(r.task.lease, null);
-  assert.equal(r.task.worktree, '/wt/T-001');
-  assert.equal(r.task.last_failure, null, '不覆盖上次失败原因');
-  bad(planTransition(r.task, 'in_progress', 'run_paused', facts({ reason: 'x' })), /没有运行中/);
-  bad(planTransition(inProgress(), 'in_progress', 'run_paused', facts()), /原因/);
+interface StageCase { from: StageStatus; to: StageStatus; trigger: StageTrigger; facts?: Partial<StageFacts>; reject?: Partial<StageFacts> }
+const stages: StageCase[] = [
+  { from: 'active', to: 'awaiting_gate', trigger: 'submit_gate' },
+  { from: 'awaiting_gate', to: 'active', trigger: 'gate_failed', reject: { reason: '' } },
+  { from: 'awaiting_gate', to: 'awaiting_human', trigger: 'gate_passed', facts: { needs_human: true }, reject: { needs_human: false } },
+  { from: 'awaiting_gate', to: 'done', trigger: 'gate_passed', facts: { needs_human: false }, reject: { needs_human: true } },
+  { from: 'awaiting_gate', to: 'needs_human', trigger: 'gate_exhausted', reject: { reason: '' } },
+  { from: 'needs_human', to: 'awaiting_human', trigger: 'accept', facts: { actor: 'human' }, reject: { actor: 'orchestrator' } },
+  { from: 'needs_human', to: 'awaiting_gate', trigger: 'gate_rerun', facts: { actor: 'human' }, reject: { actor: 'engine' } },
+  ...(['needs_human', 'awaiting_human'] as const).map((from): StageCase => ({ from, to: 'active', trigger: 'reject', facts: { actor: 'human' }, reject: { actor: 'orchestrator' } })),
+  { from: 'awaiting_human', to: 'done', trigger: 'approve', facts: { actor: 'human' }, reject: { actor: 'engine' } },
+  ...(['active', 'awaiting_gate', 'needs_human', 'awaiting_human'] as const).map((from): StageCase => ({ from, to: 'aborted', trigger: 'abort', facts: { actor: 'human' }, reject: { actor: 'orchestrator' } })),
+];
+for (const c of stages) test(`阶段：${c.from} → ${c.to}（${c.trigger}）正反例`, () => {
+  const f: StageFacts = { actor: 'engine', reason: '门禁失败', ...c.facts };
+  assert.deepEqual(planStageTransition(c.from, c.to, c.trigger, f), []);
+  assert.ok(planStageTransition(c.reject ? c.from : 'done', c.to, c.trigger, { ...f, ...c.reject }).length);
+});
+test('阶段状态 × 触发 × 目标穷举，只允许阶段清单内的组合', () => {
+  const allowed = new Set(stages.map((c) => `${c.from}/${c.trigger}/${c.to}`));
+  for (const from of STAGE_STATUSES) for (const to of STAGE_STATUSES) for (const trigger of new Set(stages.map((c) => c.trigger))) {
+    if (allowed.has(`${from}/${trigger}/${to}`)) continue;
+    assert.ok(planStageTransition(from, to, trigger, { actor: 'human', reason: 'x', needs_human: true }).length);
+  }
 });

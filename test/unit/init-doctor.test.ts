@@ -13,18 +13,19 @@ import { worktreesRoot } from '../../src/core/worktree.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
-import { PKG_CONTENT } from '../helpers/package.ts';
+const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
-const PKG = PKG_CONTENT;
+const PKG = PACKAGE_ROOT;
 
 test('/forge init：生成骨架、.gitignore、.forge 与初始提交；重复执行不覆盖、只补缺并报告差异', async () => {
   const r = tmpRepo();
   try {
     writeFileSync(path.join(r.dir, '.gitignore'), 'node_modules/');
     const first = await initProject(r.dir, PKG);
-    for (const f of ['workflow.yaml', 'AGENTS.md', 'rules/global.md', 'docs/interfaces/.gitkeep', 'docs/research/.gitkeep', '.forge/state.json']) {
+    for (const f of ['workflow.yaml', 'AGENTS.md', 'rules/global.md', 'docs/contracts/paths/.gitkeep', 'docs/contracts/components/.gitkeep', 'docs/contracts/errors/.gitkeep', 'docs/spec/.gitkeep', 'docs/arch/.gitkeep', 'docs/plan/.gitkeep', 'tests/acceptance/.gitkeep', 'docs/research/.gitkeep', '.forge/state.json']) {
       assert.ok(existsSync(path.join(r.dir, f)), f);
     }
+    assert.ok(!existsSync(path.join(r.dir, 'docs/interfaces')), '不再生成 docs/interfaces/');
     assert.match(readFileSync(path.join(r.dir, 'workflow.yaml'), 'utf8'), new RegExp(`^project: ${path.basename(r.dir)}$`, 'm'));
     assert.equal(readFileSync(path.join(r.dir, '.gitignore'), 'utf8'), 'node_modules/\n\n# pi-forge\n.codegraph/\n');
     assert.ok(first.commit);
@@ -102,8 +103,8 @@ test('唯一允许的下一步：dispatch → wait → 报告阻塞；闸门等�
   const p = await setupProject({ tasks: [mkTask('T-001'), mkTask('T-002', { deps: [hard('T-001')] })] });
   try {
     let s = nextStep(p.store, 2);
-    assert.equal(s.tool, 'forge_dispatch');
-    assert.equal(s.task, 'T-001');
+    assert.equal(s.tool, 'forge_wait');
+    assert.equal(s.task, undefined);
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'schedule', actor: 's' });
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'd', patch: {
       lease: { run_id: 'r', role: 'backend-engineer', token_hash: 'a'.repeat(64), acquired_at: 'x', expires_at: '2999-01-01T00:00:00Z' },
@@ -113,7 +114,7 @@ test('唯一允许的下一步：dispatch → wait → 报告阻塞；闸门等�
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'x', facts: { reason: '需求有歧义' } });
     s = nextStep(p.store, 2);
     assert.equal(s.tool, 'none');
-    assert.match(s.next, /T-001（需求有歧义）.*\/forge answer.*forge_revise_plan/);
+    assert.match(s.next, /T-001（需求有歧义）.*\/forge unblock/);
     assert.match(turnContext(p.store, 2), /^\[pi-forge 状态\][\s\S]*\[唯一允许的下一步\]/);
     await p.store.transitionStage(p.flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
     await p.store.transitionStage(p.flowId, { to: 'awaiting_human', trigger: 'gate_passed', actor: 'engine', needs_human: true });

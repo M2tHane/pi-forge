@@ -92,14 +92,14 @@ export function findCycle(tasks: readonly DagTask[]): string[] | null {
   return null;
 }
 
-type ReadyTask = Pick<TaskFile, 'id' | 'stage' | 'status' | 'depends_on' | 'needs_acceptance' | 'accepted'>;
+type ReadyTask = Pick<TaskFile, 'id' | 'stage' | 'status' | 'depends_on'>;
 
-/** 依赖判断用的状态（第五轮）：需要独立验收的模块合入后、验收通过前不算完成，依赖它的模块继续等待 */
-export function depStatus(t: Pick<TaskFile, 'status' | 'needs_acceptance' | 'accepted'>): string {
-  return t.status === 'done' && t.needs_acceptance && !t.accepted ? 'accepting' : t.status;
+/** 依赖直接取真实状态；只有 done 满足硬依赖与软依赖。 */
+export function depStatus(t: Pick<TaskFile, 'status'>): string {
+  return t.status;
 }
 
-/** 当前 stage 中所有硬依赖都已 done（需要验收的已通过验收）的 pending 任务。软依赖不影响 ready。 */
+/** 当前 stage 中所有硬依赖都已 done 的 pending 任务；软依赖不影响 ready。 */
 export function computeReady(tasks: readonly ReadyTask[], stage: string): string[] {
   const status = new Map(tasks.map((t) => [t.id, depStatus(t)]));
   return tasks

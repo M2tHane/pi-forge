@@ -11,7 +11,7 @@ import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { mergeToMain } from '../../src/core/release.ts';
 import { actionsNeeded } from '../../src/core/status-view.ts';
 import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
-import { PKG_CONTENT } from '../helpers/package.ts';
+const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 /** 用户直接在主分支（主工作区检出）上提交 */
 function commitOnMain(p: Project, files: Record<string, string>, msg: string) {
@@ -40,13 +40,14 @@ async function implement(a: FakeAgent, files: Record<string, string>) {
 }
 
 const env = (p: Project, engine: ReturnType<typeof makeEngine>['engine']): CommandEnv => ({
-  root: p.dir, packageRoot: PKG_CONTENT, ui: null,
+  root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
   engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
   roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
 });
 
 test('阶段边界同步主分支：无冲突直接合入；writes 内冲突生成 merge-fix 解决；最终合入主分支不再冲突', async () => {
   const p = await setupProject();
+  p.config.raw.implementation_gate!.human = false; // 本用例的中间阶段自动通过，最后阶段仍需签收。
   try {
     const flowId = await twoStageFlow(p);
     await p.store.addTasks(flowId, [

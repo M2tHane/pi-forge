@@ -16,7 +16,7 @@ const models = [
 ].map((m) => ({ ref: m.ref, levels: [...m.levels] }));
 const rows = (): RoleRow[] => [
   { role: 'architect', purpose: '模块规划', defaults: { model: 'a/big' } },
-  { role: 'implementer', purpose: '模块实现', defaults: {} },
+  { role: 'worker', purpose: '模块实现', defaults: {} },
 ];
 const DOWN = '\x1b[B';
 
@@ -134,16 +134,16 @@ test('/forge-config 表格：保存各行的模型、备用模型与思考强度
     const seen: RoleRow[][] = [];
     const out = await runFlowConfig('', deps(mk((r) => {
       seen.push(r);
-      return r.map((x) => (x.role === 'implementer' ? { ...x, model: 'b/small', escalate: 'a/big', thinking: 'off' as const } : x));
+      return r.map((x) => (x.role === 'worker' ? { ...x, model: 'b/small', escalate: 'a/big', thinking: 'off' as const } : x));
     })));
     assert.match(out, /已保存/);
-    assert.ok(seen[0]!.some((r) => r.role === 'orchestrator' && r.purpose.includes('主 agent')));
-    const s = loadRoleSettings(settingsPath).roles['implementer']!;
+    assert.ok(seen[0]!.some((r) => r.role === 'orchestrator' && r.purpose.includes('主会话')));
+    const s = loadRoleSettings(settingsPath).roles['worker']!;
     assert.deepEqual(s, { model: 'b/small', thinking: 'off', escalate_model: 'a/big' });
 
     // 再打开：现有设置带入；恢复默认后清除
     const out2 = await runFlowConfig('', deps(mk((r) => {
-      assert.equal(r.find((x) => x.role === 'implementer')!.model, 'b/small');
+      assert.equal(r.find((x) => x.role === 'worker')!.model, 'b/small');
       return r.map((x) => ({ ...x, model: undefined, escalate: undefined, thinking: undefined }));
     })));
     assert.match(out2, /已保存/);

@@ -16,6 +16,8 @@ export const PROJECT_YAML = TEST_YAML
   lint:      "true"
   test:      "test -f src/server/t-001/a.ts && ! grep -q FAIL src/server/t-001/a.ts"
   e2e:       "true"
+  acceptance: "true"
+  acceptance_list: "true"
 limits:`);
 
 /** 第五轮起提交后都直接合并（合并时跑全量测试）：保留这个名字给旧测试 */

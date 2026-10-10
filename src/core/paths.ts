@@ -8,7 +8,7 @@ const GLOB_CHARS = /[*?[\]{}]/;
 
 export const PROTECTED_PATHS = ['.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
 /** 模块之间的接口文档（第五轮）：实现者只能追加 */
-export const INTERFACES_PATH = 'docs/interfaces/**';
+export const INTERFACES_PATH = 'docs/contracts/**';
 export const SENSITIVE_PATHS = ['**/.env*', '**/*.pem', 'secrets/**', '**/secrets/**'] as const;
 
 /** 把路径规范化为相对 root 的 posix 路径；越出 root 返回 null。不解析符号链接（由调用方用 realpath 处理）。 */
@@ -22,6 +22,21 @@ export function normalizeRelPath(root: string, p: string): string | null {
 
 export function matchesAny(rel: string, globs: readonly string[]): boolean {
   return globs.some((g) => minimatch(rel, g, MM));
+}
+
+/** read_paths 按顺序覆盖：普通模式允许，! 模式排除；没有匹配默认拒绝。 */
+export function matchesReadPaths(rel: string, globs: readonly string[]): boolean {
+  let allowed = false;
+  for (const glob of globs) {
+    const exclude = glob.startsWith('!');
+    const pattern = exclude ? glob.slice(1) : glob;
+    if (!pattern) continue;
+    // 同时匹配目录本身，防止通过 ls/read 读取被排除目录的列表。
+    if (minimatch(rel, pattern, { ...MM, nonegate: true }) || minimatch(`${rel}/`, pattern, { ...MM, nonegate: true })) {
+      allowed = !exclude;
+    }
+  }
+  return allowed;
 }
 
 export function protectedGlobs(): string[] {

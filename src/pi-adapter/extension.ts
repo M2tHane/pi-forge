@@ -23,9 +23,7 @@ import { parseAgentFile } from '../core/agents.ts';
 import { runFlowConfig, type ModelOption } from '../commands/forge-config.ts';
 import { RoleTable, type RoleRow, type TableModel } from '../commands/role-table.ts';
 import { runFlowCommand, runFlowBuild, runFlowFix, FLOW_USAGE, type CommandEnv, type EngineHandle } from '../commands/forge.ts';
-import { DispatchParams, PlanDocParams, RequirementsParams, ResolveScopeParams, ResolveTimeoutParams, ReviseParams, WaitParams, activeFlowId, flowDispatch, flowPlanDoc, flowProposeModules, flowRequirements, flowResolveScope, flowResolveTimeout, flowRevisePlan, flowWait, statusText } from '../tools/orchestrator-tools.ts';
-import { ProposeModulesParams } from '../tools/module-tools.ts';
-import { mainSessionSkills, mainSkillNames, implModelsNote } from '../core/planning.ts';
+import { ResolveScopeParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveScope, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
 import { PiLauncher } from './launcher.ts';
 import { lastFailureKind, notices, snapshotOf, statusLine, visibleFlows } from '../core/status-view.ts';
 import { packageRoots, pluginExtensionsFor } from './plugins.ts';
@@ -38,11 +36,9 @@ import { historyTool } from '../tools/subagent-tools.ts';
 import { MAIN_NOTES_REL } from '../core/state-store.ts';
 
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-/** 角色提示、技能、规则与模板所在的目录；pi-forge M0：测试用 PI_FORGE_CONTENT_ROOT 指向 pi-flow 的包内容夹具（M1 起随 v3 内容迁移） */
-export const CONTENT_ROOT = process.env['PI_FORGE_CONTENT_ROOT'] || PACKAGE_ROOT;
-const TEMPLATE_WORKFLOW = path.join(CONTENT_ROOT, 'templates', 'workflow.yaml');
+const TEMPLATE_WORKFLOW = path.join(PACKAGE_ROOT, 'templates', 'workflow.yaml');
 const SUBAGENT_EXTENSION = path.join(PACKAGE_ROOT, 'src', 'pi-adapter', 'subagent.ts');
-const ORCHESTRATOR_TOOLS = ['forge_status', 'forge_dispatch', 'forge_wait', 'forge_requirements', 'forge_plan_doc', 'forge_propose_modules', 'forge_revise_plan', 'forge_resolve_timeout', 'forge_resolve_scope'];
+const ORCHESTRATOR_TOOLS = ['forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_resolve_scope'];
 
 /** 用户级设置文件：~/.pi/agent/pi-forge.json（与 Pi 官方 preset 示例的全局配置位置一致） */
 export function roleSettingsPath(): string {
@@ -147,11 +143,11 @@ export function engineFor(root: string): EngineHandle {
   const engine = new Engine({
     root, store, config, launcher: new PiLauncher(),
     roleSettings: () => loadRoleSettings(roleSettingsPath()),
-    packageAgentsDir: path.join(CONTENT_ROOT, 'agents'),
+    packageAgentsDir: path.join(PACKAGE_ROOT, 'agents'),
     subagentExtension: SUBAGENT_EXTENSION,
     // 测试用的额外扩展（假模型 provider）在前，随后是第三方插件；guard 所在的 subagent 扩展由引擎放在最后
     extraExtensions: (role) => [...extra, ...pluginExtensionsFor(config, role, packageRoots(root, getAgentDir())).paths],
-    packageSkillsDir: path.join(CONTENT_ROOT, 'skills'),
+    packageSkillsDir: path.join(PACKAGE_ROOT, 'skills'),
     mergeHooks: { afterMerge: codegraphSync },
     onError: (e) => s.notify(`pi-forge 程序步骤出错：${(e as Error).message}`, 'warning'),
   });
@@ -187,7 +183,7 @@ const NOTICE_THROTTLE_MS = 300;
 
 function agentPrompt(root: string, name: string): string {
   const project = path.join(root, '.pi', 'agents', `${name}.md`);
-  const file = existsSync(project) ? project : path.join(CONTENT_ROOT, 'agents', `${name}.md`);
+  const file = existsSync(project) ? project : path.join(PACKAGE_ROOT, 'agents', `${name}.md`);
   return parseAgentFile(readFileSync(file, 'utf8'), file).prompt;
 }
 
@@ -229,7 +225,7 @@ export default function piFlow(pi: ExtensionAPI): void {
     const s = session(root);
     s.notify = (m, l) => report(ctx, m, l);
     return {
-      root, packageRoot: CONTENT_ROOT,
+      root, packageRoot: PACKAGE_ROOT,
       ui: ctx.hasUI ? { select: (t, o) => ctx.ui.select(t, o), input: (t, p) => ctx.ui.input(t, p), notify: (m, l) => ctx.ui.notify(m, l) } : null,
       engine: () => engineFor(root),
       store: () => s.handle?.store ?? new StateStore(root),
@@ -268,51 +264,6 @@ export default function piFlow(pi: ExtensionAPI): void {
       async execute(_id, _p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
         return toolResult(statusText(h.store, h.engine, activeFlowId(h.store)));
-      },
-    });
-    pi.registerTool({
-      name: 'forge_dispatch', label: 'forge_dispatch', description: '把一个 ready 任务交给对应角色的 subagent（角色、模型、规则由程序决定）。立即返回 run_id，不等待完成。',
-      parameters: DispatchParams,
-      async execute(_id, p, _s, _u, ctx) {
-        const h = engineFor(ctx.cwd);
-        const r = await flowDispatch(h.store, h.engine, checked(DispatchParams, p, 'forge_dispatch'));
-        return toolResult(r.text, r.details);
-      },
-    });
-    pi.registerTool({
-      name: 'forge_revise_plan', label: 'forge_revise_plan', description: '实施中修订计划（用户要加功能、改需求、某个模块拆得不对，或有修订请求时）：新增模块、调整未开始模块的依赖、取消未开始的模块。已开始或已完成的不能改。用户 /forge-approve 后生效。',
-      parameters: ReviseParams,
-      async execute(_id, p, _s, _u, ctx) {
-        const h = engineFor(ctx.cwd);
-        const r = await flowRevisePlan(ctx.cwd, h.store, h.config, checked(ReviseParams, p, 'forge_revise_plan'));
-        return toolResult(r.text, r.details);
-      },
-    });
-    pi.registerTool({
-      name: 'forge_plan_doc', label: 'forge_plan_doc', description: '规划阶段写规划文档（docs/modules.md、docs/glossary.md、docs/interfaces/、docs/adr/、docs/rules-draft/、AGENTS.md；接收阶段可写从原型提取的 DESIGN.md）：整体覆盖，程序提交到集成分支。',
-      parameters: PlanDocParams,
-      async execute(_id, p, _s, _u, ctx) {
-        const h = engineFor(ctx.cwd);
-        const r = flowPlanDoc(ctx.cwd, h.store, checked(PlanDocParams, p, 'forge_plan_doc'));
-        return toolResult(r.text, r.details);
-      },
-    });
-    pi.registerTool({
-      name: 'forge_propose_modules', label: 'forge_propose_modules', description: '规划阶段提交模块清单：每个模块一个模型负责前端、后端与测试；写明可写范围、登记的公共文件、负责的验收条目与依赖。提交后程序检查，再交给用户审批（批准前可以重新提交覆盖）。',
-      parameters: ProposeModulesParams,
-      async execute(_id, p, _s, _u, ctx) {
-        const h = engineFor(ctx.cwd);
-        const r = await flowProposeModules(ctx.cwd, h.store, h.config, h.engine, checked(ProposeModulesParams, p, 'forge_propose_modules'));
-        return toolResult(r.text, r.details);
-      },
-    });
-    pi.registerTool({
-      name: 'forge_requirements', label: 'forge_requirements', description: '需求阶段（接收用户的 PRD 后做完就绪检查，或和用户讨论达成共识后）：提交标准化的需求说明（验收条目带 AC 编号）；检查通过即进入规划。',
-      parameters: RequirementsParams,
-      async execute(_id, p, _s, _u, ctx) {
-        const h = engineFor(ctx.cwd);
-        const r = await flowRequirements(ctx.cwd, h.store, h.engine, checked(RequirementsParams, p, 'forge_requirements'));
-        return toolResult(r.text, r.details);
       },
     });
     pi.registerTool({
@@ -395,10 +346,7 @@ export default function piFlow(pi: ExtensionAPI): void {
     if (!s?.orchestrator || !s.handle) return;
     const { store, engine, config } = s.handle;
     s.driftBefore = dirtyFiles(ctx.cwd);
-    const skills = mainSessionSkills(store, path.join(CONTENT_ROOT, 'skills'));
-    const flowId = store.readState().active_flow;
-    const planning = flowId && mainSkillNames(store.readFlow(flowId)).some((n) => n === 'plan-modules' || n === 'revise-plan') ? implModelsNote(engine.implementerModels()) : '';
-    const injected = `${agentPrompt(ctx.cwd, 'orchestrator')}${skills ? `\n\n${skills}` : ''}${planning ? `\n\n${planning}` : ''}\n\n${turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t))}`;
+    const injected = `${agentPrompt(ctx.cwd, 'orchestrator')}\n\n${turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t))}`;
     event.systemPromptOptions.appendSystemPrompt = `${event.systemPromptOptions.appendSystemPrompt ?? ''}\n\n${injected}`.trim();
   });
 
@@ -453,7 +401,7 @@ export default function piFlow(pi: ExtensionAPI): void {
 
   pi.registerCommand('forge', {
     description: 'pi-forge 管理：status、next、resume、approve、reject、unblock、gate、doctor、init',
-    getArgumentCompletions: (prefix) => ['status', 'next', 'resume', 'answer', 'accept', 'review', 'add', 'rules', 'knowledge', 'run', 'sync', 'replan', 'budget', 'models', 'off', 'approve', 'reject', 'unblock', 'gate', 'abort', 'doctor', 'init', 'help']
+    getArgumentCompletions: (prefix) => ['status', 'next', 'resume', 'answer', 'accept', 'add', 'rules', 'knowledge', 'run', 'sync', 'budget', 'models', 'off', 'approve', 'reject', 'unblock', 'gate', 'abort', 'doctor', 'init', 'help']
       .filter((x) => x.startsWith(prefix.trim())).map((x) => ({ value: x, label: x })),
     handler: async (args, ctx) => {
       try {

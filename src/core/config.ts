@@ -7,11 +7,14 @@ import { PHASES, validate, type ThinkingLevel, type WorkflowFile } from './schem
 export const BUILTIN_READ_TOOLS = ['read', 'grep', 'find', 'ls'] as const;
 export const BUILTIN_WRITE_TOOLS = ['write', 'edit'] as const;
 export const FLOW_TOOLS = [
-  'forge_status', 'forge_dispatch', 'forge_wait', 'forge_claim', 'forge_note', 'forge_submit',
-  'forge_block', 'forge_learn', 'forge_revise_plan', 'forge_plan_doc', 'forge_requirements', 'notes', 'history',
-  'forge_propose_modules', 'forge_sync', 'forge_accept', 'forge_accept_confirm', 'forge_review_report', 'forge_resolve_timeout', 'forge_service', 'forge_request_scope', 'forge_resolve_scope',
+  'forge_status', 'forge_wait', 'forge_claim', 'forge_note', 'forge_submit',
+  'forge_block', 'forge_learn', 'notes', 'history', 'forge_sync',
+  'forge_read', 'forge_spec', 'forge_spec_amend', 'forge_change_request',
+  'forge_resolve_timeout', 'forge_resolve_scope', 'forge_request_scope', 'forge_dispute',
+  'forge_service', 'forge_propose_plan', 'forge_review_report', 'forge_review_confirm',
+  'forge_qa_report', 'forge_qa_confirm',
 ] as const;
-/** 所有角色（包括 orchestrator）都隐式拥有的工具（第五轮：结构化笔记与历史检索） */
+/** 所有角色（包括 orchestrator）都隐式拥有的工具 */
 export const MEMORY_TOOLS = ['notes', 'history'] as const;
 export const DEFAULT_COMPACT_AT = 0.7;
 /**
@@ -19,13 +22,17 @@ export const DEFAULT_COMPACT_AT = 0.7;
  * 已实测：脚本中的每个工具调用都经过 tool_call 处理函数（guard 照常拦截与计违规）。它自己不直接读写文件。
  */
 export const ORCHESTRATING_TOOLS = ['codemode'] as const;
-/** 虚拟工具：实际启用 Pi 的 bash，由 guard 施加只读白名单 */
-export const BASH_READONLY = 'bash_readonly';
-
-/** 只能出现在特定角色上的工具 */
-const ROLE_EXCLUSIVE: Record<string, string> = { forge_accept: 'acceptor', forge_accept_confirm: 'acceptor', forge_review_report: 'reviewer', forge_propose_modules: 'orchestrator', forge_revise_plan: 'orchestrator', forge_plan_doc: 'orchestrator', forge_requirements: 'orchestrator', forge_resolve_timeout: 'orchestrator', forge_resolve_scope: 'orchestrator' };
-/** orchestrator 只允许这些工具（第 20 节） */
-const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'ask_user', 'forge_status', 'forge_dispatch', 'forge_wait', 'forge_requirements', 'forge_plan_doc', 'forge_propose_modules', 'forge_revise_plan', 'forge_resolve_timeout', 'forge_resolve_scope', ...MEMORY_TOOLS]);
+/** 只能显式分配给特定角色；按层运行时夹具的 *-engineer 视为 worker */
+const ROLE_EXCLUSIVE: Record<string, readonly string[]> = {
+  forge_request_scope: ['worker'], forge_dispute: ['worker'],
+  forge_service: ['worker', 'stage-qa'], forge_propose_plan: ['architect'],
+  forge_review_report: ['reviewer'], forge_review_confirm: ['reviewer'],
+  forge_qa_report: ['stage-qa'], forge_qa_confirm: ['stage-qa'],
+  forge_read: ['orchestrator'], forge_spec: ['orchestrator'], forge_spec_amend: ['orchestrator'],
+  forge_resolve_timeout: ['orchestrator'], forge_resolve_scope: ['orchestrator'],
+};
+/** orchestrator 严格使用第 13.1 节的白名单 */
+const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_spec', 'forge_spec_amend', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_resolve_scope', ...MEMORY_TOOLS]);
 const WRITE_GROUP = 'serena_edit';
 const WEB_GROUP = 'web';
 
@@ -37,11 +44,13 @@ export interface ResolvedRole {
   model: string;
   thinking: ThinkingLevel | null;
   scopes: string[];
-  /** 展开后的具体工具名（bash_readonly 已映射为 bash） */
+  /** 展开后的具体工具名；bash 只由角色的 bash 字段授予 */
   tools: Set<string>;
   /** 有序的工具列表，用于动态启用 */
   toolList: string[];
   bash: 'none' | 'full' | 'readonly';
+  /** allowlist 引用的命令名；M4 实现白名单，M1 的 bash 保守解析为 readonly */
+  bashAllow: string[];
   writes: string[];
   /** null 表示读不受路径限制（敏感文件除外） */
   readPaths: string[] | null;
@@ -133,6 +142,9 @@ export function parseConfig(source: string): FlowConfig {
     }));
   }
   const wf = raw as WorkflowFile;
+  // schema 的 default 只描述配置；解析时补齐实际运行所需的默认值。
+  wf.limits.max_precheck_failures ??= 3;
+  wf.limits.max_merge_failures ??= 2;
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -143,6 +155,9 @@ export function parseConfig(source: string): FlowConfig {
   // 闸门命令
   for (const mode of ['build', 'feature'] as const) {
     const stages = wf.modes[mode]?.stages ?? [];
+    if (wf.modes[mode] && (stages.length !== 2 || stages[0]?.id !== 'P0' || stages[1]?.id !== 'P1')) {
+      errors.push(`${at(['modes', mode, 'stages'])}: ${mode} 只能按顺序配置 P0、P1；S 阶段由计划生成，使用 implementation_gate`);
+    }
     const seen = new Set<string>();
     let lastPhase = -1;
     stages.forEach((s, i) => {
@@ -166,6 +181,7 @@ export function parseConfig(source: string): FlowConfig {
   for (const t of FLOW_TOOLS) kinds.set(t, 'flow');
   for (const t of ORCHESTRATING_TOOLS) kinds.set(t, 'other');
   kinds.set('bash', 'bash');
+  kinds.set('ask_user', 'ext-read');
   for (const [group, tools] of Object.entries(wf.tool_groups)) {
     for (const t of tools) {
       const kind: ToolKind = group === WRITE_GROUP ? 'write' : group === WEB_GROUP ? 'web' : 'ext-read';
@@ -191,55 +207,49 @@ export function parseConfig(source: string): FlowConfig {
     }
 
     const toolList: string[] = [];
-    let bash: ResolvedRole['bash'] = 'none';
+    // M4 实现白名单；M1 的 allowlist 使用 readonly 防止过度放行。
+    const bash: ResolvedRole['bash'] = def.bash === 'allowlist' ? 'readonly' : def.bash ?? 'none';
+    if (def.bash === 'allowlist' && !def.bash_allow?.length) {
+      errors.push(`${at(['roles', name, 'bash_allow'])}: bash: allowlist 必须配置 bash_allow 命令名数组`);
+    }
+    if (def.bash_allow && def.bash !== 'allowlist') {
+      errors.push(`${at(['roles', name, 'bash_allow'])}: bash_allow 只能用于 bash: allowlist`);
+    }
+    for (const [i, command] of (def.bash_allow ?? []).entries()) {
+      if (!Object.hasOwn(wf.commands, command)) errors.push(`${at(['roles', name, 'bash_allow', i])}: 命令 ${command} 未在 commands 中定义`);
+    }
+    const addTool = (t: string, loc: string) => {
+      if (t === 'bash' || t === 'bash_readonly') {
+        errors.push(`${loc}: tools 中不能声明 ${t}，请改用角色的 bash: full、readonly 或 allowlist 字段`);
+      } else if (kinds.has(t)) toolList.push(t);
+      else errors.push(`${loc}: 未知工具 ${t}（不是内置工具、forge_* 工具，也不在任何 tool_groups 中）`);
+    };
     def.tools.forEach((t, i) => {
       const loc = at(['roles', name, 'tools', i]);
       if (t.startsWith('@')) {
         const g = wf.tool_groups[t.slice(1)];
         if (!g) errors.push(`${loc}: 工具组 ${t.slice(1)} 未在 tool_groups 中定义`);
-        else toolList.push(...g);
-      } else if (t === BASH_READONLY) {
-        if (bash === 'full') errors.push(`${loc}: 不能同时声明 bash 与 bash_readonly`);
-        bash = 'readonly';
-        toolList.push('bash');
-      } else if (t === 'bash') {
-        if (bash === 'readonly') errors.push(`${loc}: 不能同时声明 bash 与 bash_readonly`);
-        bash = 'full';
-        toolList.push('bash');
-      } else if (kinds.has(t)) {
-        toolList.push(t);
-      } else {
-        errors.push(`${loc}: 未知工具 ${t}（不是内置工具、forge_* 工具，也不在任何 tool_groups 中）`);
-      }
+        else for (const tool of g) addTool(tool, loc);
+      } else addTool(t, loc);
     });
-    // 偏离：所有 subagent 角色都隐式拥有 forge_block（第 13、16 节要求遇到歧义先 forge_block）
-    if (name !== 'orchestrator' && !toolList.includes('forge_block')) toolList.push('forge_block');
-    // 偏离：所有 subagent 角色都隐式拥有 forge_learn（项目知识库，第二轮 C 项）
-    if (name !== 'orchestrator' && !toolList.includes('forge_learn')) toolList.push('forge_learn');
-    // 第五、六轮：需求、规划与计划修订由 orchestrator（主 agent）直接进行，隐式拥有这些工具
-    if (name === 'orchestrator') for (const x of ['forge_requirements', 'forge_plan_doc', 'forge_propose_modules', 'forge_revise_plan']) if (!toolList.includes(x)) toolList.push(x);
-    // 运行超时后的复核由 orchestrator 决定（接着做、从头做、交给用户）
-    if (name === 'orchestrator' && !toolList.includes('forge_resolve_timeout')) toolList.push('forge_resolve_timeout');
-    // 第六轮 D3：可写范围的申请——有可写范围、能提交的角色可以申请，与其他任务重叠时由 orchestrator 决定
-    if (name === 'orchestrator' && !toolList.includes('forge_resolve_scope')) toolList.push('forge_resolve_scope');
-    if (name !== 'orchestrator' && writes.length && toolList.includes('forge_submit') && !toolList.includes('forge_request_scope')) toolList.push('forge_request_scope');
-    // 第六轮 D2：能运行任意命令的角色可以启动项目的服务命令（取代后台 &）
-    if (name !== 'orchestrator' && (bash as ResolvedRole['bash']) === 'full' && !toolList.includes('forge_service')) toolList.push('forge_service');
-    // 第五轮：所有角色都有结构化笔记与历史检索
-    for (const x of MEMORY_TOOLS) if (!toolList.includes(x)) toolList.push(x);
-    // 偏离：有 forge_submit 的角色隐式拥有 forge_claim（角色提示要求先 claim）
-    if (toolList.includes('forge_submit') && !toolList.includes('forge_claim')) toolList.push('forge_claim');
+    if (bash !== 'none') toolList.push('bash');
+    // 子进程角色隐式拥有 forge_block、forge_learn；专属工具均须显式授予。
+    if (name !== 'orchestrator') toolList.push('forge_block', 'forge_learn');
+    // 第 14 节：有 forge_submit 的角色隐式拥有 forge_claim
+    if (toolList.includes('forge_submit')) toolList.push('forge_claim');
+    toolList.push(...MEMORY_TOOLS);
     const unique = [...new Set(toolList)];
     const tools = new Set(unique);
 
+    const policyRole = name.endsWith('-engineer') ? 'worker' : name;
     for (const t of unique) {
-      const owner = ROLE_EXCLUSIVE[t];
-      if (owner && owner !== name) errors.push(`${at(['roles', name, 'tools'])}: ${t} 只能分配给 ${owner}`);
+      const owners = ROLE_EXCLUSIVE[t];
+      if (owners && !owners.includes(policyRole)) errors.push(`${at(['roles', name, 'tools'])}: ${t} 只能分配给 ${owners.join('、')}`);
     }
     if (name === 'orchestrator') {
-      // 第六轮：主 agent 规划时要在大仓库里定位模块，可以用只读的扩展工具（serena 读、codegraph）与只读 bash
-      const extra = unique.filter((t) => !ORCHESTRATOR_ALLOWED.has(t) && kinds.get(t) !== 'ext-read' && !(t === 'bash' && bash === 'readonly'));
-      if (extra.length) errors.push(`${at(['roles', name, 'tools'])}: orchestrator 只能使用 ${[...ORCHESTRATOR_ALLOWED].join('、')}、只读的扩展工具与 bash_readonly，不能有 ${extra.join('、')}`);
+      const extra = unique.filter((t) => !ORCHESTRATOR_ALLOWED.has(t));
+      if (extra.length) errors.push(`${at(['roles', name, 'tools'])}: orchestrator 只能使用 ${[...ORCHESTRATOR_ALLOWED].join('、')}，不能有 ${extra.join('、')}`);
+      if (writes.length) errors.push(`${at(['roles', name, 'scopes'])}: orchestrator 不能有可写范围`);
     }
     if (writes.length === 0) {
       const w = unique.filter((t) => kinds.get(t) === 'write');
@@ -248,12 +258,11 @@ export function parseConfig(source: string): FlowConfig {
 
     roles[name] = {
       name, modelTier: def.model, model: wf.models[def.model] ?? '', thinking: def.thinking ?? null,
-      scopes, tools, toolList: unique, bash, writes, readPaths: def.read_paths ?? null, env: def.env ?? {},
+      scopes, tools, toolList: unique, bash, bashAllow: [...(def.bash_allow ?? [])], writes, readPaths: def.read_paths ?? null, env: def.env ?? {},
       rules: [...new Set(scopes.flatMap((s) => wf.scopes[s]?.rules ?? []))],
     };
   }
   if (!roles['orchestrator']) errors.push('roles: 缺少 orchestrator 角色');
-  if (wf.review?.final && !roles['reviewer']) errors.push('review.final 开启时需要 reviewer 角色（见模板 workflow.yaml）');
   // 模型引用：档位名必须在 models 中；provider/model 原样使用
   const modelRef = (ref: string | undefined, loc: (string | number)[]) => {
     if (ref && !ref.includes('/') && !(ref in wf.models)) errors.push(`${at(loc)}: 模型档位 ${ref} 未在 models 中定义（也可以写 provider/model）`);

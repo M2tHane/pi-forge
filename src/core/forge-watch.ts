@@ -3,12 +3,12 @@
 import type { FlowConfig } from './config.ts';
 import type { StateStore } from './state-store.ts';
 import type { FlowEvent, FlowFile, TaskFile } from './schemas.ts';
-import { DESIGN_STAGES } from '../modes/plan.ts';
+const DESIGN_STAGES = new Set(['P0', 'P1']);
 
 export const DEFAULT_STALL_MINUTES = 20;
 
 /** 不计入流程墙钟的时段：等用户审批，以及需求阶段（和用户讨论、接收检查） */
-const userTime = (stage: string, status: string) => status === 'awaiting_human' || stage === 'D0';
+const userTime = (stage: string, status: string) => ['awaiting_human', 'needs_human'].includes(status) || stage === 'P0';
 
 /** 流程已用的分钟数：从创建起，按阶段事件排除等用户的时段 */
 export function activeMinutes(flow: FlowFile, events: readonly FlowEvent[], now: Date): number {
@@ -63,7 +63,6 @@ export interface Stall { minutes: number; since: string; seq: number }
  */
 export function stallOf(store: StateStore, config: FlowConfig, flow: FlowFile, now: Date): Stall | null {
   if (flow.stage_status !== 'active' || DESIGN_STAGES.has(flow.stage)) return null;
-  if (flow.replan_request || store.readRevision(flow.id)?.status === 'proposed') return null;
   const tasks = store.listTasks(flow.id);
   if (tasks.some((t) => t.lease) || stuckTasks(flow, tasks)) return null;
   const last = [...store.readEvents()].reverse().find((e) => e.flow === flow.id);

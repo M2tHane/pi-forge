@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { TaskFile } from './schemas.ts';
 import { INTERFACES_PATH, PROTECTED_PATHS, SENSITIVE_PATHS, globWithin, globsOverlap } from './paths.ts';
 
-export const SCOPE_KINDS = new Set<TaskFile['kind']>(['impl', 'review-fix']);
+export const SCOPE_KINDS = new Set<TaskFile['kind']>(['impl', 'fix']);
 export const SCOPE_PATHS_MAX = 10;
 
 export interface ScopeCheck { invalid: string[]; conflicts: { path: string; task: string }[]; outsideRole: string[] }

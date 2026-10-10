@@ -46,7 +46,7 @@
 
 - 继承自 pi-flow：serena 的 `prepareArguments` 在 `tool_call` 之前还是之后未核实；guard 管不到脚本文件内部（`bash x.sh`、`npm run`），兜底是提交时的 diff 检查；打码只认识常见密钥形态。
 - Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。
-- M0 之后运行时仍是 pi-flow 第六轮的流程（D0 接收 → D2 主 agent 规划 → E 模块实施与独立验收），角色名也还是 orchestrator、implementer、acceptor。pi-forge 的 v3 角色、技能和模板还没接上（M1 起）。
+- M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。`/forge-build` 仅建流程并停在 P0；规格与计划由 M2/M3 实现，真实预检、审查和阶段验收分别由 M4/M5/M6 接入。主会话角色按用户决定沿用 orchestrator。
 
 ## 偏离记录
 
@@ -54,19 +54,82 @@
 
 1. 复用基线分两层（规格 v2/v3 第 1、16 节，DECISIONS-R1 第 1 条）：运行时文件取 pi-flow HEAD `31f3f15`，流程层取 `7006e7d`。M0 拷贝 `31f3f15` 的整个 `src/` 与 `test/`；`7006e7d` 的流程层（core 的 stages、revision、acceptance、final-review、requirements、gates，modes 的 plan、fix，tools 的 module-tools、orchestrator-tools 及其测试）与 `5100d6b^` 的 stage-review、state-machine 放在 `legacy/` 作参考，不参与构建。`5100d6b^` 目录写成 `legacy/5100d6b-parent/`（`^` 在 shell 中需要转义）。
 2. 改名只改产品与命名空间：`pi-flow` → `pi-forge`（包名、`refs/pi-forge/state` 与检查点 refs、`pi-forge.json`、git 身份、消息类型），`.flow/` → `.forge/`，`PI_FLOW_*` → `PI_FORGE_*`，工具名 `flow_*` → `forge_*`，命令 `/flow`、`/flow-*` → `/forge`、`/forge-*`，状态提交前缀 `forge-state:`，文件 `commands/flow.ts`、`flow-config.ts`、`flow-watch.ts`、`scripts/flow-view.*` 改成 forge。**领域名词 flow（一个流程实例）保留**：`FlowFile`、`flowId`、`.forge/flows/<id>/`、`active_flow`、事件与 run 的 `flow` 字段、实体名 `'flow'`、工具种类 `'flow'`、集成分支 `flow/<id>/integration`；TS 标识符（`runFlowCommand`、`FLOW_TOOLS`、`piFlowSubagent` 等）也不改，改编时按需更换。改名脚本按明确的正则替换，之后逐条核对残留。
-3. pi-flow 的包内容（agents、skills、rules、templates、prompts @ 31f3f15，已改名）放在 `test/fixtures/pi-flow-package/`，运行时测试经 `test/helpers/package.ts` 的 `PKG_CONTENT` 引用；pi-forge 自己的 `agents/`、`skills/`、`rules/`、`templates/workflow.yaml` 是 v3 内容，迁入的 config 还解析不了（M1 改）。为了让真实 pi 进程的测试也用夹具，`src/pi-adapter/extension.ts` 新增 `CONTENT_ROOT`（环境变量 `PI_FORGE_CONTENT_ROOT`，默认包根目录），角色提示、技能、模板、init 的来源都改从它读取；子进程扩展路径仍取包根目录。这是 M0 唯一的 `src/` 行为改动，M1 迁移完成后删除。
+3. pi-flow 的包内容（agents、skills、rules、templates、prompts @ 31f3f15，已改名）放在 `test/fixtures/pi-flow-package/`，运行时测试经 `test/helpers/package.ts` 的 `PKG_CONTENT` 引用；pi-forge 自己的 `agents/`、`skills/`、`rules/`、`templates/workflow.yaml` 是 v3 内容，迁入的 config 还解析不了（M1 改）。为了让真实 pi 进程的测试也用夹具，`src/pi-adapter/extension.ts` 新增 `CONTENT_ROOT`（环境变量 `PI_FORGE_CONTENT_ROOT`，默认包根目录），角色提示、技能、模板、init 的来源都改从它读取；子进程扩展路径仍取包根目录。这是 M0 唯一的 `src/` 行为改动，M1 迁移完成后删除。（M1 已落实，见第 13、14 条。）
 4. M0 不 skip 测试（DECISIONS-R2 第 3 节）：拷贝的是 HEAD 的流程层，测试全部能过，留着保护改名。通知测试（`test/unit/state-recovery6.test.ts`）原来让两个通知进程追加同一个文件，负载高时内容交错、偶发失败；改为每个事件写单独的文件（只改测试）。
 5. `.npmrc` 设 `legacy-peer-deps=true`：pi-flow 的锁文件没有 Pi 的 peer 依赖（Pi 由宿主提供，扩展经 jiti 加载时解析到全局安装），npm 7 起默认会安装 peer 依赖，导致 `npm ci` 报锁文件不同步。
 6. 没有拷贝 pi-flow 的 `scripts/demo*`、`bench5-native.ts`、`measure-merge.ts`、`playground/`、`docs/`；`package.json` 去掉 `demo` 脚本与 `prompts` 清单（`prompts/stage-kickoff.md` 是 pi-flow 主会话的提示模板，只放进夹具）。`templates/AGENTS.md`、`templates/gitignore.append` 从 pi-flow 拷贝（`init` 要用，v3 没有提供）。
 7. 契约"只能追加"的判定规则（DECISIONS-R1 第 21 条，规格第 12.1 节）：新增 path、operation、响应状态码、可选的请求或响应字段、schema、错误码、`modules/*.md` 的函数小节、数据表、可空列算追加；删除或改名、改已有字段的类型、格式、默认值，给请求新增必填字段，改动任何 `required` 数组或 `enum`（包括新增取值），改已有错误码的 http 状态或含义，改已有列、新增非空且没有默认值的列，都算修改，要走变更请求。M5 实现时以规格第 12.1 节的表为准。
 
-## M1 起随改编替换的流程层测试
+**M1（2026-10-09）**
 
-这些测试覆盖 pi-flow 第六轮的流程（接收、主 agent 规划、模块验收、计划修订、最终审查、fix），M0 照常运行；对应的流程层改编时，换成 pi-forge 流程的测试或删除：
+8. 一次切换到 v3.2：删除 HEAD 的规划、需求讨论、独立验收、最终审查、修订与 fix 流程层，后续按 legacy 分别在 M2–M7 重建。`/forge-build` 只建流程、停在 P0，不启动主会话讨论。
+9. M1 临时预检集中在 `passthroughPrecheck()`，等待最新验收测试与软依赖、同步后直通 queued_merge；合并时仍执行全量验证。M4 替换，M4 验收必须确认直通代码和标记已删除。
+10. bash allowlist 在 M4 前按 readonly 处理，保留 `bashAllow` 配置；**命令白名单尚未生效**，不能因此放行有副作用的命令。
+11. 暂时保留 HEAD 的门禁失败修复任务机制，kind 改为 fix；两轮用尽进入 needs_human。M6 由 stage-qa 取代；M1 的 accept 只接状态机已有的人工例外路径，最终合入仍需用户签收。
+12. 主会话角色沿用 orchestrator，不采用规格中的 main（用户决定）；规格中的 main 都指 orchestrator。范围授权来源和超时复核设置也使用 orchestrator，主分支名与 main_branch 保持原样。
+13. `.forge` 格式版本从 1 开始，无内置旧格式迁移；保留迁移框架、更新版本拒写与缺失迁移提示。不提供旧 pi-flow 流程兼容路径（修订 M0 第 3 条的临时夹具方案）。
+14. 名字以 `-engineer` 结尾的角色按 worker 校验专属工具，保留按层的运行时测试夹具；仓库角色来自包根目录与项目覆盖目录，不再使用 CONTENT_ROOT。
+15. run_timeout 计入 attempts（规格第 8.1 节），保留超时复核和续跑上限；已有超时复核决定优先于重复失败看守，避免其提前截断续跑。unblock 默认保留计数，--reset 仅清零阻塞原因对应的计数。
+16. `testing.adjust_tests` 按模板保留，仅 impl/fix 可适配已有测试，新增与删除不放行；独立的 `tests/acceptance/**` 从适配白名单中排除。
+17. risk 枚举暂定为 low、normal、high；M1 仅校验形状，计划的语义检查与 DAG 推导留给 M3。
+18. `canAppendInterfaces` 保留，路径改为 `docs/contracts/**`，提交例外只认 `Facts.contract_additions`；M5 判定实现前传空数组，不能将 agent 的声明当成已核实的追加。
+19. 模型升级读取 attempts、precheck_failures、merge_failures、review_rounds 的合计，不改写各独立计数；合并验证日志按 merge_failures 编号，避免旧 attempts 编号覆盖重试证据。
+20. intake 的输入导入与独立索引提交原语暂时保留，输入放进 `docs/spec/inputs/`；M2 改为规格流程。旧真实构建脚本移除，M9 再实现真实模型实验。
 
-- e2e：`flow6`、`tools6`、`modules`、`replan`、`final-review`、`fix`、`finish`、`orchestrator-session`、`orchestrator-tools`、`commands`、`rules-draft`
-- unit：`revision`、`state-recovery6`（命令草案与检查点部分保留）、`status-view`、`config`（模板部分）、`init-doctor`（模板部分）
-- 夹具：`test/fixtures/pi-flow-package/`、`workflow-legacy.yaml`、`fixtures/agents/*`、`fake-llm/scripts/*`
+## M1 删除、由 Mx 重建
+
+下列为删除的整个测试或单个用例，保留的运行时用例已迁移配置、角色与提交状态链。跨里程碑用例标出后续参与的里程碑；门禁、同步等机制另有 M1 运行时测试继续保护。
+
+**M2：规格与 P0**
+
+- `test/e2e/flow6.test.ts`：「第六轮全流程：带 PRD 与原型进来 → 就绪检查后提交需求说明（没有 AC 编号被退回）→ 主 agent 规划（缺项目规则被退回、用户打回一次）→ 底座先行、两个模块并行 → 验收不通过交回修复再复查 → 合入主分支」（亦涉及 M3/M6）。
+- `test/e2e/flow6.test.ts`：「没有 PRD 时退回讨论；规划闸门设为自动通过时提交模块清单后直接开工并应用规则草案；输入路径写错时不建流程」（亦涉及 M3/M6）。
+- `test/e2e/commands.test.ts`：「/forge-build：--direct 缺少描述报错；已有进行中的流程时拒绝并提示 /forge resume」。
+- `test/e2e/orchestrator-session.test.ts`：「真实 pi：空仓库执行 /forge-build（没有 PRD），主 agent 逐轮问用户、自己查代码，用户确认后提交需求说明，检查通过直接进入规划」。
+- `test/e2e/orchestrator-session.test.ts`：「真实 pi print：首次接收与新进程恢复都把集成分支 PRD 原文放进模型请求」。
+
+**M3：契约与计划**
+
+- `test/e2e/commands.test.ts`：「renumber：临时编号映射到流程内新编号，依赖一起改写」。
+- `test/e2e/rules-draft.test.ts`：「批准规划阶段（D2）时：规划时写的项目专属规则草案在无界面时自动应用」。
+- `test/unit/prompt-assembler.test.ts`：「规划模块时附上实现者的模型（第六轮注入主会话）：强模型时模块可以大一些，否则要小一些」。
+
+**M4：输入同步与流水线**
+
+- `test/e2e/modules.test.ts`：「forge_sync：把其他模块已合入的代码合进自己的工作区；公共文件冲突时留下标记，解决后再调用一次完成；提交只算自己的改动」。
+- `test/e2e/modules.test.ts`：「merge_check：合并时和全量测试一起跑，失败退回实现者」。
+
+**M5：审查（阶段审查亦涉及 M6）**
+
+- `test/e2e/final-review.test.ts`：「最终代码审查：模块都验收后审查整个流程的改动；必须改交给负责的模块（接着原会话）修一轮，建议由用户挑选，之后执行闸门」。
+- `test/e2e/final-review.test.ts`：「最终代码审查默认关闭：模块验收通过后直接执行闸门；/forge review 提示怎么开启」。
+
+**M6：阶段验收与交付**
+
+- `test/e2e/modules.test.ts`：「验收两轮修复后仍不通过：转"需要你处理"，依赖它的模块继续等待；/forge accept 人工放行后开工」。
+- `test/e2e/modules.test.ts`：「实施阶段闸门的全量测试失败：按日志交给写过那个文件的模块修复（接着原会话）；修好后闸门通过」。
+- `test/e2e/modules.test.ts`：「要用户自己查看的检查项：规划时写的与验收者标为 manual 的条目，模块验收通过后列给用户与主会话；manual 不算未通过」。
+- `test/e2e/finish.test.ts`：「收尾：全部完成后状态栏显示"完成（待合入）"，主会话拿到收尾汇报，/forge report 可查看」。
+- `test/unit/prompt-assembler.test.ts`：「验收任务：逐条验收列出全部条目，复查只列没通过的条目与上次结论；结尾指明用哪个工具提交」。
+
+**M7：变更请求、规格修订与 fix 模式**
+
+- `test/e2e/modules.test.ts`：「/forge-add：只有一个未完成的模块时送到它（写进笔记与 handoff）；多个模块时记为修订请求交给主 agent」。
+- `test/e2e/modules.test.ts`：「/forge-add：运行中的模块收到插话（steer），并写进笔记」。
+- `test/e2e/replan.test.ts`：「执行中修订计划：/forge replan 交给主 agent，主 agent 直接提交修订，校验拒绝改动已开始的任务；用户批准后新增、调整依赖、取消；进行中的任务不受影响；打回后带着意见重做」。
+- `test/e2e/replan.test.ts`：「修订待批准期间，被点名调整或取消的任务暂停派发；打回后恢复」。
+- `test/e2e/fix.test.ts`：「/forge-fix：一个实现者定位并修复（回归测试）→ 合并时全量测试 → 直接合入主分支 → 独立验收 → 日志含成本」。
+- `test/e2e/fix.test.ts`：「fix 与 build 流程：流程运行中拒绝；等待审批时需确认；同时只允许一个修复」。
+- `test/e2e/fix.test.ts`：「成本汇总与 runs 记录一致；返工统计来自事件日志」。
+- `test/unit/revision.test.ts`：「修订校验：阶段不能早于当前或是设计阶段；调整依赖造成环、指向不存在的任务都被拒；只报告修订引入的错误」。
+- `test/unit/revision.test.ts`：「修订可以取消已阻塞的任务（依赖它的任务要一并调整），不能取消进行中的任务」。
+- `test/unit/revision.test.ts`：「调整依赖可以指向本次新增的任务，批准时改写为正式编号」。
+
+**M1 已替换或按规格删除**
+
+- `test/unit/migrations.test.ts`：「迁移 1 → 2（第六轮）：删除原型阶段；停在原型阶段的流程转到规划由主 agent 进行；designer、architect 未结束的任务取消；未结束的修订任务转为修订请求」；第一批删除，格式版本与迁移框架用例替代，不在后续重建。
+- `test/unit/migrations.test.ts`：「迁移 1 → 2：停在原型阶段进行中的流程进入规划」；第一批删除，格式版本与迁移框架用例替代，不在后续重建。
+- `test/e2e/orchestrator-tools.test.ts`：「forge_dispatch / forge_wait / forge_status」中的手动 dispatch 子路径；wait/status 保留，派发改为程序调用，规格第 13.1 节没有 forge_dispatch，不重建该工具。
 
 ## 真实模型实验
 
@@ -77,3 +140,4 @@
 修改 `agents/`、`rules/`、`skills/` 会改变子进程系统提示的稳定前缀，提供商的提示缓存失效一次。改动时在此追加一行。
 
 - 10-09（M0）：`agents/`、`rules/`、`skills/`、`templates/` 是用户提供的 v3 全文，M0 没有改动；运行时还没有使用它们。
+- 10-09（M1）：`agents/main.md` 改名为 `agents/orchestrator.md` 并同步 frontmatter；`skills/domain-modeling/SKILL.md`、`skills/change-request/SKILL.md` 将主会话用词改为 orchestrator。运行时开始使用包内角色与技能，稳定前缀改变，提示缓存会失效一次。

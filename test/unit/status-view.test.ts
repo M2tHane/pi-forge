@@ -10,20 +10,20 @@ import { mkTask, hard } from '../helpers/tasks.ts';
 
 test('phase：模板显式配置；缺省按阶段 id 推断；顺序倒退报错', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
-  assert.equal(phaseOfStage(c, 'build', 'D0'), 'requirements');
-  assert.equal(phaseOfStage(c, 'build', 'D2'), 'planning');
-  assert.equal(phaseOfStage(c, 'feature', 'E'), 'execution');
+  assert.equal(phaseOfStage(c, 'build', 'P0'), 'spec');
+  assert.equal(phaseOfStage(c, 'build', 'P1'), 'plan');
+  assert.equal(phaseOfStage(c, 'feature', 'S0'), 'implementation');
   const noPhase = parseConfig(REAL_TEMPLATE_YAML.replace(/phase: \w+,\s*/g, ''));
-  assert.equal(phaseOfStage(noPhase, 'build', 'E'), 'execution');
-  assert.throws(() => parseConfig(REAL_TEMPLATE_YAML.replace('id: D0, name: requirements, phase: requirements', 'id: D0, name: requirements, phase: execution')),
-    (e: unknown) => e instanceof ConfigError && /phase planning 不能排在 execution 之后/.test(e.message));
+  assert.equal(phaseOfStage(noPhase, 'build', 'S0'), 'implementation');
+  assert.throws(() => parseConfig(REAL_TEMPLATE_YAML.replace(/(id: P0, name: spec,\s*phase:) spec/g, '$1 implementation')),
+    (e: unknown) => e instanceof ConfigError && /phase plan 不能排在 implementation 之后/.test(e.message));
 });
 
 test('任务活动用人话表示，重试带上次失败原因', () => {
   const lease = { run_id: 'r', role: 'backend-engineer', token_hash: 'a'.repeat(64), acquired_at: 'x', expires_at: 'y' };
   assert.equal(taskActivity(mkTask('T-1', { status: 'in_progress', lease }), null), '实现中');
   assert.equal(taskActivity(mkTask('T-1', { status: 'in_progress', attempts: 1 }), '合并时全量测试失败'), '等待重新派发（第 2 次，上次：合并时全量测试失败）');
-  assert.equal(taskActivity(mkTask('T-1', { status: 'in_progress', lease, kind: 'analysis', accept_of: 'T-2', accept_kind: 'check' }), null), '验收中');
+  assert.equal(taskActivity(mkTask('T-1', { status: 'in_progress', lease, kind: 'qa', for_task: 'T-2' }), null), '阶段验收中');
   assert.equal(taskActivity(mkTask('T-1', { status: 'queued_merge' }), null), '合入中');
   assert.equal(taskActivity(mkTask('T-1', { status: 'merging' }), null), '合入中');
 });
@@ -33,8 +33,8 @@ test('/forge status 精简视图：阶段条、进度、正在进行、需要你
   try {
     let out = renderStatus(p.store, p.config);
     assert.match(out, /^需要你处理：无/);
-    assert.match(out, /\[实施\] → 完成/);
-    assert.match(out, /实施阶段：一个模块交给一个模型实现/);
+    assert.match(out, /\[实施\] → 交付/);
+    assert.match(out, /实施阶段：按任务实施并运行全量验证/);
     assert.match(out, /进度：0 \/ 3 个任务完成/);
     assert.doesNotMatch(out, /pending|in_progress|queued_merge|S3/, '不暴露内部状态名');
 
@@ -52,7 +52,7 @@ test('/forge status 精简视图：阶段条、进度、正在进行、需要你
 
     await p.store.transitionStage(p.flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
     await p.store.transitionStage(p.flowId, { to: 'awaiting_human', trigger: 'gate_passed', actor: 'engine', needs_human: true });
-    assert.ok(actionsNeeded(p.store, p.config).some((a) => /全部模块已完成，等你批准合入主分支（收尾汇报：\/forge report）/.test(a.text) && a.command === '/forge-approve'));
+    assert.ok(actionsNeeded(p.store, p.config).some((a) => /全部任务已完成，等你批准合入主分支/.test(a.text) && a.command.startsWith('/forge-approve')));
   } finally { p.cleanup(); }
 });
 
@@ -74,7 +74,7 @@ test('主动通知：只在进入新阶段、出现需要处理的事、首次�
     await p.store.transitionStage(p.flowId, { to: 'awaiting_human', trigger: 'gate_passed', actor: 'engine', needs_human: true });
     const n = notices(s2, snapshotOf(p.store, p.config));
     assert.equal(n.length, 1);
-    assert.match(n[0]!, /需要你处理：全部模块已完成，等你批准合入主分支/);
+    assert.match(n[0]!, /需要你处理：全部任务已完成，等你批准合入主分支/);
     await p.store.transitionStage(p.flowId, { to: 'done', trigger: 'approve', actor: 'human' });
     const s3 = snapshotOf(p.store, p.config);
     await p.store.advanceStage(p.flowId, 'human');

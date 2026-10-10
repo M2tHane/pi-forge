@@ -10,9 +10,9 @@ export const DEFAULT_MODULE_RUNS = 8;
 export const MODULE_MINUTES_FACTOR = 4;
 
 /** 派生任务指向的上游任务 */
-const parentOf = (t: TaskFile): string | undefined => t.merge_fix_for ?? t.accept_of ?? t.fork_from_task;
+const parentOf = (t: TaskFile): string | undefined => t.merge_fix_for ?? t.for_task ?? t.fork_from_task;
 
-/** 谱系的根（模块任务本身）：沿 merge_fix_for、accept_of、fork_from_task 一路向上 */
+/** 谱系的根（模块任务本身）：沿 merge_fix_for、for_task、fork_from_task 一路向上 */
 export function lineageRoot(t: TaskFile, byId: ReadonlyMap<string, TaskFile>): TaskFile {
   let cur = t;
   const seen = new Set<string>();

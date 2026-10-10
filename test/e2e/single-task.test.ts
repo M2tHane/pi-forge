@@ -36,7 +36,7 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
     assert.deepEqual(errors, []);
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done', t.last_failure ?? '');
-    assert.ok(p.store.readEvents().some((e) => e.task === 'T-001' && e.trigger === 'submit' && e.from === 'in_progress' && e.to === 'queued_merge'));
+    assert.ok(p.store.readEvents().some((e) => e.task === 'T-001' && e.trigger === 'submit' && e.from === 'in_progress' && e.to === 'awaiting_inputs'));
     assert.deepEqual(p.store.readMergeQueue().queue, []);
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), 'export const a = 1;');
 
@@ -128,7 +128,8 @@ test('合并时全量测试失败：回到 in_progress 重新派发并带上失�
     await engine.idle();
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done');
-    assert.equal(t.attempts, 1);
+    assert.equal(t.merge_failures, 1);
+    assert.equal(t.attempts, 0);
     assert.equal(prompts.length, 2);
     assert.match(prompts[1]!, /上次未通过的原因[\s\S]*合并后验证失败（[^）]*test 退出码 1）/);
     const transitions = p.store.readEvents().filter((e) => e.type === 'transition' && e.task === 'T-001').map((e) => `${e.trigger}:${e.from}->${e.to}`);
@@ -163,10 +164,10 @@ test('提交前清理可写范围外、未被跟踪的文件（测试运行留�
 test('失败达上限转 blocked，不再派发；同样的原因连续失败两次且没有可升级的模型时提前交给用户（第六轮 B3）', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
-    // 失败原因交替变化（合并验证失败、子进程崩溃）：不算"同样的原因"，照常用完 3 次
+    // 三次不同原因的运行失败：只增加 attempts，按配置的上限阻塞。
     const { engine, launcher } = makeEngine(p, async (_role, nth, a) => {
-      if (nth === 2) { await a.call('forge_claim'); throw new Error('模型连接失败'); }
-      await implGood(a, 'FAIL');
+      await a.call('forge_claim');
+      throw new Error(['配置损坏', '模型连接失败', '依赖缺失'][nth - 1]);
     });
     await engine.next(p.flowId);
     await engine.idle();
@@ -178,13 +179,16 @@ test('失败达上限转 blocked，不再派发；同样的原因连续失败两
   } finally { p.cleanup(); }
   const q = await setupProject({ tasks: [task1()] });
   try {
-    const { engine, launcher, errors } = makeEngine(q, async (_role, _n, a) => implGood(a, 'FAIL'));
+    const { engine, launcher, errors } = makeEngine(q, async (_role, _n, a) => {
+      await a.call('forge_claim');
+      throw new Error('模型连接失败');
+    });
     await engine.next(q.flowId);
     await engine.idle();
     const t = q.store.readTask(q.flowId, 'T-001');
     assert.equal(t.status, 'blocked');
     assert.equal(t.attempts, 2);
-    assert.match(t.blocked_reason ?? '', /同样的原因连续失败 2 次（没有可升级的模型）[\s\S]*合并后验证失败[\s\S]*\/forge unblock T-001/);
+    assert.match(t.blocked_reason ?? '', /同样的原因连续失败 2 次（没有可升级的模型）[\s\S]*模型连接失败[\s\S]*\/forge unblock T-001/);
     assert.equal(launcher.launched.length, 2);
     assert.deepEqual(errors, [], '交给用户不算程序出错');
   } finally { q.cleanup(); }

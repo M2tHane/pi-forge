@@ -13,7 +13,7 @@ import { PiLauncher } from '../../src/pi-adapter/launcher.ts';
 import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { PKG_CONTENT } from '../helpers/package.ts';
+const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 const ROOT = path.join(import.meta.dirname, '../..');
 const SCRIPTS = path.join(ROOT, 'test/fixtures/fake-llm/scripts');
@@ -45,7 +45,7 @@ function startDriver(p: Project, settings: object): ChildProcess {
 function recoveryEngine(p: Project, store: StateStore, settings: object) {
   return new Engine({
     root: p.dir, store, config: p.config, launcher: new PiLauncher(), roleSettings: () => settings as never,
-    packageAgentsDir: [path.join(PKG_CONTENT, 'agents'), path.join(ROOT, 'test/fixtures/agents')].join(path.delimiter), subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
+    packageAgentsDir: [path.join(PACKAGE_ROOT, 'agents'), path.join(ROOT, 'test/fixtures/agents')].join(path.delimiter), subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
     extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
   });
 }
@@ -131,7 +131,7 @@ test('引擎所在的 pi 收到 SIGTERM：结束它拉起的 subagent，不留�
     const main = spawn('pi', ['-p', '--no-session', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
       '-e', provider, '-e', path.join(ROOT, 'src/pi-adapter/extension.ts'), '/forge next'], {
       cwd: p.dir, stdio: ['ignore', 'ignore', 'ignore'],
-      env: { ...process.env, PI_FORGE_CONTENT_ROOT: PKG_CONTENT, PI_CODING_AGENT_DIR: agentDir, PI_FORGE_EXTRA_EXTENSIONS: provider },
+      env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_FORGE_EXTRA_EXTENSIONS: provider },
     });
     drivers.push(main);
     const store = new StateStore(p.dir);

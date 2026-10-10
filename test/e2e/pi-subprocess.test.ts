@@ -138,12 +138,13 @@ test('真实 pi 子进程：提交直接合并，合并时全量测试失败退�
     assert.deepEqual(errors, []);
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done', `${t.status} ${t.last_failure ?? ''}`);
-    assert.equal(t.attempts, 1, '第一次提交在合并时的全量测试中失败');
+    assert.equal(t.merge_failures, 1, '第一次提交在合并时的全量测试中失败');
+    assert.equal(t.attempts, 0);
     const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at));
     assert.deepEqual(runs.map((r) => r.role), ['backend-engineer', 'backend-engineer']);
     assert.equal(runs[1]!.forked_from, runs[0]!.run_id);
     const triggers = p.store.readEvents().filter((e) => e.task === 'T-001' && e.type === 'transition').map((e) => e.trigger);
-    assert.deepEqual(triggers.filter((x) => x !== 'dispatch' && x !== 'schedule'), ['submit', 'merge_start', 'merge_verify_fail', 'submit', 'merge_start', 'merge_done']);
+    assert.deepEqual(triggers.filter((x) => x !== 'dispatch' && x !== 'schedule'), ['submit', 'inputs_ready', 'precheck_pass_skip', 'merge_start', 'merge_verify_fail', 'submit', 'inputs_ready', 'precheck_pass_skip', 'merge_start', 'merge_done']);
     const reqs = readFileSync(logFile, 'utf8').slice(before).trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'impl-fork');
     const second = reqs.find((r) => r.turn === 5)!;
     assert.ok(second, '第二次运行的第一个请求带着上一次的 5 条回复');
@@ -153,7 +154,7 @@ test('真实 pi 子进程：提交直接合并，合并时全量测试失败退�
 });
 
 test('真实 pi 子进程：bash 命令没给超时或超过上限时改成 limits.bash_timeout_s', { skip: !piAvailable && 'pi 不可用', timeout: 120_000 }, async () => {
-  const yaml = PROJECT_YAML.replace(/^  bash_timeout_s: 300 /m, '  bash_timeout_s: 2   ');
+  const yaml = PROJECT_YAML.replace(/^  bash_timeout_s: 300\b/m, '  bash_timeout_s: 2   ');
   const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: ['test'] })] });
   try {
     const logFile = '/tmp/pi-forge-e2e-llm.log';
@@ -183,7 +184,7 @@ test('真实 pi 子进程：notes 与 history 工具可用；任务笔记由程�
   const local = await startFakeLlm({ scriptsDir: SCRIPTS, logFile: log });
   const prev = process.env['FAKE_LLM_URL'];
   process.env['FAKE_LLM_URL'] = local.url;
-  const p = await setupProject({ yaml: DIRECT_YAML, tasks: [mkTask('T-001', { verify: ['typecheck', 'test'], acceptance: ['导出 a = 1'] })] });
+  const p = await setupProject({ yaml: DIRECT_YAML, tasks: [mkTask('T-001', { verify: ['typecheck', 'test'], ac: ['导出 a = 1'] })] });
   try {
     const errors: unknown[] = [];
     const engine = new Engine({

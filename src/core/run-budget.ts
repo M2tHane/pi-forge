@@ -16,7 +16,7 @@ const SIZE_FACTOR = { S: 0.5, M: 1, L: 2 } as const;
 /** 这个任务每次运行的时间预算（分钟）：M 号实现任务为 limits.run_minutes；只读任务（验收、修订）减半；S 减半、L 加倍 */
 export function runBudgetMinutes(config: Pick<FlowConfig, 'limits'>, task: Pick<TaskFile, 'kind' | 'size'>): number {
   const base = config.limits.run_minutes ?? DEFAULT_RUN_MINUTES;
-  const kind = task.kind === 'analysis' ? 0.5 : 1;
+  const kind = ['acctest', 'review', 'qa'].includes(task.kind) ? 0.5 : 1;
   return Math.max(5, Math.round(base * kind * SIZE_FACTOR[task.size ?? 'M']));
 }
 
@@ -27,7 +27,7 @@ export function wrapUpMessage(minutes: number, grace: number): string {
   return [
     `⏰ 本次运行的时间预算（${minutes} 分钟）已用完。请在 ${grace} 分钟内收尾，不要再开始新的尝试：`,
     '1. 用 forge_note 写 handoff：做到哪、下一步打算怎么做、卡在哪（试过什么、结果如何）。',
-    '2. 已经做完就照常提交（forge_submit、forge_accept 等）；没做完就停下，本地改动先 git commit 作为检查点。',
+    '2. 已经做完就照常提交（forge_submit）；没做完就停下，本地改动先 git commit 作为检查点。',
     `${grace} 分钟后本次运行会被结束；主会话会查看进度，决定接着做、换个思路重来，还是交给用户。`,
   ].join('\n');
 }

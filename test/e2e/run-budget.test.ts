@@ -15,10 +15,10 @@ import { flowResolveTimeout, flowWait, statusText } from '../../src/tools/orches
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 
 const MIN = 60_000;
-/** 主会话复核（limits.timeout_review: main）；默认由程序按进展决定，见最后一条测试 */
-const MAIN_YAML = FLOW5_YAML.replace(/^  timeout_review: auto .*$/m, '  timeout_review: main');
+/** 主会话复核（limits.timeout_review: orchestrator）；默认由程序按进展决定，见最后一条测试 */
+const ORCHESTRATOR_YAML = FLOW5_YAML.replace(/^  timeout_review: auto.*$/m, '  timeout_review: orchestrator');
 const mod = (id: string, over: Parameters<typeof mkTask>[1] = {}) => mkTask(id, {
-  stage: 'E', role: 'implementer', scopes: ['code'], writes: [`src/${id.toLowerCase()}/**`], acceptance: ['能用'], verify: [], ...over,
+  stage: 'S0', role: 'worker', scopes: ['code'], writes: [`src/${id.toLowerCase()}/**`], ac: ['能用'], verify: [], ...over,
 });
 
 /** 一直在做事、不提交，直到被结束（被结束后下一次工具调用抛出） */
@@ -34,14 +34,14 @@ test('时间预算：按任务大小与类型计算', () => {
   assert.equal(runBudgetMinutes(cfg, { kind: 'impl' }), 30);
   assert.equal(runBudgetMinutes(cfg, { kind: 'impl', size: 'L' }), 60);
   assert.equal(runBudgetMinutes(cfg, { kind: 'impl', size: 'S' }), 15);
-  assert.equal(runBudgetMinutes(cfg, { kind: 'analysis' }), 15, '验收等只读任务减半');
+  assert.equal(runBudgetMinutes(cfg, { kind: 'review' }), 15, '验收等只读任务减半');
   assert.equal(runBudgetMinutes({ limits: {} } as never, { kind: 'impl' }), 30, '默认 30 分钟');
 });
 
-test('超时：到期插话提醒收尾，宽限期后结束；不计失败，等主会话复核，复核前不重新派发；continue 接着原会话再做', async () => {
+test('超时：到期插话提醒收尾，宽限期后结束；计一次运行失败，等主会话复核，复核前不重新派发；continue 接着原会话再做', async () => {
   let clock = Date.now(); // 假子进程的 forge_* 工具按真实时间检查租约
   const now = () => new Date(clock);
-  const p = await setupProject({ yaml: MAIN_YAML, stages: ['E'], now, tasks: [mod('T-001')] });
+  const p = await setupProject({ yaml: ORCHESTRATOR_YAML, stages: ['S0'], now, tasks: [mod('T-001')] });
   try {
     const { engine, launcher, errors } = makeEngine(p, async (_role, nth, a) => {
       if (nth === 1) {
@@ -81,7 +81,7 @@ test('超时：到期插话提醒收尾，宽限期后结束；不计失败，�
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'in_progress');
     assert.equal(t.lease, null);
-    assert.equal(t.attempts, 0, '超时不计失败');
+    assert.equal(t.attempts, 1, '超时计入运行失败次数');
     assert.equal(t.timeouts, 1);
     assert.equal(t.timeout_review?.run, run1);
     assert.equal(p.store.readRun(run1).outcome, 'timeout');
@@ -118,8 +118,8 @@ test('超时：到期插话提醒收尾，宽限期后结束；不计失败，�
 test('超时：restart 不接旧会话、提示换思路；超时次数超过 max_continuations 转 blocked', async () => {
   let clock = Date.now(); // 假子进程的 forge_* 工具按真实时间检查租约
   const now = () => new Date(clock);
-  const yaml = MAIN_YAML.replace(/^  max_continuations: 2 .*$/m, '  max_continuations: 1');
-  const p = await setupProject({ yaml, stages: ['E'], now, tasks: [mod('T-001', { size: 'S' })] });
+  const yaml = ORCHESTRATOR_YAML.replace(/^  max_continuations: 2.*$/m, '  max_continuations: 1');
+  const p = await setupProject({ yaml, stages: ['S0'], now, tasks: [mod('T-001', { size: 'S' })] });
   try {
     const { engine, launcher } = makeEngine(p, async (_role, nth, a) => {
       await a.call('forge_claim');
@@ -159,7 +159,7 @@ test('超时：restart 不接旧会话、提示换思路；超时次数超过 ma
 test('超时：主会话判断需要用户决定时 block', async () => {
   let clock = Date.now(); // 假子进程的 forge_* 工具按真实时间检查租约
   const now = () => new Date(clock);
-  const p = await setupProject({ yaml: MAIN_YAML, stages: ['E'], now, tasks: [mod('T-001')] });
+  const p = await setupProject({ yaml: ORCHESTRATOR_YAML, stages: ['S0'], now, tasks: [mod('T-001')] });
   try {
     const { engine } = makeEngine(p, async (_role, _nth, a) => {
       await a.call('forge_claim');
@@ -180,7 +180,7 @@ test('超时：主会话判断需要用户决定时 block', async () => {
 test('宽限期内已经提交的运行不算超时', async () => {
   let clock = Date.now(); // 假子进程的 forge_* 工具按真实时间检查租约
   const now = () => new Date(clock);
-  const p = await setupProject({ yaml: MAIN_YAML, stages: ['E'], now, tasks: [mod('T-001')] });
+  const p = await setupProject({ yaml: ORCHESTRATOR_YAML, stages: ['S0'], now, tasks: [mod('T-001')] });
   try {
     let release!: () => void;
     const hold = new Promise<void>((r) => { release = r; });
@@ -206,7 +206,7 @@ test('宽限期内已经提交的运行不算超时', async () => {
 test('超时：默认由程序按进展复核——有改动接着原会话做；没有进展从头做一次；从头做后仍没有进展交给用户', async () => {
   let clock = Date.now();
   const now = () => new Date(clock);
-  const p = await setupProject({ yaml: FLOW5_YAML.replace(/^  max_continuations: 2 .*$/m, '  max_continuations: 5'), stages: ['E'], now, tasks: [mod('T-001')] });
+  const p = await setupProject({ yaml: FLOW5_YAML.replace(/max_attempts: \d+/, 'max_attempts: 5').replace(/^  max_continuations: 2.*$/m, '  max_continuations: 5'), stages: ['S0'], now, tasks: [mod('T-001')] });
   try {
     assert.equal(p.config.limits.timeout_review, 'auto');
     const { engine, launcher, errors } = makeEngine(p, async (_role, nth, a) => {

@@ -9,8 +9,8 @@ import { execFileSync } from 'node:child_process';
 import lockfile from 'proper-lockfile';
 import { MIGRATIONS, SCHEMA_VERSION, migrationChain, type Migration } from './migrations.ts';
 import {
-  validate, type FlowFile, type MergeQueueFile, type RunFile, type ProposalFile, type KnowledgeFile, type ModelPausesFile, type RevisionFile, type SchemaKind, type StageStatus, type StateFile,
-  type TaskFile, type TaskStatus, type FlowEvent, type NotesFile, type AcceptanceFile, type FinalReviewFile,
+  validate, type FlowFile, type MergeQueueFile, type RunFile, type KnowledgeFile, type ModelPausesFile, type SchemaKind, type StageStatus, type StateFile,
+  type TaskFile, type TaskStatus, type FlowEvent, type NotesFile,
 } from './schemas.ts';
 import {
   IN_FLIGHT, planStageTransition, planTransition, type Facts, type StageTrigger, type TaskPatch, type Trigger,
@@ -37,7 +37,11 @@ export class StateError extends Error {
 
 const newerFormat = (from: number, to: number) => new StateError(`.forge/ 是更新版本的 pi-forge 写入的（格式 ${from}，当前只支持到 ${to}），请升级 pi-forge`);
 
-export interface StoreLimits { max_attempts: number; max_parallel: number; max_continuations?: number }
+export interface StoreLimits {
+  max_attempts: number; max_parallel: number; max_continuations?: number;
+  max_parallel_aux?: number; max_precheck_failures?: number; max_merge_failures?: number;
+  review_max_rounds?: number; max_disputes?: number;
+}
 
 export interface StoreOptions {
   now?: () => Date;
@@ -66,11 +70,7 @@ export const taskRel = (flow: string, task: string) => `flows/${flow}/tasks/${ta
 export const handoffRel = (flow: string, task: string) => `flows/${flow}/handoff/${task}.md`;
 export const evidenceRel = (flow: string, task: string) => `flows/${flow}/evidence/${task}`;
 export const runRel = (run: string) => `runs/${run}.json`;
-export const proposalRel = (flow: string) => `flows/${flow}/proposal.json`;
-export const revisionRel = (flow: string) => `flows/${flow}/revision.json`;
 export const stageEvidenceRel = (flow: string, stage: string) => `flows/${flow}/evidence/stage-${stage}`;
-export const acceptanceRel = (flow: string, task: string) => `flows/${flow}/acceptance/${task}.json`;
-export const finalReviewRel = (flow: string) => `flows/${flow}/final-review.json`;
 const MQ_REL = 'merge-queue.json';
 export const KNOWLEDGE_REL = 'knowledge.json';
 /** 任务的结构化笔记：同一任务的所有运行共用一份 */
@@ -84,12 +84,8 @@ export function schemaKindOf(rel: string): SchemaKind | null {
   if (/^flows\/[^/]+\/flow\.json$/.test(rel)) return 'flow';
   if (/^flows\/[^/]+\/tasks\/[^/]+\.json$/.test(rel)) return 'task';
   if (/^runs\/[^/]+\.json$/.test(rel)) return 'run';
-  if (/^flows\/[^/]+\/proposal\.json$/.test(rel)) return 'proposal';
-  if (/^flows\/[^/]+\/revision\.json$/.test(rel)) return 'revision';
   if (rel === KNOWLEDGE_REL) return 'knowledge';
   if (rel === MODEL_PAUSES_REL) return 'model-pauses';
-  if (/^flows\/[^/]+\/acceptance\/[^/]+\.json$/.test(rel)) return 'acceptance';
-  if (/^flows\/[^/]+\/final-review\.json$/.test(rel)) return 'final-review';
   if (rel === MAIN_NOTES_REL || /^flows\/[^/]+\/notes\/[^/]+\.json$/.test(rel)) return 'notes';
   return null;
 }
@@ -148,7 +144,6 @@ export class Tx {
   putTask(flow: string, t: TaskFile) { return this.putJson(taskRel(flow, t.id), 'task', t); }
   putMergeQueue(q: MergeQueueFile) { return this.putJson(MQ_REL, 'merge-queue', q); }
   putRun(r: RunFile) { return this.putJson(runRel(r.run_id), 'run', r); }
-  putProposal(flow: string, p: ProposalFile) { return this.putJson(proposalRel(flow), 'proposal', p); }
 
   event(e: StagedEvent): void { this.events.push(e); }
   setActiveFlow(id: string | null): void { this.activeFlow = id; }
@@ -178,8 +173,8 @@ export interface CreateFlowInput {
   actor?: string;
 }
 
-export type TaskInput = Pick<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs'
-  | 'writes' | 'acceptance' | 'verify'> & Partial<Pick<TaskFile, 'merge_fix_for' | 'conflict_files' | 'worktree' | 'branch' | 'base_sha' | 'sync_main' | 'replan' | 'fork_from_task' | 'shared' | 'needs_acceptance' | 'accept_of' | 'accept_kind' | 'final_review' | 'size' | 'manual_checks'>>;
+export type TaskInput = Pick<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify'>
+  & Partial<Omit<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify' | 'status' | 'lease' | 'created_by' | 'version'>>;
 
 export interface IntegrityReport { ok: boolean; errors: string[] }
 
@@ -350,18 +345,15 @@ export class StateStore {
     for (const id of this.listFlows()) {
       let flow = tx.readJson<Json>(flowRel(id))!;
       const tasks = this.listTasks(id).map((t) => t as unknown as Json);
-      let proposal = tx.readJson<Json>(proposalRel(id));
       let ts = tasks;
       for (const m of steps) {
         if (m.flow) flow = m.flow(flow);
         const before = ts;
         if (m.task) ts = ts.map((t) => m.task!(t, flow));
-        if (m.proposal && proposal) proposal = m.proposal(proposal, flow);
         if (m.finish) flow = m.finish(flow, before);
       }
       tx.putJson(flowRel(id), 'flow', flow as unknown as FlowFile);
       for (const t of ts) tx.putJson(taskRel(id, String(t['id'])), 'task', t as unknown as TaskFile);
-      if (proposal) tx.putJson(proposalRel(id), 'proposal', proposal as unknown as ProposalFile);
     }
     tx.event({ flow: null, actor: 'engine', type: 'note', reason: `.forge/ 格式 ${from} → ${to}：${steps.map((m) => m.description).join('；')}`, data: { migration: { from, to } } });
   }
@@ -537,78 +529,22 @@ export class StateStore {
   private putNewTask(tx: Tx, flow: string, t: TaskInput, actor: string): TaskFile {
     if (tx.readJson(taskRel(flow, t.id))) throw new StateError(`任务 ${flow}/${t.id} 已存在`);
     const task: TaskFile = {
-      id: t.id, stage: t.stage, kind: t.kind, title: t.title, role: t.role, scopes: [...t.scopes],
-      depends_on: structuredClone(t.depends_on), inputs: [...t.inputs], writes: [...t.writes],
-      acceptance: [...t.acceptance], verify: [...t.verify], status: 'pending', attempts: 0, violations: 0,
+      ...structuredClone(t),
+      ac: [...(t.ac ?? [])], verify: [...t.verify], status: 'pending', attempts: 0, violations: 0,
+      precheck_failures: 0, review_rounds: 0, merge_failures: 0, disputes: {}, blocked_by: null,
       lease_expirations: 0, lease: null, impl_run: null, branch: t.branch ?? null, worktree: t.worktree ?? null, base_sha: t.base_sha ?? null,
       blocked_reason: null, last_failure: null, created_by: actor, version: 1,
       ...(t.merge_fix_for ? { merge_fix_for: t.merge_fix_for } : {}),
       ...(t.conflict_files ? { conflict_files: [...t.conflict_files] } : {}),
       ...(t.sync_main ? { sync_main: t.sync_main } : {}),
-      ...(t.replan ? { replan: t.replan } : {}),
+
       ...(t.fork_from_task ? { fork_from_task: t.fork_from_task } : {}),
       ...(t.shared?.length ? { shared: [...t.shared] } : {}),
-      ...(t.needs_acceptance ? { needs_acceptance: true } : {}),
-      ...(t.accept_of ? { accept_of: t.accept_of } : {}),
-      ...(t.accept_kind ? { accept_kind: t.accept_kind } : {}),
-      ...(t.final_review ? { final_review: true } : {}),
+
       ...(t.size ? { size: t.size } : {}),
       ...(t.manual_checks?.length ? { manual_checks: [...t.manual_checks] } : {}),
     };
     return tx.putTask(flow, task);
-  }
-
-  readAcceptance(flow: string, task: string): AcceptanceFile | null {
-    return this.readJsonRel<AcceptanceFile>(acceptanceRel(flow, task));
-  }
-
-  listAcceptances(flow: string): AcceptanceFile[] {
-    return this.listTasks(flow).filter((t) => t.needs_acceptance).map((t) => this.readAcceptance(flow, t.id)).filter((x): x is AcceptanceFile => !!x);
-  }
-
-  /**
-   * 推进模块验收记录（第五轮）：同一事务内写记录、新增任务与 handoff；accepted 时把模块任务标记为已验收（依赖它的模块随之可以开工）。
-   * next.version 必须基于当前版本（新记录忽略）。
-   */
-  async updateAcceptance(flow: string, next: AcceptanceFile, opts: { tasks?: readonly TaskInput[]; handoffs?: Record<string, string>; actor: string; reason: string }): Promise<AcceptanceFile> {
-    return this.transaction((tx) => {
-      tx.readFlow(flow);
-      const rel = acceptanceRel(flow, next.task);
-      const cur = tx.readJson<AcceptanceFile>(rel);
-      const saved = tx.putJson(rel, 'acceptance', { ...next, version: cur ? next.version : 1 });
-      const added = (opts.tasks ?? []).map((t) => this.putNewTask(tx, flow, t, opts.actor));
-      for (const [task, text] of Object.entries(opts.handoffs ?? {})) {
-        const h = handoffRel(flow, task);
-        tx.putText(h, `${tx.readText(h) ?? ''}\n## ${tx.ts} ${opts.actor}\n\n${text.trim()}\n`);
-      }
-      const mod = tx.readTask(flow, next.task);
-      if ((next.status === 'accepted') !== !!mod.accepted) tx.putTask(flow, { ...mod, accepted: next.status === 'accepted' });
-      tx.event({ flow, task: next.task, actor: opts.actor, type: 'note', reason: opts.reason,
-        data: { acceptance: next.status, round: next.round, ...(added.length ? { tasks: added.map((t) => t.id) } : {}) } });
-      return saved;
-    });
-  }
-
-  readFinalReview(flow: string): FinalReviewFile | null {
-    return this.readJsonRel<FinalReviewFile>(finalReviewRel(flow));
-  }
-
-  /** 推进最终代码审查记录（第五轮，可选）：同一事务内写记录、新增任务与 handoff。next.version 必须基于当前版本（新记录忽略） */
-  async updateFinalReview(flow: string, next: FinalReviewFile, opts: { tasks?: readonly TaskInput[]; handoffs?: Record<string, string>; actor: string; reason: string }): Promise<FinalReviewFile> {
-    return this.transaction((tx) => {
-      tx.readFlow(flow);
-      const rel = finalReviewRel(flow);
-      const cur = tx.readJson<FinalReviewFile>(rel);
-      const saved = tx.putJson(rel, 'final-review', { ...next, version: cur ? next.version : 1 });
-      const added = (opts.tasks ?? []).map((t) => this.putNewTask(tx, flow, t, opts.actor));
-      for (const [task, text] of Object.entries(opts.handoffs ?? {})) {
-        const h = handoffRel(flow, task);
-        tx.putText(h, `${tx.readText(h) ?? ''}\n## ${tx.ts} ${opts.actor}\n\n${text.trim()}\n`);
-      }
-      tx.event({ flow, actor: opts.actor, type: 'note', reason: opts.reason,
-        data: { final_review: next.status, ...(added.length ? { tasks: added.map((t) => t.id) } : {}) } });
-      return saved;
-    });
   }
 
   async transitionTask(flowId: string, taskId: string, req: TransitionRequest): Promise<TaskFile> {
@@ -621,6 +557,14 @@ export class StateStore {
       const me = `${flowId}/${taskId}`;
       const merging = mq.merging ? key(mq.merging) : null;
 
+      const latestAcctest = others.filter((t) => t.kind === 'acctest' && t.for_task === (task.for_task ?? task.id))
+        .sort((a, b) => Number(a.id.match(/\.at-(\d+)$/)?.[1] ?? 1) - Number(b.id.match(/\.at-(\d+)$/)?.[1] ?? 1)).at(-1);
+      const statusOf = new Map(others.map((t) => [t.id, depStatus(t)]));
+      const softDone = (t: TaskFile) => t.depends_on.filter((d) => d.type === 'soft').every((d) => statusOf.get(d.task) === 'done');
+      const eligible = mq.queue.find((e) => {
+        const candidate = e.flow === flowId ? (e.task === taskId ? task : others.find((t) => t.id === e.task)) : this.readTask(e.flow, e.task);
+        return candidate?.status === 'queued_merge' && (e.flow === flowId ? softDone(candidate) : candidate.depends_on.filter((d) => d.type === 'soft').every((d) => this.readTask(e.flow, d.task).status === 'done'));
+      });
       const facts: Facts = {
         ...req.facts,
         now: this.now(),
@@ -628,11 +572,14 @@ export class StateStore {
         actor: req.actor,
         // 以下由程序推导，覆盖调用方传入的同名字段
         stage_active: flow.stage === task.stage && flow.stage_status === 'active',
-        status_of: new Map(others.map((t) => [t.id, depStatus(t)])),
+        status_of: statusOf,
+        latest_acctest_done: !latestAcctest || latestAcctest.status === 'done',
+        soft_deps_done: softDone(task),
+        impl_done: task.kind === 'acctest' && !!task.for_task && others.some((t) => t.id === task.for_task && t.status === 'done'),
         running_count: others.filter((t) => t.status === 'in_progress').length,
         conflicting_running: others.filter((t) => IN_FLIGHT.includes(t.status) && t.id !== task.merge_fix_for && conflictsWith(t, task)).map((t) => t.id),
         merging_other: merging && merging !== me ? merging : null,
-        queue_head: mq.queue[0] ? key(mq.queue[0]) === me : false,
+        queue_head: eligible ? key(eligible) === me : false,
         handoff_written: (tx.readText(handoffRel(flowId, taskId)) ?? '').trim().length > 0,
       };
       const plan = planTransition(task, req.to, req.trigger, facts, req.patch);
@@ -654,7 +601,7 @@ export class StateStore {
   private applyQueueEffects(tx: Tx, mq: MergeQueueFile, flow: string, task: string, from: TaskStatus, to: TaskStatus) {
     const same = (e: { flow: string; task: string }) => e.flow === flow && e.task === task;
     let changed = false;
-    if (to === 'queued_merge' && from === 'in_progress') {
+    if (to === 'queued_merge' && from !== 'merging') {
       if (!mq.queue.some(same)) mq.queue.push({ flow, task, enqueued_at: tx.ts });
       changed = true;
     } else if (to === 'queued_merge' && from === 'merging') {
@@ -684,13 +631,7 @@ export class StateStore {
       const mq = tx.readMergeQueue();
       if (!mq.merging || mq.merging.flow !== flow || mq.merging.task !== task) throw new StateError(`${task} 不是当前正在合并的任务`);
       if (tx.readJson(taskRel(flow, fix.id))) throw new StateError(`任务 ${flow}/${fix.id} 已存在`);
-      const m = tx.putTask(flow, {
-        id: fix.id, stage: fix.stage, kind: 'merge-fix', title: fix.title, role: fix.role, scopes: [...fix.scopes],
-        depends_on: [], inputs: [...fix.inputs], writes: [...fix.writes], acceptance: [...fix.acceptance], verify: [...fix.verify],
-        status: 'pending', attempts: 0, violations: 0, lease_expirations: 0, lease: null, impl_run: null,
-        branch: fix.branch ?? null, worktree: fix.worktree ?? null, base_sha: fix.base_sha ?? null, blocked_reason: null,
-        last_failure: null, merge_fix_for: task, conflict_files: [...conflicts], created_by: 'merge-queue', version: 1,
-      });
+      const m = this.putNewTask(tx, flow, { ...fix, kind: 'merge-fix', merge_fix_for: task, for_task: task, conflict_files: [...conflicts] }, 'merge-queue');
       mq.merging = null;
       mq.suspended = [...(mq.suspended ?? []), { flow, task, merge_fix: fix.id, since: tx.ts }];
       tx.putMergeQueue(mq);
@@ -942,22 +883,6 @@ export class StateStore {
     return existsSync(abs) ? readFileSync(abs, 'utf8') : '';
   }
 
-  readProposal(flow: string): ProposalFile | null {
-    return this.readJsonRel<ProposalFile>(proposalRel(flow));
-  }
-
-  /** 保存（或替换）任务提案；已有提案时基于其版本覆盖 */
-  async saveProposal(flow: string, proposal: Omit<ProposalFile, 'version'>, actor: string): Promise<ProposalFile> {
-    return this.transaction((tx) => {
-      tx.readFlow(flow);
-      const cur = tx.readJson<ProposalFile>(proposalRel(flow));
-      const saved = tx.putProposal(flow, { ...proposal, version: cur?.version ?? 1 });
-      tx.event({ flow, actor, type: 'note', reason: `${cur ? '替换' : '提交'}任务提案：${proposal.tasks.length} 个任务`,
-        data: { stage: proposal.stage, tasks: proposal.tasks.length, critical_path: proposal.report.critical_path_length } });
-      return saved;
-    });
-  }
-
   async saveStageEvidence(flow: string, stage: string, name: string, content: string, actor: string): Promise<string> {
     if (!/^[\w.-]+$/.test(name) || name.startsWith('.')) throw new StateError(`evidence 文件名不合法：${name}`);
     return this.transaction((tx) => {
@@ -986,76 +911,23 @@ export class StateStore {
       const type = req.trigger === 'approve' ? 'approval' : req.trigger.startsWith('gate_') ? 'gate_result' : 'transition';
       tx.event({ flow: flowId, actor: req.actor, type, from, to: req.to, trigger: req.trigger,
         data: { entity: 'stage', stage: flow.stage }, ...(req.reason ? { reason: req.reason } : {}) });
+      if (req.to === 'active' && ['awaiting_human', 'needs_human'].includes(from)) {
+        tx.event({ flow: flowId, actor: req.actor, type: 'stage_reopened', from, to: 'active', trigger: req.trigger,
+          reason: req.reason, data: { stage: flow.stage } });
+      }
       return next;
     });
   }
 
-  /** 当前阶段 done 后进入下一阶段；最后一个阶段完成时流程结束，清除活动流程指针。 */
-  readRevision(flow: string): RevisionFile | null {
-    return this.readJsonRel<RevisionFile>(revisionRel(flow));
-  }
-
-  /** 保存（或替换）计划修订提案；已批准或已打回的会被新的提案覆盖 */
-  async saveRevision(flow: string, rev: Omit<RevisionFile, 'version'>, actor: string): Promise<RevisionFile> {
+  /** M3 调用：同时写入动态阶段、顺序与计划模式，事件和状态在一个事务提交。 */
+  async setStages(flowId: string, stages: NonNullable<FlowFile['s_stages']>, planMode: NonNullable<FlowFile['plan_mode']>, actor = 'engine', revised = false): Promise<FlowFile> {
     return this.transaction((tx) => {
-      tx.readFlow(flow);
-      const cur = tx.readJson<RevisionFile>(revisionRel(flow));
-      const saved = tx.putJson(revisionRel(flow), 'revision', { ...rev, version: cur?.version ?? 1 });
-      tx.event({ flow, task: rev.task, actor, type: 'note', reason: `计划修订提案：${rev.summary}`.slice(0, 500),
-        data: { add: rev.add.length, rewire: rev.rewire.length, cancel: rev.cancel.length } });
-      return saved;
-    });
-  }
-
-  /** 打回计划修订（仅用户） */
-  async rejectRevision(flow: string, note: string): Promise<RevisionFile> {
-    return this.transaction((tx) => {
-      const cur = tx.readJson<RevisionFile>(revisionRel(flow));
-      if (!cur || cur.status !== 'proposed') throw new StateError('没有待批准的计划修订');
-      const saved = tx.putJson(revisionRel(flow), 'revision', { ...cur, status: 'rejected' as const });
-      tx.event({ flow, task: cur.task, actor: 'human', type: 'approval', reason: `打回计划修订：${note}`.slice(0, 500), data: { revision: 'rejected' } });
-      return saved;
-    });
-  }
-
-  /**
-   * 批准并落地计划修订（仅用户），一个事务内完成：新增任务、整体替换未开始任务的依赖、取消未开始的任务（经转移表 cancel）。
-   * 调用方（core/revision.ts）负责编号映射与 DAG 校验；这里再次确认被改动的任务都未开始。
-   */
-  async applyRevision(flow: string, input: { add: TaskInput[]; rewire: RevisionFile['rewire']; cancel: RevisionFile['cancel']; mapping: Record<string, string> }): Promise<RevisionFile> {
-    return this.transaction((tx) => {
-      const cur = tx.readJson<RevisionFile>(revisionRel(flow));
-      if (!cur || cur.status !== 'proposed') throw new StateError('没有待批准的计划修订');
-      for (const t of input.add) {
-        if (tx.readJson(taskRel(flow, t.id))) throw new StateError(`任务 ${flow}/${t.id} 已存在`);
-        tx.putTask(flow, {
-          id: t.id, stage: t.stage, kind: t.kind, title: t.title, role: t.role, scopes: [...t.scopes],
-          depends_on: structuredClone(t.depends_on), inputs: [...t.inputs], writes: [...t.writes],
-          acceptance: [...t.acceptance], verify: [...t.verify], status: 'pending', attempts: 0, violations: 0,
-          lease_expirations: 0, lease: null, impl_run: null, branch: null, worktree: null, base_sha: null,
-          blocked_reason: null, last_failure: null, created_by: 'orchestrator', version: 1,
-          ...(t.shared?.length ? { shared: [...t.shared] } : {}),
-          ...(t.needs_acceptance ? { needs_acceptance: true } : {}),
-          ...(t.size ? { size: t.size } : {}),
-          ...(t.manual_checks?.length ? { manual_checks: [...t.manual_checks] } : {}),
-        });
-      }
-      for (const r of input.rewire) {
-        const t = tx.readTask(flow, r.task);
-        if (t.status !== 'pending' && t.status !== 'ready') throw new StateError(`任务 ${r.task} 当前是 ${t.status}，已开始的任务不能调整依赖`);
-        tx.putTask(flow, { ...t, depends_on: structuredClone(r.depends_on) });
-      }
-      for (const c of input.cancel) {
-        const t = tx.readTask(flow, c.task);
-        const plan = planTransition(t, 'cancelled', 'cancel', { now: this.now(), limits: this.limits, actor: 'human', reason: c.reason });
-        if (!plan.ok) throw new StateError(`取消 ${c.task} 被拒`, plan.errors);
-        tx.putTask(flow, plan.task);
-        tx.event({ flow, actor: 'human', type: 'transition', task: c.task, from: t.status, to: 'cancelled', trigger: 'cancel', reason: c.reason });
-      }
-      const saved = tx.putJson(revisionRel(flow), 'revision', { ...cur, status: 'approved' as const, mapping: input.mapping });
-      tx.event({ flow, task: cur.task, actor: 'human', type: 'approval', reason: `批准计划修订：${cur.summary}`.slice(0, 500),
-        data: { revision: 'approved', added: input.add.map((t) => t.id), rewired: input.rewire.map((r) => r.task), cancelled: input.cancel.map((c) => c.task) } });
-      return saved;
+      const flow = tx.readFlow(flowId);
+      if (new Set(stages.map((s) => s.id)).size !== stages.length) throw new StateError('S 阶段编号重复');
+      const fixed = flow.stages.filter((s) => !(flow.s_stages ?? []).some((v) => v.id === s));
+      const next = tx.putFlow({ ...flow, s_stages: structuredClone(stages), plan_mode: planMode, stages: [...fixed, ...stages.map((s) => s.id)] });
+      tx.event({ flow: flowId, actor, type: revised ? 'stages_revised' : 'stages_planned', data: { stages, plan_mode: planMode } });
+      return next;
     });
   }
 
@@ -1084,53 +956,11 @@ export class StateStore {
     });
   }
 
-  /** 记录需求讨论的状态（D0）：提交需求说明、用户打回或闸门未通过 */
-  async setRequirements(flowId: string, r: NonNullable<FlowFile['requirements']>, actor: string, reason: string): Promise<FlowFile> {
-    return this.transaction((tx) => {
-      const f = tx.readFlow(flowId);
-      const saved = tx.putFlow({ ...f, requirements: r });
-      tx.event({ flow: flowId, actor, type: 'note', reason, data: { requirements: r.submitted ? 'submitted' : 'discussing', rounds: r.rounds } });
-      return saved;
-    });
-  }
-
   /** 记录用户带进来的输入（第六轮接收） */
   async setIntake(flowId: string, intake: NonNullable<FlowFile['intake']>, actor: string, reason: string): Promise<FlowFile> {
     return this.transaction((tx) => {
       const saved = tx.putFlow({ ...tx.readFlow(flowId), intake });
       tx.event({ flow: flowId, actor, type: 'note', reason, data: { intake: { prd: intake.prd, pages: intake.pages.length, design_doc: intake.design_doc } } });
-      return saved;
-    });
-  }
-
-  /** 主 agent 规划的进度（第六轮 D2）：提交模块清单、被打回、闸门未通过 */
-  async setPlanning(flowId: string, planning: NonNullable<FlowFile['planning']>, actor: string, reason: string): Promise<FlowFile> {
-    return this.transaction((tx) => {
-      const saved = tx.putFlow({ ...tx.readFlow(flowId), planning });
-      tx.event({ flow: flowId, actor, type: 'note', reason, data: { planning: planning.submitted ? 'submitted' : 'planning', rounds: planning.rounds } });
-      return saved;
-    });
-  }
-
-  /** 记下或清除等主 agent 起草的计划修订请求 */
-  async setReplanRequest(flowId: string, request: FlowFile['replan_request'] | null, actor: string, reason: string): Promise<FlowFile> {
-    return this.transaction((tx) => {
-      const { replan_request: _old, ...f } = tx.readFlow(flowId);
-      const saved = tx.putFlow({ ...f, ...(request ? { replan_request: request } : {}) });
-      tx.event({ flow: flowId, actor, type: 'note', reason, data: { replan_request: request ? 'open' : 'cleared' } });
-      return saved;
-    });
-  }
-
-  /** 设置要跳过的阶段（提交需求时判断不需要原型、或用户在批准时指定）；只能跳过尚未到达的阶段 */
-  async setSkipStages(flowId: string, skip: string[], actor: string, reason: string): Promise<FlowFile> {
-    return this.transaction((tx) => {
-      const f = tx.readFlow(flowId);
-      const cur = f.stages.indexOf(f.stage);
-      const bad = skip.filter((st) => f.stages.indexOf(st) <= cur);
-      if (bad.length) throw new StateError(`不能跳过当前或已经过去的阶段：${bad.join('、')}`);
-      const saved = tx.putFlow({ ...f, skip_stages: [...new Set(skip)] });
-      tx.event({ flow: flowId, actor, type: 'note', reason, data: { skip_stages: skip } });
       return saved;
     });
   }
@@ -1152,7 +982,7 @@ export class StateStore {
       if (flow.stage_status !== 'done') throw new StateError(`当前阶段 ${flow.stage} 尚未 done（${flow.stage_status}），不能进入下一阶段`);
       const idx = flow.stages.indexOf(flow.stage);
       // 跳过的阶段（第五轮：没有界面时跳过原型）
-      const nextStage = flow.stages.slice(idx + 1).find((st) => !(flow.skip_stages ?? []).includes(st));
+      const nextStage = flow.stages[idx + 1];
       if (!nextStage) {
         if (flow.mode !== 'fix') tx.setActiveFlow(null);
         tx.event({ flow: flowId, actor, type: 'transition', from: flow.stage, to: 'finished', data: { entity: 'flow' } });

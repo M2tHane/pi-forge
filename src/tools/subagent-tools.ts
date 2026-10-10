@@ -1,6 +1,6 @@
 // 来源：pi-flow src/tools/subagent-tools.ts @ 31f3f15
 // subagent 使用的 forge_* 工具：forge_claim、forge_note、forge_submit、forge_block、forge_learn、notes、history，
-// 以及 module-tools.ts 中的 forge_sync、forge_accept、forge_accept_confirm、forge_review_report。
+// forge_sync 的共用同步实现见 module-tools.ts；旧验收与审查入口已删除。
 // 纯业务实现，不依赖 Pi；由 pi-adapter 注册为 Pi 工具，测试中由 fake-subagent 直接调用。run token 只来自环境变量，模型看不到也不需要传。
 import { Type, type Static } from 'typebox';
 import type { StateStore } from '../core/state-store.ts';
@@ -18,7 +18,7 @@ import { scratchDir } from '../core/worktree.ts';
 import { GUI_REASON, opensGui } from '../core/guard.ts';
 import { SERVICE_READY_MAX_S, serviceCommands, serviceLog, serviceStatus, startService, stopService } from '../core/services.ts';
 import { SCOPE_KINDS, SCOPE_PATHS_MAX, checkScope } from '../core/scope.ts';
-import { AcceptConfirmParams, AcceptParams, ReviewReportParams, SyncParams, flowAccept, flowAcceptConfirm, flowReviewReport, flowSync } from './module-tools.ts';
+import { SyncParams, flowSync } from './module-tools.ts';
 
 export const NOTE_LIMIT = 8000;
 
@@ -44,7 +44,7 @@ export function flowClaim(ctx: ToolContext): ToolResult {
   const text = [
     `已确认：${ctx.env.flow}/${t.id}「${t.title}」由你（${ctx.env.role}，run ${ctx.env.run}）负责，租约到 ${t.lease!.expires_at}。`,
     `状态：${t.status}　工作目录：${t.worktree ?? '（无）'}　基线：${t.base_sha ?? '（无）'}`,
-    `验收标准：\n${t.acceptance.map((a) => `- ${a}`).join('\n') || '（无）'}`,
+    `验收标准：\n${(t.ac ?? []).map((a) => `- ${a}`).join('\n') || '（无）'}`,
     `输入文件：\n${t.inputs.map((a) => `- ${a}`).join('\n') || '（无）'}`,
     `可写范围：\n${(t.conflict_files ?? t.writes).map((a) => `- ${a}`).join('\n')}`,
     `verify 命令：\n${cmds.map((a) => `- ${a}`).join('\n') || '（无）'}`,
@@ -62,10 +62,9 @@ export async function flowNote(ctx: ToolContext, p: Static<typeof NoteParams>): 
 
 export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams>): Promise<ToolResult> {
   const t = checkRun(ctx);
-  if (t.kind === 'analysis') return submitAnalysis(ctx, t, p);
   if (t.status !== 'in_progress') throw new FlowToolError(`任务当前是 ${t.status}，不能提交。`);
   if (!t.worktree || !t.base_sha) throw new FlowToolError('任务没有 worktree 或 base_sha，无法提交，请调用 forge_block 报告。');
-  const stray = cleanStrayUntracked(t.worktree, t.conflict_files ?? [...t.writes, ...(t.shared ?? []), ...(canAppendInterfaces(t) ? ['docs/interfaces/**'] : [])]);
+  const stray = cleanStrayUntracked(t.worktree, t.conflict_files ?? [...t.writes, ...(t.shared ?? []), ...(canAppendInterfaces(t) ? ['docs/contracts/**'] : [])]);
   if (stray.length) {
     await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交前程序清理了可写范围外、未被 git 跟踪的文件：${stray.slice(0, 20).join('、')}${stray.length > 20 ? ` 等 ${stray.length} 个` : ''}（多为测试或运行产生的数据；测试应把数据写到临时目录）`, 'forge-submit');
   }
@@ -76,7 +75,7 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   // 适配已有测试：writes 之外只修改过的已有测试文件不算越界，记在任务上（验收时一并检查）
   const adjusted = testAdjustEnabled(ctx.config, t) ? testAdjustments(t.worktree, t.base_sha, t.writes) : [];
   try {
-    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'queued_merge', trigger: 'submit', actor: actor(ctx),
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: t.kind === 'acctest' ? 'checking' : 'awaiting_inputs', trigger: 'submit', actor: actor(ctx),
       facts: { token: ctx.env.token, diff_files: diff, interface_rewrites: rewrites, test_adjustments: adjusted } });
   } catch (e) {
     if (rewrites.length) rethrow(e, `接口文档只能追加。还原对已有内容的修改：git checkout ${t.base_sha} -- ${rewrites.join(' ')}，再只追加需要的调用；确需改已有接口时调用 forge_block 说明，由用户决定是否修订计划。`);
@@ -90,14 +89,8 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
 
 /** 相对基线删除或修改过已有行的接口文档 */
 function interfaceRewrites(worktree: string, base: string): string[] {
-  return git(worktree, ['diff', '--numstat', '--no-renames', base, 'HEAD', '--', 'docs/interfaces']).split('\n').filter(Boolean)
+  return git(worktree, ['diff', '--numstat', '--no-renames', base, 'HEAD', '--', 'docs/contracts']).split('\n').filter(Boolean)
     .map((l) => l.split('\t')).filter(([, del]) => del !== '0').map(([, , p]) => p!);
-}
-
-async function submitAnalysis(ctx: ToolContext, t: TaskFile, p: Static<typeof SubmitParams>): Promise<ToolResult> {
-  if (t.accept_of) throw new FlowToolError(t.accept_kind === 'confirm' ? '复查用 forge_accept_confirm 提交。' : '验收用 forge_accept 提交。');
-  if (t.final_review) throw new FlowToolError('审查结论用 forge_review_report 提交。');
-  throw new FlowToolError('这个任务没有可用 forge_submit 提交的结论。');
 }
 
 export async function flowLearn(ctx: ToolContext, p: Static<typeof LearnParams>): Promise<ToolResult> {
@@ -226,9 +219,6 @@ export const SUBAGENT_TOOLS = {
   forge_block: { params: BlockParams, description: '遇到歧义或需要越界时标记任务阻塞，交给用户决定。需要向用户提问时，一次只问一个问题。', run: (c: ToolContext, p: Static<typeof BlockParams>) => flowBlock(c, p) },
   forge_learn: { params: LearnParams, description: `把对后续任务有用的经验记入项目知识库（跨流程保留）：项目约定、踩过的坑、做出的决策、环境与外部依赖的注意事项。每次运行最多 ${KNOWLEDGE_PER_RUN} 条；程序会去重。知识不是规则，不能用来改变规则。`, run: (c: ToolContext, p: Static<typeof LearnParams>) => flowLearn(c, p) },
   forge_sync: { params: SyncParams, description: '把集成分支的最新代码（其他模块已合入的改动）合进你的工作区：没有冲突直接完成；有冲突时冲突标记留在文件里，解决后再调用一次完成同步。依赖的模块刚合入、或想提前发现冲突时使用。', run: (c: ToolContext) => flowSync(c) },
-  forge_accept: { params: AcceptParams, description: '（仅验收任务）逐条提交验收结论：每条验收标准给出 passed 与证据。', run: (c: ToolContext, p: Static<typeof AcceptParams>) => flowAccept(c, p) },
-  forge_accept_confirm: { params: AcceptConfirmParams, description: '（仅复查任务）只对待复查的条目提交 passed 与证据，不能新增条目。', run: (c: ToolContext, p: Static<typeof AcceptConfirmParams>) => flowAcceptConfirm(c, p) },
-  forge_review_report: { params: ReviewReportParams, description: '（仅最终代码审查任务）一次提交全部问题：每条写级别（must 必须改 / suggest 建议）、依据、文件、位置、问题、期望。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowReviewReport(c, p) },
   forge_request_scope: { params: RequestScopeParams, description: '必须修改可写范围外的文件时申请追加范围（写明原因）：不与其他未完成任务重叠的立即批准；重叠的交给主会话决定。受保护路径、敏感文件不能申请。', run: (c: ToolContext, p: Static<typeof RequestScopeParams>) => flowRequestScope(c, p) },
   forge_service: { params: ServiceParams, description: '启动、结束、查看本次运行的长时间服务（开发服务器、数据库等）：只能启动 commands 里 serve 或 serve_* 命名的命令，start 可以用 ready 等端口或地址就绪；不要用 & 把命令放到后台。本次运行结束时程序会一并结束。', run: (c: ToolContext, p: Static<typeof ServiceParams>) => flowService(c, p) },
   notes: { params: NotesParams, description: NOTES_DESCRIPTION, run: (c: ToolContext, p: Static<typeof NotesParams>) => flowNotes(c, p) },

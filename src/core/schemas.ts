@@ -7,17 +7,17 @@ import { Value } from 'typebox/value';
 const Nullable = <T extends TSchema>(t: T) => Type.Union([t, Type.Null()]);
 const IsoTime = Type.String({ minLength: 1 });
 const FlowId = Type.String({ pattern: '^[BFX]-[0-9]{3,}$' });
-const TaskId = Type.String({ pattern: '^T-[0-9]{3,}$' });
+const TaskId = Type.String({ pattern: '^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$' });
 
 export const TASK_STATUSES = [
-  'pending', 'ready', 'in_progress',
+  'pending', 'ready', 'in_progress', 'awaiting_inputs', 'checking', 'in_review', 'disputed',
   'queued_merge', 'merging', 'done', 'blocked', 'cancelled',
 ] as const;
 export const TaskStatus = Type.Enum(TASK_STATUSES);
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
-/** impl 实现（模块）、doc 文档（需求、原型、规划）、review-fix 修复（验收没通过、闸门失败）、merge-fix 解决合并冲突、analysis 只读（需求讨论、验收、计划修订） */
-export const TASK_KINDS = ['impl', 'doc', 'review-fix', 'merge-fix', 'analysis'] as const;
+/** 实现、文档、验收测试、审查、阶段验收、修复与合并冲突修复 */
+export const TASK_KINDS = ['impl', 'doc', 'acctest', 'review', 'qa', 'fix', 'merge-fix'] as const;
 export const TaskKind = Type.Enum(TASK_KINDS);
 export type TaskKind = (typeof TASK_KINDS)[number];
 
@@ -41,13 +41,13 @@ export const TimeoutReview = Type.Object({
 }, { additionalProperties: false });
 export type TimeoutReview = Static<typeof TimeoutReview>;
 
-export const STAGE_STATUSES = ['active', 'awaiting_gate', 'awaiting_human', 'done', 'aborted'] as const;
+export const STAGE_STATUSES = ['active', 'awaiting_gate', 'needs_human', 'awaiting_human', 'done', 'aborted'] as const;
 export const StageStatus = Type.Enum(STAGE_STATUSES);
 export type StageStatus = (typeof STAGE_STATUSES)[number];
 
 export const EVENT_TYPES = [
   'transition', 'violation', 'note', 'dispatch', 'lease_expired', 'approval',
-  'gate_result', 'merge', 'merge_conflict', 'integrity_error',
+  'gate_result', 'merge', 'merge_conflict', 'integrity_error', 'stages_planned', 'stages_revised', 'stage_reopened',
 ] as const;
 export const EventType = Type.Enum(EVENT_TYPES);
 export type EventType = (typeof EVENT_TYPES)[number];
@@ -62,6 +62,20 @@ export type StateFile = Static<typeof StateFile>;
 
 export const Approval = Type.Object({ by: Type.Literal('human'), at: IsoTime, note: Type.Optional(Type.String()) },
   { additionalProperties: false });
+
+const PlanMode = Type.Enum(['standard', 'lean']);
+const TaskReview = Type.Enum(['skip', 'auto', 'strong']);
+const TaskRisk = Type.Enum(['low', 'normal', 'high']);
+const PlanStage = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  goal: Type.String({ minLength: 1 }),
+  exit: Type.Array(Type.String({ minLength: 1 })),
+}, { additionalProperties: false });
+const StringList = Type.Array(Type.String({ minLength: 1 }));
+const BlockedBy = Type.Enum([
+  'dispute', 'review_exhausted', 'precheck_exhausted', 'merge_exhausted', 'attempts',
+  'agent', 'dispatcher', 'user', 'integration_broken',
+]);
 
 export const FlowFile = Type.Object({
   id: FlowId,
@@ -94,12 +108,9 @@ export const FlowFile = Type.Object({
   gate_rounds: Type.Optional(Type.Array(Type.Object({
     stage: Type.String({ minLength: 1 }), command: Type.String(), tasks: Type.Array(TaskId), at: IsoTime,
   }, { additionalProperties: false }))),
-  /** 跳过的阶段（第五轮起保留：阶段推进时跳过） */
-  skip_stages: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-  /** 需求讨论（D0）：主会话追问用户后经 forge_requirements 提交；submitted 为 false 时主会话继续追问。feedback 是用户最近一次打回的意见（或闸门未通过的原因） */
-  requirements: Type.Optional(Type.Object({
-    submitted: Type.Boolean(), rounds: Type.Integer({ minimum: 0 }), path: Type.Optional(Type.String()), feedback: Type.Optional(Type.String()),
-  }, { additionalProperties: false })),
+  /** P1 批准时由程序写入的有序实施阶段 */
+  s_stages: Type.Optional(Type.Array(PlanStage)),
+  plan_mode: Type.Optional(PlanMode),
   /** 用户带进来的输入（第六轮：PRD、技术架构、原型与设计规范），原样放在集成分支上的位置 */
   intake: Type.Optional(Type.Object({
     prd: Type.String({ minLength: 1 }),
@@ -108,14 +119,6 @@ export const FlowFile = Type.Object({
     pages: Type.Array(Type.String()),
     /** 导出物里带了设计规范 DESIGN.md */
     design_doc: Type.Boolean(),
-  }, { additionalProperties: false })),
-  /** 主 agent 规划（第六轮 D2）：submitted 为 false 时主 agent 继续规划；feedback 是用户打回的意见或闸门未通过的原因 */
-  planning: Type.Optional(Type.Object({
-    submitted: Type.Boolean(), rounds: Type.Integer({ minimum: 0 }), feedback: Type.Optional(Type.String()),
-  }, { additionalProperties: false })),
-  /** 等主 agent 起草的计划修订（第六轮：用户 /forge replan、/forge-add 或打回修订时记下，主 agent 用 forge_revise_plan 提交后清除） */
-  replan_request: Type.Optional(Type.Object({
-    reason: Type.String({ minLength: 1 }), at: IsoTime, feedback: Type.Optional(Type.String()),
   }, { additionalProperties: false })),
   version: Type.Integer({ minimum: 1 }),
 }, { additionalProperties: false });
@@ -147,10 +150,27 @@ export const TaskFile = Type.Object({
   depends_on: Type.Array(Dependency),
   inputs: Type.Array(Type.String()),
   writes: Type.Array(Type.String()),
-  acceptance: Type.Array(Type.String()),
+  module: Type.Optional(Type.String({ minLength: 1 })),
+  ac: Type.Optional(StringList),
+  layers: Type.Optional(StringList),
+  produces: Type.Optional(StringList),
+  requires: Type.Optional(StringList),
+  test_interface: Type.Optional(StringList),
+  review: Type.Optional(TaskReview),
+  risk: Type.Optional(TaskRisk),
+  /** 派生任务所属的原任务 */
+  for_task: Type.Optional(TaskId),
+  /** worker 提交的偏离说明，供审查与签收使用 */
+  deviations: Type.Optional(StringList),
   verify: Type.Array(Type.String()),
   status: TaskStatus,
   attempts: Type.Integer({ minimum: 0 }),
+  precheck_failures: Type.Optional(Type.Integer({ minimum: 0 })),
+  review_rounds: Type.Optional(Type.Integer({ minimum: 0 })),
+  merge_failures: Type.Optional(Type.Integer({ minimum: 0 })),
+  /** 每个测试分别累计的争议次数 */
+  disputes: Type.Optional(Type.Record(Type.String(), Type.Integer({ minimum: 0 }))),
+  blocked_by: Type.Optional(Nullable(BlockedBy)),
   violations: Type.Integer({ minimum: 0 }),
   lease_expirations: Type.Integer({ minimum: 0 }),
   /** 会话中断（pi 崩溃、被强杀、用户关闭）导致 run 丢失的次数；不计入 attempts */
@@ -158,7 +178,7 @@ export const TaskFile = Type.Object({
   /** 连续以同样的原因失败的次数（失败原因归一化后的签名相同，第六轮 B3）：达到 2 时立刻升级模型，没有可升级的就交给用户 */
   same_failures: Type.Optional(Type.Integer({ minimum: 0 })),
   failure_sig: Type.Optional(Type.String()),
-  /** 运行超过时间预算被结束的次数；不计入 attempts，超过 limits.max_continuations 转 blocked */
+  /** 运行超过时间预算被结束的次数；同时计入 attempts，超过 limits.max_continuations 转 blocked */
   timeouts: Type.Optional(Type.Integer({ minimum: 0 })),
   /** 超时后等主会话复核（有 decision 后由程序按决定重新派发） */
   timeout_review: Type.Optional(TimeoutReview),
@@ -192,8 +212,6 @@ export const TaskFile = Type.Object({
   base_sha: Nullable(Type.String()),
   blocked_reason: Nullable(Type.String()),
   last_failure: Nullable(Type.String()),
-  /** 计划修订任务（第五轮的只读 analysis 任务；第六轮起由主 agent 直接修订，保留以兼容旧数据）：用户提出的修订原因 */
-  replan: Type.Optional(Type.String({ minLength: 1 })),
   // merge-fix 专用：被挂起的原任务与冲突文件
   merge_fix_for: Type.Optional(TaskId),
   conflict_files: Type.Optional(Type.Array(Type.String())),
@@ -205,15 +223,6 @@ export const TaskFile = Type.Object({
   test_adjustments: Type.Optional(Type.Array(Type.String())),
   /** 模块登记的公共文件（第五轮：路由注册、菜单、迁移目录、文案等）：可以写，但不算进互斥，并行模块都可能改 */
   shared: Type.Optional(Type.Array(Type.String())),
-  /** 模块任务（第五轮）：合并后要经独立验收；依赖它的任务等验收通过才开工 */
-  needs_acceptance: Type.Optional(Type.Boolean()),
-  /** 独立验收已通过 */
-  accepted: Type.Optional(Type.Boolean()),
-  /** 独立验收任务（第五轮，kind=analysis，角色 acceptor）：验收的模块任务与类型（check 逐条验收，confirm 只复查没通过的条目） */
-  accept_of: Type.Optional(TaskId),
-  accept_kind: Type.Optional(Type.Union([Type.Literal('check'), Type.Literal('confirm')])),
-  /** 最终代码审查任务（第五轮，可选，kind=analysis，角色 reviewer）：结论用 forge_review_report 提交 */
-  final_review: Type.Optional(Type.Boolean()),
   created_by: Type.String({ minLength: 1 }),
   version: Type.Integer({ minimum: 1 }),
 }, { additionalProperties: false });
@@ -262,7 +271,7 @@ export const RunFile = Type.Object({
     Type.Literal('failed'), Type.Literal('killed'), Type.Literal('lease_expired'), Type.Literal('noted'),
     /** 模型服务不可用（额度用完、限流等）：不计失败，模型暂停 */
     Type.Literal('unavailable'),
-    /** 超过时间预算被结束：不计失败，等主会话复核 */
+    /** 超过时间预算被结束：计入运行失败，等主会话复核 */
     Type.Literal('timeout'),
   ])),
   token_hash: Type.String({ minLength: 64, maxLength: 64 }),
@@ -310,11 +319,12 @@ const Gate = Type.Object({
   human: Type.Optional(Type.Boolean()),
   auto: Type.Optional(Type.Array(Type.String())),
   all_tasks_done: Type.Optional(Type.Boolean()),
+  coverage: Type.Optional(Type.Boolean()),
+  qa: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 
-/** 给人看的高层阶段；底层阶段（S0…S5、F0…）与任务 DAG 只给程序用 */
-/** 高层阶段（第六轮）：需求（或接收）→ 规划 → 实施；全部完成即"完成" */
-export const PHASES = ['requirements', 'planning', 'execution'] as const;
+/** 高层阶段：规格 → 契约与计划 → 实施；交付由最后一个 S 阶段的批准表示 */
+export const PHASES = ['spec', 'plan', 'implementation'] as const;
 export type Phase = (typeof PHASES)[number];
 
 const StageDef = Type.Object({
@@ -336,7 +346,12 @@ export const WorkflowFile = Type.Object({
   commands: Type.Record(Type.String(), Type.String({ minLength: 1 })),
   limits: Type.Object({
     max_parallel: PosInt,
+    max_parallel_aux: Type.Optional(PosInt),
     max_attempts: PosInt,
+    max_precheck_failures: Type.Optional(Type.Integer({ minimum: 1, default: 3 })),
+    max_merge_failures: Type.Optional(Type.Integer({ minimum: 1, default: 2 })),
+    lean_below_loc: Type.Optional(PosInt),
+    port_block: Type.Optional(PosInt),
     lease_minutes: PosInt,
     max_violations_per_run: PosInt,
     max_task_files: PosInt,
@@ -347,7 +362,7 @@ export const WorkflowFile = Type.Object({
     continue_session: Type.Optional(Type.Boolean()),
     /** 子进程 bash 命令的超时上限（秒），默认 300：没给或超过时由 pi-forge 改成上限 */
     bash_timeout_s: Type.Optional(PosInt),
-    /** ready 任务由引擎自动派发（默认 true）；false 时由 orchestrator 调用 forge_dispatch 或用户 /forge next（第三轮后续 5） */
+    /** ready 任务由引擎自动派发（默认 true）；false 时由用户 /forge next 派发 */
     auto_dispatch: Type.Optional(Type.Boolean()),
     /** 批量合并（第四轮后续）：不逐任务审查时，合并队列里最多这么多个任务一起 rebase、只跑一次全量测试，默认 3；1 关闭 */
     merge_batch: Type.Optional(PosInt),
@@ -363,8 +378,8 @@ export const WorkflowFile = Type.Object({
     module_minutes: Type.Optional(PosInt),
     /** 流程不在等你、也没有任何运行，却这么多分钟没有任何状态变化时提醒你（第六轮 B6），默认 20 */
     stall_minutes: Type.Optional(PosInt),
-    /** 运行超时后的复核：auto 由程序按进展决定（默认），main 交给主会话（第六轮 C1） */
-    timeout_review: Type.Optional(Type.Union([Type.Literal('auto'), Type.Literal('main')])),
+    /** 运行超时后的复核：auto 由程序按进展决定（默认），orchestrator 交给主会话（第六轮 C1） */
+    timeout_review: Type.Optional(Type.Union([Type.Literal('auto'), Type.Literal('orchestrator')])),
     /** 运行中每隔这么多分钟给工作区拍一次快照（不动索引与工作区），默认 10；0 关闭（第六轮 7.4） */
     checkpoint_minutes: Type.Optional(Type.Integer({ minimum: 0 })),
   }, { additionalProperties: false }),
@@ -372,6 +387,13 @@ export const WorkflowFile = Type.Object({
   gui_commands: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   models: Type.Record(Type.String(), Type.String({ minLength: 1 })),
   modes: Type.Object({ build: Type.Optional(ModeDef), feature: Type.Optional(ModeDef) }, { additionalProperties: false }),
+  /** 动态 S 阶段共用闸门；auto 中未在 commands 配置的命令跳过 */
+  implementation_gate: Type.Optional(Gate),
+  generated_paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  acctest_workspace: Type.Optional(Type.Object({
+    include: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    cache: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  }, { additionalProperties: false })),
   scopes: Type.Record(Type.String(), Type.Object({
     rules: Type.Optional(Type.Array(Type.String())),
     writes: Type.Array(Type.String()),
@@ -382,6 +404,8 @@ export const WorkflowFile = Type.Object({
     thinking: Type.Optional(ThinkingLevel),
     scopes: Type.Optional(Type.Array(Type.String())),
     tools: Type.Array(Type.String({ minLength: 1 })),
+    bash: Type.Optional(Type.Enum(['full', 'readonly', 'allowlist'])),
+    bash_allow: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
     read_paths: Type.Optional(Type.Array(Type.String())),
     writes: Type.Optional(Type.Array(Type.String())),
     env: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -395,12 +419,20 @@ export const WorkflowFile = Type.Object({
     /** 被至少这么多任务硬依赖的实施任务（底座）第一次就用升级模型，默认 3；0 关闭（第三轮后续：底座任务对弱模型太大） */
     critical_fanout: Type.Optional(Type.Integer({ minimum: 0 })),
   }, { additionalProperties: false })),
-  /** adjust_tests（第四轮后续，默认开）：实现任务可以修改别的模块已有的测试来适配接口变化（只改不增删） */
-  testing: Type.Optional(Type.Object({ adjust_tests: Type.Optional(Type.Boolean()) }, { additionalProperties: false })),
+  /** 模板保留 adjust_tests；max_disputes 按单个测试限制争议次数 */
+  testing: Type.Optional(Type.Object({
+    adjust_tests: Type.Optional(Type.Boolean()),
+    max_disputes: Type.Optional(Type.Integer({ minimum: 0 })),
+  }, { additionalProperties: false })),
+  qa: Type.Optional(Type.Object({ max_rounds: Type.Optional(PosInt) }, { additionalProperties: false })),
   /** 项目知识库：auto_candidates 为 true 时，合并后验证失败会提炼为知识候选（默认关闭：真实冒烟中这些候选多是一次性细节） */
   knowledge: Type.Optional(Type.Object({ auto_candidates: Type.Optional(Type.Boolean()) }, { additionalProperties: false })),
-  /** 最终代码审查（第五轮，默认关闭）：实施阶段所有模块验收通过后、阶段闸门前，审查者对照项目规范审查整个流程的改动 */
-  review: Type.Optional(Type.Object({ final: Type.Optional(Type.Boolean()) }, { additionalProperties: false })),
+  /** 逐任务审查策略；第二轮只确认，skip_sizes 供计划推导使用 */
+  review: Type.Optional(Type.Object({
+    per_task: Type.Optional(Type.Boolean()),
+    max_rounds: Type.Optional(PosInt),
+    skip_sizes: Type.Optional(Type.Array(TaskSize)),
+  }, { additionalProperties: false })),
   /** 外部通知（第六轮 7.5）：需要你处理的新事项、流程完成时运行的 shell 命令，事件 JSON 从标准输入传入 */
   notify: Type.Optional(Type.Object({ command: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false })),
   /** 上下文管理（第五轮）：compact_at 为触发压缩的上下文占比（默认 0.7）；压缩后靠 notes 与 history 延续 */
@@ -415,94 +447,35 @@ export const WorkflowFile = Type.Object({
 }, { additionalProperties: false });
 export type WorkflowFile = Static<typeof WorkflowFile>;
 
-// —— 模块清单：主 agent 在规划阶段（D2）经 forge_propose_modules 提交，批准该阶段闸门后才落为任务 ——
+// —— plan.yaml：只校验形状；符号、DAG、覆盖率与阶段顺序由 M3 校验 ——
 
-export const ProposedTask = Type.Object({
-  id: TaskId,
-  stage: Type.String({ minLength: 1 }),
-  kind: TaskKind,
-  title: Type.String({ minLength: 1, maxLength: 200 }),
-  role: Type.String({ minLength: 1 }),
-  scopes: Type.Array(Type.String()),
-  depends_on: Type.Array(Dependency),
-  inputs: Type.Array(Type.String()),
-  writes: Type.Array(Type.String(), { minItems: 1 }),
-  acceptance: Type.Array(Type.String(), { minItems: 1 }),
-  verify: Type.Array(Type.String()),
-  shared: Type.Optional(Type.Array(Type.String())),
-  needs_acceptance: Type.Optional(Type.Boolean()),
-  size: Type.Optional(TaskSize),
-  manual_checks: Type.Optional(ManualChecks),
-}, { additionalProperties: false });
-export type ProposedTask = Static<typeof ProposedTask>;
-
-export const ProposalFile = Type.Object({
-  stage: Type.String(),
-  run: Type.String(),
-  created_at: IsoTime,
-  tasks: Type.Array(ProposedTask, { minItems: 1 }),
-  /** 文档（契约、架构）中超出需求的设计，由用户在批准时决定是否保留（第三轮后续：契约不超出需求） */
-  extras: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-  /** 需求没说清、规划时按默认方案处理的地方（第四轮后续：有合理默认值时不阻塞提问，批准时列给用户） */
-  assumptions: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-  report: Type.Object({
-    task_count: Type.Integer(), critical_path: Type.Array(Type.String()), critical_path_length: Type.Integer(),
-    max_width: Type.Integer(), hard_ratio: Type.Number(), warnings: Type.Array(Type.String()),
+export const PlanFile = Type.Object({
+  size_estimate: Type.Object({
+    loc: Type.Integer({ minimum: 0 }),
+    modules: Type.Integer({ minimum: 0 }),
   }, { additionalProperties: false }),
-  version: Type.Integer({ minimum: 1 }),
+  mode: PlanMode,
+  stages: Type.Array(PlanStage, { minItems: 1 }),
+  baseline: Type.Optional(StringList),
+  tasks: Type.Array(Type.Object({
+    id: TaskId,
+    stage: Type.String({ minLength: 1 }),
+    module: Type.String({ minLength: 1 }),
+    title: Type.String({ minLength: 1 }),
+    size: TaskSize,
+    layers: StringList,
+    ac: StringList,
+    writes: StringList,
+    shared: Type.Optional(StringList),
+    produces: StringList,
+    requires: StringList,
+    test_interface: StringList,
+    manual_checks: Type.Optional(ManualChecks),
+    review: Type.Optional(TaskReview),
+    risk: Type.Optional(TaskRisk),
+  }, { additionalProperties: false }), { minItems: 1 }),
 }, { additionalProperties: false });
-export type ProposalFile = Static<typeof ProposalFile>;
-
-// —— 执行中的计划修订：主 agent 经 forge_revise_plan 提交，用户 /forge-approve 后由程序增删任务 ——
-
-/** 修订中的依赖：可以指向现有任务（T-xxx）或本次新增的任务（N-xxx），批准时改写为正式编号 */
-export const RevisionDependency = Type.Object({
-  task: Type.String({ pattern: '^[TN]-[0-9]{3,}$' }),
-  type: Type.Union([Type.Literal('hard'), Type.Literal('soft')]),
-  reason: Type.Optional(Type.String()),
-}, { additionalProperties: false });
-
-/** 修订中新增的任务：临时编号 N-001 起；依赖可以指向现有任务（T-xxx）或本次新增的任务（N-xxx） */
-export const RevisionTask = Type.Object({
-  id: Type.String({ pattern: '^N-[0-9]{3,}$' }),
-  stage: Type.String({ minLength: 1 }),
-  kind: TaskKind,
-  title: Type.String({ minLength: 1, maxLength: 200 }),
-  role: Type.String({ minLength: 1 }),
-  scopes: Type.Array(Type.String()),
-  depends_on: Type.Array(RevisionDependency),
-  inputs: Type.Array(Type.String()),
-  writes: Type.Array(Type.String(), { minItems: 1 }),
-  acceptance: Type.Array(Type.String(), { minItems: 1 }),
-  verify: Type.Array(Type.String()),
-
-  shared: Type.Optional(Type.Array(Type.String())),
-  size: Type.Optional(Type.Enum(TASK_SIZES, { description: '任务大小：S 小改动、M 一般模块（默认）、L 大模块；决定每次运行的时间预算' })),
-  manual_checks: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 20, description: '要用户自己打开应用查看的检查项（agent 不启动桌面应用与浏览器）' })),
-}, { additionalProperties: false });
-export type RevisionTask = Static<typeof RevisionTask>;
-
-
-export const RevisionFile = Type.Object({
-  /** 发起修订的任务（第六轮起由主 agent 直接提交，没有任务）与原因 */
-  task: Type.Optional(TaskId),
-  reason: Type.String(),
-  run: Type.String(),
-  created_at: IsoTime,
-  status: Type.Union([Type.Literal('proposed'), Type.Literal('approved'), Type.Literal('rejected')]),
-  add: Type.Array(RevisionTask),
-  /** 调整未开始任务的依赖（整体替换 depends_on） */
-  rewire: Type.Array(Type.Object({ task: TaskId, depends_on: Type.Array(RevisionDependency) }, { additionalProperties: false })),
-  cancel: Type.Array(Type.Object({ task: TaskId, reason: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
-  summary: Type.String(),
-  /** 影响分析：受影响的接口、模块，以及已完成、进行中、未开始的任务各自怎么处理 */
-  impact: Type.Optional(Type.String()),
-  /** 批准时新增任务的编号映射 N-xxx → T-xxx */
-  mapping: Type.Optional(Type.Record(Type.String(), TaskId)),
-  version: Type.Integer({ minimum: 1 }),
-}, { additionalProperties: false });
-export type RevisionFile = Static<typeof RevisionFile>;
-
+export type PlanFile = Static<typeof PlanFile>;
 
 // —— 项目级知识库（.forge/knowledge.json）：跨流程积累的约定、坑、决策；只由程序写入 ——
 
@@ -571,35 +544,7 @@ export const ModelPausesFile = Type.Object({
 }, { additionalProperties: false });
 export type ModelPausesFile = Static<typeof ModelPausesFile>;
 
-// —— 模块独立验收（第五轮，.forge/flows/<流程>/acceptance/<模块任务>.json）：只由程序写入 ——
-
-export const ACCEPTANCE_STATUSES = ['checking', 'fixing', 'confirming', 'accepted', 'needs_human'] as const;
-export const AcceptanceResult = Type.Object({
-  id: Type.String({ pattern: '^A-[0-9]+$' }),
-  passed: Type.Boolean(),
-  evidence: Type.String({ maxLength: 2000 }),
-  /** 只能打开应用看效果才能确认：交给用户手动验证，不算未通过 */
-  manual: Type.Optional(Type.Boolean()),
-}, { additionalProperties: false });
-export type AcceptanceResult = Static<typeof AcceptanceResult>;
-export const AcceptanceFile = Type.Object({
-  task: TaskId,
-  status: Type.Enum(ACCEPTANCE_STATUSES),
-  /** 第几轮修复（0：还没修过；最多 2 轮） */
-  round: Type.Integer({ minimum: 0, maximum: 2 }),
-  criteria: Type.Array(Type.Object({ id: Type.String({ pattern: '^A-[0-9]+$' }), text: Type.String() }, { additionalProperties: false })),
-  /** 每个条目最近一次的结论（复查只更新没通过的条目） */
-  results: Type.Array(AcceptanceResult),
-  check_task: Nullable(TaskId),
-  fix_tasks: Type.Array(TaskId),
-  confirm_tasks: Type.Array(TaskId),
-  summary: Type.Optional(Type.String({ maxLength: 2000 })),
-  reason: Type.Optional(Type.String()),
-  version: Type.Integer({ minimum: 1 }),
-}, { additionalProperties: false });
-export type AcceptanceFile = Static<typeof AcceptanceFile>;
-
-// —— 最终代码审查（第五轮，可选，.forge/flows/<流程>/final-review.json）：只由程序写入 ——
+// —— 审查问题：供 M5 的 reviewer 使用 ——
 
 export const REVIEW_LEVELS = ['must', 'suggest'] as const;
 export const ReviewFinding = Type.Object({
@@ -615,25 +560,6 @@ export const ReviewFinding = Type.Object({
   expected: Type.String({ minLength: 1, maxLength: 2000 }),
 }, { additionalProperties: false });
 export type ReviewFinding = Static<typeof ReviewFinding>;
-export const FINAL_REVIEW_STATUSES = ['reviewing', 'fixing', 'awaiting_user', 'done'] as const;
-export const FinalReviewFile = Type.Object({
-  stage: Type.String({ minLength: 1 }),
-  status: Type.Enum(FINAL_REVIEW_STATUSES),
-  /** 审查的改动范围：base..head（集成分支与主分支的分叉点到审查开始时的集成分支） */
-  base: Type.String({ minLength: 7 }),
-  head: Type.String({ minLength: 7 }),
-  review_task: TaskId,
-  findings: Type.Array(ReviewFinding),
-  summary: Type.Optional(Type.String({ maxLength: 2000 })),
-  /** 已交给模块修复的条目（必须改自动修；建议由用户 /forge review fix 挑选），每条只修一轮，不再复审 */
-  fixed: Type.Array(Type.String({ pattern: '^R-[0-9]+$' })),
-  fix_tasks: Type.Array(TaskId),
-  /** 用户已经挑选过（/forge review fix 或 done）：修复完成后直接结束，不再等待 */
-  decided: Type.Optional(Type.Boolean()),
-  version: Type.Integer({ minimum: 1 }),
-}, { additionalProperties: false });
-export type FinalReviewFile = Static<typeof FinalReviewFile>;
-
 // —— 结构化笔记（.forge/flows/<流程>/notes/<任务>.json、.forge/notes/main.json）：agent 用 notes 工具维护，每次请求原样放回上下文 ——
 
 export const NOTE_SECTIONS = ['goal', 'done', 'todo', 'current', 'decisions', 'pitfalls'] as const;
@@ -677,13 +603,10 @@ export const SCHEMAS = {
   'merge-queue': MergeQueueFile,
   workflow: WorkflowFile,
   'role-settings': RoleSettingsFile,
-  proposal: ProposalFile,
+  plan: PlanFile,
   knowledge: KnowledgeFile,
-  revision: RevisionFile,
   'model-pauses': ModelPausesFile,
   notes: NotesFile,
-  acceptance: AcceptanceFile,
-  'final-review': FinalReviewFile,
 } as const;
 export type SchemaKind = keyof typeof SCHEMAS;
 

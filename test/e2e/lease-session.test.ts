@@ -13,7 +13,7 @@ import { runEnvFrom } from '../../src/tools/subagent-tools.ts';
 import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
 import { doctor } from '../../src/core/doctor.ts';
 import { sessionDirOf, summarizeSession } from '../../src/core/session-log.ts';
-import { PKG_CONTENT } from '../helpers/package.ts';
+const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 const MIN = 60_000;
 
@@ -91,7 +91,7 @@ test('会话留档：run 记录会话目录；/forge run 显示工具调用摘�
     assert.equal(s.lastText, '已提交，结束。');
 
     const env: CommandEnv = {
-      root: p.dir, packageRoot: PKG_CONTENT, ui: null,
+      root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
       engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
       roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
     };

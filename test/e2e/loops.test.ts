@@ -21,7 +21,10 @@ test('同样的原因连续失败两次：第三次直接用升级模型（不�
   const settings = { version: 1 as const, roles: { ...ALL_FAKE.roles, 'backend-engineer': { model: 'fake/small', escalate_model: 'fake/big' } } };
   const p = await setupProject({ yaml: PROJECT_YAML.replace(/after_failures: \d+/, 'after_failures: 5').replace(/max_attempts: \d+/, 'max_attempts: 6'), tasks: [task1()] });
   try {
-    const { engine, launcher, errors } = makeEngine(p, async (_role, _n, a) => submit(a, 'FAIL'), settings);
+    const { engine, launcher, errors } = makeEngine(p, async (_role, _n, a) => {
+      assert.ok((await a.call('forge_claim')).ok);
+      throw new Error('同样的运行失败');
+    }, settings);
     await engine.next(p.flowId);
     await engine.idle();
     assert.deepEqual(launcher.launched.map((s) => s.model), ['fake/small', 'fake/small', 'fake/big']);
@@ -31,15 +34,15 @@ test('同样的原因连续失败两次：第三次直接用升级模型（不�
     assert.match(t.blocked_reason ?? '', /同样的原因连续失败 3 次（升级模型后仍然一样）/);
     assert.ok(p.store.listRuns().find((r) => r.model === 'fake/big')?.escalated);
     assert.deepEqual(errors, []);
-    // 用户解除阻塞后计数清零
-    await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'unblock', actor: 'human' });
+    // 因调度器的重复失败看守阻塞，--reset 不会清零 attempts；保留 worktree，清除重复原因标记。
+    await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'unblock', actor: 'human', facts: { reset: true } });
     const u = p.store.readTask(p.flowId, 'T-001');
-    assert.deepEqual([u.same_failures, u.failure_sig, u.attempts], [undefined, undefined, 0]);
+    assert.deepEqual([u.same_failures, u.failure_sig, u.attempts], [undefined, undefined, 3]);
   } finally { p.cleanup(); }
 });
 
 test('模块谱系预算：失败原因各不相同、失败次数也没用完，但模块累计运行次数超过 limits.module_runs 时交给用户；解除阻塞后重新计算', async () => {
-  const yaml = PROJECT_YAML.replace(/max_attempts: \d+/, 'max_attempts: 10').replace(/(max_attempts: 10)/, '$1\n  module_runs: 3');
+  const yaml = PROJECT_YAML.replace(/max_merge_failures: \d+/, 'max_merge_failures: 10').replace(/max_attempts: \d+/, 'max_attempts: 10').replace(/(max_attempts: 10)/, '$1\n  module_runs: 3');
   const p = await setupProject({ yaml, tasks: [task1()] });
   try {
     assert.equal(p.config.limits.module_runs, 3);
@@ -54,7 +57,8 @@ test('模块谱系预算：失败原因各不相同、失败次数也没用完�
     assert.equal(t.status, 'blocked');
     assert.ok(t.attempts < 10);
     assert.match(t.blocked_reason ?? '', /模块 T-001「任务 T-001」连同派生任务（T-001）已运行 3 次[\s\S]*超过上限（3 次[\s\S]*最近的失败/);
-    await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'unblock', actor: 'human' });
+    await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'unblock', actor: 'human' });
+    await engine.pump(p.flowId);
     await engine.next(p.flowId);
     await engine.idle();
     assert.equal(launcher.launched.length, 6, '解除阻塞后又给了一轮');
@@ -65,8 +69,8 @@ test('谱系：merge-fix、验收、修复任务都追溯到模块本身', () =>
   const tasks = [
     mkTask('T-001'),
     mkTask('T-002', { kind: 'merge-fix', merge_fix_for: 'T-001' }),
-    mkTask('T-003', { kind: 'analysis', accept_of: 'T-001' }),
-    mkTask('T-004', { kind: 'review-fix', fork_from_task: 'T-001' }),
+    mkTask('T-003', { kind: 'review', for_task: 'T-001' }),
+    mkTask('T-004', { kind: 'fix', fork_from_task: 'T-001' }),
     mkTask('T-005', { kind: 'merge-fix', merge_fix_for: 'T-004' }),
     mkTask('T-006'),
   ];

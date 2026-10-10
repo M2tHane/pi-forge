@@ -10,14 +10,14 @@ import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
 import { actionsNeeded } from '../../src/core/status-view.ts';
 import { nextStep } from '../../src/core/context-injector.ts';
-import { PKG_CONTENT } from '../helpers/package.ts';
+const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 const MODELS = (yaml: string) => yaml
   .replace(/  test:      ".*"/, '  test:      "! grep -rqs FAIL src/server"')
   .replace(/models:[\s\S]*?\ntesting:/, 'models:\n  strong: "f/strong"\n  medium: "f/medium"\n  cheap:  "f/cheap"\ntesting:');
 const SETTINGS = { version: 1 as const, roles: {} };
 const env = (p: Project, engine: ReturnType<typeof makeEngine>['engine']): CommandEnv => ({
-  root: p.dir, packageRoot: PKG_CONTENT, ui: null,
+  root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
   engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
   roleSettings: () => SETTINGS, availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
 });
@@ -30,7 +30,7 @@ async function implement(a: FakeAgent, file: string, content = 'x\n') {
 }
 
 test('失败后升级模型：第 2 次失败后的派发使用升级模型并记录；超预算暂停派发新任务、提示用户，提高预算后继续', async () => {
-  const p = await setupProject({ yaml: MODELS(PROJECT_YAML), tasks: [mkTask('T-001', { verify: ['test'] }),
+  const p = await setupProject({ yaml: MODELS(PROJECT_YAML).replace(/max_merge_failures: \d+/, 'max_merge_failures: 3'), tasks: [mkTask('T-001', { verify: ['test'] }),
     mkTask('T-002', { verify: [], writes: ['src/server/t-002/**'], deps: [{ task: 'T-001', type: 'hard', reason: '需要 T-001' }] })] });
   try {
     const { engine, errors } = makeEngine(p, async (_role, nth, a) =>
@@ -60,7 +60,7 @@ test('失败后升级模型：第 2 次失败后的派发使用升级模型并�
 
 test('关键底座：被至少 3 个任务硬依赖的实施任务第一次就用升级模型；普通任务照常；可关闭', async () => {
   const deps = ['T-002', 'T-003', 'T-004'].map((id) => mkTask(id, { verify: [], writes: [`src/server/${id.toLowerCase()}/**`], deps: [{ task: 'T-001', type: 'hard', reason: '需要底座' }] }));
-  for (const [yaml, expected] of [[MODELS(PROJECT_YAML), 'f/strong'], [MODELS(PROJECT_YAML).replace('critical_fanout: 3 ', 'critical_fanout: 0 '), 'f/medium']] as const) {
+  for (const [yaml, expected] of [[MODELS(PROJECT_YAML), 'f/strong'], [MODELS(PROJECT_YAML).replace(/critical_fanout: 3\b/, 'critical_fanout: 0'), 'f/medium']] as const) {
     const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: [] }), ...deps] });
     try {
       const { engine, launcher } = makeEngine(p, async (_role, _n, a) => implement(a, `src/server/${a.env.task.toLowerCase()}/a.ts`), SETTINGS);

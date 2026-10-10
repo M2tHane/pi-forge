@@ -37,5 +37,5 @@ test('角色启用 codemode 时显式加载 Pi 内置扩展 builtin:codemode（�
   assert.deepEqual(pluginExtensionsFor(config, 'architect', []).paths, ['builtin:codemode']);
   assert.ok(!pluginExtensionsFor(config, 'backend-engineer', []).paths.includes('builtin:codemode'));
   assert.ok(config.activeTools('architect').includes('codemode'));
-  assert.throws(() => parseConfig(TEST_YAML.replace('orchestrator:      { model: medium, tools: [read,', 'orchestrator:      { model: medium, tools: [codemode, read,')), /orchestrator 只能使用/);
+  assert.throws(() => parseConfig(TEST_YAML.replace('tools: [read, grep, find, ls, forge_read', 'tools: [codemode, read, grep, find, ls, forge_read')), /orchestrator 只能使用/);
 });

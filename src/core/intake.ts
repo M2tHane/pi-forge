@@ -1,13 +1,40 @@
 // 来源：pi-flow src/core/intake.ts @ 31f3f15
 // 接收用户带进来的输入（第六轮）：PRD、技术架构、原型与设计规范（例如和 Claude 讨论得出的 PRD、Claude Design 的导出物）。
 // 程序原样放进集成分支（不解析内容），主 agent 随后做就绪检查、写标准化的需求说明，再直接规划。
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { StateStore } from './state-store.ts';
 import type { FlowFile } from './schemas.ts';
-import { commitFilesToBranch } from './requirements.ts';
-import { git } from './git.ts';
-import { slug, type FlowMode } from '../modes/plan.ts';
+import { git, gitOk } from './git.ts';
+
+type FlowMode = 'build' | 'feature';
+const slug = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 60) || 'feature';
+
+// 来源：pi-flow src/core/requirements.ts @ 31f3f15；只保留 intake 依赖的独立索引提交原语。
+export function commitFilesToBranch(root: string, branch: string, files: readonly { rel: string; content: string | Buffer }[], message: string): string | null {
+  const ref = `refs/heads/${branch}`;
+  const parent = git(root, ['rev-parse', ref]).trim();
+  const dir = mkdtempSync(path.join(tmpdir(), 'pi-forge-intake-'));
+  try {
+    const env = { GIT_INDEX_FILE: path.join(dir, 'index') };
+    git(root, ['read-tree', parent], { env });
+    let changed = false;
+    files.forEach((f, i) => {
+      const file = path.join(dir, `content-${i}`);
+      writeFileSync(file, f.content);
+      const blob = git(root, ['hash-object', '-w', '--path', f.rel, file]).trim();
+      if (gitOk(root, ['cat-file', '-e', `${parent}:${f.rel}`]) && git(root, ['rev-parse', `${parent}:${f.rel}`]).trim() === blob) return;
+      changed = true;
+      git(root, ['update-index', '--add', '--cacheinfo', `100644,${blob},${f.rel}`], { env });
+    });
+    if (!changed) return null;
+    const tree = git(root, ['write-tree'], { env }).trim();
+    const sha = git(root, ['commit-tree', tree, '-p', parent, '-m', message], { engineIdentity: true }).trim();
+    git(root, ['update-ref', ref, sha, parent]);
+    return sha;
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
 
 export class IntakeError extends Error {}
 
@@ -51,11 +78,11 @@ const htmlTitle = (html: string) => /<title[^>]*>([^<]*)<\/title>/i.exec(html)?.
 /** 输入在集成分支上的位置：新项目放在固定目录，已有项目按功能分目录，不覆盖之前的 */
 export function intakeLayout(mode: FlowMode, title: string) {
   const sub = mode === 'feature' ? `/${slug(title)}` : '';
-  return { prd: `docs/prd${sub}`, arch: `docs/architecture${sub}`, prototype: `prototype${sub}` };
+  return { prd: `docs/spec/inputs${sub}/prd`, arch: `docs/spec/inputs${sub}/arch`, prototype: `docs/spec/inputs${sub}/prototype` };
 }
 
 /**
- * 把输入原样提交到集成分支：PRD → docs/prd/、架构 → docs/architecture/、设计导出物 → prototype/（DESIGN.md 放仓库根目录），
+ * 把输入原样提交到集成分支：PRD、架构与原型放进 docs/spec/inputs/（功能流程按名称分目录；DESIGN.md 放仓库根目录），
  * 并生成原型页面清单 prototype/INDEX.md。记下 flow.intake。
  */
 export async function importInputs(root: string, store: StateStore, flowId: string, input: IntakeInput): Promise<NonNullable<FlowFile['intake']>> {

@@ -12,10 +12,11 @@ import { TEST_YAML } from '../helpers/config.ts';
 // 额外加一个可写 ** 的角色，用来验证受保护路径对"任何 writes"都只读
 const YAML = TEST_YAML
   .replace('infra:      {', 'everything: { writes: ["**"] }\n  infra:      {')
+  .replace(/^  reviewer:.*\n/m, '')
   // chaos：可写 **；reviewer、scout：只读角色（bash 只读白名单），用来验证只读角色的约束
-  + '  chaos:             { model: medium, scopes: [everything], tools: [read, find, grep, write, edit, bash, "@serena_edit"] }\n'
-  + '  reviewer:          { model: medium, scopes: [], tools: [codemode, read, bash_readonly, "@serena_read", "@codegraph"], writes: [] }\n'
-  + '  scout:             { model: cheap,  scopes: [], tools: [codemode, read, bash_readonly, "@serena_read", "@codegraph", forge_note, forge_submit], writes: [] }\n';
+  + '  chaos:             { model: medium, scopes: [everything], bash: full, tools: [read, find, grep, ls, write, edit, "@serena_edit"] }\n'
+  + '  reviewer:          { model: medium, scopes: [], bash: readonly, tools: [codemode, read, "@serena_read", "@codegraph"], writes: [] }\n'
+  + '  scout:             { model: cheap,  scopes: [], bash: readonly, tools: [codemode, read, "@serena_read", "@codegraph", forge_note, forge_submit], writes: [] }\n';
 const config = parseConfig(YAML);
 
 let base: string, main: string, wt: string;
@@ -60,16 +61,52 @@ test('orchestrator：写、编辑、bash、serena 编辑、审批全部被阻断
     checkToolCall(call('serena_replace_symbol_body', { relative_path: 'src/a.ts' }), c),
     checkToolCall(call('forge_approve', { decision: 'pass' }), c),
     checkToolCall(call('powershell', { command: 'ls' }), c),
-  ]) blocked(d, 'tool_whitelist', /你是调度者，不能直接修改代码。请调用 forge_dispatch\(T-003\) 交给对应 subagent。/);
+  ]) blocked(d, 'tool_whitelist', /你是调度者，不能直接修改代码。请用户执行 \/forge next，或调用 forge_wait 等待结果。/);
 });
 
-test('orchestrator：read 只能读 docs 与 .forge', () => {
-  const c = ctx('orchestrator');
+test('orchestrator：有序 read_paths 仍可限制只读路径为 docs 与 .forge', () => {
+  const scoped = parseConfig(YAML);
+  scoped.role('orchestrator').readPaths = ['docs/**', '.forge/**'];
+  const c = ctx('orchestrator', { config: scoped });
   allowed(checkToolCall(call('read', { path: 'docs/PRD.md' }), c));
   allowed(checkToolCall(call('read', { path: '.forge/state.json' }), c));
   allowed(checkToolCall(call('forge_status', {}), c));
-  blocked(checkToolCall(call('read', { path: 'src/server/a.ts' }), c), 'read_paths', /调度者.*forge_wait/);
+  blocked(checkToolCall(call('read', { path: 'src/server/a.ts' }), c), 'read_paths', /orchestrator 只能读取/);
   blocked(checkToolCall(call('read', { path: '../proj/src/server/a.ts' }), c), 'read_paths');
+});
+
+const readCtx = (patterns: string[]): GuardContext => {
+  const scoped = parseConfig(YAML);
+  scoped.role('chaos').readPaths = patterns;
+  return ctx('chaos', { config: scoped });
+};
+
+test('有序 read_paths：排除 .forge，目录本身与符号链接同样拒绝', () => {
+  const c = readCtx(['**', '!.forge/**']);
+  allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), c));
+  blocked(checkToolCall(call('read', { path: '.forge/state.json' }), c), 'read_paths');
+  blocked(checkToolCall(call('read', { path: 'src/server/evil/state.json' }), c), 'read_paths');
+  blocked(checkToolCall(call('ls', { path: '.forge' }), c), 'read_paths');
+  allowed(checkToolCall(call('ls', {}), c));
+  blocked(checkToolCall(call('read', { path: path.join(main, 'src/server/a.ts') }), c), 'read_paths');
+});
+
+test('有序 read_paths：后面的允许和排除反复覆盖', () => {
+  const c = readCtx(['**', '!a/**', 'a/b/**', '!a/b/private/**', 'a/b/private/public/**']);
+  blocked(checkToolCall(call('read', { path: 'a/x.ts' }), c), 'read_paths');
+  allowed(checkToolCall(call('read', { path: 'a/b/x.ts' }), c));
+  blocked(checkToolCall(call('read', { path: 'a/b/private/x.ts' }), c), 'read_paths');
+  allowed(checkToolCall(call('read', { path: 'a/b/private/public/x.ts' }), c));
+});
+
+test('有序 read_paths：只有排除项或空列表拒绝所有读取，null 保持不限制', () => {
+  for (const patterns of [[], ['!a/**', '!.forge/**']]) {
+    const c = readCtx(patterns);
+    blocked(checkToolCall(call('read', { path: 'src/server/a.ts' }), c), 'read_paths');
+    blocked(checkToolCall(call('ls', {}), c), 'read_paths');
+    blocked(checkToolCall(call('grep', { pattern: 'x' }), c), 'read_paths');
+  }
+  allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), ctx('chaos')));
 });
 
 test('reviewer：任何写入都被阻断', () => {
@@ -267,11 +304,11 @@ test('同一命令中字面量赋值的变量会被代入后校验；含命令�
 
 test('实现类任务可以在接口文档里追加（不受任务可写范围限制），其他路径照旧；没有该标记时不可写', () => {
   const impl = ctx('backend-engineer', { interfaceAdditions: true, writes: ['src/server/a.ts'] });
-  allowed(checkToolCall(call('write', { path: 'docs/interfaces/web.md', content: '' }), impl));
+  allowed(checkToolCall(call('write', { path: 'docs/contracts/web.md', content: '' }), impl));
   allowed(checkToolCall(call('write', { path: 'src/server/a.ts', content: '' }), impl));
   blocked(checkToolCall(call('write', { path: 'docs/requirements.md', content: '' }), impl), 'write_paths');
   blocked(checkToolCall(call('write', { path: 'workflow.yaml', content: '' }), impl));
-  blocked(checkToolCall(call('write', { path: 'docs/interfaces/web.md', content: '' }), ctx('backend-engineer', { writes: ['src/server/a.ts'] })), 'write_paths');
+  blocked(checkToolCall(call('write', { path: 'docs/contracts/web.md', content: '' }), ctx('backend-engineer', { writes: ['src/server/a.ts'] })), 'write_paths');
 });
 
 test('禁止后台运行：单独的 & 被拦下，&& 与 2>&1 不受影响；setsid、disown 被拦下', () => {

@@ -5,7 +5,7 @@ export function mkTask(id: string, over: Partial<TaskFile> & { deps?: Dependency
   const { deps, ...rest } = over;
   return {
     id, stage: 'S3', kind: 'impl' as TaskKind, title: `任务 ${id}`, role: 'backend-engineer', scopes: ['backend'],
-    depends_on: deps ?? [], inputs: [], writes: [`src/server/${id.toLowerCase()}/**`], acceptance: ['可验证'],
+    depends_on: deps ?? [], inputs: [], writes: [`src/server/${id.toLowerCase()}/**`], ac: ['REQ-001.AC1'],
     verify: ['test'], status: 'pending', attempts: 0, violations: 0, lease_expirations: 0, lease: null,
     impl_run: null, branch: null, worktree: null, base_sha: null, blocked_reason: null, last_failure: null,
     created_by: 'architect', version: 1, ...rest,

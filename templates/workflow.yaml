@@ -96,7 +96,7 @@ tool_groups:
 # read_paths 按 gitignore 规则从上到下匹配，后面的覆盖前面的，! 表示排除
 # bash: full | readonly | allowlist 是唯一依据，写了才有 bash 工具（tools 里不写 bash）
 roles:                            # notes、history、forge_block、forge_learn 所有子进程角色隐式拥有；forge_service 只给 worker 与 stage-qa，forge_request_scope 只给 worker
-  main:        { model: strong, tools: [read, grep, find, ls, forge_read, "@ask", forge_spec, forge_spec_amend, forge_status, forge_wait, forge_change_request, forge_resolve_timeout, forge_resolve_scope], read_paths: ["**"], writes: [] }   # notes、history 隐式拥有
+  orchestrator:        { model: strong, tools: [read, grep, find, ls, forge_read, "@ask", forge_spec, forge_spec_amend, forge_status, forge_wait, forge_change_request, forge_resolve_timeout, forge_resolve_scope], read_paths: ["**"], writes: [] }   # notes、history 隐式拥有
   architect:   { model: strong, scopes: [plan], read_paths: ["**", "!.forge/**"], bash: readonly, tools: [codemode, read, write, edit, "@serena_read", "@codegraph", forge_propose_plan, forge_note, forge_submit] }
   worker:      { model: strong, scopes: [code], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, write, edit, forge_service, "@serena_read", "@serena_edit", "@codegraph", forge_sync, forge_dispute, forge_change_request, forge_request_scope, forge_note, forge_submit] }
   test-author: { model: medium, scopes: [acctest], bash: allowlist, bash_allow: [acceptance_list, acceptance], tools: [read, write, edit, forge_note, forge_submit] }   # 隔离工作区里没有实现代码

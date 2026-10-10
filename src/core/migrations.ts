@@ -17,43 +17,10 @@ export interface Migration {
 }
 
 /** 当前格式版本 */
-export const SCHEMA_VERSION = 2;
-
-const SETTLED = new Set(['done', 'cancelled']);
-const OLD_ROLES = new Set(['designer', 'architect']);
-
-/**
- * 1 → 2（第六轮）：删除原型阶段 D1；规划由主 agent 进行（flow.planning）；计划修订由主 agent 起草（flow.replan_request）。
- * 旧流程停在 D1 时直接进入 D2 由主 agent 规划；designer、architect 未结束的任务取消，未结束的修订任务转为修订请求。
- */
-const v1to2: Migration = {
-  from: 1,
-  description: '删除原型阶段，规划与计划修订改由主 agent 进行',
-  flow: (f) => {
-    const stages = (f['stages'] as string[]).filter((x) => x !== 'D1');
-    const skip = ((f['skip_stages'] as string[] | undefined) ?? []).filter((x) => x !== 'D1');
-    const { skip_stages: _s, ...rest } = f;
-    const out: Json = { ...rest, stages, ...(skip.length ? { skip_stages: skip } : {}) };
-    if (f['mode'] === 'fix') return out;
-    const at = stages.indexOf(String(f['stage']));
-    if (f['stage'] === 'D1') Object.assign(out, { stage: 'D2', stage_status: 'active', planning: { submitted: false, rounds: 0, feedback: '旧流程迁移：原型阶段已删除，规划改由你（主 agent）进行' } });
-    else if (f['stage'] === 'D2') out['planning'] = { submitted: f['stage_status'] === 'awaiting_human', rounds: 0 };
-    else if (at > stages.indexOf('D2')) out['planning'] = { submitted: true, rounds: 0 };
-    return out;
-  },
-  task: (t) => {
-    if (SETTLED.has(String(t['status'])) || !(OLD_ROLES.has(String(t['role'])) || t['replan'])) return t;
-    return { ...t, status: 'cancelled', lease: null, blocked_reason: null };
-  },
-  finish: (f, before) => {
-    const open = before.filter((t) => t['replan'] && !SETTLED.has(String(t['status'])));
-    if (!open.length) return f;
-    return { ...f, replan_request: { reason: open.map((t) => String(t['replan'])).join('\n\n'), at: new Date().toISOString() } };
-  },
-};
+export const SCHEMA_VERSION = 1;
 
 /** 版本链；新格式在此追加一步并把 SCHEMA_VERSION 加一 */
-export const MIGRATIONS: Migration[] = [v1to2];
+export const MIGRATIONS: Migration[] = [];
 
 /** 从 from 到 to 依次要执行的迁移；缺某一步时返回缺的版本号 */
 export function migrationChain(from: number, to: number, list: readonly Migration[] = MIGRATIONS): { steps: Migration[]; missing: number | null } {

@@ -4,29 +4,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { runFlowCommand, runFlowBuild, type CommandEnv } from '../../src/commands/forge.ts';
-import { renumber } from '../../src/core/stages.ts';
+import { startFlow } from '../../src/core/stages.ts';
 import { setupProject, DIRECT_YAML, type Project } from '../helpers/project.ts';
 import { StateStore } from '../../src/core/state-store.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { PKG_CONTENT } from '../helpers/package.ts';
+const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 function env(p: Project, engine: ReturnType<typeof makeEngine>['engine']): CommandEnv {
   return {
-    root: p.dir, packageRoot: PKG_CONTENT, ui: null,
+    root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
     engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
     roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
   };
 }
-
-test('renumber：临时编号映射到流程内新编号，依赖一起改写', () => {
-  const r = renumber([
-    { id: 'T-001', stage: 'S3', kind: 'impl', title: 'a', role: 'test-engineer', scopes: [], depends_on: [], inputs: [], writes: ['x'], acceptance: ['a'], verify: [] },
-    { id: 'T-002', stage: 'S3', kind: 'impl', title: 'b', role: 'backend-engineer', scopes: [], depends_on: [{ task: 'T-001', type: 'hard', reason: 'r' }], inputs: [], writes: ['y'], acceptance: ['b'], verify: [] },
-  ], 5);
-  assert.deepEqual(r.tasks.map((t) => t.id), ['T-005', 'T-006']);
-  assert.equal(r.tasks[1]!.depends_on[0]!.task, 'T-005');
-});
 
 test('/forge unblock 附回答写入 handoff 并回到 ready；approve 在没有等待批准的闸门时报错；最后阶段无 UI 需 --yes', async () => {
   const p = await setupProject({ tasks: [mkTask('T-001')] });
@@ -37,8 +28,8 @@ test('/forge unblock 附回答写入 handoff 并回到 ready；approve 在没有
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'blocked');
     const e = env(p, engine);
     // 解除阻塞后会被重新派发（脚本仍会 block），这里只验证回答写入与状态转移
-    const out = await runFlowCommand('unblock T-001 "用 SQLite" --attempts 1', e);
-    assert.match(out, /已解除 T-001 的阻塞.*attempts=1/);
+    const out = await runFlowCommand('unblock T-001 "用 SQLite" --reset', e);
+    assert.match(out, /已解除 T-001 的阻塞/);
     assert.match(p.store.readHandoff(p.flowId, 'T-001'), /用户回答：\n用 SQLite/);
     await assert.rejects(runFlowCommand('unblock', e), /用法/);
     await assert.rejects(runFlowCommand('approve', e), /没有等待批准的闸门/);
@@ -50,13 +41,24 @@ test('/forge unblock 附回答写入 handoff 并回到 ready；approve 在没有
   } finally { p.cleanup(); }
 });
 
-test('/forge-build：--direct 缺少描述报错；已有进行中的流程时拒绝并提示 /forge resume', async () => {
+test('/forge-build 停在 P0：仅创建流程与集成分支，不派发任务或启动主会话讨论', async () => {
   const p = await setupProject();
   try {
-    const { engine } = makeEngine(p, async () => {});
-    await assert.rejects(runFlowBuild('--feature "导出"', env(p, engine)), /已有进行中的流程 B-001.*\/forge-resume/);
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
-    await assert.rejects(runFlowBuild('--direct', env(p, engine)), /请带上 PRD（--prd），或写下你的想法/);
+    const { engine, launcher } = makeEngine(p, async () => { throw new Error('P0 不应派发'); });
+    let activated = 0;
+    const e = { ...env(p, engine), activateOrchestrator: () => { activated++; } };
+    assert.match(await runFlowBuild('用户服务', e), /P0（规格）在 M2 实现/);
+    const id = p.store.readState().active_flow!;
+    assert.deepEqual(p.store.readFlow(id).stages, ['P0', 'P1']);
+    assert.equal(p.store.readFlow(id).stage, 'P0');
+    assert.deepEqual(p.store.listTasks(id), []);
+    assert.ok(p.git('rev-parse', p.store.readFlow(id).integration_branch));
+    await engine.pump(id);
+    await engine.idle();
+    assert.equal(p.store.readFlow(id).stage_status, 'active');
+    assert.equal(activated, 0);
+    assert.equal(launcher.launched.length, 0);
   } finally { p.cleanup(); }
 });
 
@@ -97,7 +99,7 @@ test('/forge next 先推进程序步骤：引擎重启前已提交、排队合�
     });
     await old.engine.next(p.flowId);
     const end = Date.now() + 30_000;
-    while (p.store.readTask(p.flowId, 'T-001').status !== 'queued_merge') { if (Date.now() > end) throw new Error('等待超时'); await new Promise((r) => setTimeout(r, 20)); }
+    while (p.store.readTask(p.flowId, 'T-001').status !== 'awaiting_inputs') { if (Date.now() > end) throw new Error('等待超时'); await new Promise((r) => setTimeout(r, 20)); }
     const store = new StateStore(p.dir, { limits: p.config.limits });
     const fresh = makeEngine({ ...p, store }, async () => { throw new Error('不应再派发'); });
     await runFlowCommand('next', env({ ...p, store }, fresh.engine));

@@ -83,8 +83,8 @@ function roles(deps: FlowConfigDeps): string[] {
 
 /** 角色做什么（菜单与 show 中显示，方便选模型） */
 const ROLE_PURPOSE: Record<string, string> = {
-  orchestrator: '主 agent：接收需求、规划模块、和你对话', implementer: '模块实现',
-  acceptor: '独立验收', reviewer: '最终代码审查（review.final 开启时）', researcher: '查资料',
+  orchestrator: '主会话：整理规格、和你对话', architect: '制定契约与计划', worker: '任务实现',
+  'test-author': '编写验收测试', reviewer: '代码审查', 'stage-qa': '阶段验收', researcher: '查资料',
 };
 const roleLabel = (r: string) => (ROLE_PURPOSE[r] ? `${r}（${ROLE_PURPOSE[r]}）` : r);
 

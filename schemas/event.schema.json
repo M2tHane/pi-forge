@@ -45,7 +45,10 @@
         "gate_result",
         "merge",
         "merge_conflict",
-        "integrity_error"
+        "integrity_error",
+        "stages_planned",
+        "stages_revised",
+        "stage_reopened"
       ]
     },
     "task": {

@@ -78,7 +78,7 @@ test('对抗：orchestrator 自己写代码被阻断并记录', async () => {
     const r = await enforceToolCall({ toolName: 'write', input: { path: 'src/server/a.ts', content: 'x' } }, ctx, store,
       { flow: flow.id, task: null, run: 'orchestrator' });
     assert.equal(r.allow, false);
-    if (!r.allow) assert.match(r.reason, /forge_dispatch\(T-002\)/);
+    if (!r.allow) assert.match(r.reason, /forge_wait/);
     const ev = store.readEvents().filter((e) => e.type === 'violation');
     assert.equal(ev.length, 1);
     assert.equal(ev[0]!.data?.['role'], 'orchestrator');

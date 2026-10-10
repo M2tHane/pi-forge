@@ -17,10 +17,10 @@ test('可适配的已有测试：基线上已有、writes 之外的测试文件�
     r.git('add', '-A'); r.git('commit', '-qm', 'base');
     const base = r.git('rev-parse', 'HEAD');
     const writes = ['src/server/**', 'tests/server/**'];
-    assert.deepEqual(adjustableTests(r.dir, base, writes).sort(), ['src/web/v.spec.js', 'tests/acceptance/a.test.js', 'tests/acceptance/b.test.js']);
-    put('tests/acceptance/a.test.js', 'a2'); rmSync(path.join(r.dir, 'tests/acceptance/b.test.js')); put('tests/acceptance/c.test.js', 'c'); put('tests/server/s.test.js', 's2');
+    assert.deepEqual(adjustableTests(r.dir, base, writes).sort(), ['src/web/v.spec.js']);
+    put('tests/acceptance/a.test.js', 'a2'); rmSync(path.join(r.dir, 'tests/acceptance/b.test.js')); put('tests/acceptance/c.test.js', 'c'); put('tests/server/s.test.js', 's2'); put('src/web/v.spec.js', 'v2');
     r.git('add', '-A'); r.git('commit', '-qm', 'change');
-    assert.deepEqual(testAdjustments(r.dir, base, writes), ['tests/acceptance/a.test.js']);
+    assert.deepEqual(testAdjustments(r.dir, base, writes), ['src/web/v.spec.js']);
   } finally { r.cleanup(); }
 });
 
@@ -28,8 +28,8 @@ test('适配已有测试的开关：默认开；只读角色、只读任务、me
   const t = (over: Partial<TaskFile>) => ({ kind: 'impl', role: 'backend-engineer', ...over }) as TaskFile;
   const on = parseConfig(TEST_YAML);
   assert.equal(testAdjustEnabled(on, t({})), true);
-  assert.equal(testAdjustEnabled(on, t({ kind: 'review-fix' })), true);
+  assert.equal(testAdjustEnabled(on, t({ kind: 'fix' })), true);
   assert.equal(testAdjustEnabled(on, t({ kind: 'merge-fix' })), false);
-  assert.equal(testAdjustEnabled(on, t({ kind: 'analysis', role: 'reviewer' })), false);
-  assert.equal(testAdjustEnabled(parseConfig(TEST_YAML.replace(/^  adjust_tests: true .*$/m, '  adjust_tests: false')), t({})), false);
+  assert.equal(testAdjustEnabled(on, t({ kind: 'review', role: 'reviewer' })), false);
+  assert.equal(testAdjustEnabled(parseConfig(TEST_YAML.replace(/^  adjust_tests: true.*$/m, '  adjust_tests: false')), t({})), false);
 });

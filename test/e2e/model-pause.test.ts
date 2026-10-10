@@ -12,7 +12,7 @@ import { actionsNeeded } from '../../src/core/status-view.ts';
 import { nextStep } from '../../src/core/context-injector.ts';
 import { DispatchError, type Engine } from '../../src/core/dispatcher.ts';
 import type { RoleSettingsFile } from '../../src/core/schemas.ts';
-import { PKG_CONTENT } from '../helpers/package.ts';
+const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 const YAML = PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "true"');
 const SETTINGS: RoleSettingsFile = { version: 1, roles: {
@@ -20,7 +20,7 @@ const SETTINGS: RoleSettingsFile = { version: 1, roles: {
 const QUOTA = 'Codex error: You have hit your ChatGPT usage limit (plus plan). Try again in ~120 min.';
 
 const env = (p: Project, engine: Engine): CommandEnv => ({
-  root: p.dir, packageRoot: PKG_CONTENT, ui: null,
+  root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
   engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
   roleSettings: () => SETTINGS, availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
 });

@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pi-forge/plan.schema.json",
+  "type": "object",
+  "required": [
+    "size_estimate",
+    "mode",
+    "stages",
+    "tasks"
+  ],
+  "properties": {
+    "size_estimate": {
+      "type": "object",
+      "required": [
+        "loc",
+        "modules"
+      ],
+      "properties": {
+        "loc": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "modules": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "mode": {
+      "enum": [
+        "standard",
+        "lean"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "goal",
+          "exit"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1
+          },
+          "exit": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "baseline": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "stage",
+          "module",
+          "title",
+          "size",
+          "layers",
+          "ac",
+          "writes",
+          "produces",
+          "requires",
+          "test_interface"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$"
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "module": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ]
+          },
+          "layers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "ac": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "shared": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "produces": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "test_interface": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "manual_checks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 20
+          },
+          "review": {
+            "enum": [
+              "skip",
+              "auto",
+              "strong"
+            ]
+          },
+          "risk": {
+            "enum": [
+              "low",
+              "normal",
+              "high"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false
+}

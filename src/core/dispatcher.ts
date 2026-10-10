@@ -325,7 +325,9 @@ export class Engine {
     const stageLevel = isStageLevelTask(task);
     if (task.kind === 'acctest' || task.kind === 'review' && !stageLevel) return;
     if (!stageLevel && task.worktree && task.branch && task.base_sha) return;
-    const r = await prepareWorkspaceRecorded(store, root, config, wt, stageLevel ? 'readonly' : 'writable', { flow: flowId, task: task.id, actor: 'dispatcher' });
+    // 阶段审查（只读档 bash）用只读缓存；stage-qa 的 bash 是 full 档，可能原地改依赖目录里的文件，硬链接会污染共享缓存，改为直接 install
+    const mode = stageLevel && task.kind !== 'qa' ? 'readonly' : 'writable';
+    const r = await prepareWorkspaceRecorded(store, root, config, wt, mode, { flow: flowId, task: task.id, actor: 'dispatcher' });
     if (!r.ok && !stageLevel) await store.appendHandoff(flowId, task.id, `依赖准备失败（程序在创建工作区后运行 install 的结果）：${r.reason ?? ''}\n需要依赖的命令在修好之前都会失败；请检查包清单与 install 命令，必要时自己运行 install。`, 'dispatcher');
   }
 

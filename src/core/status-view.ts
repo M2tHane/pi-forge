@@ -1,6 +1,6 @@
 // 来源：pi-flow src/core/status-view.ts @ 31f3f15（M1 改编）
 // 用户界面只显示规格、契约与计划、实施、交付；内部状态保留在 --detail。
-import { stalls } from './waits.ts';
+import { actionableStalls } from './waits.ts';
 import { pendingChanges } from './change-flow.ts';
 import { planStatus } from './plan-flow.ts';
 import type { FlowConfig } from './config.ts';
@@ -85,9 +85,7 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
     const stuck = stuckTasks(flow, tasks);
     // 停滞（waits.ts 的等待图）：每条一项。pending 的 task 等在 blocked 的硬依赖上不另报：那是排队的常态，blocked 的 task 自己有一条带解除命令的项，
     // 全都被挡住时还有下面的"流程卡住"；其余——awaiting_inputs / disputed 在等已阻塞的 task、环、等到已取消——只有这里会报
-    for (const s of stalls(tasks)) {
-      const waiter = s.kind === 'cycle' ? undefined : tasks.find((x) => x.id === s.tasks[0]);
-      if (s.kind === 'blocked' && waiter?.status === 'pending') continue;
+    for (const s of actionableStalls(tasks)) {
       const target = s.target ? tasks.find((x) => x.id === s.target) : undefined;
       out.push({ key: `${flow.id}:stall-wait:${s.kind}:${s.tasks.join(',')}${s.target ? `:${s.target}@${target?.version ?? 0}` : ''}`, text: s.reason,
         command: s.kind === 'blocked' ? `/forge unblock ${s.target}` : '/forge-status --detail 查看等待关系；无法自行恢复时 /forge abort' });

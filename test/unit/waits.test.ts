@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { TaskFile } from '../../src/core/schemas.ts';
-import { softDepsDone, stalls, waitsOn } from '../../src/core/waits.ts';
+import { actionableStalls, softDepsDone, stalls, waitsOn } from '../../src/core/waits.ts';
 import { hard, mkTask, soft } from '../helpers/tasks.ts';
 
 const acctest = (id: string, forTask: string, over: Parameters<typeof mkTask>[1] = {}) => mkTask(id, { kind: 'acctest', role: 'test-author', for_task: forTask, ...over });
@@ -111,4 +111,14 @@ test('softDepsDone：只看软依赖；硬依赖和缺失的生产方', () => {
   assert.equal(softDepsDone(t, [mkTask('T-002', { status: 'in_review' })]), false);
   assert.equal(softDepsDone(t, []), false, '生产方不存在 = 未 done');
   assert.equal(softDepsDone(mkTask('T-004', { deps: [hard('T-001')] }), []), true, '没有软依赖');
+});
+
+test('actionableStalls：pending 等在 blocked 的硬依赖上不报（排队常态），awaiting_inputs 等 blocked 的照报', () => {
+  const tasks = [
+    mkTask('T-001', { status: 'blocked', blocked_by: 'agent' }),
+    mkTask('T-002', { status: 'pending', deps: [hard('T-001')] }),
+    mkTask('T-003', { status: 'awaiting_inputs', deps: [soft('T-001')] }),
+  ];
+  assert.deepEqual(stalls(tasks).map((s) => s.tasks[0]).sort(), ['T-002', 'T-003']);
+  assert.deepEqual(actionableStalls(tasks).map((s) => s.tasks[0]), ['T-003']);
 });

@@ -91,3 +91,11 @@ export function stalls(tasks: readonly WaitTask[]): Stall[] {
 
 /** 停滞的可读摘要（测试辅助与 doctor 用） */
 export const formatStalls = (list: readonly Stall[]): string => list.map((s) => s.reason).join('；');
+
+/**
+ * 需要人处理的停滞：去掉"pending 的 task 等在 blocked 的硬依赖上"——那是排队的常态，blocked 的 task 自己会被列出（带解除命令）；
+ * status-view 与 /forge doctor 共用，口径一致
+ */
+export function actionableStalls<T extends Parameters<typeof stalls>[0][number]>(tasks: readonly T[]): Stall[] {
+  return stalls(tasks).filter((s) => !(s.kind === 'blocked' && tasks.find((x) => x.id === s.tasks[0])?.status === 'pending'));
+}

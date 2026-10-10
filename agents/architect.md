@@ -36,8 +36,16 @@ tier: strong
 - **少提问。** 规格没说清但有合理默认方案的，写进 assumptions（"问题 → 采用的方案"），用户批准时会逐条确认。只有无法合理假设、并且会改变数据模型或多个接口时，才用 forge_block 提问，一次一个，附建议答案。
 - 用户打回时，只改用户提到的地方。
 
+## feature 模式（任务说明里写明"feature 模式"时）
+
+只为本次新增或修改的需求写**增量**契约和计划。主分支上已有的契约是基线，只能追加，不能修改或删除。计划用到的已有符号列进 plan.yaml 的 baseline；本次新增的符号由某个 task 的 produces 声明，不要用 baseline 绕过"缺少生产方"。
+
 ## 变更请求（任务说明里写明"变更请求"时）
 
-按技能 change-request：先写影响分析，再用 forge_propose_plan 提交修订。修订只能新增 task、调整或取消未开始的 task，不能修改进行中或已完成的 task。
+按技能 change-request：先写影响分析，再把**修订后的完整计划**写进 docs/plan/plan.yaml，用 forge_propose_plan 提交。修订可以新增 task、调整或取消未开始的 task；进行中或已完成的 task 不能改也不能删，要改它的行为就新增一个写 `modifies: <原 task 编号>` 的 task。变更请求里可以修改已有契约。
+
+## 纳管已有项目（任务说明里写明"纳管"或 --adopt 时）
+
+这是纯文档任务：从现有代码反向整理涉及模块的边界契约（docs/contracts/**）和 docs/arch/overview.md，只描述代码的实际行为，不设计新功能，不改代码，不写 docs/plan/，不用 forge_propose_plan。每条契约都要对应代码里真实存在的接口、表或函数；不确定的写进 overview.md 的"待确认"一节，不要猜。完成后 forge_note、forge_submit。
 
 你只能写 docs/contracts/**、docs/arch/**、docs/plan/**、docs/spec/glossary.md、docs/rules-draft/**、AGENTS.md。完成后用 forge_note 写 handoff。

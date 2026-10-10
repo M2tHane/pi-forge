@@ -1,0 +1,28 @@
+需要你处理：
+- 阶段门禁修复轮数用尽，需要你处理：全量测试失败：test 命令退出码 1，已自动修复 2 轮仍未通过
+  → /forge accept S1 --note "<说明>"（人工放行进入签收）、/forge gate（重跑门禁）或 /forge-reject "<意见>"（打回）
+
+B-001「演示」（新项目）
+规格 ✓ → 契约与计划 ✓ → [实施] → 交付
+实施阶段：S0 骨架 ✓ → [S1] → S2
+当前阶段 S1：可以创建并查看看板（阶段检查未通过，等你处理）
+进度：S1 2 / 2 个任务完成（全部实施阶段 2 / 2）
+正在进行：无（阶段检查未通过，等你决定）
+
+## B-001「演示」内部状态
+- 模式 build；阶段序列 P0 → P1 → S0 → S1 → S2（S 阶段：S0、S1、S2）
+- 当前阶段 S1：needs_human；集成分支 flow/B-001/integration
+- 已批准的闸门：P0、P1
+
+### 任务表（2 个）
+| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 争议 | 尝试 | 阻塞原因 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| T-001 | impl | worker | done | S1 | 0 | 0 | 0 | 0 | 0 | - |
+| T-002 | impl | worker | done | S1 | 0 | 0 | 0 | 0 | 0 | - |
+
+### 最近事件
+#2 <时间> transition none→active
+#3 <时间> stages_planned
+#4 <时间> note：新增任务 2 个
+#5 <时间> transition active→awaiting_gate [submit_gate]
+#6 <时间> gate_result awaiting_gate→needs_human [gate_exhausted]：全量测试失败：test 命令退出码 1，已自动修复 2 轮仍未通过

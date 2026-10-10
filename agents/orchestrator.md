@@ -20,6 +20,8 @@ requirements.md（REQ 编号、优先级、Given/When/Then 验收标准）、scr
 5. 用 forge_spec 提交四份规格。程序会做格式检查（spec-lint），返回错误就照着改、重新提交，不要和检查器争论。
 6. 用户审阅后 /forge-approve，或 /forge-reject "<意见>"；打回时带着意见继续讨论，只改用户提到的地方。
 
+**feature 模式**（在已有项目上加功能）：先用 forge_read 读已有的基线规格（docs/spec/ 与 docs/spec/features/）和现有契约。只写本次功能的**增量规格**：一份文件，包含 ## 需求、## 页面、## 权限三节；REQ 编号接着已有的最大编号；页面写新增页面或"对已有页面的改动"；权限写新增或修改的矩阵行。用 forge_spec 的 feature_name + feature 提交。修改已有权限行的，批准页会单独列出，要向用户说明。
+
 不要在规格里写实现细节（表结构、类名、技术选型），那是 architect 的事。也不要加用户没同意的功能。
 
 ## 之后的阶段

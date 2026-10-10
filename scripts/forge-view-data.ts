@@ -1,0 +1,89 @@
+// pi-forge 视图的数据提取（纯读取，不修改 .forge/）：forge-view.ts 与单元测试共用。
+// 所有内嵌的自由文本（handoff、备注、证据摘录、事件原因、变更内容）一律经 redactDeep 打码后才进入页面。
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { StateStore, handoffRel, evidenceRel } from '../src/core/state-store.ts';
+import { STAGE_TRANSITIONS, TRANSITIONS } from '../src/core/state-machine.ts';
+import { flowMetrics } from '../src/core/signoff.ts';
+import { isAdoptFlow } from '../src/core/adopt.ts';
+import { redactDeep, redactSecrets } from '../src/core/redact.ts';
+import type { FlowFile, TaskFile } from '../src/core/schemas.ts';
+
+/** 七个角色（规格第 14 节） */
+export const ROLES = ['orchestrator', 'architect', 'worker', 'test-author', 'reviewer', 'stage-qa', 'researcher'] as const;
+
+const HANDOFF_TAIL = 3000;
+const EVIDENCE_TAIL = 1500;
+const EVIDENCE_FILES = ['qa-report.json', 'review.json', 'precheck.log', 'verify.log'];
+
+const tail = (text: string, n: number) => (text.length > n ? text.slice(-n) : text);
+
+/** 流程类型：build、feature、fix 之外，含 ADOPT 阶段的是接管（adopt） */
+export const flowKind = (flow: FlowFile): string => (isAdoptFlow(flow) ? 'adopt' : flow.mode);
+
+/** 阶段列表：P0、P1、S 阶段（带目标与出口）、其余阶段；每项带状态与闸门轮次 */
+function stageRows(flow: FlowFile, tasks: readonly TaskFile[]) {
+  const plan = new Map((flow.s_stages ?? []).map((s) => [s.id, s]));
+  const idx = flow.stages.indexOf(flow.stage);
+  return flow.stages.map((id, i) => {
+    const status = i < idx ? 'done' : i === idx ? flow.stage_status : 'pending';
+    const mine = tasks.filter((t) => t.stage === id);
+    const byStatus: Record<string, number> = {};
+    for (const t of mine) byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
+    const p = plan.get(id);
+    return {
+      id, status, goal: p?.goal ?? null, exit: p?.exit ?? [], approved: flow.approvals[id] ?? null,
+      tasks: mine.length, by_status: byStatus,
+      gate_rounds: (flow.gate_rounds ?? []).filter((g) => g.stage === id),
+    };
+  });
+}
+
+export function buildViewData(store: StateStore, root: string, now = new Date()) {
+  const state = store.readState();
+  const flows = store.listFlows().map((id) => {
+    const flow = store.readFlow(id);
+    const tasks = store.listTasks(id);
+    const handoffs: Record<string, string> = {};
+    const evidence: Record<string, Record<string, string>> = {};
+    for (const t of tasks) {
+      const f = store.abs(handoffRel(id, t.id));
+      if (existsSync(f)) handoffs[t.id] = tail(redactSecrets(readFileSync(f, 'utf8')).text, HANDOFF_TAIL);
+      for (const name of EVIDENCE_FILES) {
+        const e = store.abs(`${evidenceRel(id, t.id)}/${name}`);
+        if (existsSync(e)) (evidence[t.id] ??= {})[name] = tail(readFileSync(e, 'utf8'), EVIDENCE_TAIL);
+      }
+    }
+    // 变更请求里的完整计划文本很长，页面只看摘要与动作
+    const changes = store.listChanges(id).map(({ plan_text: _p, ...c }) => c);
+    const amends = store.listAmends(id).map(({ content: _c, ...a }) => a);
+    let metrics: unknown = null;
+    try { metrics = flowMetrics(store, id, now, root); } catch {
+      try { metrics = flowMetrics(store, id, now); } catch { metrics = null; }
+    }
+    return { flow, kind: flowKind(flow), stageRows: stageRows(flow, tasks), tasks, handoffs, evidence, changes, amends, metrics };
+  });
+  const events = store.readEvents().map(({ entities: _e, prev_hash: _p, hash: _h, ...e }) => e);
+  const data = {
+    generatedAt: now.toISOString(),
+    project: root,
+    activeFlow: state.active_flow,
+    roles: [...ROLES],
+    flows,
+    runs: store.listRuns(),
+    events,
+    transitions: TRANSITIONS.map((r) => ({ from: [...r.from], to: r.to, trigger: r.trigger, failure: !!r.failure, ...(r.counter ? { counter: r.counter } : {}) })),
+    stageTransitions: STAGE_TRANSITIONS.map((r) => ({ from: [...r.from], to: r.to, trigger: r.trigger, humanOnly: !!r.humanOnly })),
+    modelPauses: store.readModelPauses().pauses,
+    mergeQueue: store.readMergeQueue(),
+    knowledge: store.readKnowledge().entries.length,
+  };
+  return redactDeep(data).value as typeof data;
+}
+
+/** 把数据内嵌进 forge-view.html 的模板；`<` 转义，避免数据里的 </script> 截断页面 */
+export function renderViewHtml(data: unknown): string {
+  const json = JSON.stringify(data).replace(/</g, '\\u003c');
+  const html = readFileSync(path.join(import.meta.dirname, 'forge-view.html'), 'utf8');
+  return html.replace('/*__DATA__*/null', () => json);
+}

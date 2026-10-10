@@ -1,44 +1,19 @@
-// 来源：pi-flow scripts/flow-view.ts @ 31f3f15（改名）
-// 把一个项目的 .forge/ 状态生成一个可交互的 HTML（自包含，不联网）：任务状态机与转移次数、任务 DAG、运行时间线、成本、事件日志、原始状态。
+// 来源：pi-flow scripts/flow-view.ts @ 31f3f15（改名；按 pi-forge 的流程、阶段与角色改写）
+// 把一个项目的 .forge/ 状态生成一个可交互的 HTML（自包含，不联网）：
+// 阶段（P0、P1、S0…Sn）与任务 DAG（按角色着色，派生任务挨着原任务）、任务状态机与转移次数、§17 度量、变更与规格修订、运行时间线、成本、事件日志、原始状态。
+//   npm run view -- <项目目录> [--out <文件>]
 //   node scripts/forge-view.ts <项目目录> [--out <文件>]
-// 默认输出到 <项目目录>.forge-view.html（项目目录之外，不污染工作区）。只读，不修改 .forge/。
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+// 默认输出到 <项目目录>.forge-view.html（项目目录之外，不污染工作区）。只读，不修改 .forge/；内嵌的自由文本都经过打码。
+import { existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { StateStore, handoffRel } from '../src/core/state-store.ts';
-import { TRANSITIONS } from '../src/core/state-machine.ts';
+import { StateStore } from '../src/core/state-store.ts';
+import { buildViewData, renderViewHtml } from './forge-view-data.ts';
 
 const argv = process.argv.slice(2);
-const dir = path.resolve(argv.find((a) => !a.startsWith('--') && argv[argv.indexOf(a) - 1] !== '--out') ?? '.');
-const out = argv.includes('--out') ? path.resolve(argv[argv.indexOf('--out') + 1]!) : `${dir.replace(/\/$/, '')}.forge-view.html`;
+const outIdx = argv.indexOf('--out');
+const dir = path.resolve(argv.find((a, i) => !a.startsWith('--') && i !== outIdx + 1) ?? '.');
+const out = outIdx >= 0 && argv[outIdx + 1] ? path.resolve(argv[outIdx + 1]!) : `${dir.replace(/\/$/, '')}.forge-view.html`;
 if (!existsSync(path.join(dir, '.forge', 'state.json'))) { console.error(`${dir} 不是 pi-forge 项目（缺少 .forge/state.json）`); process.exit(1); }
 
-const store = new StateStore(dir);
-const state = store.readState();
-const flows = store.listFlows().map((id) => {
-  const flow = store.readFlow(id);
-  const tasks = store.listTasks(id);
-  const handoffs: Record<string, string> = {};
-  for (const t of tasks) {
-    const f = store.abs(handoffRel(id, t.id));
-    if (existsSync(f)) handoffs[t.id] = readFileSync(f, 'utf8').slice(-3000);
-  }
-  return { flow, tasks, handoffs };
-});
-const events = store.readEvents().map(({ entities: _e, prev_hash: _p, hash: _h, ...e }) => e);
-const data = {
-  generatedAt: new Date().toISOString(),
-  project: dir,
-  activeFlow: state.active_flow,
-  flows,
-  runs: store.listRuns(),
-  events,
-  transitions: TRANSITIONS.map((r) => ({ from: [...r.from], to: r.to, trigger: r.trigger, failure: !!r.failure })),
-  modelPauses: store.readModelPauses().pauses,
-  mergeQueue: store.readMergeQueue(),
-  knowledge: store.readKnowledge().entries.length,
-};
-const json = JSON.stringify(data).replace(/</g, '\\u003c');
-// 页面模板在 forge-view.html：数据以 JSON 内嵌，页面不联网
-const html = readFileSync(path.join(import.meta.dirname, 'forge-view.html'), 'utf8');
-writeFileSync(out, html.replace('/*__DATA__*/null', () => json));
+writeFileSync(out, renderViewHtml(buildViewData(new StateStore(dir), dir)));
 console.log(`已生成：${out}`);

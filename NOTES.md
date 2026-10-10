@@ -3,17 +3,28 @@
 记录已核实的事实（版本、Pi API）、偏离规格（`docs/BUILD_PROMPT.md`）的决定、真实模型实验的结论。实现细节以代码与测试为准，这里只写"为什么这样做"。
 偏离记录的编号不变；新增条目往后追加，一条 1–3 行，被后来的条目修订时注明。代码注释里的"第 N 条"在 M0 迁入的文件中指 pi-flow `NOTES.md` 的编号，改编时逐步换成本文的编号。
 
+目录：[已验证版本](#已验证版本) · [Pi API（已核实）](#pi-api已核实) · [待确认与已知局限](#待确认与已知局限) · [偏离记录](#偏离记录)（第 1–70 条，按里程碑 M0–M7 分组） · [M1 删除、由 Mx 重建](#m1-删除由-mx-重建) · [M2 删除按层角色](#m2-删除按层角色) · [真实模型实验](#真实模型实验) · [缓存提醒](#缓存提醒)。用户文档见 `README.md`，流程图见 `docs/flow.md`。
+
 ## 已验证版本
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
 | Node | 24.18.0 | 要求 ≥22；测试用原生 TS 类型剥离（只用可擦除语法） |
 | git | 2.50.1 | 要求 ≥2.30（worktree） |
-| Pi | `@earendil-works/pi-coding-agent` **1.0.0**（本机全局安装） | 与 pi-flow 已验证的版本相同；npm 上已有 1.1.0，未验证 |
+| Pi | `@earendil-works/pi-coding-agent` **1.0.0**（本机全局安装）；**1.1.0 已评估、兼容**（10-10，见下方升级评估） | 本机全局仍是 1.0.0，是否升级等用户决定；M9 在升级后的版本上跑 |
 | typebox | 1.3.27 | Pi 内置核心包，`peerDependencies: "*"`，不打包 |
 | minimatch 10.2.6、proper-lockfile 4.1.2、yaml 2.9.0 | | 与 pi-flow 相同，不新增运行时依赖（规格第 1 节第 6 条） |
 | typescript 5.9.3、@types/node 22 | | 开发依赖 |
 | 复用来源 | pi-flow `~/Documents/Code/program/pi-flow`：运行时 `31f3f15`，流程层 `7006e7d` | 见偏离第 1 条 |
+
+## Pi 1.0.0 → 1.1.0 升级评估（10-10）
+
+- **变更记录**（1.0.1–1.1.0）：对 pi-forge 有影响的只有两处，都不需要改代码。
+  - 1.0.4 起 `--tools` 不再移除 MCP 工具（codemode 脚本仍能调用）。pi-forge 的子进程带 `--no-extensions`，内置 MCP 不加载（已读 1.1.0 源码 `core/resource-loader.js`：`noExtensions` 时只加载 `-e` 显式给出的扩展）；guard 的工具白名单也会拦下未授予的工具（第二层）。主会话（用户的交互 pi）上的 MCP 工具同样被 guard 白名单拦下。
+  - 1.1.0 的 `--tools` 支持 `+name`/`-name`；pi-forge 的工具名不以 `+`、`-` 开头，不受影响。
+- **扩展 API**：对比 1.0.0 与 1.1.0 的 `dist/core/extensions/types.d.ts`、`dist/index.d.ts`，只有新增：`tool_execution_end.durationMs`、`agent_settled.aborted`、`registerToolRenderer`、`ToolLoadout.getPromptGuidelines`、渲染上下文的 `durationMs`/`outputPad`。pi-forge 用到的 API（registerTool、registerCommand、tool_call、before_agent_start、setActiveTools、sendUserMessage、ui、RPC 事件与 usage）没有变化。
+- **实测**：真实 Pi 测试（`pi-subprocess`、`orchestrator-session`、`crash-recovery`、`orchestrator-p0`，共 11 个，fake LLM）在 1.0.0 与 1.1.0（临时目录安装，不动全局）上结果相同：10 通过、1 失败。失败的是 `pi-subprocess` 的"合并时全量测试失败退回"，两个版本一样，原因是 M4 起测试改在预检阶段失败、不再走到合并，测试本身过时，留到统一 e2e 修。
+- **结论**：可以升级到 1.1.0，不需要改代码。注意 1.0.3 把 Azure 提供方从 `azure-openai-responses` 改名为 `azure`，用 Azure 模型时要改 workflow.yaml 与角色设置里的模型名。
 
 ## Pi API（已核实）
 
@@ -47,14 +58,17 @@
 ## 待确认与已知局限
 
 - 继承自 pi-flow：serena 的 `prepareArguments` 在 `tool_call` 之前还是之后未核实；guard 管不到脚本文件内部（`bash x.sh`、`npm run`），兜底是提交时的 diff 检查；打码只认识常见密钥形态。
-- Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。
-- M4 已接上资源隔离、bash 白名单、test-author 隔离工作区与 .at、真实预检、争议、验收测试单独合并与范围申请规则；e2e 按用户要求留到全部开发完统一运行。
-- M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；M3 已接上 P1：architect 起草契约与计划、forge_propose_plan 校验、doc 预检、P1 闸门、批准后生成 S 阶段与 task 并进入 S0。真实预检、验收测试 task、审查与契约锁定检查、阶段验收分别由 M4/M5/M6 接入。主会话角色按用户决定沿用 orchestrator。
+- Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。（10-10 已完成评估，结论兼容，见「Pi 1.0.0 → 1.1.0 升级评估」；全局安装是否升级等用户决定。）
+- M4 已接上资源隔离、bash 白名单、test-author 隔离工作区与 .at、真实预检、争议、验收测试单独合并与范围申请规则；e2e 按用户要求留到全部开发完统一运行（M4 到 M7 的 e2e 都是这样处理的，M9 之前统一跑一遍）。
+- M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；M3 已接上 P1：architect 起草契约与计划、forge_propose_plan 校验、doc 预检、P1 闸门、批准后生成 S 阶段与 task 并进入 S0。真实预检、验收测试 task、审查与契约锁定检查、阶段验收分别由 M4/M5/M6 接入（均已完成，见偏离第 32、44–62 条）。主会话角色按用户决定沿用 orchestrator。
 - stage-qa 的 bash 是 full，现有 guard 拦不住 shell 重定向改源码，而规格第 14 节要求 stage-qa 不能写（临时目录除外）。M6 改为由隔离兜底：stage-qa 和阶段审查在集成分支 HEAD 的临时 detached worktree 里运行，没有任何流程从这个 worktree 提交，结束后删除。重定向和 write 工具仍按可写范围（空）拦截。仍然留着的缺口：full bash 命令参数里写主工作区的绝对路径（例如 `cp x /项目/...`）是否被拦截，没有专门的测试。留到统一 e2e 时核对。
 - M6 的 e2e（`test/e2e/stage-acceptance.test.ts`）只写了，没有运行。旧的 `test/e2e/gates.test.ts` 按模块生成 `T-NNN` 修复任务；现在改为按 task 生成 `.fx-n`，需要在统一 e2e 时更新。测试项目的 `PROJECT_YAML` 默认 `qa: false`，M6 的测试显式打开。
 - 阶段被打回（stage_reopened）后，再跑 stage-qa 与阶段审查时，旧的轮次仍计入 `qa.max_rounds` 和 `review.max_rounds`。M7 没有处理，留作已知局限：签收被打回后，用户可以用 `/forge accept` 放行。
-- M7 的 e2e（`change-request`、`fix`）只写了，没有运行。没有为 feature 和 adopt 写 e2e，它们由单元测试覆盖。`agents/architect.md`、`skills/change-request` 没有提到 `modifies` 和 adopt，目前只靠程序生成的 brief 说明；是否修改提示词由用户决定。修改提示词会让缓存失效。
-- 变更请求的 `cancelled` 状态在 store 里有，但没有接命令。
+- M7 的 e2e（`change-request`、`fix`）只写了，没有运行。没有为 feature 和 adopt 写 e2e，它们由单元测试覆盖。提示词已按用户决定在 M8 补上 `modifies`、adopt 与 feature 的写法（见缓存提醒 10-10）。
+- 变更请求的 `cancelled` 状态在 store 里有（`StateStore.cancelChange`），但没有接命令，也没有调用者（M8 文档阶段核对：仍然如此）。
+- 流程图按用户要求延后（含 drawio）：`docs/flow.md` 是 M8 subagent 写的 mermaid 草稿，未审阅，之后再整理。
+- 工作流视图（`scripts/forge-view.*`）按用户要求延后：M8 subagent 的改编已合入，只做过渲染冒烟（能打开、无脚本错误），界面与数据未审阅，之后再整理。
+- M8 文档阶段发现的小问题已修正：帮助文本补上 `change:<id>`，删掉不存在的 `/forge stop`，旧写法 `/forge-build "<描述>"` 改为 `--prd`，`templates/AGENTS.md` 改为 v3 的阶段与目录。
 
 ## 偏离记录
 
@@ -66,21 +80,21 @@
 4. M0 不 skip 测试（DECISIONS-R2 第 3 节）：拷贝的是 HEAD 的流程层，测试全部能过，留着保护改名。通知测试（`test/unit/state-recovery6.test.ts`）原来让两个通知进程追加同一个文件，负载高时内容交错、偶发失败；改为每个事件写单独的文件（只改测试）。
 5. `.npmrc` 设 `legacy-peer-deps=true`：pi-flow 的锁文件没有 Pi 的 peer 依赖（Pi 由宿主提供，扩展经 jiti 加载时解析到全局安装），npm 7 起默认会安装 peer 依赖，导致 `npm ci` 报锁文件不同步。
 6. 没有拷贝 pi-flow 的 `scripts/demo*`、`bench5-native.ts`、`measure-merge.ts`、`playground/`、`docs/`；`package.json` 去掉 `demo` 脚本与 `prompts` 清单（`prompts/stage-kickoff.md` 是 pi-flow 主会话的提示模板，只放进夹具）。`templates/AGENTS.md`、`templates/gitignore.append` 从 pi-flow 拷贝（`init` 要用，v3 没有提供）。
-7. 契约"只能追加"的判定规则（DECISIONS-R1 第 21 条，规格第 12.1 节）：新增 path、operation、响应状态码、可选的请求或响应字段、schema、错误码、`modules/*.md` 的函数小节、数据表、可空列算追加；删除或改名、改已有字段的类型、格式、默认值，给请求新增必填字段，改动任何 `required` 数组或 `enum`（包括新增取值），改已有错误码的 http 状态或含义，改已有列、新增非空且没有默认值的列，都算修改，要走变更请求。M5 实现时以规格第 12.1 节的表为准。
+7. 契约"只能追加"的判定规则（DECISIONS-R1 第 21 条，规格第 12.1 节）：新增 path、operation、响应状态码、可选的请求或响应字段、schema、错误码、`modules/*.md` 的函数小节、数据表、可空列算追加；删除或改名、改已有字段的类型、格式、默认值，给请求新增必填字段，改动任何 `required` 数组或 `enum`（包括新增取值），改已有错误码的 http 状态或含义，改已有列、新增非空且没有默认值的列，都算修改，要走变更请求。M5 实现时以规格第 12.1 节的表为准。（已被第 54 条细化）
 
 **M1（2026-10-09）**
 
 8. 一次切换到 v3.2：删除 HEAD 的规划、需求讨论、独立验收、最终审查、修订与 fix 流程层，后续按 legacy 分别在 M2–M7 重建。`/forge-build` 只建流程、停在 P0，不启动主会话讨论。
-9. M1 临时预检集中在 `passthroughPrecheck()`，等待最新验收测试与软依赖、同步后直通 queued_merge；合并时仍执行全量验证。M4 替换，M4 验收必须确认直通代码和标记已删除。
-10. bash allowlist 在 M4 前按 readonly 处理，保留 `bashAllow` 配置；**命令白名单尚未生效**，不能因此放行有副作用的命令。
-11. 暂时保留 HEAD 的门禁失败修复任务机制，kind 改为 fix；两轮用尽进入 needs_human。M6 由 stage-qa 取代；M1 的 accept 只接状态机已有的人工例外路径，最终合入仍需用户签收。
+9. M1 临时预检集中在 `passthroughPrecheck()`，等待最新验收测试与软依赖、同步后直通 queued_merge；合并时仍执行全量验证。M4 替换，M4 验收必须确认直通代码和标记已删除。（已被第 47、48 条修订）
+10. bash allowlist 在 M4 前按 readonly 处理，保留 `bashAllow` 配置；**命令白名单尚未生效**，不能因此放行有副作用的命令。（已被第 41 条修订）
+11. 暂时保留 HEAD 的门禁失败修复任务机制，kind 改为 fix；两轮用尽进入 needs_human。M6 由 stage-qa 取代；M1 的 accept 只接状态机已有的人工例外路径，最终合入仍需用户签收。（已被第 59、60 条修订）
 12. 主会话角色沿用 orchestrator，不采用规格中的 main（用户决定）；规格中的 main 都指 orchestrator。范围授权来源和超时复核设置也使用 orchestrator，主分支名与 main_branch 保持原样。
 13. `.forge` 格式版本从 1 开始，无内置旧格式迁移；保留迁移框架、更新版本拒写与缺失迁移提示。不提供旧 pi-flow 流程兼容路径（修订 M0 第 3 条的临时夹具方案）。
 14. **已撤销（M2，见第 21 条）**：名字以 `-engineer` 结尾的角色按 worker 校验专属工具，保留按层的运行时测试夹具；仓库角色来自包根目录与项目覆盖目录，不再使用 CONTENT_ROOT。
 15. run_timeout 计入 attempts（规格第 8.1 节），保留超时复核和续跑上限；已有超时复核决定优先于重复失败看守，避免其提前截断续跑。unblock 默认保留计数，--reset 仅清零阻塞原因对应的计数。
 16. `testing.adjust_tests` 按模板保留，仅 impl/fix 可适配已有测试，新增与删除不放行；独立的 `tests/acceptance/**` 从适配白名单中排除。
 17. risk 枚举暂定为 low、normal、high；M1 仅校验形状，计划的语义检查与 DAG 推导留给 M3。
-18. `canAppendInterfaces` 保留，路径改为 `docs/contracts/**`，提交例外只认 `Facts.contract_additions`；M5 判定实现前传空数组，不能将 agent 的声明当成已核实的追加。
+18. `canAppendInterfaces` 保留，路径改为 `docs/contracts/**`，提交例外只认 `Facts.contract_additions`；M5 判定实现前传空数组，不能将 agent 的声明当成已核实的追加。（已被第 54 条修订）
 19. 模型升级读取 attempts、precheck_failures、merge_failures、review_rounds 的合计，不改写各独立计数；合并验证日志按 merge_failures 编号，避免旧 attempts 编号覆盖重试证据。
 20. intake 的输入导入与独立索引提交原语暂时保留，输入放进 `docs/spec/inputs/`；M2 改为规格流程。旧真实构建脚本移除，M9 再实现真实模型实验。
 
@@ -89,20 +103,20 @@
 21. 删除按层测试角色，运行时测试改用 pi-forge 七角色重写；撤销第 14 条的 engineer 后缀兼容。旧断言的替代见下方“M2 删除按层角色”。
 22. `/forge-build` 的 `--prd` 必填，不支持无 PRD 的想法讨论；原件不解析，流程标题取 PRD 文件或目录名，原型可省略。
 23. forge_read 的 ref 白名单只认存在的本地主分支与 flow 的集成/任务分支，不接受 HEAD、SHA、revision 或状态引用，避免读到状态与检查点。
-24. 同一流程只允许一份 proposed 规格修订；多个审批对象必须明确 stage/amend，change 留给 M7，避免误批准或叠加未批准修订。
+24. 同一流程只允许一份 proposed 规格修订；多个审批对象必须明确 stage/amend，change 留给 M7，避免误批准或叠加未批准修订。（change 已由第 64 条实现）
 25. spec 增量页面按路由整页替换，权限按资源操作合并角色单元格；没有删除页面语法，空页面小节与无数据行的合法权限表表示没有变更。
 26. 删除的 REQ 编号不得复用，仍计入历史最大编号；额外拒绝不可解析的需求/AC/术语、空基线、删除标题带 AC、重复 feature 文件名或小节，避免静默猜测。
 27. intake 清单持久化为 `{ prd, prototype_path?, files }`，替换第 20 条的兼容投影；TypeBox 1.3.27 的 Memory.Clone 会剔除 `prototype` 键，故内部改名，公开 intake 接口仍为 `{ prd, prototype?, files }`。
 28. 输入入库保留原件字节、相对目录和可执行位；拒绝空目录、符号链接、敏感/状态路径，保留 500 文件/30 MiB 上限；forge_read 沿用 2000 行/50 KiB 完整行分页，超长单行明确提示。
 29. P0 的 spec-lint 错误整体拒绝且不落文件/事件；通过后独立索引提交，闸门重读集成分支并必须人工批准；P1 只留 M3 占位，不派发（已被 33 修订）。恢复 awaiting_gate 时由引擎重跑闸门。
-30. 修订先只保存提案与 AC/task 影响，批准才提交 feature；批准前重新 lint 并对比影响，变化时要求打回重提。日期回拨时不早于已有 feature 的日期，保持文件名叠加顺序；architect 变更请求留 M7。
+30. 修订先只保存提案与 AC/task 影响，批准才提交 feature；批准前重新 lint 并对比影响，变化时要求打回重提。日期回拨时不早于已有 feature 的日期，保持文件名叠加顺序；architect 变更请求留 M7。（已被第 64、67 条修订）
 31. AC 的全局编号统一为 `REQ-001.AC1`（规格第 7.1 节、acceptance-tests 技能的写法），task.ac、spec 的 diffAcs/acTexts、修订影响分析都用它，不做转换。规格文件/修订内容单份限 120000 字符，修订名最多 80 字且只含文字、数字、下划线、短横线。
 32. 验收测试 task（`.at`）的推导已实现（`deriveTasks` 的 `acctest` 开关），但 M3 不创建（`ACCTEST_TASKS_M4 = false`）：独立工作区、同步进 impl 预检和报告路径在 M4，现在创建会让 impl 的输入一直不就绪。M4 打开并补 e2e。（M4 第 3 步已打开，常量删除。）
 33. P1 由程序驱动：进入 P1、打回或闸门失败时引擎新建 architect 的 doc task（接着上一个 task 的会话，`fork_from_task`），不经主会话、不受 auto_dispatch 影响，直接派发（与 merge-fix 同路径）。返工原因存在 `flow.plan_rework`，写进新 task 的 handoff，派发后清除。
 34. task 编号全流程连续：architect 的 doc task 也占编号，plan.yaml 从下一个空号起（brief 写明起始号，冲突时校验给出建议编号）。不用临时编号再映射。
 35. `forge_propose_plan` 在 architect 的 worktree 上跑完整 P1 校验（契约结构、术语表只追加、计划），通过后保存 `plan-proposal.json`（含 plan 的 sha256、assumptions、extras、报告）。doc 预检要求提案存在且 plan.yaml 未再改；闸门在集成分支上重跑同样的校验。
 36. 术语表在 P1 只能追加：对比 `flow.spec.sha` 时的版本，已有术语的定义不能改、不能删。
-37. 契约锁定只记录 `flow.contracts_base`（批准 P1 时集成分支的提交）。实施阶段对契约只能追加的强制检查放在 M5（审查/契约检查）。
+37. 契约锁定只记录 `flow.contracts_base`（批准 P1 时集成分支的提交）。实施阶段对契约只能追加的强制检查放在 M5（审查/契约检查）。（已被第 54、66 条修订）
 38. 批准 P1 时先在主工作区应用规则与命令草案（单独提交，包括 `acctest_workspace`），并同步更新运行中的配置，再生成 S 阶段与 task。P1 不算最后阶段，不提示合入主分支。
 39. 规则文件除按 scope 选择外，还按 task 的 `layers` 附上 `rules/<layer>.md`（存在时）。architect 写的规则草案按层命名，worker 就能拿到。
 40. 资源端口段在 41000–60000 内按 10 对齐，从随机位置开始找，登记前逐个端口探测能否监听。程序步骤（预检、门禁、合并验证）用带前缀的标签（`pc-`、`gate-`、`merge-`）代替 run id；条目的 pid 记分配它的引擎进程，回收条件是 run 已结束或该进程已不存在。
@@ -217,3 +231,4 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 
 - 10-09（M0）：`agents/`、`rules/`、`skills/`、`templates/` 是用户提供的 v3 全文，M0 没有改动；运行时还没有使用它们。
 - 10-09（M1）：`agents/main.md` 改名为 `agents/orchestrator.md` 并同步 frontmatter；`skills/domain-modeling/SKILL.md`、`skills/change-request/SKILL.md` 将主会话用词改为 orchestrator。运行时开始使用包内角色与技能，稳定前缀改变，提示缓存会失效一次。
+- 10-10（M8）：`agents/architect.md` 增加 feature 模式、变更请求（完整计划与 `modifies`）、纳管（--adopt）三节；`skills/change-request/SKILL.md` 改为写完整计划、已开始的 task 用 `modifies`，删掉 N-001 编号；`agents/orchestrator.md` 增加 feature 模式的增量规格写法。architect 与 orchestrator 的提示缓存各失效一次。

@@ -1,0 +1,40 @@
+需要你处理：
+- T-001「任务 T-001」审查多轮仍有问题，等你决定：原因 review_exhausted
+  → /forge accept T-001 --note "<说明>"（接受现状，程序继续合并验证）或 /forge unblock T-001 "<意见>" --reset（清零后重新审查）
+- T-002「任务 T-002」预检多次失败：原因 precheck_exhausted
+  → /forge unblock T-002 "<提示>" --reset（计数清零后重试）
+- T-003「任务 T-003」有问题要问你：原因 agent
+  → /forge answer T-003
+- T-004「任务 T-004」集成分支已坏：原因 integration_broken
+  → 集成分支本身已坏：修好后 /forge unblock T-004
+- T-005「任务 T-005」合并验证多次失败：原因 merge_exhausted
+  → /forge unblock T-005 "<提示>" --reset（计数清零后重试）
+- 流程卡住：剩下的任务都被 T-001、T-002、T-003、T-004、T-005 挡住
+  → /forge unblock <任务>
+
+B-001「演示」（新项目）
+规格 ✓ → 契约与计划 ✓ → [实施] → 交付
+实施阶段：S0 骨架 ✓ → [S1] → S2
+当前阶段 S1：可以创建并查看看板（进行中）
+进度：S1 0 / 5 个任务完成（全部实施阶段 0 / 5）
+正在进行：无（有任务在等你处理，见上）
+阻塞：T-001、T-002、T-003、T-004、T-005
+
+## B-001「演示」内部状态
+- 模式 build；阶段序列 P0 → P1 → S0 → S1 → S2（S 阶段：S0、S1、S2）
+- 当前阶段 S1：active；集成分支 flow/B-001/integration
+- 已批准的闸门：P0、P1
+
+### 任务表（5 个）
+| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 争议 | 尝试 | 阻塞原因 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| T-001 | impl | worker | blocked | S1 | 0 | 3 | 0 | 0 | 0 | review_exhausted |
+| T-002 | impl | worker | blocked | S1 | 3 | 0 | 0 | 0 | 0 | precheck_exhausted |
+| T-003 | impl | worker | blocked | S1 | 0 | 0 | 0 | 0 | 0 | agent |
+| T-004 | impl | worker | blocked | S1 | 0 | 0 | 0 | 0 | 0 | integration_broken |
+| T-005 | impl | worker | blocked | S1 | 0 | 0 | 3 | 0 | 0 | merge_exhausted |
+
+### 最近事件
+#2 <时间> transition none→active
+#3 <时间> stages_planned
+#4 <时间> note：新增任务 5 个

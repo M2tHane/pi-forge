@@ -101,7 +101,7 @@ test('fixPhase 与 fixStatusLine：修复中 / 合并 / 复现确认 / 需要你
   assert.equal(fixPhase(flow('active'), [t('T-001', 'impl', 'blocked')]), 'needs_human');
   assert.equal(fixPhase(flow('needs_human'), [t('T-001', 'impl', 'done')]), 'needs_human');
   assert.equal(fixPhase(flow('done'), []), 'done');
-  assert.match(fixStatusLine(flow('active'), [t('T-001', 'impl', 'done'), t('X1.qa', 'qa', 'in_progress')] as never), /复现确认，复现确认第 1 轮/);
+  assert.match(fixStatusLine(flow('active'), [t('T-001', 'impl', 'done'), t('X1.qa', 'qa', 'in_progress')] as never), /复现确认（第 1 轮）/);
   assert.match(fixStatusLine(flow('active'), [t('T-001', 'impl', 'in_progress')] as never), /修复中/);
 });
 

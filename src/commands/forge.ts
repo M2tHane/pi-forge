@@ -21,8 +21,8 @@ import { featurePrecondition } from '../core/feature-spec.ts';
 import { approveChange, rejectChange } from '../core/change-flow.ts';
 import { importInputs, prepareInputs, type IntakeInput, type PreparedIntake } from '../core/intake.ts';
 import { readFileSync } from 'node:fs';
-import { costReport, formatCost } from '../core/cost.ts';
-import { deliveryReport, flowMetrics, renderMetrics, sStageIds, stageSignoff } from '../core/signoff.ts';
+import { renderCostView, renderDetail, renderMetricsView } from '../core/status-detail.ts';
+import { deliveryReport, sStageIds, stageSignoff } from '../core/signoff.ts';
 import { renderStatus, visibleFlows } from '../core/status-view.ts';
 import { applyDrafts, formatDrafts, listDrafts, type Draft } from '../core/rules-draft.ts';
 import { findSessionFile, formatRunDetail, summarizeSession } from '../core/session-log.ts';
@@ -79,8 +79,8 @@ export const FLOW_USAGE = [
   '  /forge doctor [--fix]    状态完整性与前置条件检查；--fix 清理残留 worktree 与提示文件',
   '  /forge init              初始化项目骨架（可重复执行，不覆盖）',
   '  /forge init --adopt ["<涉及的模块或说明>"] [--force]   已有项目纳管：architect 从现有代码反向整理边界契约，你批准后合入主分支成为 feature 模式的基线；主分支已有契约时需要 --force（补充更多模块，已有契约只能追加）',
-  '  /forge-approve [stage:<id>|amend:<id>] [--yes]   批准等待审阅的对象（仅用户）；实施阶段批准时把集成分支合入主分支',
-  '  /forge-reject [stage:<id>|amend:<id>] "<意见>"   打回对象并记录意见',
+  '  /forge-approve [stage:<id>|amend:<id>|change:<id>] [--yes]   批准等待审阅的对象（仅用户）；实施阶段批准时把集成分支合入主分支',
+  '  /forge-reject [stage:<id>|amend:<id>|change:<id>] "<意见>"   打回对象并记录意见',
   '  /forge-add "<需求>"       中途追加需求：交给主会话整理成规格修订（forge_spec_amend），你用 /forge-approve amend:<id> 批准（P0 批准之后可用）',
   '  /forge accept <阶段或任务> --note "<说明>"   阶段在"需要你处理"（门禁修复轮数用尽）时人工放行进入签收；或接受耗尽轮数的任务审查',
   '  /forge-decide <任务> keep-test ["<说明>"] | fix-test "<说明>"   裁决交给你的验收测试争议',
@@ -111,24 +111,18 @@ export function currentFlowId(store: Store): string {
   return activeFlowId(store);
 }
 
-function fullStatus(store: Store, engine: Engine | null): string {
-  const parts: string[] = [];
-  const active = store.readState().active_flow;
-  if (active) parts.push(statusText(store, engine, active));
+function fullStatus(store: Store, config: FlowConfig): string {
+  const parts: string[] = [renderDetail(store, config)];
   const fix = store.openFixFlow();
-  if (fix) {
-    parts.push(statusText(store, engine, fix.id));
-    if (fix.stage_status === 'awaiting_human') {
-      const why = [...store.readEvents()].reverse().find((e) => e.flow === fix.id && e.type === 'gate_result')?.reason ?? '';
-      parts.push(`修复 ${fix.id} 等待你决定：${why}\n继续按修复处理 → /forge-approve；改用功能流程 → /forge abort 后 /forge-build --feature "<描述>"`);
-    }
+  if (fix?.stage_status === 'awaiting_human') {
+    const why = [...store.readEvents()].reverse().find((e) => e.flow === fix.id && e.type === 'gate_result')?.reason ?? '';
+    parts.push(`修复 ${fix.id} 等待你决定：${why}\n继续按修复处理 → /forge-approve；改用功能流程 → /forge abort 后 /forge-build --feature --prd <文件>`);
   }
-  if (!parts.length) {
+  if (!store.readState().active_flow && !fix) {
     // 没有进行中的流程时，显示最近一次已结束的修复及其日志
     const last = store.listFlows().map((id) => store.readFlow(id)).filter((f) => f.mode === 'fix' && f.stage_status === 'done').at(-1);
-    if (last) parts.push(statusText(store, engine, last.id));
+    if (last) parts.push(statusText(store, null, last.id));
   }
-  if (!parts.length) parts.push('当前没有进行中的流程。开始：/forge-build "<描述>"、/forge-build --feature "<描述>" 或 /forge-fix "<描述>"。');
   const recent = store.readKnowledge().entries.filter((e) => e.status === 'active' || e.status === 'candidate').slice(-5);
   if (recent.length) parts.push(`最近的项目知识（全部：/forge knowledge）：\n${formatKnowledgeList(recent)}`);
   return parts.join('\n\n');
@@ -190,24 +184,17 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
     }
     case 'status': {
       const store = env.store();
-      if (argv.includes('--cost')) {
-        const config = loadConfig(path.join(env.root, 'workflow.yaml'));
-        const budgets = visibleFlows(store).flatMap((f) => { const b = budgetState(store, config, f); return b ? [`${f.id} ${formatBudget(b)}`] : []; });
-        return [formatCost(costReport(store), store.listFixLogs()), ...budgets].join('\n\n');
-      }
-      if (argv.includes('--detail')) return fullStatus(store, null);
-      if (argv.includes('--metrics')) {
-        const flows = visibleFlows(store);
-        if (!flows.length) return '没有进行中的流程。';
-        return flows.map((f) => renderMetrics(flowMetrics(store, f.id, new Date(), env.root))).join('\n\n');
-      }
+      const config = () => loadConfig(path.join(env.root, 'workflow.yaml'));
+      if (argv.includes('--cost')) return renderCostView(store, config());
+      if (argv.includes('--detail')) return fullStatus(store, config());
+      if (argv.includes('--metrics')) return renderMetricsView(store, new Date(), env.root);
       if (argv.includes('--timing')) {
         const flows = visibleFlows(store);
         if (!flows.length) return '没有进行中的流程。';
         const reports = flows.map((f) => timingReport(store, f.id));
         return argv.includes('--json') ? JSON.stringify(reports.length === 1 ? reports[0] : reports, null, 2) : reports.map(formatTiming).join('\n\n');
       }
-      return renderStatus(store, loadConfig(path.join(env.root, 'workflow.yaml')));
+      return renderStatus(store, config());
     }
     case 'report': {
       const store = env.store();
@@ -231,7 +218,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       }
       for (const r of h.engine.activeRuns().filter((x) => x.flow === flowId)) h.engine.kill(r.run_id);
       await h.store.transitionStage(flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
-      return `已中止 ${flowId}。${flow.mode === 'fix' ? '如需改用功能流程：/forge-build --feature "<描述>"' : ''}`;
+      return `已中止 ${flowId}。${flow.mode === 'fix' ? '如需改用功能流程：/forge-build --feature --prd <文件>' : ''}`;
     }
     case 'next': {
       const h = env.engine();
@@ -390,7 +377,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         const id = argv[2];
         if (!id) return '用法：/forge checkpoint restore <任务>';
         const t = h.store.readTask(flowId, id);
-        if (t.lease) return `${id} 正在运行（run ${t.lease.run_id}），等它结束或 /forge stop 后再恢复。`;
+        if (t.lease) return `${id} 正在运行（run ${t.lease.run_id}），等它结束（或 /forge abort 中止流程）后再恢复。`;
         if (!t.worktree || !existsSync(t.worktree)) return `${id} 的工作区不存在，无法恢复。`;
         const n = restoreCheckpoint(env.root, t.worktree, flowId, id);
         await h.store.recordEvent({ flow: flowId, task: id, actor: 'human', type: 'note', reason: `从检查点恢复工作区（${n} 个文件）` });

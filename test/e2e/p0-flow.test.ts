@@ -47,7 +47,7 @@ test('P0 不合格规格零写入；合格规格独立索引提交，打回带�
     assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
     assert.equal(p.git('diff', '--cached'), index);
     assert.equal(existsSync(path.join(p.dir, 'docs/spec/requirements.md')), false);
-    assert.match(renderStatus(p.store, p.config), /规格：已提交；spec-lint：通过[\s\S]*stage:P0/);
+    assert.match(renderStatus(p.store, p.config), /stage:P0[\s\S]*规格：已提交；检查：通过/);
     await assert.rejects(submitSpec(p.dir, p.store, p.flowId, P0_SPEC), /等待用户/);
     await assert.rejects(runFlowCommand('approve typo', e.cmd), /用法/);
     await assert.rejects(runFlowCommand('approve stage:P0 amend:A-001', e.cmd), /用法/);
@@ -107,7 +107,7 @@ test('规格修订：列出 AC 差异与关联 task；多个待批对象须明�
     assert.match(proposed.text, /AC 新增：REQ-001\.AC2；修改：REQ-001\.AC1[\s\S]*T-001/);
     assert.equal(p.git('rev-parse', ref), initial);
     assert.equal(p.store.listAmends(p.flowId)[0]!.status, 'proposed');
-    assert.match(renderStatus(p.store, p.config), /amend:A-001[\s\S]*AC 新增：[\s\S]*T-001/);
+    assert.match(renderStatus(p.store, p.config), /amend:A-001[\s\S]*AC 新增 1[\s\S]*T-001/);
     assert.match(statusText(p.store, e.engine, p.flowId), /amend:A-001[\s\S]*T-001/);
     await assert.rejects(flowSpecAmend(p.dir, p.store, { content: P0_AMEND, reason: '重复' }), /已有修订等待批准/);
     await p.store.transitionStage(p.flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });

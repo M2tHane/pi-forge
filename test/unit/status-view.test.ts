@@ -48,7 +48,7 @@ test('/forge status 精简视图：阶段条、进度、正在进行、需要你
 
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'run:r-1', facts: { reason: '用 PostgreSQL 还是 SQLite？' } });
     out = renderStatus(p.store, p.config);
-    assert.match(out, /^需要你处理：\n- T-001「用户服务」阻塞：用 PostgreSQL 还是 SQLite？\n  → \/forge answer T-001/);
+    assert.match(out, /^需要你处理：\n- T-001「用户服务」有问题要问你：用 PostgreSQL 还是 SQLite？\n  → \/forge answer T-001/);
     assert.match(out, /阻塞：T-001/);
 
     await p.store.transitionStage(p.flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
@@ -89,7 +89,7 @@ test('状态栏一行：流程、高层阶段、进度、进行中的任务、�
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher',
       patch: { worktree: '/w', branch: 'b', base_sha: 'abc', lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('t'), acquired_at: '2026-10-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' } } });
-    assert.equal(statusLine(p.store, p.config), 'pi-forge B-001 实施 · 0/3 · 进行中：T-001 实现中');
+    assert.equal(statusLine(p.store, p.config), 'pi-forge B-001 实施 · 0/3 · 1 个任务进行中');
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'run:r-1', facts: { token: 't', reason: '需要决定' } });
     assert.match(statusLine(p.store, p.config)!, /需要你处理 1 项$/);
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });

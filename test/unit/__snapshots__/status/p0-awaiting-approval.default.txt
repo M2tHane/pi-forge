@@ -1,0 +1,12 @@
+需要你处理：
+- 规格已通过检查，等你批准
+  → /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"
+
+B-001「演示」（新项目）
+[规格] → 契约与计划 → 实施 → 交付
+规格阶段：规格已通过检查，等你批准
+规格：已提交；检查：通过
+警告：REQ-004 没有写非功能约束
+正在进行：无（等待你审批）
+
+（完整任务表与最近事件：/forge-status --detail；成本：/forge-status --cost；度量：/forge-status --metrics）

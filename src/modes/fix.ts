@@ -60,10 +60,10 @@ export function fixPhase(flow: Pick<FlowFile, 'stage_status' | 'stage' | 'stages
 export function fixStatusLine(flow: Pick<FlowFile, 'stage_status' | 'stage' | 'stages'>, tasks: readonly TaskFile[]): string {
   const phase = fixPhase(flow, tasks);
   const qa = qaTasksOf(tasks, FIX_STAGE);
-  const round = qa.length ? `，复现确认第 ${qaRoundOf(qa.at(-1)!.id)} 轮` : '';
+  const n = qa.length ? qaRoundOf(qa.at(-1)!.id) : 0;
   const fixes = tasks.filter((t) => t.kind === 'fix' && t.status !== 'cancelled').length;
   const rework = fixes ? `，验收返修 ${fixes} 个任务` : '';
-  return `修复步骤：${FIX_PHASE_LABEL[phase]}${phase === 'confirming' || phase === 'needs_human' ? round : ''}${rework}`;
+  return `修复步骤：${FIX_PHASE_LABEL[phase]}${n && phase === 'confirming' ? `（第 ${n} 轮）` : n && phase === 'needs_human' ? `（已复现确认 ${n} 轮）` : ''}${rework}`;
 }
 
 /** 超过这个文件数的改动应改用 /forge-build --feature */

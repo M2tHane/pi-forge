@@ -203,6 +203,14 @@ class Evaluator {
   }
 
   get isOrchestrator() { return this.role.name === 'orchestrator'; }
+
+  /** 命令文本里出现主工作区绝对路径（后面是路径分隔、引号、空白或结尾，不误伤 <项目>.worktrees/ 下的工作区）；与工作区相同时为 null */
+  mainPathPattern(): RegExp | null {
+    const roots = [...new Set([this.main, path.resolve(this.ctx.mainRoot)])].filter((r) => r !== this.ws && r !== path.resolve(this.ctx.workspaceRoot));
+    if (!roots.length) return null;
+    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(${roots.map(esc).join('|')})(?=$|[/'"\\s;)&|])`);
+  }
   get isReadonlyRole() { return !this.isOrchestrator && this.role.writes.length === 0; }
 
   hint(): string {
@@ -426,8 +434,13 @@ class BashChecker {
       if (!s.allow) return { decision: s };
     }
 
-    // 隔离工作区：参数里的路径不能越出工作区，也不能碰 .forge/（第 9.2 节第 5 条）
+    // 隔离工作区：参数里的路径不能越出工作区，也不能碰 .forge/（第 9.2 节第 5 条）；
+    // 内联脚本（node -e、python -c 等）里写死主工作区的绝对路径同样拦下（偏离 79）
     if (this.ev.ctx.isolatedWorkspace) {
+      const mainRef = this.ev.mainPathPattern();
+      if (mainRef) for (const w of words) {
+        if (mainRef.test(w.text)) return { decision: deny('read_paths', `不能在命令里引用主工作区的路径：${w.text.slice(0, 200)}。只在当前工作区与临时目录里工作。`) };
+      }
       for (const w of args) {
         const d = this.ev.checkIsolatedPath(w.text.includes('=') && w.text.startsWith('-') ? w.text.slice(w.text.indexOf('=') + 1) : w.text, cwd);
         if (!d.allow) return { decision: d };

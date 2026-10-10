@@ -141,6 +141,21 @@ test('stage-qa：没有写工具或可写范围，服务与无界面测试可用
   allowed(checkToolCall(bash(`echo result > ${scratch}/result.txt`), c));
 });
 
+test('stage-qa 在临时 worktree 里按隔离工作区约束：写不到主工作区（含 touch 与内联脚本里写死的路径），测试、服务、临时目录照常（偏离 79）', () => {
+  const scratch = path.join(base, 'scratch-qa-iso');
+  mkdirSync(scratch, { recursive: true });
+  const c = ctx('stage-qa', { scratchDir: scratch, isolatedWorkspace: true });
+  for (const cmd of [`touch ${main}/src/server/new.ts`, `node -e "require('fs').writeFileSync('${main}/src/server/a.ts','x')"`,
+    `python3 -c 'open("${main}/src/server/a.ts","w")'`, `cp src/server/a.ts ${main}/src/server/b.ts`, `echo x > ${main}/src/server/a.ts`, `cat ../../proj/src/server/a.ts`]) {
+    blocked(checkToolCall(bash(cmd), c));
+  }
+  for (const cmd of ['pnpm test', 'curl -s http://localhost:41000/api/health', `echo result > ${scratch}/result.txt`, 'cat src/server/a.ts', `ls ${wt}/src/server`]) {
+    allowed(checkToolCall(bash(cmd), c));
+  }
+  // 主工作区路径是工作区路径的前缀（<项目>.worktrees/…）时不误伤
+  assert.ok(wt.startsWith(main));
+});
+
 test('architect：只能写规划产物，不能写实现代码或规格需求', () => {
   const c = ctx('architect');
   for (const file of ['docs/contracts/openapi.yaml', 'docs/arch/overview.md', 'docs/plan/plan.yaml', 'docs/rules-draft/backend.md', 'docs/spec/glossary.md', 'AGENTS.md']) {

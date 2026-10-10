@@ -135,6 +135,11 @@ test('第 14 节：stage-qa 没有自己的 worktree，forge_service 的服务�
       if (existsSync(f)) cwd = readFileSync(f, 'utf8').trim();
     }
     await a.call('forge_service', { action: 'stop', name: 'serve' });
+    // full 档 bash 也写不到主工作区：绝对路径参数与内联脚本里写死的路径都被拦下（偏离 79）
+    for (const command of [`touch ${p.dir}/qa-wrote.txt`, `node -e "require('fs').writeFileSync('${p.dir}/qa-wrote.txt','x')"`]) {
+      const r = await a.call('bash', { command });
+      assert.ok(!r.ok && /主工作区|工作区之外/.test(r.text), `应被拦下：${command}\n${r.text}`);
+    }
     await a.call('forge_qa_report', { verdict: 'pass', issues: [] });
   });
   try {
@@ -144,6 +149,7 @@ test('第 14 节：stage-qa 没有自己的 worktree，forge_service 的服务�
     assert.notEqual(path.resolve(cwd), path.resolve(p.dir));
     assert.ok(cwd.includes(`${p.flowId}-S1.qa`), cwd);
     assert.equal(p.git('status', '--porcelain'), statusBefore, '主工作区没有改动');
+    assert.ok(!existsSync(path.join(p.dir, 'qa-wrote.txt')));
     assert.equal(stageStatus(p), 'awaiting_human');
   } finally { p.cleanup(); rmSync(OUT, { recursive: true, force: true }); }
 });

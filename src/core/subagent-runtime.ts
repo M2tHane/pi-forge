@@ -90,8 +90,9 @@ export class SubagentRuntime {
       mainRoot: this.env.root,
       // 实现类任务可以在模块之间的接口文档里追加（只能新增，forge_submit 检查）
       ...(canAppendInterfaces(t) ? { interfaceAdditions: true } : {}),
-      // test-author 在隔离工作区里：路径不能越出工作区（第 9.2 节第 5 条）
-      ...(t.kind === 'acctest' ? { isolatedWorkspace: true } : {}),
+      // test-author 在隔离工作区里：路径不能越出工作区（第 9.2 节第 5 条）；
+      // stage-qa 有 full 档 bash，在集成分支的临时 worktree 里同样不能越出（规格第 14 节：除临时目录外不能写；偏离 79）
+      ...(t.kind === 'acctest' || t.kind === 'qa' ? { isolatedWorkspace: true } : {}),
       ...(t.scope_grants?.length && !t.conflict_files ? { granted: t.scope_grants.flatMap((g) => g.paths) } : {}),
       // 模块登记的公共文件（第五轮）也可以写；没有可写范围但能运行命令的角色（验收者）也有临时目录
       ...(role.writes.length ? { writes: [...(t.conflict_files ?? t.writes), ...(t.conflict_files ? [] : t.shared ?? [])], scratchDir: scratchDir(this.env.root, this.env.run) } : {}),

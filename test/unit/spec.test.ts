@@ -194,7 +194,7 @@ test('术语格式严格要求中文主名、英文名与定义', () => {
 for (const file of ['requirements', 'screens', 'permissions', 'glossary'] as const) {
   test(`${file} 的 TODO、TBD、待定均报错且有行号`, () => {
     checkRule(baseline, 'placeholder', false);
-    for (const word of ['TODO', 'todo', 'TbD', '待定']) {
+    for (const word of ['TODO', 'TBD：价格', '（TODO）', '待定']) {
       const content = `${baseline[file]}\n${word}`;
       const result = lintSpec({ ...baseline, [file]: content });
       const found = result.errors.find((item) => item.rule === 'placeholder')!;
@@ -204,6 +204,10 @@ for (const file of ['requirements', 'screens', 'permissions', 'glossary'] as con
     }
   });
 }
+
+test('Todo、TodoCollection、todo list 这类合法术语不是占位词（只认大写独立的 TODO/TBD，偏离 88）', () => {
+  for (const word of ['**待办（Todo）**：清单项。', 'TodoCollection', 'a todo list', 'TBDX', 'Stbd']) checkRule({ ...baseline, glossary: `${baseline.glossary}\n${word}` }, 'placeholder', false);
+});
 
 test('feature 中任意位置的占位词报错', () => {
   const amendment = feature(requirement('REQ-002'));

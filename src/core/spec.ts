@@ -287,7 +287,8 @@ export function effectiveSpec(base: SpecFiles, features: readonly SpecFeature[])
   let maxId = 0;
   const scanPlaceholders = (content: string, file: string): void => {
     splitLines(content).forEach((line, index) => {
-      if (/TODO|TBD|待定/i.test(line)) issues.push(issue(file, index + 1, 'placeholder', '发现 TODO、TBD 或待定，请替换为确定、可验收的内容。'));
+      // 只认大写、独立成词的 TODO/TBD 与"待定"：不区分大小写会把 Todo、TodoList 这类合法术语当成占位（偏离 88，M9 冒烟发现）
+      if (/(?<![A-Za-z])(TODO|TBD)(?![A-Za-z])|待定/.test(line)) issues.push(issue(file, index + 1, 'placeholder', '发现 TODO、TBD 或待定，请替换为确定、可验收的内容。'));
     });
   };
   const applyRequirements = (parsed: ReturnType<typeof parseRequirements>): void => {

@@ -142,7 +142,7 @@ async function submitAcctest(ctx: ToolContext, t: TaskFile, summary: string): Pr
   await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明：${summary}`, actor(ctx));
   if (implDone && sha) {
     // 单独合并（第 9.5 节）：acc 分支检出为普通 worktree，之后与普通 task 一样预检、rebase、合并验证
-    const acc = checkoutAccWorktree(ctx.env.root, ctx.env.flow, t);
+    const acc = await checkoutAccWorktree(ctx.env.root, ctx.store, ctx.config, ctx.env.flow, t);
     await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'checking', trigger: 'submit', actor: actor(ctx),
       facts: { token: ctx.env.token, diff_files: changed }, patch: { worktree: acc.path, branch: acc.branch, base_sha: git(ctx.env.root, ['rev-parse', flow.integration_branch]).trim() } });
   } else {

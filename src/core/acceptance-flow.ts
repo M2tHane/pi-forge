@@ -9,6 +9,7 @@ import { git, gitOk } from './git.ts';
 import { headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from './worktree.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { resourceOptions, withResources } from './resources.ts';
+import { prepareWorkspaceRecorded } from './workspace.ts';
 
 const roundOf = (id: string) => Number(/\.at-(\d+)$/.exec(id)?.[1] ?? 1);
 
@@ -94,7 +95,7 @@ export async function createAcctestRound(store: StateStore, flowId: string, impl
  * 新建修复 task（.fx-n，第 9.5 节）：分支基于"集成分支 + 这批测试"（acc 分支），基线记为集成分支，
  * 这样测试随 .fx-n 一起合并；与 acc 分支一致的测试文件不算 worker 的改动。
  */
-export async function createFixRound(root: string, store: StateStore, flowId: string, impl: string, brief: string, actor: string): Promise<TaskFile> {
+export async function createFixRound(root: string, store: StateStore, config: FlowConfig, flowId: string, impl: string, brief: string, actor: string): Promise<TaskFile> {
   const tasks = store.listTasks(flowId);
   const implTask = tasks.find((t) => t.id === impl)!;
   const flow = store.readFlow(flowId);
@@ -104,6 +105,8 @@ export async function createFixRound(root: string, store: StateStore, flowId: st
   const base = headSha(root, flow.integration_branch);
   removeWorktree(root, wt, branch);
   git(root, ['worktree', 'add', '-q', '-b', branch, wt, accBranch(flowId, impl)]);
+  // F1：.fx-n 的 worktree 可写，直接 install；失败写进 handoff，让 worker 自己修
+  const prep = await prepareWorkspaceRecorded(store, root, config, wt, 'writable', { flow: flowId, task: id, actor });
   const input: TaskInput = {
     id, stage: flow.stage, kind: 'fix', role: implTask.role, title: `修复：${implTask.title}`, scopes: [...implTask.scopes],
     depends_on: [], inputs: [], writes: [...implTask.writes], verify: [...implTask.verify], for_task: impl, ac: [...(implTask.ac ?? [])],
@@ -114,6 +117,7 @@ export async function createFixRound(root: string, store: StateStore, flowId: st
   };
   const [t] = await store.addTasks(flowId, [input], actor);
   await store.appendHandoff(flowId, id, brief, actor);
+  if (!prep.ok) await store.appendHandoff(flowId, id, `依赖准备失败（程序在创建工作区后运行 install 的结果）：${prep.reason ?? ''}\n需要依赖的命令在修好之前都会失败；请检查包清单与 install 命令。`, actor);
   return t!;
 }
 
@@ -144,12 +148,14 @@ export async function resolveDisputes(store: StateStore, flowId: string): Promis
 }
 
 /** 单独合并的 acctest（第 9.5 节）进入 checking 时：把 acc 分支检出为普通 worktree，进入合并时与普通 task 一样 rebase、验证 */
-export function checkoutAccWorktree(root: string, flowId: string, t: TaskFile): { path: string; branch: string } {
+export async function checkoutAccWorktree(root: string, store: StateStore, config: FlowConfig, flowId: string, t: TaskFile): Promise<{ path: string; branch: string }> {
   const impl = t.for_task ?? t.id;
   const branch = accBranch(flowId, impl);
   const wt = worktreePath(root, flowId, t.id);
   removeWorktree(root, wt);
   git(root, ['worktree', 'add', '-q', wt, branch]);
+  // F1：预检与合并验证在这个 worktree 里跑，需要依赖；它不改依赖，走只读缓存。失败只记事件，预检会给出真实的失败原因
+  await prepareWorkspaceRecorded(store, root, config, wt, 'readonly', { flow: flowId, task: t.id, actor: 'forge-submit' });
   return { path: wt, branch };
 }
 
@@ -168,12 +174,12 @@ export async function precheckAcctest(root: string, store: StateStore, config: F
 }
 
 /** 测试在已有实现上失败（预检或合并验证，失败都在本目录）：acctest 以 report 结束，为原 impl 建 .fx-n */
-export async function handOffToFix(root: string, store: StateStore, flowId: string, t: TaskFile, reason: string, actor: string): Promise<string> {
+export async function handOffToFix(root: string, store: StateStore, config: FlowConfig, flowId: string, t: TaskFile, reason: string, actor: string): Promise<string> {
   const impl = t.for_task ?? t.id;
   await store.transitionTask(flowId, t.id, { to: 'done', trigger: 'precheck_fail_handoff', actor,
     facts: { [t.status === 'checking' ? 'precheck_ok' : 'post_verify_ok']: false, failed_tests_own_directory: true, reason: reason.slice(0, 2000) } });
   if (t.worktree && existsSync(t.worktree) && t.worktree.startsWith(worktreesRoot(root))) removeWorktree(root, t.worktree);
-  const fx = await createFixRound(root, store, flowId, impl, [
+  const fx = await createFixRound(root, store, config, flowId, impl, [
     `# ${impl} 的验收测试在已有实现上失败（${t.id}）`, reason,
     '工作区已包含这批测试。修改实现让它们通过；认为测试不符合规格时用 forge_dispute（引用规格或契约的具体位置），不要改测试。',
   ].join('\n\n'), actor);

@@ -42,7 +42,8 @@ test('同样的原因连续失败两次：第三次直接用升级模型（不�
 });
 
 test('模块谱系预算：失败原因各不相同、失败次数也没用完，但模块累计运行次数超过 limits.module_runs 时交给用户；解除阻塞后重新计算', async () => {
-  const yaml = PROJECT_YAML.replace(/max_merge_failures: \d+/, 'max_merge_failures: 10').replace(/max_attempts: \d+/, 'max_attempts: 10').replace(/(max_attempts: 10)/, '$1\n  module_runs: 3');
+  // 提交的 FAIL 在预检被拦下：预检失败上限也放宽，只让谱系预算起作用
+  const yaml = PROJECT_YAML.replace(/max_merge_failures: \d+/, 'max_merge_failures: 10').replace(/max_precheck_failures: \d+/, 'max_precheck_failures: 10').replace(/max_attempts: \d+/, 'max_attempts: 10').replace(/(max_attempts: 10)/, '$1\n  module_runs: 3');
   const p = await setupProject({ yaml, tasks: [task1()] });
   try {
     assert.equal(p.config.limits.module_runs, 3);

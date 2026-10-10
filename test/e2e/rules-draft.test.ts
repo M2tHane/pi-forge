@@ -5,22 +5,13 @@ import { parseConfig } from '../../src/core/config.ts';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
+import { runFlowCommand } from '../../src/commands/forge.ts';
 import { listDrafts } from '../../src/core/rules-draft.ts';
-import { startFlow } from '../../src/core/stages.ts';
-import { setupProject, type Project } from '../helpers/project.ts';
+import { setupProject } from '../helpers/project.ts';
 import { makeEngine, commitToBranch } from '../helpers/engine.ts';
 import { TEMPLATE_YAML } from '../helpers/config.ts';
-import { FLOW5_YAML } from '../helpers/flow5.ts';
-const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
+import { commandEnv } from '../helpers/commands.ts';
 
-function env(p: Project, engine: ReturnType<typeof makeEngine>['engine'], ui: CommandEnv['ui'] = null): CommandEnv {
-  return {
-    root: p.dir, packageRoot: PACKAGE_ROOT, ui,
-    engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
-    roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
-  };
-}
 
 const DRAFTS = {
   'docs/rules-draft/backend.md': '# 后端规则\n\n1. 数据库访问统一用 Prisma Client，不写原生 SQL。\n',
@@ -39,7 +30,7 @@ test('列出并应用草案：规则替换与新增、命令修改保留注释�
     assert.match(drafts[1]!.summary, /test："pnpm test" → "npm test"/);
     assert.match(drafts[1]!.summary, /agent 不能运行（会打开界面）："npm run dev:desktop"/);
     assert.match(drafts[2]!.summary, /新文件/);
-    const e = env(p, engine);
+    const e = commandEnv(p, engine);
     assert.match(await runFlowCommand('rules', e), /规则与命令草案[\s\S]*\/forge rules apply all/);
 
     const out = await runFlowCommand('rules apply all', e);
@@ -62,7 +53,7 @@ test('不合法的草案被拒绝且不写入任何文件', async () => {
   try {
     const { engine } = makeEngine(p, async () => {});
     commitToBranch(p.dir, `flow/${p.flowId}/integration`, { 'docs/rules-draft/commands.yaml': 'commands:\n  test: 123\n', 'docs/rules-draft/x.md': 'x' }, '坏草案');
-    await assert.rejects(runFlowCommand('rules', env(p, engine)), /test 的命令必须是非空字符串/);
+    await assert.rejects(runFlowCommand('rules', commandEnv(p, engine)), /test 的命令必须是非空字符串/);
     assert.ok(!existsSync(path.join(p.dir, 'rules/x.md')));
   } finally { p.cleanup(); }
 });
@@ -76,7 +67,7 @@ test('acctest_workspace 草案：列出摘要；格式不对时拒绝且不写�
     assert.match(listDrafts(p.dir, ref)[0]!.summary, /验收测试工作区：include package\.json；cache node_modules/);
     const before = readFileSync(path.join(p.dir, 'workflow.yaml'), 'utf8');
     commitToBranch(p.dir, ref, { 'docs/rules-draft/commands.yaml': 'commands:\n  test: "npm test"\nacctest_workspace:\n  include: package.json\n' }, '坏草案');
-    await assert.rejects(runFlowCommand('rules apply all', env(p, engine)), /acctest_workspace 应为/);
+    await assert.rejects(runFlowCommand('rules apply all', commandEnv(p, engine)), /acctest_workspace 应为/);
     assert.equal(readFileSync(path.join(p.dir, 'workflow.yaml'), 'utf8'), before);
   } finally { p.cleanup(); }
 });

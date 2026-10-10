@@ -19,9 +19,32 @@ import { resourceOptions, withResources } from './resources.ts';
 import { classifyAcceptanceFailure, failingAcceptanceDirs, handOffToFix, handleForeignBreak } from './acceptance-flow.ts';
 
 
+/**
+ * 冲突文件全部是契约（docs/contracts/**）时做结构化三方合并（第 12.2 节），写回并 git add；有一个合并不了就什么都不写、返回 false。
+ * stages 指明冲突的 stage 2、3 分别是集成分支还是任务（rebase 与 merge 相反），合并结果里集成分支的内容在前。
+ */
+export function resolveContractConflicts(wt: string, conflicts: readonly string[], stages: { integration: 2 | 3; task: 2 | 3 }): boolean {
+  if (!conflicts.length || !conflicts.every((f) => matchesAny(f, [INTERFACES_PATH]))) return false;
+  const merged = new Map<string, string>();
+  for (const f of conflicts) {
+    try {
+      const r = mergeContractThreeWay(f, git(wt, ['show', `:1:${f}`]), git(wt, ['show', `:${stages.integration}:${f}`]), git(wt, ['show', `:${stages.task}:${f}`]));
+      if (!r.ok) return false;
+      merged.set(f, r.text);
+    } catch {
+      return false; // 缺少某一侧（新增/删除冲突）：不自动合并
+    }
+  }
+  for (const [f, text] of merged) writeFileSync(path.join(wt, f), text);
+  git(wt, ['add', '--', ...merged.keys()]);
+  return true;
+}
+
 export interface MergeHooks {
   /** 合并后验证开始前调用（测试用：让合并停在验证前，模拟中断） */
   beforeVerify?: () => Promise<void>;
+  /** 取队首之前调用（测试用：等几个任务都进队列再合并，检验批量合并） */
+  beforeMerge?: () => Promise<void>;
   /** 合并完成后的钩子（codegraph sync 等），失败不影响合并 */
   afterMerge?: (root: string) => Promise<void>;
   verifyTimeoutMs?: number;
@@ -59,12 +82,13 @@ export class MergeQueue {
   /** 队首任务可以开始合并时处理它；同一时间只处理一个（进程内互斥 + 合并队列的 merging 名额）。 */
   async processNext(flowId: string): Promise<MergeResult | null> {
     if (this.running) return null;
-    const mq = this.store.readMergeQueue();
-    const head = mq.queue.find((e) => e.flow === flowId && this.store.readTask(e.flow, e.task).depends_on
-      .filter((d) => d.type === 'soft').every((d) => this.store.readTask(e.flow, d.task).status === 'done'));
-    if (mq.merging || !head) return null;
     this.running = true;
     try {
+      if (this.hooks.beforeMerge) await this.hooks.beforeMerge();
+      const mq = this.store.readMergeQueue();
+      const head = mq.queue.find((e) => e.flow === flowId && this.store.readTask(e.flow, e.task).depends_on
+        .filter((d) => d.type === 'soft').every((d) => this.store.readTask(e.flow, d.task).status === 'done'));
+      if (mq.merging || !head) return null;
       const batch = head === mq.queue[0] ? await this.mergeBatch(flowId) : null;
       if (batch) return batch;
       await this.store.transitionTask(flowId, head.task, { to: 'merging', trigger: 'merge_start', actor: 'merge-queue' });
@@ -387,20 +411,9 @@ export class MergeQueue {
    * 返回 true 表示 rebase 已完成；false 表示无法自动合并（调用方负责 rebase --abort，工作区内容无需还原）。
    */
   private autoMergeContracts(wt: string, conflicts: string[]): boolean {
-    if (!conflicts.length || !conflicts.every((f) => matchesAny(f, [INTERFACES_PATH]))) return false;
-    const merged = new Map<string, string>();
-    for (const f of conflicts) {
-      try {
-        const r = mergeContractThreeWay(f, git(wt, ['show', `:1:${f}`]), git(wt, ['show', `:2:${f}`]), git(wt, ['show', `:3:${f}`]));
-        if (!r.ok) return false;
-        merged.set(f, r.text);
-      } catch {
-        return false; // 缺少某一侧（新增/删除冲突）：不自动合并
-      }
-    }
-    for (const [f, text] of merged) writeFileSync(path.join(wt, f), text);
+    // rebase 时 stage 2 是集成分支、stage 3 是任务提交
+    if (!resolveContractConflicts(wt, conflicts, { integration: 2, task: 3 })) return false;
     try {
-      git(wt, ['add', '--', ...merged.keys()]);
       git(wt, ['-c', 'core.editor=true', 'rebase', '--continue'], { engineIdentity: true, env: { GIT_EDITOR: 'true' } });
       return true;
     } catch {

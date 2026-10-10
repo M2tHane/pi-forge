@@ -5,21 +5,13 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { runFlowCommand, runFlowBuild, type CommandEnv } from '../../src/commands/forge.ts';
-import { startFlow } from '../../src/core/stages.ts';
-import { setupProject, DIRECT_YAML, type Project } from '../helpers/project.ts';
+import { runFlowCommand, runFlowBuild } from '../../src/commands/forge.ts';
+import { setupProject, DIRECT_YAML } from '../helpers/project.ts';
 import { StateStore } from '../../src/core/state-store.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
-const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
+import { commandEnv } from '../helpers/commands.ts';
 
-function env(p: Project, engine: ReturnType<typeof makeEngine>['engine']): CommandEnv {
-  return {
-    root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
-    engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
-    roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
-  };
-}
 
 test('/forge unblock 附回答写入 handoff 并回到 ready；approve 在没有等待批准的闸门时报错；最后阶段无 UI 需 --yes', async () => {
   const p = await setupProject({ tasks: [mkTask('T-001')] });
@@ -28,7 +20,7 @@ test('/forge unblock 附回答写入 handoff 并回到 ready；approve 在没有
     await engine.next(p.flowId);
     await engine.idle();
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'blocked');
-    const e = env(p, engine);
+    const e = commandEnv(p, engine);
     // 解除阻塞后会被重新派发（脚本仍会 block），这里只验证回答写入与状态转移
     const out = await runFlowCommand('unblock T-001 "用 SQLite" --reset', e);
     assert.match(out, /已解除 T-001 的阻塞/);
@@ -50,7 +42,7 @@ test('/forge-build 入库 PRD 与原型后停在 P0，启动主会话讨论，�
     const { engine, launcher } = makeEngine(p, async () => { throw new Error('P0 不应派发'); });
     let activated = 0;
     const talks: string[] = [];
-    const e = { ...env(p, engine), activateOrchestrator: () => { activated++; }, startConversation: (s: string) => { talks.push(s); } };
+    const e = { ...commandEnv(p, engine), activateOrchestrator: () => { activated++; }, startConversation: (s: string) => { talks.push(s); } };
     mkdirSync(path.join(p.dir, 'inputs'));
     writeFileSync(path.join(p.dir, 'inputs/用户 服务.md'), '# 用户服务\n原始 PRD');
     const image = Buffer.from([0, 255, 2, 3]);
@@ -77,12 +69,12 @@ test('/forge-build 入库 PRD 与原型后停在 P0，启动主会话讨论，�
   } finally { p.cleanup(); }
 });
 
-test('/forge-build 缺参数、旧参数与路径错误不建流程；feature 明确提示 M7', async () => {
+test('/forge-build 旧参数与路径错误不建流程；没有契约时 feature 提示先 adopt', async () => {
   const p = await setupProject();
   try {
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
     const { engine } = makeEngine(p, async () => { throw new Error('输入错误不应派发'); });
-    const e = env(p, engine);
+    const e = commandEnv(p, engine);
     mkdirSync(path.join(p.dir, 'inputs'));
     mkdirSync(path.join(p.dir, 'empty'));
     writeFileSync(path.join(p.dir, 'inputs/prd.md'), '# PRD');
@@ -91,7 +83,6 @@ test('/forge-build 缺参数、旧参数与路径错误不建流程；feature �
       ['--prd', /缺少路径/],
       ['--prd --prototype inputs', /缺少路径/],
       ['--prd ""', /缺少路径/],
-      ['想法', /未知参数/],
       ['--from inputs/prd.md', /未知参数/],
       ['--prd inputs/prd.md --arch inputs', /未知参数/],
       ['--prd inputs/prd.md --design inputs', /未知参数/],
@@ -107,7 +98,7 @@ test('/forge-build 缺参数、旧参数与路径错误不建流程；feature �
     assert.match(await runFlowBuild('--feature --prd inputs/prd.md', e), /\/forge init --adopt/);
     assert.equal(p.store.readState().active_flow, null);
     assert.match(await runFlowBuild('--help', e), /--prd <文件或目录> \[--prototype <路径>\]/);
-    assert.match(await runFlowCommand('help', e), /\/forge-build --prd <文件或目录> \[--prototype <路径>\]/);
+    assert.match(await runFlowCommand('help', e), /\/forge-build \["<项目名>"\]/);
     assert.doesNotMatch(await runFlowBuild('help', e), /--arch|--design|--from/);
   } finally { p.cleanup(); }
 });
@@ -117,7 +108,7 @@ test('/forge-build PRD 目录无需原型，原样入库并停在 P0；活动流
   try {
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
     const { engine } = makeEngine(p, async () => {});
-    const e = env(p, engine);
+    const e = commandEnv(p, engine);
     mkdirSync(path.join(p.dir, 'prd/nested'), { recursive: true });
     writeFileSync(path.join(p.dir, 'prd/requirements.md'), '# 需求');
     writeFileSync(path.join(p.dir, 'prd/nested/detail.txt'), '补充');
@@ -136,7 +127,7 @@ test('/forge knowledge：列出、确认改写、废弃、提升；/forge rules 
   const p = await setupProject();
   try {
     const { engine } = makeEngine(p, async () => {});
-    const e = env(p, engine);
+    const e = commandEnv(p, engine);
     assert.match(await runFlowCommand('knowledge', e), /知识库还是空的/);
     const { learn } = await import('../../src/core/knowledge.ts');
     const src = { kind: 'review' as const, flow: p.flowId, task: 'T-001', run: null, role: null };
@@ -172,7 +163,7 @@ test('/forge next 先推进程序步骤：引擎重启前已提交、排队合�
     while (p.store.readTask(p.flowId, 'T-001').status !== 'awaiting_inputs') { if (Date.now() > end) throw new Error('等待超时'); await new Promise((r) => setTimeout(r, 20)); }
     const store = new StateStore(p.dir, { limits: p.config.limits });
     const fresh = makeEngine({ ...p, store }, async () => { throw new Error('不应再派发'); });
-    await runFlowCommand('next', env({ ...p, store }, fresh.engine));
+    await runFlowCommand('next', commandEnv({ ...p, store }, fresh.engine));
     assert.equal(store.readTask(p.flowId, 'T-001').status, 'done');
     assert.deepEqual(fresh.errors, []);
   } finally { p.cleanup(); }

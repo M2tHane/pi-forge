@@ -1,5 +1,4 @@
 // M5：契约文件冲突的结构化三方合并（第 12.2 节）。
-// 注意：本文件按约定未在编写时运行；由最后统一的 npm test 验证。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from 'yaml';
@@ -14,7 +13,7 @@ paths:
     $ref: './paths/a.yaml#/~1api~1a'
 `;
 
-test('根 openapi.yaml 的 paths 并行追加：后合并者 rebase 冲突，被结构化合并后合入', async () => {
+test('根 openapi.yaml 的 paths 并行追加：预检前同步集成分支时冲突，被结构化合并后合入', async () => {
   const p = await setupProject({
     yaml: PROJECT_YAML,
     files: { 'docs/contracts/openapi.yaml': ROOT },

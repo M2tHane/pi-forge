@@ -40,7 +40,7 @@ import { pausedByChange } from './change-request.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions } from './resources.ts';
 import { prepareAcctestWorkspace } from './acctest.ts';
 import { runPrecheck } from './precheck.ts';
-import { handOffToFix, latestAcctest, precheckAcctest, resolveDisputes } from './acceptance-flow.ts';
+import { awaitedAcctest, handOffToFix, precheckAcctest, resolveDisputes } from './acceptance-flow.ts';
 import { REVIEW_INPUT, decideReview, readReviewEvidence, resolveReviews, reviewWorktreeOf, type ReviewInputFile } from './review-flow.ts';
 import { QA_INPUT, stageWorktreeFor } from './stage-qa.ts';
 import { isStageLevelTask } from './stage-worktree.ts';
@@ -59,7 +59,7 @@ export async function advanceInputs(store: StateStore, flowId: string): Promise<
   for (const listed of tasks) {
     const t = store.readTask(flowId, listed.id);
     if (t.status !== 'awaiting_inputs') continue;
-    const latest = latestAcctest(tasks, t.for_task ?? t.id);
+    const latest = awaitedAcctest(tasks, t.for_task ?? t.id);
     if (latest && store.readTask(flowId, latest.id).status !== 'done') continue;
     if (!t.depends_on.filter((d) => d.type === 'soft').every((d) => store.readTask(flowId, d.task).status === 'done')) continue;
     if (t.waits_for?.some((id) => store.readTask(flowId, id).status !== 'done')) continue;
@@ -587,11 +587,11 @@ export class Engine {
   /** 正在预检的 task（flow/task）；同一 task 不会并发预检 */
   private readonly prechecking = new Set<string>();
 
-  /** 为 checking 状态的 impl、fix、doc 启动预检（后台运行，结束后推进状态并 pump）；单独合并的 acctest 见第 9.5 节 */
+  /** 为 checking 状态的 impl、fix、doc、merge-fix 启动预检（后台运行，结束后推进状态并 pump）；单独合并的 acctest 见第 9.5 节 */
   private startPrechecks(flowId: string): void {
     for (const t of this.d.store.listTasks(flowId)) {
       const key = `${flowId}/${t.id}`;
-      if (t.status !== 'checking' || this.prechecking.has(key) || !['impl', 'fix', 'doc', 'acctest'].includes(t.kind)) continue;
+      if (t.status !== 'checking' || this.prechecking.has(key) || !['impl', 'fix', 'doc', 'acctest', 'merge-fix'].includes(t.kind)) continue;
       this.prechecking.add(key);
       this.track(this.precheckOne(flowId, t.id).catch((e) => this.d.onError?.(e)).finally(() => {
         this.prechecking.delete(key);
@@ -638,7 +638,7 @@ export class Engine {
     await advanceInputs(this.d.store, flowId);
     for (const t of this.d.store.listTasks(flowId)) {
       const key = `${flowId}/${t.id}`;
-      if (t.status !== 'checking' || this.prechecking.has(key) || !['impl', 'fix', 'doc', 'acctest'].includes(t.kind)) continue;
+      if (t.status !== 'checking' || this.prechecking.has(key) || !['impl', 'fix', 'doc', 'acctest', 'merge-fix'].includes(t.kind)) continue;
       this.prechecking.add(key);
       try { await this.precheckOne(flowId, t.id); } finally { this.prechecking.delete(key); }
     }
@@ -706,7 +706,7 @@ export class Engine {
         this.track(runStageGate(this.d.root, this.d.store, this.d.config, flowId, this.d.verifyTimeoutMs)
           .then(async (g) => {
             this.d.onGate?.(g);
-            if (!g.passed) await this.d.store.setPlanRework(flowId, `${flow.stage === P1_STAGE ? 'P1' : '纳管'}闸门未通过：\n${g.reasons.join('\n')}`.slice(0, 4000), 'gate');
+            if (!g.passed) await this.d.store.setPlanRework(flowId, `${flow.stage === P1_STAGE ? 'P1 ' : '纳管'}闸门未通过：\n${g.reasons.join('\n')}`.slice(0, 4000), 'gate');
           })
           .finally(() => this.gating.delete(flowId))
           .then(() => { this.notify(); return this.pump(flowId); }));

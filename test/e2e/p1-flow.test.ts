@@ -1,10 +1,10 @@
 // M3：P1 契约与计划。architect 由 fake-subagent 扮演，经真实的 SubagentRuntime（guard + forge_* 工具）提交。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { setupProject, type Project } from '../helpers/project.ts';
-import { makeEngine, commitToBranch, type RoleScript } from '../helpers/engine.ts';
+import { commitToBranch } from '../helpers/engine.ts';
 import type { MergeHooks } from '../../src/core/merge-queue.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
 import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
@@ -13,7 +13,7 @@ import { renderStatus } from '../../src/core/status-view.ts';
 import { flowSpec, statusText } from '../../src/tools/orchestrator-tools.ts';
 import { parseConfig } from '../../src/core/config.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-const ROOT = path.join(import.meta.dirname, '../..');
+import { engineEnv } from '../helpers/commands.ts';
 
 const RULE_DRAFT = '# 后端\n- 服务层抛出 AppError\n\n## 审查清单\n- [ ] R1 错误码来自 errors/*.yaml\n';
 const COMMANDS_DRAFT = 'commands:\n  test: "true"\n  contract_lint: "true"\nacctest_workspace:\n  include: ["packages/api/package.json"]\n  cache: ["node_modules"]\n';
@@ -38,12 +38,6 @@ async function writeDesign(a: FakeAgent) {
   await writeAll(a, { 'docs/spec/glossary.md': glossary + GLOSSARY_ADD });
 }
 
-function env(p: Project, scripts: RoleScript, hooks?: MergeHooks) {
-  const m = makeEngine(p, scripts, undefined, hooks);
-  const cmd: CommandEnv = { root: p.dir, packageRoot: ROOT, ui: null, engine: () => ({ store: p.store, engine: m.engine, config: p.config }), store: () => p.store,
-    roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true };
-  return { ...m, cmd };
-}
 
 async function toP1(p: Project, cmd: CommandEnv) {
   await flowSpec(p.dir, p.store, p.config, P1_SPEC);
@@ -54,7 +48,7 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
   const p = await setupProject({ stages: ['P0', 'P1'] });
   const results: { tool: string; ok: boolean; text: string }[] = [];
   let workerSystem = '';
-  const e = env(p, async (role, nth, a) => {
+  const e = engineEnv(p, async (role, nth, a) => {
     if (role === 'architect') {
       await a.call('forge_claim');
       await writeDesign(a);
@@ -146,7 +140,7 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
 test('P1 预检：没有 propose、或 propose 之后又改了 plan.yaml，预检失败退回 architect 并写进 handoff；改正后通过', async () => {
   const p = await setupProject({ stages: ['P0', 'P1'] });
   let run = 0;
-  const e = env(p, async (role, _nth, a) => {
+  const e = engineEnv(p, async (role, _nth, a) => {
     assert.equal(role, 'architect');
     const claim = await a.call('forge_claim');
     if (++run === 1) {
@@ -178,7 +172,7 @@ test('P1 预检：没有 propose、或 propose 之后又改了 plan.yaml，预�
 test('P1 打回：新建 architect task 接着上一个的会话，意见写进 handoff；主会话等待；返工后再次等待批准', async () => {
   const p = await setupProject({ stages: ['P0', 'P1'] });
   let run = 0;
-  const e = env(p, async (role, _nth, a) => {
+  const e = engineEnv(p, async (role, _nth, a) => {
     assert.equal(role, 'architect');
     await a.call('forge_claim');
     if (++run === 1) { await writeDesign(a); await writeAll(a, { 'docs/plan/plan.yaml': PLAN_YAML }); }
@@ -214,7 +208,7 @@ test('P1 闸门：集成分支上的契约不合格时回到 active，派 archit
     commitToBranch(root, p.store.readFlow(p.flowId).integration_branch, { 'docs/contracts/errors/team.yaml': 'BAD: { http: 400, message: x }\n' }, '外部改动');
   } };
   let run = 0;
-  const e = env(p, async (role, _nth, a) => {
+  const e = engineEnv(p, async (role, _nth, a) => {
     assert.equal(role, 'architect');
     await a.call('forge_claim');
     if (++run === 1) {

@@ -9,7 +9,6 @@
 // - 新增列是否"非空"：列定义是映射且（nullable: true 或带 default 键）才算可空/有默认；其余（含 pk、简写字符串、nullable: false 且无 default）都算非空，不允许。
 // - 错误码已有条目只比较 http 与 message，其他键（如 req）不检查。
 // - modules/*.md 按 `## 名称` 切分：开头（第一个 ## 之前）与每个旧小节必须不变，可以新增小节。
-import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { CONTRACTS_DIR, HTTP_METHODS, contractFilesAt, contractFilesInDir } from './contract-check.ts';
 import type { ContractFiles } from './contract-check.ts';
@@ -170,5 +169,5 @@ export function contractDiff(oldFiles: ContractFiles, newFiles: ContractFiles, m
 
 /** 基准 ref 的契约 对比 worktree（headDir）里的契约 */
 export function contractViolationsAt(root: string, baseRef: string, headDir: string, module: string | undefined): ContractViolation[] {
-  return contractDiff(contractFilesAt(root, baseRef), contractFilesInDir(path.join(headDir, 'docs/contracts')), module);
+  return contractDiff(contractFilesAt(root, baseRef), contractFilesInDir(headDir), module);
 }

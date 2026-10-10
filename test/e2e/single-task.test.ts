@@ -56,8 +56,9 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
       assert.equal(r.token_hash.length, 64);
     }
     const ev = readdirSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence/T-001'));
-    // 合并时在集成分支上跑全量 typecheck、lint、test
-    assert.deepEqual(ev.sort(), ['merge-a0-lint.log', 'merge-a0-test.log', 'merge-a0-typecheck.log']);
+    // 预检在任务 worktree 跑 typecheck、lint、test（没有验收测试目录，不跑 acceptance）；合并时在集成分支上跑全量
+    assert.deepEqual(ev.sort(), ['merge-a0-acceptance.log', 'merge-a0-lint.log', 'merge-a0-test.log', 'merge-a0-typecheck.log',
+      'precheck-a0-diff.txt', 'precheck-a0-lint.log', 'precheck-a0-test.log', 'precheck-a0-typecheck.log']);
     assert.match(p.store.readHandoff(p.flowId, 'T-001'), /提交说明：实现 a/);
     // 主工作区没有被实施角色改动
     assert.ok(!existsSync(path.join(p.dir, 'src/server/t-001/a.ts')));
@@ -113,27 +114,6 @@ test('diff 越界被拒（改了已跟踪的文件）；还原后再提交通过
     assert.match(rejected, /越出任务 writes：README\.md/);
     assert.match(rejected, /git checkout/);
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
-  } finally { p.cleanup(); }
-});
-
-test('合并时全量测试失败：回到 in_progress 重新派发并带上失败原因', async () => {
-  const p = await setupProject({ tasks: [task1()] });
-  try {
-    const prompts: string[] = [];
-    const { engine } = makeEngine(p, async (_role, nth, a) => {
-      prompts.push(a.spec.prompt);
-      await implGood(a, nth === 1 ? 'FAIL' : 'ok');
-    });
-    await engine.next(p.flowId);
-    await engine.idle();
-    const t = p.store.readTask(p.flowId, 'T-001');
-    assert.equal(t.status, 'done');
-    assert.equal(t.merge_failures, 1);
-    assert.equal(t.attempts, 0);
-    assert.equal(prompts.length, 2);
-    assert.match(prompts[1]!, /上次未通过的原因[\s\S]*合并后验证失败（[^）]*test 退出码 1）/);
-    const transitions = p.store.readEvents().filter((e) => e.type === 'transition' && e.task === 'T-001').map((e) => `${e.trigger}:${e.from}->${e.to}`);
-    assert.ok(transitions.includes('merge_verify_fail:merging->in_progress'));
   } finally { p.cleanup(); }
 });
 

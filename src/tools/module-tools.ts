@@ -7,6 +7,7 @@ import type { TaskFile } from '../core/schemas.ts';
 import type { StateStore } from '../core/state-store.ts';
 import { git, gitOk } from '../core/git.ts';
 import { snapshot } from '../core/worktree.ts';
+import { resolveContractConflicts } from '../core/merge-queue.ts';
 import { FlowToolError, checkRunOf, type ToolContext, type ToolResult } from './tool-common.ts';
 
 export const SyncParams = Type.Object({}, { additionalProperties: false });
@@ -34,7 +35,12 @@ export async function syncTaskInputs(store: StateStore, flowId: string, t: TaskF
     catch {
       const conflicts = git(wt, ['diff', '--name-only', '--diff-filter=U']).split('\n').filter(Boolean);
       if (!conflicts.length) { gitOk(wt, ['merge', '--abort']); throw new FlowToolError('合并失败但没有冲突文件，已放弃这次同步。'); }
-      return { text: `同步时有冲突，冲突标记留在：${conflicts.join('、')}。解决后再调用 forge_sync。`, conflicts };
+      // 契约文件的冲突先做结构化三方合并（merge 时 stage 2 是任务、stage 3 是集成分支）
+      if (!resolveContractConflicts(wt, conflicts, { integration: 3, task: 2 })) {
+        return { text: `同步时有冲突，冲突标记留在：${conflicts.join('、')}。解决后再调用 forge_sync。`, conflicts };
+      }
+      git(wt, ['commit', '-q', '--no-edit', '--no-verify'], { engineIdentity: true });
+      await store.recordEvent({ flow: flowId, task: t.id, actor, type: 'note', reason: `契约文件冲突已结构化合并：${conflicts.join('、')}`, data: { files: conflicts } });
     }
   }
   const base = git(wt, ['merge-base', 'HEAD', integ]).trim();

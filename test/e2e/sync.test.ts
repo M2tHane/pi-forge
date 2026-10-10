@@ -10,8 +10,8 @@ import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { mergeToMain } from '../../src/core/release.ts';
 import { actionsNeeded } from '../../src/core/status-view.ts';
-import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
-const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
+import { runFlowCommand } from '../../src/commands/forge.ts';
+import { commandEnv } from '../helpers/commands.ts';
 
 /** 用户直接在主分支（主工作区检出）上提交 */
 function commitOnMain(p: Project, files: Record<string, string>, msg: string) {
@@ -39,11 +39,7 @@ async function implement(a: FakeAgent, files: Record<string, string>) {
   assert.ok(r.ok, r.text);
 }
 
-const env = (p: Project, engine: ReturnType<typeof makeEngine>['engine']): CommandEnv => ({
-  root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
-  engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
-  roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
-});
+const env = commandEnv;
 
 test('阶段边界同步主分支：无冲突直接合入；writes 内冲突生成 merge-fix 解决；最终合入主分支不再冲突', async () => {
   const p = await setupProject();

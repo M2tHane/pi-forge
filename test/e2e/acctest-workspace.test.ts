@@ -40,7 +40,7 @@ test('隔离工作区：读不到实现提交与工作区外的绝对路径，_s
     await e.engine.next(p.flowId);
     await e.engine.idle();
     assert.deepEqual(e.errors, []);
-    assert.ok(workspace.endsWith('-at') && !workspace.startsWith(p.dir), `隔离工作区在项目之外：${workspace}`);
+    assert.ok(workspace.endsWith('-at') && !workspace.startsWith(`${p.dir}/`), `隔离工作区在项目之外：${workspace}`);
     assert.equal(seen['abs']!.ok, false);
     assert.match(seen['abs']!.text, /隔离工作区之外/);
     assert.equal(seen['up']!.ok, false);

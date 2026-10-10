@@ -5,14 +5,15 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
-import { makeEngine } from '../helpers/engine.ts';
+import { commitToBranch, makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { acceptCandidate, retireEntries, promoteToDraft, markPromoted, selectKnowledge } from '../../src/core/knowledge.ts';
 import { applyDrafts, listDrafts } from '../../src/core/rules-draft.ts';
 import { renderStatus } from '../../src/core/status-view.ts';
 
-const YAML = `${PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "! grep -rqs FAIL src/server"')}
+// 有 FAIL 的代码只有和集成分支上的 src/server/later.ts 放在一起才失败：预检能过，合并后验证才拦下
+const YAML = `${PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "! { grep -rqs FAIL src/server && test -e src/server/later.ts; }"')}
 knowledge:
   auto_candidates: true
 `;
@@ -50,7 +51,12 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
       }
       if (a.env.task === 'T-002') return implement(a, 'src/server/t-002/a.ts', '完成');
       return implement(a, 'docs/research/t-003/a.md', '完成');
-    }, settings);
+    }, settings, { beforeMerge: async () => {
+      // 第一次合并前，别处的改动先进了集成分支
+      if (!p.git('ls-tree', '--name-only', p.store.readFlow(p.flowId).integration_branch, 'src/server/later.ts')) {
+        commitToBranch(p.dir, p.store.readFlow(p.flowId).integration_branch, { 'src/server/later.ts': 'later\n' }, '他人改动');
+      }
+    } });
     await engine.next(p.flowId);
     await engine.idle();
     await engine.next(p.flowId);

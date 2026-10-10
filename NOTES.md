@@ -151,6 +151,9 @@
 69. feature 模式：增量规格文件名带"日期-000-"前缀，规格写的是 `<名字>.md`，加前缀是为了按文件名叠加的顺序稳定。修改过的权限行记在 `flow.spec.permission_changes`，在批准页单独列出。P1 计划只要求新增或变化的 AC 有归属，因为基线里的 AC 已经实现。main 上已有的契约从流程开始就锁定，只能追加。没有 `docs/contracts/` 时 `/forge-build --feature` 拒绝，并提示先运行 `/forge init --adopt`。
 70. `/forge init --adopt ["<说明>"] [--force]` 用一个 feature 流程，只有一个阶段 `ADOPT`。architect 的 doc task 只写 `docs/contracts/**` 和 `docs/arch/**`，只描述现有行为；契约结构检查通过后由用户批准，批准时 `--no-ff` 合入 main。`--force` 用于以后纳管更多模块，此时已有契约只能追加。`/forge-add` 只把需求交给主会话整理成 `forge_spec_amend`，不改状态。
 71. 按用户要求，`/forge-build` 不再必须带 `--prd`（规格第 13.2 节写的是必填）：不指定时扫描项目 `docs/` 下用户放的文档，跳过 pi-forge 维护的目录（spec、contracts、arch、plan、qa、review、research、rules-draft）、隐藏文件、敏感文件，入库到集成分支 `docs/spec/inputs/docs/` 并保持相对路径。feature 模式按 git blob 编号跳过主分支 `docs/spec/inputs/` 下已入库过的文档。有文档时主会话先读、只就疑点提问；没有文档时不记 intake，主会话按 grilling 详细访谈。`--prd`、`--prototype` 仍然可用，位置参数是流程名。
+72. 硬依赖自己 impl 的验收测试（impl 合入后才写，第 9.5 节单独合并）不算 impl 预检要等的"最新验收测试"（`awaitedAcctest`），否则 impl 与它互相等待。
+73. 第 12.2 节的契约结构化三方合并也用在预检前的同步（`syncTaskInputs`）上：预检先同步集成分支，契约追加的冲突在这里就出现，不再留到合并队列的 rebase。
+74. merge-fix 也走预检（此前停在 checking 无人处理）；合并队列加测试钩子 `beforeMerge`（取队首前调用），e2e 用它让几个任务都进队列再合并。
 
 ## M1 删除、由 Mx 重建
 

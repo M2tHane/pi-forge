@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CONTRACTS } from '../helpers/contracts.ts';
-import { contractDiff, isNullableColumn } from '../../src/core/contract-diff.ts';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { contractDiff, contractViolationsAt, isNullableColumn } from '../../src/core/contract-diff.ts';
+import { tmpRepo } from '../helpers/repo.ts';
 
 const edit = (over: Record<string, string | null>): Record<string, string> => {
   const out: Record<string, string> = { ...CONTRACTS };
@@ -163,4 +166,19 @@ test('违规带文件与路径', () => {
   const vs = contractDiff(CONTRACTS, edit({ 'paths/datasource.yaml': CONTRACTS['paths/datasource.yaml']!.replace('listDatasources', 'list') }), 'datasource');
   assert.equal(vs[0]!.file, 'docs/contracts/paths/datasource.yaml');
   assert.equal(vs[0]!.path, '/api/datasources.get.operationId');
+});
+
+test('contractViolationsAt：读基准提交与 worktree 的 docs/contracts/，未改动时无违规，追加合法、删除被拦下', () => {
+  const repo = tmpRepo();
+  try {
+    for (const [rel, text] of Object.entries(CONTRACTS)) {
+      mkdirSync(path.dirname(path.join(repo.dir, 'docs/contracts', rel)), { recursive: true });
+      writeFileSync(path.join(repo.dir, 'docs/contracts', rel), text);
+    }
+    repo.git('add', '.');
+    repo.git('commit', '-q', '-m', 'contracts');
+    assert.deepEqual(contractViolationsAt(repo.dir, 'HEAD', repo.dir, 'datasource'), []);
+    rmSync(path.join(repo.dir, 'docs/contracts/paths/datasource.yaml'));
+    assert.match(JSON.stringify(contractViolationsAt(repo.dir, 'HEAD', repo.dir, 'datasource')), /不得删除已有契约文件/);
+  } finally { repo.cleanup(); }
 });

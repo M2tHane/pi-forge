@@ -73,24 +73,30 @@ test('正常合并：squash 成单个提交快进到集成分支，清理 worktr
   } finally { p.cleanup(); }
 });
 
-test('语义冲突：writes 不重叠、各自 verify 通过，后合并者在合并后验证中被拦下并重新派发', async () => {
+test('语义冲突：writes 不重叠、各自预检通过，后合并者在合并后验证中被拦下并重新派发', async () => {
   const p = await setupProject({
-    yaml: withTest('[ ! -f src/server/t-002/b.ts ] || cmp -s src/server/t-001/a.ts src/server/t-002/b.ts'),
+    yaml: withTest('[ ! -f src/server/t-002/b.ts ] || cmp -s src/server/t-001/a.ts src/server/t-002/b.ts').replace(/^  merge_batch: 3.*$/m, '  merge_batch: 1'),
     files: { 'src/server/t-001/a.ts': 'v1\n' },
     tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('T-002', { verify: ['test'] })],
   });
   try {
+    // 两个都预检通过（各自基线上的 a.ts 与 b.ts 一致）再开始合并：T-001 先合入，T-002 的合并后验证才看到新的 a.ts
+    let waited = false;
+    const beforeMerge = async () => {
+      if (waited) return;
+      waited = true;
+      await until(() => p.store.readTask(p.flowId, 'T-002').status === 'queued_merge');
+    };
     const { engine, merges } = makeEngine(p, async (_role, nth, a) => {
       if (a.env.task === 'T-001') return implement(a, { 'src/server/t-001/a.ts': 'v2\n' });
       if (nth === 1) {
-        // 依据自己基线上的 a.ts（v1）实现；等 T-001 合入后再提交，制造语义冲突
-        await until(() => p.store.readTask(p.flowId, 'T-001').status === 'done');
+        await until(() => p.store.readTask(p.flowId, 'T-001').status === 'queued_merge');
         return implement(a, { 'src/server/t-002/b.ts': 'v1\n' });
       }
       // 第二次派发：worktree 已 rebase 到集成分支，读到新的 a.ts
       const cur = await a.call('read', { path: 'src/server/t-001/a.ts' });
       return implement(a, { 'src/server/t-002/b.ts': cur.text });
-    });
+    }, undefined, { beforeMerge });
     await engine.next(p.flowId);
     await engine.idle();
     const vf = merges.find((m) => m.kind === 'verify_failed');
@@ -182,56 +188,51 @@ test('merge-fix 残留冲突标记：合并后检查拦下，回到 in_progress�
   } finally { p.cleanup(); }
 });
 
-test('提交后直接进入合并队列；合并时跑全量 typecheck、lint、test，失败退回实施并重新派发，修好后合入；文档类任务不跑命令', async () => {
+test('合并时跑全量 typecheck、lint、test、acceptance（各留 evidence）；文档类任务（verify 为空）合并时不跑命令', async () => {
   const p = await setupProject({ yaml: DIRECT_YAML.replace(/^  merge_batch: 3.*$/m, '  merge_batch: 1'), tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('T-002', { verify: [] })] });
   try {
-    const { engine, merges, errors } = makeEngine(p, async (_role, nth, a) => {
+    const { engine, errors } = makeEngine(p, async (_role, _nth, a) => {
       if (a.env.task === 'T-002') return implement(a, { 'src/server/t-002/readme.md': 'doc' });
-      // 第一次带着 FAIL 提交（全量 test 会失败），第二次修好
-      return implement(a, { 'src/server/t-001/a.ts': nth === 1 ? 'FAIL' : 'ok' });
+      return implement(a, { 'src/server/t-001/a.ts': 'ok' });
     });
     await engine.next(p.flowId);
     await engine.idle();
     assert.deepEqual(errors, []);
     for (const id of ['T-001', 'T-002']) assert.equal(p.store.readTask(p.flowId, id).status, 'done', id);
-    const t1 = p.store.readTask(p.flowId, 'T-001');
-    assert.equal(t1.merge_failures, 1);
-    assert.equal(t1.attempts, 0);
-    const vf = merges.find((m) => m.kind === 'verify_failed');
-    assert.ok(vf?.kind === 'verify_failed' && vf.task === 'T-001', JSON.stringify(merges));
-    if (vf?.kind === 'verify_failed') assert.match(vf.reason, /全量 typecheck、lint、test 中 test 退出码 1/);
-    assert.deepEqual(readdirEvidence(p.dir, p.flowId, 'T-001').sort(),
-      ['merge-a0-lint.log', 'merge-a0-test.log', 'merge-a0-typecheck.log', 'merge-a1-lint.log', 'merge-a1-test.log', 'merge-a1-typecheck.log']);
-    assert.ok(!existsSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence', 'T-002')), '文档类任务不跑命令');
-    const evs = p.store.readEvents().filter((e) => e.type === 'transition');
-    assert.equal(evs.filter((e) => e.trigger === 'submit').length, 3);
-    assert.deepEqual(p.store.listRuns().map((r) => r.role).sort(), ['worker', 'worker', 'worker']);
+    const merged = (id: string) => (existsSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence', id)) ? readdirEvidence(p.dir, p.flowId, id) : []).filter((f) => f.startsWith('merge-')).sort();
+    assert.deepEqual(merged('T-001'), ['merge-a0-acceptance.log', 'merge-a0-lint.log', 'merge-a0-test.log', 'merge-a0-typecheck.log']);
+    assert.deepEqual(merged('T-002'), [], '文档类任务合并时不跑命令');
     assertSingleMerging(p.store.readEvents());
   } finally { p.cleanup(); }
 });
-
 test('批量合并：队列里的 3 个任务一起叠加、只跑一次全量测试，依次快进；有一个坏的时整批退回逐个合并，坏的被退回修好', async () => {
-  const yaml = DIRECT_YAML.replace(/^  max_parallel: 2$/m, '  max_parallel: 3').replace(/  test:      ".*"/, '  test:      "! grep -rqs FAIL src/server"');
+  // 坏的 T-003 自己的预检能过（它的 worktree 里没有 T-001），与 T-001 叠加后才失败
+  const yaml = DIRECT_YAML.replace(/^  max_parallel: 2$/m, '  max_parallel: 3').replace(/  test:      ".*"/, '  test:      "! { grep -rqs BAD src/server && test -e src/server/t-001/a.ts; }"');
   for (const bad of [false, true]) {
     const p = await setupProject({ yaml, tasks: ['T-001', 'T-002', 'T-003'].map((id) => mkTask(id, { verify: ['test'] })) });
     try {
+      // 第一次合并等三个都进了合并队列，让它看到整批
+      let waited = false;
+      const beforeMerge = async () => {
+        if (waited) return;
+        waited = true;
+        await until(() => p.store.readMergeQueue().queue.length === 3);
+      };
       const { engine, merges, errors } = makeEngine(p, async (_role, nth, a) => {
         const id = a.env.task.toLowerCase();
-        await implement(a, { [`src/server/${id}/a.ts`]: bad && id === 't-003' && nth === 1 ? 'FAIL' : id });
-        // 三个都进了合并队列才结束，让第一次合并看到整批
-        if (nth === 1) await until(() => ['T-001', 'T-002', 'T-003'].every((x) => ['awaiting_inputs', 'checking', 'queued_merge', 'merging', 'done', 'in_progress'].includes(p.store.readTask(p.flowId, x).status) && p.store.readTask(p.flowId, x).impl_run));
-      });
+        await implement(a, { [`src/server/${id}/a.ts`]: bad && id === 't-003' && nth === 1 ? 'BAD' : id });
+      }, undefined, { beforeMerge });
       await engine.next(p.flowId);
       await engine.idle();
       assert.deepEqual(errors, []);
       for (const id of ['T-001', 'T-002', 'T-003']) assert.equal(p.store.readTask(p.flowId, id).status, 'done', `${bad} ${id}`);
       const mergeEvents = p.store.readEvents().filter((e) => e.type === 'merge');
       if (!bad) {
-        assert.deepEqual(merges.map((m) => m.kind === 'merged' ? m.finished : m.kind), [['T-001', 'T-002', 'T-003']]);
+        assert.deepEqual(merges.map((m) => m.kind === 'merged' ? [...m.finished].sort() : m.kind), [['T-001', 'T-002', 'T-003']]);
         assert.ok(mergeEvents.every((e) => Array.isArray(e.data?.['batch']) && (e.data['batch'] as string[]).length === 3));
-        for (const id of ['T-001', 'T-002', 'T-003']) assert.deepEqual(readdirEvidence(p.dir, p.flowId, id).sort(), ['merge-a0-batch-lint.log', 'merge-a0-batch-test.log', 'merge-a0-batch-typecheck.log']);
-        const log = p.git('log', '--format=%s', `flow/${p.flowId}/integration`).split('\n').slice(0, 3);
-        assert.deepEqual(log, ['[B-001/T-003] 任务 T-003', '[B-001/T-002] 任务 T-002', '[B-001/T-001] 任务 T-001']);
+        for (const id of ['T-001', 'T-002', 'T-003']) assert.deepEqual(readdirEvidence(p.dir, p.flowId, id).filter((f) => f.startsWith('merge-')).sort(), ['merge-a0-batch-acceptance.log', 'merge-a0-batch-lint.log', 'merge-a0-batch-test.log', 'merge-a0-batch-typecheck.log']);
+        const log = p.git('log', '--format=%s', `flow/${p.flowId}/integration`).split('\n').slice(0, 3).sort();
+        assert.deepEqual(log, ['[B-001/T-001] 任务 T-001', '[B-001/T-002] 任务 T-002', '[B-001/T-003] 任务 T-003']);
         assertSingleMerging(p.store.readEvents());
       } else {
         assert.ok(p.store.readEvents().some((e) => /批量合并 .* 失败，改为逐个合并/.test(e.reason ?? '')));

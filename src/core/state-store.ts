@@ -183,7 +183,7 @@ export interface CreateFlowInput {
   actor?: string;
 }
 
-import { latestAcctest as latestAcctestOf } from './acceptance-flow.ts';
+import { awaitedAcctest } from './acceptance-flow.ts';
 
 export type TaskInput = Pick<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify'>
   & Partial<Omit<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify' | 'status' | 'lease' | 'created_by' | 'version'>>;
@@ -587,7 +587,7 @@ export class StateStore {
       const me = `${flowId}/${taskId}`;
       const merging = mq.merging ? key(mq.merging) : null;
 
-      const latestAcctest = latestAcctestOf(others, task.for_task ?? task.id);
+      const latestAcctest = awaitedAcctest(others, task.for_task ?? task.id);
       const statusOf = new Map(others.map((t) => [t.id, depStatus(t)]));
       const softDone = (t: TaskFile) => t.depends_on.filter((d) => d.type === 'soft').every((d) => statusOf.get(d.task) === 'done');
       const eligible = mq.queue.find((e) => {

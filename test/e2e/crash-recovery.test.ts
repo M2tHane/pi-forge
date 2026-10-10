@@ -90,8 +90,8 @@ test('任务进行中强杀引擎：残留 pi 子进程被清理，任务在原 
 test('合并进行中强杀引擎：合并回滚到队首，重启后完成合并', { skip: !piAvailable && 'pi 不可用', timeout: 300_000 }, async () => {
   const flag = path.join(ROOT, `.tmp-crash-flag-${process.pid}`);
   rmSync(flag, { force: true });
-  // 合并后验证的 test 命令在 flag 出现前一直很慢，便于在合并途中强杀
-  const yaml = PROJECT_YAML.replace(/  test:      ".*"/, `  test:      "[ -f ${flag} ] || sleep 60"`);
+  // 合并后验证的 test 命令在 flag 出现前一直很慢，便于在合并途中强杀；预检（资源目录 pc-*）不受影响
+  const yaml = PROJECT_YAML.replace(/  test:      ".*"/, `  test:      "case $FORGE_TMP in */merge-*) [ -f ${flag} ] || sleep 60;; esac"`);
   const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: ['typecheck'] })] });
   try {
     const driver = startDriver(p, GOOD);

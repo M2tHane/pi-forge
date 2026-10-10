@@ -10,10 +10,10 @@ import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { SubagentRuntime } from '../../src/core/subagent-runtime.ts';
 import { runEnvFrom } from '../../src/tools/subagent-tools.ts';
-import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
+import { runFlowCommand } from '../../src/commands/forge.ts';
 import { doctor } from '../../src/core/doctor.ts';
 import { sessionDirOf, summarizeSession } from '../../src/core/session-log.ts';
-const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
+import { commandEnv } from '../helpers/commands.ts';
 
 const MIN = 60_000;
 
@@ -90,11 +90,7 @@ test('会话留档：run 记录会话目录；/forge run 显示工具调用摘�
     assert.deepEqual(s.toolCalls.map((c) => [c.name, !!c.error]), [['forge_claim', false], ['write', true]]);
     assert.equal(s.lastText, '已提交，结束。');
 
-    const env: CommandEnv = {
-      root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
-      engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
-      roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
-    };
+    const env = commandEnv(p, engine);
     assert.match(await runFlowCommand('run', env), new RegExp(`${impl.run_id}　B-001/T-001　worker　submitted`));
     const detail = await runFlowCommand(`run ${impl.run_id}`, env);
     assert.match(detail, /工具调用（2 次，失败 1 次）[\s\S]*2\. write \{"path":"\/etc\/x"[\s\S]*✗ 越界：只能写 worktree[\s\S]*最后的回复：已提交，结束。/);

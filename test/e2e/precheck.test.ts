@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { MergeQueue } from '../../src/core/merge-queue.ts';
 import { hashToken } from '../../src/core/state-machine.ts';
-import { createTaskWorktree, snapshot } from '../../src/core/worktree.ts';
+import { createTaskWorktree, snapshot, worktreesRoot } from '../../src/core/worktree.ts';
 import { setupProject, type Project } from '../helpers/project.ts';
 import { commitToBranch, makeEngine } from '../helpers/engine.ts';
 import { accBranch } from '../../src/core/acctest.ts';
@@ -106,8 +106,9 @@ test('两个并行预检拿到不同的端口段、数据库名和临时目录',
     const e = engineOf(p);
     await e.pump(p.flowId);
     await e.idle();
-    const lines = readFileSync(path.join(path.dirname(p.store.readTask(p.flowId, 'T-001').worktree!), 'ports.log'), 'utf8').trim().split('\n').map((l) => l.split(' '));
-    assert.equal(lines.length, 2);
+    const lines = readFileSync(path.join(worktreesRoot(p.dir), 'ports.log'), 'utf8').trim().split('\n').map((l) => l.split(' '))
+      .filter((l) => l[1]!.startsWith('forge_pc_')); // 两个任务合入后阶段门禁也会跑 test
+    assert.equal(lines.length, 2, JSON.stringify(lines));
     assert.notEqual(lines[0]![0], lines[1]![0]);
     assert.notEqual(lines[0]![1], lines[1]![1]);
     assert.notEqual(lines[0]![2], lines[1]![2]);

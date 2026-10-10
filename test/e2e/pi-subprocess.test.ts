@@ -119,7 +119,7 @@ test('真实 pi 子进程：模型返回额度用完（429 insufficient_quota）
   } finally { p.cleanup(); }
 });
 
-test('真实 pi 子进程：提交直接合并，合并时全量测试失败退回，接着上一次的对话修好后合入', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
+test('真实 pi 子进程：预检时测试失败退回，接着上一次的对话修好后合入', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
   const p = await setupProject({ yaml: DIRECT_YAML, tasks: [mkTask('T-001', { verify: ['typecheck', 'test'] })] });
   try {
     const logFile = '/tmp/pi-forge-e2e-llm.log';
@@ -138,17 +138,19 @@ test('真实 pi 子进程：提交直接合并，合并时全量测试失败退�
     assert.deepEqual(errors, []);
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done', `${t.status} ${t.last_failure ?? ''}`);
-    assert.equal(t.merge_failures, 1, '第一次提交在合并时的全量测试中失败');
+    assert.equal(t.precheck_failures, 1, '第一次提交在预检中失败');
+    assert.equal(t.merge_failures ?? 0, 0);
     assert.equal(t.attempts, 0);
     const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at));
     assert.deepEqual(runs.map((r) => r.role), ['worker', 'worker']);
     assert.equal(runs[1]!.forked_from, runs[0]!.run_id);
     const triggers = p.store.readEvents().filter((e) => e.task === 'T-001' && e.type === 'transition').map((e) => e.trigger);
-    assert.deepEqual(triggers.filter((x) => x !== 'dispatch' && x !== 'schedule'), ['submit', 'inputs_ready', 'precheck_pass_skip', 'merge_start', 'merge_verify_fail', 'submit', 'inputs_ready', 'precheck_pass_skip', 'merge_start', 'merge_done']);
+    assert.ok(triggers.includes('precheck_fail'), triggers.join(','));
+    assert.equal(triggers.at(-1), 'merge_done', triggers.join(','));
     const reqs = readFileSync(logFile, 'utf8').slice(before).trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'impl-fork');
     const second = reqs.find((r) => r.turn === 5)!;
     assert.ok(second, '第二次运行的第一个请求带着上一次的 5 条回复');
-    assert.match(JSON.stringify(second.last), /继续任务[\s\S]*合并后验证失败[\s\S]*全量[\s\S]*forge_claim/);
+    assert.match(JSON.stringify(second.last), /继续任务[\s\S]*预检未通过[\s\S]*forge_claim/);
     assert.ok(runs[1]!.session_file && runs[1]!.session_file !== runs[0]!.session_file, '新会话单独留档');
   } finally { p.cleanup(); }
 });

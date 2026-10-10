@@ -3,36 +3,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
-import { makeEngine, type RoleScript } from '../helpers/engine.ts';
-import { runFlowFix, runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
-import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-const ROOT = path.join(import.meta.dirname, '../..');
+import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
+import { runFlowFix, runFlowCommand } from '../../src/commands/forge.ts';
+import { engineEnv, submitWork } from '../helpers/commands.ts';
 const YAML = PROJECT_YAML.replace(/^  qa: false$/m, '  qa: true');
 
-function env(p: Project, scripts: RoleScript) {
-  const m = makeEngine(p, scripts);
-  const cmd: CommandEnv = { root: p.dir, packageRoot: ROOT, ui: null, engine: () => ({ store: p.store, engine: m.engine, config: p.config }), store: () => p.store,
-    roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true };
-  return { ...m, cmd };
-}
-async function done(a: FakeAgent, files: Record<string, string>, note: string) {
-  for (const [p, content] of Object.entries(files)) assert.ok((await a.call('write', { path: p, content })).ok, p);
-  await a.call('forge_note', { text: note });
-  const r = await a.call('forge_submit', { summary: note });
-  assert.ok(r.ok, r.text);
-}
-async function settle(e: ReturnType<typeof env>, fixId: string) {
+async function settle(e: ReturnType<typeof engineEnv>, fixId: string) {
   for (let i = 0; i < 15; i++) { await e.engine.pump(fixId); await e.engine.idle(); }
 }
 
 test('/forge-fix：worker 修复 → 合入主分支 → stage-qa 第一轮有 must → .fx-1 → X1.qa-2 确认 → 修复日志含成本', async () => {
   const p = await setupProject({ yaml: YAML });
-  const e = env(p, async (role, _n, a) => {
+  const e = engineEnv(p, async (role, _n, a) => {
     await a.call('forge_claim');
     const id = a.env.task;
-    if (id === 'T-001') return done(a, { 'src/server/t-001/a.ts': 'ok\n', 'test/regression.test.ts': 'regression\n' }, '修好并加回归测试');
-    if (id === 'T-001.fx-1') { assert.equal(role, 'worker'); return done(a, { 'src/server/t-001/a.ts': 'ok v2\n' }, '补修'); }
+    if (id === 'T-001') return submitWork(a, '修好并加回归测试', { 'src/server/t-001/a.ts': 'ok\n', 'test/regression.test.ts': 'regression\n' });
+    if (id === 'T-001.fx-1') { assert.equal(role, 'worker'); return submitWork(a, '补修', { 'src/server/t-001/a.ts': 'ok v2\n' }); }
     assert.equal(role, 'stage-qa');
     if (id === 'X1.qa') {
       const r = await a.call('forge_qa_report', { verdict: 'changes', issues: [{ level: 'must', basis: 'ac:修复：问题不再出现', files: ['src/server/t-001/a.ts'], location: 'a', problem: '空输入仍崩溃', expected: '返回错误' }] });
@@ -59,7 +45,7 @@ test('/forge-fix：worker 修复 → 合入主分支 → stage-qa 第一轮有 m
 
 test('/forge-fix：同时只允许一个修复；build 流程运行中拒绝', async () => {
   const p = await setupProject({ yaml: YAML });
-  const e = env(p, async (_r, _n, a) => { await a.call('forge_claim'); await a.call('forge_block', { reason: '停' }); });
+  const e = engineEnv(p, async (_r, _n, a) => { await a.call('forge_claim'); await a.call('forge_block', { reason: '停' }); });
   try {
     assert.equal(p.store.readState().active_flow, p.flowId, 'setupProject 建的 build 流程是活动流程');
     await assert.rejects(runFlowFix('"x"', e.cmd), /不能同时修复|正在阶段/);

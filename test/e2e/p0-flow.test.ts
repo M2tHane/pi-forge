@@ -115,7 +115,10 @@ test('规格修订：列出 AC 差异与关联 task；多个待批对象须明�
     assert.match(await runFlowCommand('approve', e.cmd), /有多个对象[\s\S]*stage:P1[\s\S]*amend:A-001[\s\S]*T-001/);
     assert.match(await runFlowCommand('reject "重做"', e.cmd), /有多个对象/);
     assert.match(turnContext(p.store, 3), /stage:P1、amend:A-001/);
-    assert.match(await runFlowCommand('approve amend:A-001', e.cmd), /M7 实现/);
+    // 计划还没批准（没有 S 阶段）：只提交修订，不自动发起变更请求
+    const approved = await runFlowCommand('approve amend:A-001', e.cmd);
+    assert.match(approved, /已批准 amend:A-001，规格修订已提交到集成分支/);
+    assert.doesNotMatch(approved, /变更请求/);
     const a = p.store.readAmend(p.flowId, 'A-001');
     assert.equal(a.status, 'approved');
     assert.equal(a.version, 2);

@@ -3,14 +3,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
+import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
+import { runFlowCommand } from '../../src/commands/forge.ts';
 import { actionsNeeded } from '../../src/core/status-view.ts';
 import { nextStep } from '../../src/core/context-injector.ts';
-const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
+import { commandEnv } from '../helpers/commands.ts';
 
 const MODELS = (yaml: string) => yaml
   .replace(/  test:      ".*"/, '  test:      "! grep -rqs FAIL src/server"')
@@ -18,11 +18,7 @@ const MODELS = (yaml: string) => yaml
   .replace('worker:            { model: strong', 'worker:            { model: medium')
   .replace(/models:[\s\S]*?\ntesting:/, 'models:\n  strong: "f/strong"\n  medium: "f/medium"\n  cheap:  "f/cheap"\ntesting:');
 const SETTINGS = { version: 1 as const, roles: {} };
-const env = (p: Project, engine: ReturnType<typeof makeEngine>['engine']): CommandEnv => ({
-  root: p.dir, packageRoot: PACKAGE_ROOT, ui: null,
-  engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store,
-  roleSettings: () => SETTINGS, availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true,
-});
+const env = (p: Parameters<typeof commandEnv>[0], engine: Parameters<typeof commandEnv>[1]) => commandEnv(p, engine, { roleSettings: () => SETTINGS });
 async function implement(a: FakeAgent, file: string, content = 'x\n') {
   assert.ok((await a.call('forge_claim')).ok);
   assert.ok((await a.call('write', { path: file, content })).ok, file);

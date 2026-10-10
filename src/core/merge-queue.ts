@@ -15,6 +15,7 @@ import { mergeContractThreeWay } from './contract-merge.ts';
 import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { testAdjustEnabled } from './test-adjust.ts';
+import { withScopeHint } from './scope-hint.ts';
 import { cleanTreeOf, recordVerified, reusableRuns, reuseText } from './verify-cache.ts';
 import { resourceOptions, withResources } from './resources.ts';
 import { classifyAcceptanceFailure, failingAcceptanceDirs, handOffToFix, handleForeignBreak } from './acceptance-flow.ts';
@@ -370,7 +371,9 @@ export class MergeQueue {
           // 全量验证的失败多半是任务自己的问题，日志多给一些
           const why = `已 rebase 到集成分支最新，全量 ${plan.map((x) => x.name).join('、')} 中 `;
           const adjust = testAdjustEnabled(this.config, t) ? '\n失败的如果是别的模块已有的测试、原因是本任务改了接口，可以直接修改那些测试来适配（不删用例、不放宽断言）。' : '';
-          return { ok: false as const, results, reason: `合并后验证失败（${why}${c.name} 退出码 ${r.exit_code}）\n${failureSummary(r.output)}${adjust}`, command: c.name, output: r.output };
+          // 失败的文件不在可写范围内时，引导 worker 用 forge_request_scope（F7 第一步）；只验收测试的合并（acctest）不适用
+          const reason = `合并后验证失败（${why}${c.name} 退出码 ${r.exit_code}）\n${failureSummary(r.output)}${adjust}`;
+          return { ok: false as const, results, reason: t.kind === 'acctest' ? reason : withScopeHint(reason, r.output, t, wt), command: c.name, output: r.output };
         }
       }
       await recordVerified(this.store, flowId, tree, passed, { task: t.id, actor: 'merge-queue' });

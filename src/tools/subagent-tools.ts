@@ -31,7 +31,8 @@ import { SCOPE_KINDS, SCOPE_PATHS_MAX, checkScope } from '../core/scope.ts';
 import { SyncParams, flowSync } from './module-tools.ts';
 import { proposePlan } from '../core/plan-flow.ts';
 import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/review.ts';
-import { REVIEW_CONFIRM, REVIEW_REPORT, SUGGESTIONS_PATH, readReviewInput, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/review-flow.ts';
+import { REVIEW_FILES, SUGGESTIONS_PATH, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/review-flow.ts';
+import { QA_FILES } from '../core/stage-qa.ts';
 
 export const NOTE_LIMIT = 8000;
 
@@ -182,6 +183,16 @@ export const ServiceParams = Type.Object({
   timeout_s: Type.Optional(Type.Integer({ minimum: 1, maximum: SERVICE_READY_MAX_S, description: `等就绪的秒数（最多 ${SERVICE_READY_MAX_S}）` })),
 });
 
+/**
+ * 服务的工作目录（第 14 节）：只能是任务自己的 worktree；没有 worktree 时拒绝，**绝不回退到主工作区**（纯函数）。
+ * stage-qa 与阶段审查有集成分支 HEAD 的临时 worktree，所以正常情况下不会走到拒绝。
+ */
+export function serviceCwd(task: Pick<TaskFile, 'id' | 'worktree'>, root: string): string {
+  if (!task.worktree) throw new FlowToolError(`任务 ${task.id} 没有 worktree，不能启动服务：服务不会在主工作区里运行。请用 forge_block 说明。`);
+  if (path.resolve(task.worktree) === path.resolve(root)) throw new FlowToolError(`任务 ${task.id} 的工作目录是主工作区，不能启动服务。请用 forge_block 说明。`);
+  return task.worktree;
+}
+
 /** 长时间运行的服务（第六轮 D2）：开发服务器、数据库等；本次运行结束时程序一并结束 */
 export async function flowService(ctx: ToolContext, p: Static<typeof ServiceParams>): Promise<ToolResult> {
   const t = checkRun(ctx);
@@ -208,7 +219,7 @@ export async function flowService(ctx: ToolContext, p: Static<typeof ServicePara
   if (opensGui(command.split(/\s+/).filter(Boolean), ctx.config.raw.gui_commands ?? [])) throw new FlowToolError(GUI_REASON);
   // 第 4.1 节：服务拿到本次运行分配的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP
   const res = listResources(ctx.env.root).find((e) => e.run === ctx.env.run);
-  const r = await startService({ name: p.name, command, cwd: t.worktree ?? ctx.env.root, scratch, ...(res ? { env: { ...process.env, ...resourceEnv(res) } } : {}),
+  const r = await startService({ name: p.name, command, cwd: serviceCwd(t, ctx.env.root), scratch, ...(res ? { env: { ...process.env, ...resourceEnv(res) } } : {}),
     ...(p.ready !== undefined ? { ready: p.ready } : {}), ...(p.timeout_s ? { timeoutS: p.timeout_s } : {}) });
   if (!r.ok) throw new FlowToolError(`${r.error}。${r.log ? `\n日志末尾：\n${r.log}` : ''}`);
   const state = r.ready === null ? '已启动（没给 ready，没等就绪）' : r.ready ? '已就绪' : `已启动，但 ${p.timeout_s ?? SERVICE_READY_MAX_S} 秒内没有就绪（仍在运行，可以用 logs 查看）`;
@@ -352,10 +363,14 @@ export const ReviewConfirmParams = Type.Object({
 }, { additionalProperties: false });
 
 /** 审查 task 自己：必须是进行中的 review task，且有 evidence 里的输入 */
-function reviewRun(ctx: ToolContext): { t: TaskFile; input: ReviewInputFile } {
+type ReviewFlavor = { kind: 'review' | 'qa'; files: typeof REVIEW_FILES | typeof QA_FILES; report: string; confirm: string; what: string };
+const REVIEW_FLAVOR: ReviewFlavor = { kind: 'review', files: REVIEW_FILES, report: 'forge_review_report', confirm: 'forge_review_confirm', what: '审查' };
+const QA_FLAVOR: ReviewFlavor = { kind: 'qa', files: QA_FILES, report: 'forge_qa_report', confirm: 'forge_qa_confirm', what: '阶段验收' };
+
+function reviewRun(ctx: ToolContext, f: ReviewFlavor = REVIEW_FLAVOR): { t: TaskFile; input: ReviewInputFile } {
   const t = checkRun(ctx);
-  if (t.kind !== 'review' || t.status !== 'in_progress') throw new FlowToolError('只有进行中的审查任务可以提交审查结论。');
-  const input = readReviewInput(ctx.store, ctx.env.flow, t.id);
+  if (t.kind !== f.kind || t.status !== 'in_progress') throw new FlowToolError(`只有进行中的${f.kind === 'qa' ? '阶段验收（stage-qa）' : '审查'}任务可以提交${f.what}结论。`);
+  const input = readReviewEvidence<ReviewInputFile>(ctx.store, ctx.env.flow, t.id, f.files.input);
   if (!input) throw new FlowToolError('找不到本轮审查的输入记录，请调用 forge_block 说明。');
   return { t, input };
 }
@@ -371,9 +386,13 @@ async function finishReview(ctx: ToolContext, t: TaskFile): Promise<void> {
  * forge_review_report（第 10.3 节，第一轮）：程序给问题编号；must 的出处不合格（不是 rule:/ac:/contract:/defect: 开头或冒号后为空）降为 suggest；
  * 降级后没有 must 就按 pass 处理。结论存为 evidence，由引擎的 resolveReviews 推进原 task。
  */
-export async function flowReviewReport(ctx: ToolContext, p: Static<typeof ReviewReportParams>): Promise<ToolResult> {
-  const { t, input } = reviewRun(ctx);
-  if (input.prior_must.length) throw new FlowToolError('这是确认轮：只能用 forge_review_confirm 逐条回答上一轮的问题清单，不能提出新问题。');
+export const flowReviewReport = (ctx: ToolContext, p: Static<typeof ReviewReportParams>): Promise<ToolResult> => submitReport(ctx, p, REVIEW_FLAVOR);
+/** forge_qa_report（第 11 节第 3 步，第一轮）：规则同 forge_review_report；结论存为 qa-report.json，由 resolveQa 处理 */
+export const flowQaReport = (ctx: ToolContext, p: Static<typeof ReviewReportParams>): Promise<ToolResult> => submitReport(ctx, p, QA_FLAVOR);
+
+async function submitReport(ctx: ToolContext, p: Static<typeof ReviewReportParams>, f: ReviewFlavor): Promise<ToolResult> {
+  const { t, input } = reviewRun(ctx, f);
+  if (input.prior_must.length) throw new FlowToolError(`这是确认轮：只能用 ${f.confirm} 逐条回答上一轮的问题清单，不能提出新问题。`);
   const inputs = p.issues.map((i, n) => {
     const files = i.files ?? (i.file ? [i.file] : []);
     if (!files.length) throw new FlowToolError(`第 ${n + 1} 个问题没有写 files（涉及的文件）。`);
@@ -382,7 +401,7 @@ export async function flowReviewReport(ctx: ToolContext, p: Static<typeof Review
   const { issues, downgraded } = classifyIssues(inputs);
   const verdict = effectiveVerdict(issues);
   const file: ReviewReportFile = { round: input.round, requested: p.verdict, verdict, issues, downgraded, head: input.head };
-  await ctx.store.saveEvidence(ctx.env.flow, t.id, REVIEW_REPORT, JSON.stringify(file, null, 2), actor(ctx));
+  await ctx.store.saveEvidence(ctx.env.flow, t.id, f.files.report, JSON.stringify(file, null, 2), actor(ctx));
   await finishReview(ctx, t);
   const must = mustOf(issues);
   const notes = [
@@ -394,14 +413,18 @@ export async function flowReviewReport(ctx: ToolContext, p: Static<typeof Review
 }
 
 /** forge_review_confirm（第二轮及以后）：只回答上一轮 must 的编号，必须覆盖全部；没有新增问题的字段 */
-export async function flowReviewConfirm(ctx: ToolContext, p: Static<typeof ReviewConfirmParams>): Promise<ToolResult> {
-  const { t, input } = reviewRun(ctx);
-  if (!input.prior_must.length) throw new FlowToolError('这是第一轮审查：用 forge_review_report 提交问题清单。forge_review_confirm 只在第二轮及以后使用。');
+export const flowReviewConfirm = (ctx: ToolContext, p: Static<typeof ReviewConfirmParams>): Promise<ToolResult> => submitConfirm(ctx, p, REVIEW_FLAVOR);
+/** forge_qa_confirm（第二轮及以后）：规则同 forge_review_confirm；结论存为 qa-confirm.json */
+export const flowQaConfirm = (ctx: ToolContext, p: Static<typeof ReviewConfirmParams>): Promise<ToolResult> => submitConfirm(ctx, p, QA_FLAVOR);
+
+async function submitConfirm(ctx: ToolContext, p: Static<typeof ReviewConfirmParams>, f: ReviewFlavor): Promise<ToolResult> {
+  const { t, input } = reviewRun(ctx, f);
+  if (!input.prior_must.length) throw new FlowToolError(`这是第一轮${f.what}：用 ${f.report} 提交问题清单。${f.confirm} 只在第二轮及以后使用。`);
   const errors = validateConfirm(p.items, input.prior_must.map((m) => m.id));
   if (errors.length) throw new FlowToolError(`确认未提交：${errors.join('；')}。清单：${input.prior_must.map((m) => m.id).join('、')}。`);
   const unresolved = p.items.filter((i) => !i.resolved).map((i) => i.id);
   const file: ReviewConfirmFile = { round: input.round, items: p.items.map((i) => ({ id: i.id, resolved: i.resolved, ...(i.note ? { note: i.note } : {}) })), unresolved, head: input.head };
-  await ctx.store.saveEvidence(ctx.env.flow, t.id, REVIEW_CONFIRM, JSON.stringify(file, null, 2), actor(ctx));
+  await ctx.store.saveEvidence(ctx.env.flow, t.id, f.files.confirm, JSON.stringify(file, null, 2), actor(ctx));
   await finishReview(ctx, t);
   return { text: `已提交确认：${unresolved.length ? `仍未解决 ${unresolved.join('、')}` : '全部已解决'}。你的工作已完成，请直接结束，不要再调用工具。`, details: { unresolved } };
 }
@@ -431,6 +454,8 @@ export const SUBAGENT_TOOLS = {
   forge_dispute: { params: DisputeParams, description: '认为验收测试写错时提出争议（不能自己改测试）：写明测试、理由和依据（规格或契约的具体位置）。提交后本次运行结束，由 test-author 判断改测试还是维持；维持时你接着改实现。', run: (c: ToolContext, p: Static<typeof DisputeParams>) => flowDispute(c, p) },
   forge_review_report: { params: ReviewReportParams, description: '提交第一轮审查结论：verdict 与问题列表（程序编号 R-1…）。must 必须有出处（basis 以 rule:、ac:、contract:、defect: 开头且冒号后有内容），否则降为 suggest；降级后没有 must 按 pass 处理。suggest 不阻塞合并，会汇总给用户。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowReviewReport(c, p) },
   forge_review_confirm: { params: ReviewConfirmParams, description: '第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowReviewConfirm(c, p) },
+  forge_qa_report: { params: ReviewReportParams, description: '提交 stage-qa 第一轮结论：verdict 与问题列表（程序编号 R-1…）。规则同 forge_review_report：must 必须有出处（rule:、ac:、contract:、defect:），否则降为 suggest；降级后没有 must 按 pass 处理。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowQaReport(c, p) },
+  forge_qa_confirm: { params: ReviewConfirmParams, description: 'stage-qa 第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowQaConfirm(c, p) },
   forge_sync: { params: SyncParams, description: '把集成分支的最新代码（其他模块已合入的改动）合进你的工作区：没有冲突直接完成；有冲突时冲突标记留在文件里，解决后再调用一次完成同步。依赖的模块刚合入、或想提前发现冲突时使用。', run: (c: ToolContext) => flowSync(c) },
   forge_request_scope: { params: RequestScopeParams, description: '必须修改可写范围外的文件时申请追加范围（写明原因）：不与其他未完成任务重叠的立即批准；重叠的交给主会话决定。受保护路径、敏感文件不能申请。', run: (c: ToolContext, p: Static<typeof RequestScopeParams>) => flowRequestScope(c, p) },
   forge_service: { params: ServiceParams, description: '启动、结束、查看本次运行的长时间服务（开发服务器、数据库等）：只能启动 commands 里 serve 或 serve_* 命名的命令，start 可以用 ready 等端口或地址就绪；不要用 & 把命令放到后台。本次运行结束时程序会一并结束。', run: (c: ToolContext, p: Static<typeof ServiceParams>) => flowService(c, p) },

@@ -576,7 +576,8 @@ export class StateStore {
         limits: this.limits,
         actor: req.actor,
         // 以下由程序推导，覆盖调用方传入的同名字段
-        stage_active: flow.stage === task.stage && flow.stage_status === 'active',
+        // stage-qa 在门禁进行中（awaiting_gate）运行（第 11 节第 3 步），其余 task 只在阶段 active 时派发
+        stage_active: flow.stage === task.stage && (flow.stage_status === 'active' || (task.kind === 'qa' && flow.stage_status === 'awaiting_gate')),
         status_of: statusOf,
         latest_acctest_done: !latestAcctest || latestAcctest.status === 'done',
         soft_deps_done: softDone(task),
@@ -903,7 +904,7 @@ export class StateStore {
     await this.transaction((tx) => tx.event(e));
   }
 
-  async transitionStage(flowId: string, req: { to: StageStatus; trigger: StageTrigger; actor: string; reason?: string; needs_human?: boolean; note?: string; spec?: NonNullable<FlowFile['spec']> }): Promise<FlowFile> {
+  async transitionStage(flowId: string, req: { to: StageStatus; trigger: StageTrigger; actor: string; reason?: string; needs_human?: boolean; note?: string; spec?: NonNullable<FlowFile['spec']>; data?: Record<string, unknown> }): Promise<FlowFile> {
     return this.transaction((tx) => {
       const flow = tx.readFlow(flowId);
       const errors = planStageTransition(flow.stage_status, req.to, req.trigger, req);
@@ -919,7 +920,7 @@ export class StateStore {
       if (req.to === 'aborted' && flow.mode !== 'fix') tx.setActiveFlow(null);
       const type = req.trigger === 'approve' ? 'approval' : req.trigger.startsWith('gate_') ? 'gate_result' : 'transition';
       tx.event({ flow: flowId, actor: req.actor, type, from, to: req.to, trigger: req.trigger,
-        data: { entity: 'stage', stage: flow.stage }, ...(req.reason ? { reason: req.reason } : {}) });
+        data: { ...req.data, entity: 'stage', stage: flow.stage }, ...(req.reason ? { reason: req.reason } : {}) });
       if (req.to === 'active' && ['awaiting_human', 'needs_human'].includes(from)) {
         tx.event({ flow: flowId, actor: req.actor, type: 'stage_reopened', from, to: 'active', trigger: req.trigger,
           reason: req.reason, data: { stage: flow.stage } });
@@ -1009,7 +1010,7 @@ export class StateStore {
         const h = handoffRel(flowId, task);
         tx.putText(h, `${tx.readText(h) ?? ''}\n## ${tx.ts} engine\n\n${text.trim()}\n`);
       }
-      tx.event({ flow: flowId, actor: 'engine', type: 'note', reason: `阶段 ${round.stage} 全量 ${round.command} 失败，生成修复任务 ${added.map((t) => t.id).join('、')}`, data: { tasks: added.map((t) => t.id) } });
+      tx.event({ flow: flowId, actor: 'engine', type: 'note', reason: `阶段 ${round.stage} 的 ${round.command} 未通过，记一轮修复${round.tasks.length ? `：${round.tasks.join('、')}` : ''}`, data: { tasks: [...new Set([...round.tasks, ...added.map((t) => t.id)])] } });
       return saved;
     });
   }

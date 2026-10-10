@@ -23,7 +23,8 @@ import { createTaskWorktree, ensureLocalExcludes, scratchDir, worktreePath as wo
 import { git } from './git.ts';
 import { RUN_ENV_KEYS } from '../tools/subagent-tools.ts';
 import { MergeQueue, type MergeHooks, type MergeResult, type SyncResult } from './merge-queue.ts';
-import { runStageGate, gateFailedWithoutChange, gateFailed, type GateOutcome } from './gates.ts';
+import { runStageGate, gateFailedWithoutChange, runImplementationChecks, type GateOutcome } from './gates.ts';
+import { afterChecks, stageStep } from './stage-acceptance.ts';
 import { syncTaskInputs } from '../tools/module-tools.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { killStrays } from './strays.ts';
@@ -38,7 +39,10 @@ import { allocateResources, releaseResources, resourceEnv, resourceOptions } fro
 import { prepareAcctestWorkspace } from './acctest.ts';
 import { runPrecheck } from './precheck.ts';
 import { handOffToFix, latestAcctest, precheckAcctest, resolveDisputes } from './acceptance-flow.ts';
-import { decideReview, readReviewInput, resolveReviews, reviewWorktreeOf } from './review-flow.ts';
+import { REVIEW_INPUT, decideReview, readReviewEvidence, resolveReviews, reviewWorktreeOf, type ReviewInputFile } from './review-flow.ts';
+import { QA_INPUT, stageWorktreeFor } from './stage-qa.ts';
+import { isStageLevelTask } from './stage-worktree.ts';
+import { leanForkFrom } from './stage-fix.ts';
 import { DEFAULT_CHECKPOINT_MINUTES, createCheckpoint, dropCheckpoint, listCheckpoints } from './checkpoints.ts';
 
 const tasksHas = (store: StateStore, flowId: string, id: string) => { try { store.readTask(flowId, id); return true; } catch { return false; } };
@@ -151,8 +155,10 @@ export class Engine {
   /** pending → ready（硬依赖已完成且属于当前活动阶段） */
   async promote(flowId: string): Promise<string[]> {
     const flow = this.d.store.readFlow(flowId);
-    if (flow.stage_status !== 'active') return [];
-    const ids = computeReady(this.d.store.listTasks(flowId), flow.stage);
+    if (flow.stage_status !== 'active' && flow.stage_status !== 'awaiting_gate') return [];
+    // 门禁进行中只有 stage-qa 可以就绪（第 11 节第 3 步）
+    const ids = computeReady(this.d.store.listTasks(flowId), flow.stage)
+      .filter((id) => flow.stage_status === 'active' || this.d.store.readTask(flowId, id).kind === 'qa');
     for (const id of ids) await this.d.store.transitionTask(flowId, id, { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
     return ids;
   }
@@ -223,13 +229,16 @@ export class Engine {
       // 审查者只读，直接用被审查任务的 worktree（不新建也不删除；guard 拦写操作）
       const wt = task.kind === 'acctest'
         ? await this.prepareAcctest(flowId, task, runId)
+        : isStageLevelTask(task)
+          ? stageWorktreeFor(root, store, flowId, task, flow.integration_branch)
         : task.kind === 'review'
           ? (reviewWorktreeOf(store, flowId, task) ?? (() => { throw new DispatchError(`审查任务 ${taskId} 找不到被审查任务 ${task.for_task ?? ''} 的 worktree`); })())
         : task.worktree && task.branch && task.base_sha
           ? { path: task.worktree, branch: task.branch, base_sha: task.base_sha }
           : createTaskWorktree(root, flowId, taskId, flow.integration_branch, flow.integration_branch);
       // 修复任务接着写过这些代码的任务的对话继续（第四轮后续）
-      if (task.fork_from_task && tasksHas(store, flowId, task.fork_from_task)) fork = this.forkSource(flowId, store.readTask(flowId, task.fork_from_task), role, model);
+      const forkFrom = task.fork_from_task ?? leanForkFrom(flow.plan_mode, task, flow.stages, store.listTasks(flowId));
+      if (forkFrom && tasksHas(store, flowId, forkFrom)) fork = this.forkSource(flowId, store.readTask(flowId, forkFrom), role, model);
       task = await store.transitionTask(flowId, taskId, {
         to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher',
         patch: { lease, worktree: wt.path, branch: wt.branch, base_sha: wt.base_sha },
@@ -381,8 +390,8 @@ export class Engine {
     const scratch = mode === 'impl' && (config.role(role).writes.length || config.role(role).bash === 'full') ? scratchDir(root, runId) : undefined;
     if (scratch) mkdirSync(scratch, { recursive: true });
     // 审查 task 的 handoff 就是审查输入（完整放进提示，不按 handoff 的长度截断）
-    const reviewBrief = task.kind === 'review' ? store.readHandoff(flowId, task.id).replace(/^\s*## \d{4}-[^\n]*\n+/, '') : '';
-    const confirmRound = task.kind === 'review' && (readReviewInput(store, flowId, task.id)?.prior_must.length ?? 0) > 0;
+    const reviewBrief = task.kind === 'review' || task.kind === 'qa' ? store.readHandoff(flowId, task.id).replace(/^\s*## \d{4}-[^\n]*\n+/, '') : '';
+    const confirmRound = (task.kind === 'review' || task.kind === 'qa') && (readReviewEvidence<ReviewInputFile>(store, flowId, task.id, task.kind === 'qa' ? QA_INPUT : REVIEW_INPUT)?.prior_must.length ?? 0) > 0;
     const prompt = assemblePrompt({
       agent, rules, skills, task, flowId, handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
       ...(reviewBrief ? { reviewBrief, confirmRound } : {}), commands: config.commands,
@@ -635,7 +644,7 @@ export class Engine {
     const tasks = this.d.store.listTasks(flowId);
     const ids = selectDispatchable(tasks, flow.stage, this.d.config.limits.max_parallel).filter((id) => {
       const t = tasks.find((x) => x.id === id);
-      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || (t.kind === 'doc' && t.stage === P1_STAGE)) && !this.pausedFor(flowId, t);
+      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || t.kind === 'qa' || (t.kind === 'doc' && t.stage === P1_STAGE)) && !this.pausedFor(flowId, t);
     });
     for (const id of ids) {
       try { await this.dispatch(flowId, id); } catch (e) { if (!(e instanceof HandedToUser)) throw e; }
@@ -669,29 +678,43 @@ export class Engine {
         finally { this.gating.delete(flowId); this.notify(); }
         return;
       }
-      if (force && flow.stage_status === 'needs_human') {
-        await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'gate_rerun', actor: 'human' });
-      } else {
-        if (flow.stage_status !== 'active') return;
-        if (!this.d.store.listTasks(flowId).filter((t) => t.stage === flow.stage).every(isSettled)) return;
-        if (!force && gateFailedWithoutChange(this.d.store, flowId, flow.stage)) return;
-        await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
+      // P1：architect 的任务都结束后跑 P1 闸门；未通过时返工
+      if (flow.stage === P1_STAGE) {
+        if (force && flow.stage_status === 'needs_human') await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'gate_rerun', actor: 'human' });
+        else {
+          if (flow.stage_status !== 'active') return;
+          if (!this.d.store.listTasks(flowId).filter((t) => t.stage === flow.stage).every(isSettled)) return;
+          if (!force && gateFailedWithoutChange(this.d.store, flowId, flow.stage)) return;
+          await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
+        }
+        this.gating.add(flowId);
+        this.notify();
+        this.track(runStageGate(this.d.root, this.d.store, this.d.config, flowId, this.d.verifyTimeoutMs)
+          .then(async (g) => {
+            this.d.onGate?.(g);
+            if (!g.passed) await this.d.store.setPlanRework(flowId, `P1 闸门未通过：\n${g.reasons.join('\n')}`.slice(0, 4000), 'gate');
+          })
+          .finally(() => this.gating.delete(flowId))
+          .then(() => { this.notify(); return this.pump(flowId); }));
+        return;
       }
+      // 实施阶段（第 7.6、11 节）：阶段审查（lean）→ 门禁与覆盖率 → stage-qa → 修复 → 只确认 → 签收；编排见 stage-acceptance.ts
+      const deps = { root: this.d.root, store: this.d.store, config: this.d.config };
+      const step = await stageStep(deps, flowId, { force, gateFailedWithoutChange: () => gateFailedWithoutChange(this.d.store, flowId, flow.stage) });
+      if (step === 'done') { await this.d.store.advanceStage(flowId, 'gate'); this.notify(); return; }
+      if (step === 'changed') { await this.promote(flowId); await this.dispatchProgramDriven(flowId); this.notify(); return; }
+      if (step !== 'gate') return;
       this.gating.add(flowId);
       this.notify();
-      this.track(runStageGate(this.d.root, this.d.store, this.d.config, flowId, this.d.verifyTimeoutMs)
+      this.track(runImplementationChecks(this.d.root, this.d.store, this.d.config, flowId, this.d.verifyTimeoutMs)
         .then(async (g) => {
-          this.d.onGate?.(g);
-          // M6 由 stage-qa 取代：保留 HEAD 的有限门禁修复机制。
-          if (!g.passed && g.failed && this.d.store.readFlow(flowId).stage_status === 'active') {
-            const r = await gateFailed({ root: this.d.root, store: this.d.store, config: this.d.config }, flowId, g.failed);
-            if (r.reason) await this.d.store.recordEvent({ flow: flowId, actor: 'engine', type: 'note', reason: `需要你处理：${r.reason}`, data: { needs_human: true, stage: g.stage } });
-          }
-          if (!g.passed && g.stage === P1_STAGE) await this.d.store.setPlanRework(flowId, `P1 闸门未通过：\n${g.reasons.join('\n')}`.slice(0, 4000), 'gate');
-          if (g.passed && !g.needsHuman) await this.d.store.advanceStage(flowId, 'gate');
+          const r = await afterChecks(deps, flowId, g);
+          const after = this.d.store.readFlow(flowId);
+          this.d.onGate?.({ stage: g.stage, passed: g.passed, needsHuman: after.stage_status === 'awaiting_human' || after.stage_status === 'needs_human', reasons: r.note ? [...g.reasons, r.note] : g.reasons, ...(g.failed ? { failed: g.failed } : {}) });
+          if (r.done) await this.d.store.advanceStage(flowId, 'gate');
         })
         .finally(() => this.gating.delete(flowId))
-        .then(() => { this.notify(); return this.pump(flowId); }));
+        .then(async () => { await this.promote(flowId); await this.dispatchProgramDriven(flowId); this.notify(); return this.pump(flowId); }));
     } catch (e) { report(e); }
   }
 

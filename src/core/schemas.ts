@@ -7,7 +7,8 @@ import { Value } from 'typebox/value';
 const Nullable = <T extends TSchema>(t: T) => Type.Union([t, Type.Null()]);
 const IsoTime = Type.String({ minLength: 1 });
 const FlowId = Type.String({ pattern: '^[BFX]-[0-9]{3,}$' });
-const TaskId = Type.String({ pattern: '^T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?$' });
+/** T-003、T-003.at-2、T-003.rv、T-003.fx-1；阶段级的审查与验收挂在阶段上：S1.rv、S1.rv-2、S1.qa、S1.qa-2（第 7.6、11 节） */
+const TaskId = Type.String({ pattern: '^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$' });
 
 export const TASK_STATUSES = [
   'pending', 'ready', 'in_progress', 'awaiting_inputs', 'checking', 'in_review', 'disputed',
@@ -171,7 +172,7 @@ export const TaskFile = Type.Object({
   for_task: Type.Optional(TaskId),
   /** 验收测试的返工轮次（.at-n，第 9.3–9.5 节）：争议、被别的 task 的契约追加破坏、用户裁决改测试 */
   acctest_round: Type.Optional(Type.Object({
-    kind: Type.Enum(['dispute', 'foreign', 'decide']),
+    kind: Type.Enum(['dispute', 'foreign', 'decide', 'coverage']),
     /** 争议的测试标识 */
     test: Type.Optional(Type.String()),
     /** 引发这一轮的 task（争议的 worker 或破坏测试的 task） */

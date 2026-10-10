@@ -19,6 +19,7 @@ import { P1_STAGE } from '../core/plan-flow.ts';
 import { importInputs, prepareInputs, type IntakeInput, type PreparedIntake } from '../core/intake.ts';
 import { readFileSync } from 'node:fs';
 import { costReport, formatCost } from '../core/cost.ts';
+import { deliveryReport, flowMetrics, renderMetrics, sStageIds, stageSignoff } from '../core/signoff.ts';
 import { renderStatus, visibleFlows } from '../core/status-view.ts';
 import { applyDrafts, formatDrafts, listDrafts, type Draft } from '../core/rules-draft.ts';
 import { findSessionFile, formatRunDetail, summarizeSession } from '../core/session-log.ts';
@@ -76,7 +77,7 @@ export const FLOW_USAGE = [
   '  /forge-approve [stage:<id>|amend:<id>] [--yes]   批准等待审阅的对象（仅用户）；实施阶段批准时把集成分支合入主分支',
   '  /forge-reject [stage:<id>|amend:<id>] "<意见>"   打回对象并记录意见',
   '  /forge-add "<需求>"       规格修订在 M7 实现',
-  '  /forge accept <阶段或任务> --note "<说明>"   接受耗尽轮数的阶段门禁或任务审查',
+  '  /forge accept <阶段或任务> --note "<说明>"   阶段在"需要你处理"（门禁修复轮数用尽）时人工放行进入签收；或接受耗尽轮数的任务审查',
   '  /forge-decide <任务> keep-test ["<说明>"] | fix-test "<说明>"   裁决交给你的验收测试争议',
   '  /forge answer [<任务>]   回答阻塞任务提出的问题（弹出输入框），回答后任务继续',
   '  /forge unblock <任务> ["<回答>"] [--reset]   解除阻塞；--reset 清零对应失败计数',
@@ -89,6 +90,8 @@ export const FLOW_USAGE = [
   '  /forge run [<run_id>]    某次子进程运行的工具调用摘要与最后的回复（会话留档）；不给 id 时列出最近的运行',
   '  /forge knowledge [...]   项目知识库：列出、搜索、确认候选、废弃、提升为规则草案（/forge knowledge help）',
   '  /forge-status --timing   耗时分布：各阶段、子进程按角色与结果、合并排队与验证、阻塞、最长的任务（--json 输出 JSON）',
+  '  /forge-status --metrics  速度、返工、质量、成本度量（agent 时间与墙钟、关键路径、返工次数、AC 覆盖率）',
+  '  /forge report            当前阶段的签收材料；最后一个阶段时是交付汇报',
   '  /forge-status --cost     成本统计：按流程、阶段、角色、模型、任务汇总 token 与耗时，返工最多的任务',
   '  /forge abort [--yes]     中止当前修复或流程（集成分支保留，主分支不受影响）',
 ].join('\n');
@@ -182,6 +185,11 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         return [formatCost(costReport(store), store.listFixLogs()), ...budgets].join('\n\n');
       }
       if (argv.includes('--detail')) return fullStatus(store, null);
+      if (argv.includes('--metrics')) {
+        const flows = visibleFlows(store);
+        if (!flows.length) return '没有进行中的流程。';
+        return flows.map((f) => renderMetrics(flowMetrics(store, f.id, new Date(), env.root))).join('\n\n');
+      }
       if (argv.includes('--timing')) {
         const flows = visibleFlows(store);
         if (!flows.length) return '没有进行中的流程。';
@@ -189,6 +197,17 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         return argv.includes('--json') ? JSON.stringify(reports.length === 1 ? reports[0] : reports, null, 2) : reports.map(formatTiming).join('\n\n');
       }
       return renderStatus(store, loadConfig(path.join(env.root, 'workflow.yaml')));
+    }
+    case 'report': {
+      const store = env.store();
+      const config = loadConfig(path.join(env.root, 'workflow.yaml'));
+      const flowId = store.readState().active_flow;
+      if (!flowId) return '当前没有进行中的流程。';
+      const flow = store.readFlow(flowId);
+      const stages = sStageIds(flow);
+      if (!stages.length) return '流程还没有实施阶段，没有可汇报的内容（/forge-status 查看进度）。';
+      const stage = stages.includes(flow.stage) ? flow.stage : stages.at(-1)!;
+      return stage === stages.at(-1) ? deliveryReport(env.root, store, config, flowId) : stageSignoff(env.root, store, config, flowId, stage);
     }
     case 'abort': {
       const h = env.engine();
@@ -303,6 +322,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       if (!target || !note) throw new Error('用法：/forge accept <阶段或任务> --note "<说明>"');
       const flow = h.store.readFlow(flowId);
       if (target === flow.stage) {
+        if (flow.stage_status !== 'needs_human') throw new Error(`阶段 ${target} 当前不是"需要你处理"状态（${flow.stage_status}），不能人工放行。只有门禁修复轮数用尽的阶段才需要 /forge accept；等你签收时直接 /forge-approve。`);
         await h.store.transitionStage(flowId, { to: 'awaiting_human', trigger: 'accept', actor: 'human', reason: note });
         return `已接受阶段 ${target} 的门禁例外（${note}）；仍需 /forge-approve 签收。`;
       }

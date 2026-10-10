@@ -166,9 +166,12 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
   }
   if (i.mode === 'review' && i.reviewBrief) {
     parts.push(i.reviewBrief.trim());
+    const qa = i.task.kind === 'qa';
     parts.push(i.confirmRound
-      ? '开始：这是确认轮。只核对上面清单里的编号，调用 forge_review_confirm 逐条回答（覆盖全部编号），不能提出新问题。不要修改仓库里的文件。'
-      : '开始：按上面的输入和角色提示的顺序审查，最后调用 forge_review_report 一次提交全部问题（没有问题提交空列表）。不要修改仓库里的文件。');
+      ? `开始：这是确认轮。只核对上面清单里的编号，调用 ${qa ? 'forge_qa_confirm' : 'forge_review_confirm'} 逐条回答（覆盖全部编号），不能提出新问题。不要修改仓库里的文件。`
+      : qa
+        ? '开始：按上面的输入和技能 stage-qa 的顺序检查，最后调用 forge_qa_report 一次提交全部问题（没有问题提交空列表）。不要修改仓库里的文件。'
+        : '开始：按上面的输入和角色提示的顺序审查，最后调用 forge_review_report 一次提交全部问题（没有问题提交空列表）。不要修改仓库里的文件。');
     return { system, user: parts.join('\n\n') };
   }
   if (i.mode === 'review') {

@@ -44,8 +44,12 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
   for (const flow of visibleFlows(store)) {
     for (const a of store.listAmends(flow.id).filter((a) => a.status === 'proposed')) out.push({ key: `${flow.id}:amend:${a.id}`, text: amendSummary(a), command: `/forge-approve amend:${a.id} 或 /forge-reject amend:${a.id} "<意见>"` });
     const tasks = store.listTasks(flow.id);
-    if (flow.stage_status === 'awaiting_human') out.push({ key: `${flow.id}:gate:${flow.stage}`, text: awaitingMerge(flow) ? '全部任务已完成，等你批准合入主分支' : `${phaseLabel(flow, currentPhase(config, flow, tasks))}阶段的产出等待你审批`, command: `/forge-approve stage:${flow.stage} 或 /forge-reject stage:${flow.stage} "<意见>"` });
-    if (flow.stage_status === 'needs_human') out.push({ key: `${flow.id}:gatefail:${flow.stage}`, text: '阶段门禁修复轮数用尽，需要你处理', command: '/forge gate 重跑、/forge-reject "<意见>" 或 /forge accept <阶段> --note "<说明>"' });
+    const isS = (flow.s_stages ?? []).some((x) => x.id === flow.stage);
+    if (flow.stage_status === 'awaiting_human') out.push({ key: `${flow.id}:gate:${flow.stage}`, text: awaitingMerge(flow) ? '全部任务已完成，等你批准合入主分支' : `${phaseLabel(flow, currentPhase(config, flow, tasks))}阶段的产出等待你审批`, command: `/forge-approve stage:${flow.stage} 或 /forge-reject stage:${flow.stage} "<意见>"${isS ? '；签收材料：/forge report' : ''}` });
+    if (flow.stage_status === 'needs_human') {
+      const why = needsHumanReason(store, flow);
+      out.push({ key: `${flow.id}:gatefail:${flow.stage}`, text: `阶段门禁修复轮数用尽，需要你处理${why ? `：${short(why, 200)}` : ''}`, command: `/forge accept ${flow.stage} --note "<说明>"（人工放行进入签收）、/forge gate（重跑门禁）或 /forge-reject "<意见>"（打回）` });
+    }
     const gate = [...store.readEvents()].reverse().find((e) => e.flow === flow.id && e.type === 'gate_result');
     if (flow.stage_status === 'active' && gate?.to === 'active' && gate.data?.['stage'] === flow.stage && !tasks.some((t) => t.stage === flow.stage && !['done', 'cancelled'].includes(t.status))) out.push({ key: `${flow.id}:gatefail:${gate.seq}`, text: `阶段检查未通过：${short(gate.reason ?? '')}`, command: '处理后执行 /forge gate 重跑' });
     for (const t of tasks.filter(awaitingReview)) out.push({ key: `${flow.id}:timeout:${t.id}:${t.timeout_review!.run}`, text: `${t.id} 运行超时，等主会话复核`, command: '主会话调用 forge_resolve_timeout；查看材料：/forge-status --detail' });
@@ -74,6 +78,11 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
   if (cand.length) out.push({ key: `knowledge:candidates:${cand.at(-1)!.id}`, text: `${cand.length} 条知识候选待确认`, command: '/forge knowledge accept <K-编号> 或 retire <K-编号>' });
   return out;
 }
+/** 阶段进入 needs_human 的原因（最近一次转入 needs_human 的事件的 reason） */
+export function needsHumanReason(store: StateStore, flow: Pick<FlowFile, 'id' | 'stage'>): string | null {
+  const ev = [...store.readEvents()].reverse().find((e) => e.flow === flow.id && e.data?.['entity'] === 'stage' && e.data['stage'] === flow.stage && e.to === 'needs_human');
+  return ev?.reason ?? null;
+}
 export function visibleFlows(store: StateStore): FlowFile[] {
   const active = store.readState().active_flow;
   return [...(active ? [store.readFlow(active)] : []), ...(store.openFixFlow() ? [store.openFixFlow()!] : [])];
@@ -88,7 +97,7 @@ export function renderFlow(store: StateStore, config: FlowConfig, flow: FlowFile
   const cur = currentPhase(config, flow, tasks);
   const counted = tasks.filter((t) => t.status !== 'cancelled' && (flow.mode === 'fix' || cur === 'done' || phaseOfStage(config, flow.mode, t.stage) === cur));
   const active = tasks.filter((t) => INFLIGHT.has(t.status));
-  return [`${flow.id}「${short(flow.title, 60)}」`, phaseBar(config, flow, cur), `${PHASE_LABEL[cur]}阶段：${cur === 'spec' ? '整理可验证的规格' : cur === 'plan' ? '制定契约与计划' : cur === 'implementation' ? '按任务实施并运行全量验证' : '已合入主分支'}`, `进度：${counted.filter((t) => t.status === 'done').length} / ${counted.length} 个任务完成`, specStatus(store, flow.id), ...[planStatus(store, flow.id)].filter(Boolean), active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${flow.stage_status === 'awaiting_human' ? '无（等待你审批）' : flow.stage_status === 'awaiting_gate' ? '阶段检查中' : '无'}`, `阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、') || '无'}`].join('\n');
+  return [`${flow.id}「${short(flow.title, 60)}」`, phaseBar(config, flow, cur), `${PHASE_LABEL[cur]}阶段：${cur === 'spec' ? '整理可验证的规格' : cur === 'plan' ? '制定契约与计划' : cur === 'implementation' ? '按任务实施并运行全量验证' : '已合入主分支'}`, `进度：${counted.filter((t) => t.status === 'done').length} / ${counted.length} 个任务完成`, specStatus(store, flow.id), ...[planStatus(store, flow.id)].filter(Boolean), active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${flow.stage_status === 'awaiting_human' ? `无（等待你审批${(flow.s_stages ?? []).some((x) => x.id === flow.stage) ? '，签收材料：/forge report' : ''}）` : flow.stage_status === 'needs_human' ? '无（阶段检查未通过，等你决定）' : flow.stage_status === 'awaiting_gate' ? '阶段检查中' : '无'}`, `阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、') || '无'}`].join('\n');
 }
 export function renderStatus(store: StateStore, config: FlowConfig): string {
   const flows = visibleFlows(store);

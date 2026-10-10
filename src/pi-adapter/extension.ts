@@ -443,7 +443,7 @@ export default function piFlow(pi: ExtensionAPI): void {
 
   pi.registerCommand('forge', {
     description: 'pi-forge 管理：status、next、resume、approve、reject、unblock、gate、doctor、init',
-    getArgumentCompletions: (prefix) => ['status', 'next', 'resume', 'answer', 'accept', 'add', 'rules', 'knowledge', 'run', 'sync', 'budget', 'models', 'off', 'approve', 'reject', 'unblock', 'decide', 'gate', 'abort', 'doctor', 'init', 'help']
+    getArgumentCompletions: (prefix) => ['status', 'report', 'next', 'resume', 'answer', 'accept', 'add', 'rules', 'knowledge', 'run', 'sync', 'budget', 'models', 'off', 'approve', 'reject', 'unblock', 'decide', 'gate', 'abort', 'doctor', 'init', 'help']
       .filter((x) => x.startsWith(prefix.trim())).map((x) => ({ value: x, label: x })),
     handler: async (args, ctx) => {
       try {

@@ -20,6 +20,7 @@ import {
 export const REVIEW_INPUT = 'review-input.json';
 export const REVIEW_REPORT = 'review-report.json';
 export const REVIEW_CONFIRM = 'review-confirm.json';
+export const REVIEW_FILES = { input: REVIEW_INPUT, report: REVIEW_REPORT, confirm: REVIEW_CONFIRM } as const;
 export const SUGGESTIONS_PATH = 'docs/review/suggestions.md';
 
 /** 创建 .rv 时存下的输入：确认轮的上一轮 must 清单，以及这一轮审查的提交范围 */

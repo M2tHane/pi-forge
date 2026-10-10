@@ -7,6 +7,7 @@ import { git, gitOk } from './git.ts';
 import { ensureIntegrationBranch } from './worktree.ts';
 import { mergeToMain } from './release.ts';
 import { materializePlan, P1_STAGE } from './plan-flow.ts';
+import { deliveryReport } from './signoff.ts';
 
 export interface StageDeps { root: string; store: StateStore; config: FlowConfig }
 
@@ -37,6 +38,13 @@ export async function approveStage(d: StageDeps, flowId: string, note?: string):
     flow = d.store.readFlow(flowId);
   }
   if (flow.stage === flow.stages.at(-1)) {
+    // 先把交付汇报存为阶段证据（失败不阻止合入），再合入
+    try {
+      await d.store.saveStageEvidence(flowId, flow.stage, 'delivery.md', deliveryReport(d.root, d.store, d.config, flowId), 'delivery');
+      lines.push(`交付汇报已保存为阶段证据（delivery.md）；随时可用 /forge report 查看。`);
+    } catch (e) {
+      lines.push(`提示：交付汇报未能保存（${(e as Error).message.split('\n')[0]}），不影响合入。`);
+    }
     const sha = await mergeToMain(d.root, d.store, d.config, flowId);
     lines.push(`已把 ${flow.integration_branch} 合入 ${d.config.raw.main_branch}（${sha.slice(0, 8)}）。`);
   }

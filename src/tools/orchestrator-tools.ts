@@ -38,12 +38,12 @@ export async function flowSpecAmend(root: string, store: StateStore, p: Static<t
 }
 
 export const WaitParams = Type.Object({
-  task_id: Type.Optional(Type.String({ pattern: '^T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?$' })),
+  task_id: Type.Optional(Type.String({ pattern: '^(T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-[0-9]+)?)$' })),
   timeout_s: Type.Optional(Type.Integer({ minimum: 1, maximum: 3600, default: 1200 })),
 });
 
 export const ResolveTimeoutParams = Type.Object({
-  task_id: Type.String({ pattern: '^T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?$' }),
+  task_id: Type.String({ pattern: '^(T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-[0-9]+)?)$' }),
   decision: Type.Union([Type.Literal('continue'), Type.Literal('restart'), Type.Literal('block')], {
     description: 'continue：有进展、方向对，接着原会话再给一份预算；restart：原地打转或方向错了，不带旧对话从头换个思路（保留工作区与 handoff）；block：做不到或需要用户决定，交给用户',
   }),
@@ -74,7 +74,7 @@ export async function flowResolveTimeout(store: StateStore, engine: Engine, p: S
 }
 
 export const ResolveScopeParams = Type.Object({
-  task_id: Type.String({ pattern: '^T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?$' }),
+  task_id: Type.String({ pattern: '^(T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-[0-9]+)?)$' }),
   decision: Type.Union([Type.Literal('approve'), Type.Literal('reject')], { description: 'approve：追加到该任务的可写范围（重叠的任务各改各的部分、合并时程序处理冲突）；reject：不追加' }),
   note: Type.Optional(Type.String({ maxLength: 2000, description: '给子进程的说明（reject 时必填：为什么不行、该怎么做）' })),
 });

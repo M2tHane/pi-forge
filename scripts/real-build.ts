@@ -23,7 +23,7 @@ import { StateStore } from '../src/core/state-store.ts';
 import { worktreesRoot } from '../src/core/worktree.ts';
 import { packageRoots, pluginExtensionsFor } from '../src/pi-adapter/plugins.ts';
 import {
-  agentTime, parseTestSummary, runHidden, scoreRun, toMin,
+  agentTime, parseTestSummary, runHidden, scoreRun, sessionUsage, toMin,
   type HiddenResult, type Interval, type PhaseSummary, type RunStatus, type Summary, type TestSummary,
 } from './m9/common.ts';
 import { RpcProcess, type RpcRecord } from './m9/rpc.ts';
@@ -209,6 +209,8 @@ export async function main(argv: string[]): Promise<number> {
   const agentDir = process.env['PI_CODING_AGENT_DIR'] ?? path.join(homedir(), '.pi', 'agent');
   const plugins = pluginExtensionsFor(config, 'orchestrator', packageRoots(project, agentDir));
   const notes: string[] = [];
+  // --ext 显式给出的插件包（例如装在实验目录里、不写全局配置的 ask_user）不算缺失
+  plugins.missing = plugins.missing.filter((pkg) => !o.ext.some((e) => e.endsWith(`/node_modules/${pkg}`)));
   if (plugins.missing.length) {
     const msg = `主会话缺少插件 ${plugins.missing.join('、')}：没有 ask_user，P0 会退回文字提问（pi install npm:${plugins.missing[0]}）`;
     notes.push(msg);
@@ -438,7 +440,7 @@ export async function main(argv: string[]): Promise<number> {
     for (const p of phases) if (!p.delivered && p.hidden === null && st.failure?.status !== 'stopped_early') { if (p.endMs === null) await finishPhase(p); await score(p); }
   } else for (const p of phases) if (p.endMs === null) await finishPhase(p);
 
-  const summary = buildSummary({ o, runId, startedAt, sha, dirty: dirty === null ? null : dirty.length > 0, piVersion, phases, store, project, sim, failure: st.failure, notes, p0Intervals, scoringMs });
+  const summary = buildSummary({ o, runId, startedAt, sha, dirty: dirty === null ? null : dirty.length > 0, piVersion, phases, store, project, sim, failure: st.failure, notes, p0Intervals, scoringMs, mainSessions });
   writeFileSync(path.join(out, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
   log(`完成：${summary.status}；基础 ${summary.score.base.passed}/${summary.score.base.total}，变更 ${summary.score.change ? `${summary.score.change.passed}/${summary.score.change.total}` : '—'}，回归 ${summary.score.regression}，agent 时间 ${summary.agent_min} 分钟`);
   return summary.status === 'delivered' ? 0 : 1;
@@ -452,7 +454,7 @@ function killRuns(store: StateStore): void {
 
 function buildSummary(i: {
   o: Options; runId: string; startedAt: Date; sha: string | null; dirty: boolean | null; piVersion: string; phases: Phase[]; store: StateStore; project: string;
-  sim: SimState; failure: { kind: string; reason: string; status: RunStatus } | null; notes: string[]; p0Intervals: Interval[]; scoringMs: number;
+  sim: SimState; failure: { kind: string; reason: string; status: RunStatus } | null; notes: string[]; p0Intervals: Interval[]; scoringMs: number; mainSessions: string;
 }): Summary {
   const events = safe2(() => i.store.readEvents()) ?? [];
   const phaseSummaries: PhaseSummary[] = [];
@@ -489,9 +491,16 @@ function buildSummary(i: {
       p0_questions: i.sim.counts.p0_question, p0_text_turns: i.sim.counts.p0_text_turns, p0_text_numbered: i.sim.counts.p0_text_numbered,
       gates: i.sim.counts.gate, extra: i.sim.counts.extra, extra_total: extraTotal(i.sim.counts),
     },
-    usage: {
-      runs: runs.length, input: sum((r) => r.tokens.input), output: sum((r) => r.tokens.output), cache_read: sum((r) => r.tokens.cache_read), cache_write: sum((r) => r.tokens.cache_write), cost: sum((r) => r.cost),
-    },
+    // 子进程按 run 记录累计；主会话（orchestrator）从它的会话文件累计，两者相加
+    usage: (() => {
+      const m = safe2(() => sessionUsage(i.mainSessions)) ?? {};
+      const mm = (k: string) => Number(m[k] ?? 0) || 0;
+      return {
+        runs: runs.length, input: sum((r) => r.tokens.input) + mm('input'), output: sum((r) => r.tokens.output) + mm('output'),
+        cache_read: sum((r) => r.tokens.cache_read) + mm('cache_read'), cache_write: sum((r) => r.tokens.cache_write) + mm('cache_write'), cost: sum((r) => r.cost) + mm('cost'),
+        main_input: mm('input'), main_output: mm('output'), main_cache_read: mm('cache_read'), main_cost: mm('cost'),
+      };
+    })(),
     notes: [...i.notes, ...(i.o.hidden ? [] : ['没有给 --hidden，未计分']), ...(status === 'stopped_early' ? ['提前停止，未计分'] : [])],
   };
 }

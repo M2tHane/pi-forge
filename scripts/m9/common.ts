@@ -2,6 +2,8 @@
 // hidden.mjs 输出解析与计分、回归、agent 时间、问句识别、项目自带测试的结果解析、summary.json 的类型。
 // real-build.ts 与 native.ts 都写同一种 summary.json，score.ts 汇总它。
 import { spawn } from 'node:child_process';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { stageDurations } from '../../src/core/signoff.ts';
 import type { FlowEvent, FlowFile } from '../../src/core/schemas.ts';
 
@@ -256,4 +258,29 @@ export interface Summary {
   };
   usage: Record<string, number | null>;
   notes: string[];
+}
+
+/** 会话目录下全部会话文件的 token 用量（主会话与子会话） */
+export function sessionUsage(dir: string): Record<string, number | null> {
+  const files: string[] = [];
+  const walk = (d: string) => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.jsonl')) files.push(p); } };
+  walk(dir);
+  const sum = { input: 0, output: 0, cache_read: 0, cache_write: 0, cost: 0, turns: 0 };
+  for (const f of files) {
+    if (!statSync(f).isFile()) continue;
+    for (const line of readFileSync(f, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      let o: { message?: { role?: string; usage?: Record<string, unknown> } };
+      try { o = JSON.parse(line); } catch { continue; }
+      const m = o.message;
+      if (m?.role !== 'assistant' || !m.usage) continue;
+      sum.turns++;
+      sum.input += Number(m.usage['input'] ?? 0) || 0;
+      sum.output += Number(m.usage['output'] ?? 0) || 0;
+      sum.cache_read += Number(m.usage['cacheRead'] ?? 0) || 0;
+      sum.cache_write += Number(m.usage['cacheWrite'] ?? 0) || 0;
+      sum.cost += Number((m.usage['cost'] as { total?: number } | undefined)?.total ?? 0) || 0;
+    }
+  }
+  return { session_files: files.length, ...sum };
 }

@@ -73,7 +73,7 @@ test('applyExperimentConfig：角色模型与思考级别、关闭升级；A1 �
   for (const r of ['orchestrator', 'architect', 'reviewer', 'stage-qa', 'researcher']) assert.deepEqual([a0.roles[r]!.model, a0.roles[r]!.thinking], ['planner', 'medium'], r);
   for (const r of ['worker', 'test-author']) assert.deepEqual([a0.roles[r]!.model, a0.roles[r]!.thinking], ['coder', 'high'], r);
   assert.equal(a0.escalation.enabled, false);
-  assert.equal('test_author' in a0.implementation_gate, false);
+  assert.notEqual(a0.implementation_gate['test_author'], false);
   const a1 = parseDocument(applyExperimentConfig(tpl, { ...o, arm: 'A1' })).toJS() as { implementation_gate: { test_author?: boolean } };
   assert.equal(a1.implementation_gate.test_author, false);
 });

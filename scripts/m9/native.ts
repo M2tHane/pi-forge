@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import {
-  looksLikeQuestion, nativeAgentMs, parseTestSummary, runHidden, scoreRun, toMin,
+  looksLikeQuestion, nativeAgentMs, parseTestSummary, runHidden, scoreRun, sessionUsage, toMin,
   type HiddenResult, type Interval, type PhaseSummary, type RunStatus, type Summary, type TestSummary,
 } from './common.ts';
 
@@ -233,30 +233,6 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 /** 会话目录下所有会话文件（主会话与子会话）的 token 与金额合计 */
-function sessionUsage(dir: string): Record<string, number | null> {
-  const files: string[] = [];
-  const walk = (d: string) => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.jsonl')) files.push(p); } };
-  walk(dir);
-  const sum = { input: 0, output: 0, cache_read: 0, cache_write: 0, cost: 0, turns: 0 };
-  for (const f of files) {
-    if (!statSync(f).isFile()) continue;
-    for (const line of readFileSync(f, 'utf8').split('\n')) {
-      if (!line.trim()) continue;
-      let o: { message?: { role?: string; usage?: Record<string, unknown> } };
-      try { o = JSON.parse(line); } catch { continue; }
-      const m = o.message;
-      if (m?.role !== 'assistant' || !m.usage) continue;
-      sum.turns++;
-      sum.input += Number(m.usage['input'] ?? 0) || 0;
-      sum.output += Number(m.usage['output'] ?? 0) || 0;
-      sum.cache_read += Number(m.usage['cacheRead'] ?? 0) || 0;
-      sum.cache_write += Number(m.usage['cacheWrite'] ?? 0) || 0;
-      sum.cost += Number((m.usage['cost'] as { total?: number } | undefined)?.total ?? 0) || 0;
-    }
-  }
-  return { session_files: files.length, ...sum };
-}
-
 if (import.meta.url === `file://${process.argv[1]}`) {
   main(process.argv.slice(2)).then((code) => process.exit(code), (e) => { process.stderr.write(`${(e as Error).message}\n`); process.exit(2); });
 }

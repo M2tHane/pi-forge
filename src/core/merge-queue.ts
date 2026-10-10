@@ -15,6 +15,7 @@ import { mergeContractThreeWay } from './contract-merge.ts';
 import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { testAdjustEnabled } from './test-adjust.ts';
+import { cleanTreeOf, recordVerified, reusableRuns, reuseText } from './verify-cache.ts';
 import { resourceOptions, withResources } from './resources.ts';
 import { classifyAcceptanceFailure, failingAcceptanceDirs, handOffToFix, handleForeignBreak } from './acceptance-flow.ts';
 
@@ -148,15 +149,20 @@ export class MergeQueue {
       // 2. 只跑一次全量验证（任一任务有 verify 时）
       if (applied.some((a) => a.t.verify.length)) {
         if (this.hooks.beforeVerify) await this.hooks.beforeVerify();
+        const tree = cleanTreeOf(temp);
         const ok = await withResources(this.root, `merge-${flowId}-batch`, resourceOptions(this.config), async (env) => {
+          const passed: { name: string; shell: string; evidence: string }[] = [];
           for (const c of this.mergeVerifyPlan(applied.find((a) => a.t.verify.length)!.t)) {
             const r = await runShell(c.shell, temp, this.hooks.verifyTimeoutMs, env);
-            for (const a of applied) await this.store.saveEvidence(flowId, a.t.id, `merge-a${a.t.merge_failures ?? 0}-batch-${c.name}.log`, evidenceText({ command: c.name, ...r }, c.shell), 'merge-queue');
+            let ev = '';
+            for (const a of applied) ev = await this.store.saveEvidence(flowId, a.t.id, `merge-a${a.t.merge_failures ?? 0}-batch-${c.name}.log`, evidenceText({ command: c.name, ...r }, c.shell), 'merge-queue');
+            if (r.exit_code === 0) passed.push({ name: c.name, shell: c.shell, evidence: ev });
             if (r.exit_code !== 0) {
               await this.store.recordEvent({ flow: flowId, actor: 'merge-queue', type: 'note', reason: `批量合并 ${applied.map((a) => a.t.id).join('、')} 的全量 ${c.name} 失败，改为逐个合并`, data: { tasks: applied.map((a) => a.t.id), summary: failureSummary(r.output, 800) } });
               return false;
             }
           }
+          await recordVerified(this.store, flowId, tree, passed, { actor: 'merge-queue' });
           return true;
         });
         if (!ok) return null;
@@ -343,15 +349,23 @@ export class MergeQueue {
 
   private async postMergeVerify(flowId: string, t: TaskFile, wt: string) {
     if (this.hooks.beforeVerify) await this.hooks.beforeVerify();
-    const plan = this.mergeVerifyPlan(t);
+    const full = this.mergeVerifyPlan(t);
     const results: { command: string; exit_code: number }[] = [];
+    if (!full.length) return { ok: true as const, results, reason: '' };
+    // 同一棵代码树上、命令内容相同、已经通过的命令（通常是预检跑过的）沿用结果，并写沿用记录（偏离 76）
+    const tree = cleanTreeOf(wt);
+    const reused = reusableRuns(this.store.readEvents(), flowId, tree, full);
+    if (reused.size) await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-reused.txt`, reuseText(tree!, reused), 'merge-queue');
+    const plan = full.filter((c) => !reused.has(c.name));
     if (!plan.length) return { ok: true as const, results, reason: '' };
     // 第 4.1 节：合并验证带本次分配的资源运行
     return withResources(this.root, `merge-${flowId}-${t.id}`, resourceOptions(this.config), async (env) => {
+      const passed: { name: string; shell: string; evidence: string }[] = [];
       for (const c of plan) {
         const r = { command: c.name, ...(await runShell(c.shell, wt, this.hooks.verifyTimeoutMs, env)) };
         results.push({ command: c.name, exit_code: r.exit_code });
-        await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-${c.name}.log`, evidenceText(r, c.shell), 'merge-queue');
+        const ev = await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-${c.name}.log`, evidenceText(r, c.shell), 'merge-queue');
+        if (r.exit_code === 0) passed.push({ name: c.name, shell: c.shell, evidence: ev });
         if (r.exit_code !== 0) {
           // 全量验证的失败多半是任务自己的问题，日志多给一些
           const why = `已 rebase 到集成分支最新，全量 ${plan.map((x) => x.name).join('、')} 中 `;
@@ -359,6 +373,7 @@ export class MergeQueue {
           return { ok: false as const, results, reason: `合并后验证失败（${why}${c.name} 退出码 ${r.exit_code}）\n${failureSummary(r.output)}${adjust}`, command: c.name, output: r.output };
         }
       }
+      await recordVerified(this.store, flowId, tree, passed, { task: t.id, actor: 'merge-queue' });
       return { ok: true as const, results, reason: '' };
     });
   }

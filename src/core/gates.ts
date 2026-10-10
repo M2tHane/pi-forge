@@ -18,6 +18,7 @@ import { P1_STAGE, isArchitectStage, p1GateProblems } from './plan-flow.ts';
 import { adoptGateProblems } from './adopt.ts';
 import { featurePermissionSummary } from './feature-spec.ts';
 import { headSha } from './worktree.ts';
+import { recordVerified, reusableRuns, reuseText, treeOfCommit } from './verify-cache.ts';
 import { failingAcceptanceDirs } from './acceptance-flow.ts';
 import { createStageFixTasks, type StageIssue } from './stage-fix.ts';
 import { createCoverageRounds, stageCoverage, writeCoverageReport, type CoverageResult, type CoverageRow } from './coverage.ts';
@@ -105,7 +106,13 @@ export async function runImplementationChecks(root: string, store: StateStore, c
   let failed: ImplementationChecks['failed'];
   const startHead = headSha(root, flow.integration_branch);
 
-  if (def.gate.auto?.length) {
+  // 同一棵代码树上、命令内容相同、已经通过的命令（通常是最后一次合并验证跑过的）沿用结果，并写沿用记录（偏离 76）
+  const tree = treeOfCommit(root, startHead);
+  const full = (def.gate.auto ?? []).map((name) => ({ name, shell: config.commands[name]!.replace('{files}', '').trim() }));
+  const reused = reusableRuns(store.readEvents(), flowId, tree, full);
+  if (reused.size) await store.saveStageEvidence(flowId, flow.stage, 'gate-reused.txt', reuseText(tree!, reused), 'gate');
+  const plan = full.filter((c) => !reused.has(c.name));
+  if (plan.length) {
     const wt = path.join(worktreesRoot(root), `${flowId}-gate-${flow.stage}`);
     mkdirSync(path.dirname(wt), { recursive: true });
     removeWorktree(root, wt);
@@ -113,16 +120,18 @@ export async function runImplementationChecks(root: string, store: StateStore, c
     try {
       // 第 4.1 节：门禁同样带本次分配的资源运行
       await withResources(root, `gate-${flowId}-${flow.stage}`, resourceOptions(config), async (env) => {
-        for (const name of def.gate.auto!) {
-          const shell = config.commands[name]!;
-          const r = { command: name, ...(await runShell(shell.replace('{files}', '').trim(), wt, timeoutMs, env)) };
-          await store.saveStageEvidence(flowId, flow.stage, `gate-${name}.log`, evidenceText(r, shell), 'gate');
+        const passed: { name: string; shell: string; evidence: string }[] = [];
+        for (const { name, shell } of plan) {
+          const r = { command: name, ...(await runShell(shell, wt, timeoutMs, env)) };
+          const ev = await store.saveStageEvidence(flowId, flow.stage, `gate-${name}.log`, evidenceText(r, shell), 'gate');
+          if (r.exit_code === 0) passed.push({ name, shell, evidence: ev });
           if (r.exit_code !== 0) {
             reasons.push(`闸门命令 ${name} 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1200)}`);
             failed = { command: name, output: r.output };
             break;
           }
         }
+        await recordVerified(store, flowId, tree, passed, { stage: flow.stage, actor: 'gate' });
       });
     } finally {
       removeWorktree(root, wt);

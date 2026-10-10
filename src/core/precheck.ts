@@ -10,6 +10,7 @@ import { accBranch } from './acctest.ts';
 import { branchExists } from './worktree.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { resourceOptions, withResources } from './resources.ts';
+import { cleanTreeOf, recordVerified } from './verify-cache.ts';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -71,11 +72,16 @@ export async function runPrecheck(root: string, store: StateStore, config: FlowC
   const hasAcceptance = existsSync(path.join(wt, 'tests/acceptance', impl));
   const plan = precheckCommands(config.commands, impl, hasAcceptance);
   const attempt = t.precheck_failures ?? 0;
+  // 运行前的代码树：通过后记下，合并与门禁在同一棵树上沿用（偏离 76）
+  const tree = cleanTreeOf(wt);
   return withResources(root, `pc-${flowId}-${t.id}`, resourceOptions(config), async (env) => {
     const evidence: string[] = [];
+    const passed: { name: string; shell: string; evidence: string }[] = [];
     for (const c of plan) {
       const r = { command: c.name, ...(await runShell(c.shell, wt, timeoutMs, env)) };
-      evidence.push(await store.saveEvidence(flowId, t.id, `precheck-a${attempt}-${c.name}.log`, evidenceText(r, c.shell), 'precheck'));
+      const ev = await store.saveEvidence(flowId, t.id, `precheck-a${attempt}-${c.name}.log`, evidenceText(r, c.shell), 'precheck');
+      evidence.push(ev);
+      if (r.exit_code === 0) passed.push({ name: c.name, shell: c.shell, evidence: ev });
       if (r.exit_code !== 0) {
         const what = c.name === 'acceptance' ? `验收测试（tests/acceptance/${impl}/）` : c.name;
         return { ok: false, reason: `预检未通过：${what} 退出码 ${r.exit_code}${r.timed_out ? '（超时）' : ''}\n${failureSummary(r.output)}`, command: c.name, output: r.output };
@@ -83,6 +89,7 @@ export async function runPrecheck(root: string, store: StateStore, config: FlowC
     }
     const stat = t.base_sha ? git(wt, ['diff', '--stat', t.base_sha, 'HEAD']) : '';
     evidence.push(await store.saveEvidence(flowId, t.id, `precheck-a${attempt}-diff.txt`, stat || '（无改动）', 'precheck'));
+    await recordVerified(store, flowId, tree, passed, { task: t.id, actor: 'precheck' });
     return { ok: true, evidence };
   });
 }

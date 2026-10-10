@@ -2,7 +2,7 @@
 // M4 验收：合并队列。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { setupProject, PROJECT_YAML, DIRECT_YAML } from '../helpers/project.ts';
 import { makeEngine, commitToBranch } from '../helpers/engine.ts';
@@ -200,7 +200,11 @@ test('合并时跑全量 typecheck、lint、test、acceptance（各留 evidence�
     assert.deepEqual(errors, []);
     for (const id of ['T-001', 'T-002']) assert.equal(p.store.readTask(p.flowId, id).status, 'done', id);
     const merged = (id: string) => (existsSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence', id)) ? readdirEvidence(p.dir, p.flowId, id) : []).filter((f) => f.startsWith('merge-')).sort();
-    assert.deepEqual(merged('T-001'), ['merge-a0-acceptance.log', 'merge-a0-lint.log', 'merge-a0-test.log', 'merge-a0-typecheck.log']);
+    // 全量 acceptance 每次都跑（预检只跑本 task 的）；typecheck、lint、test 要么在合并时跑，要么沿用预检在同一棵树上的结果（取决于 T-002 是否先合入，偏离 76）
+    const ran = merged('T-001');
+    assert.ok(ran.includes('merge-a0-acceptance.log'), ran.join('、'));
+    const reused = ran.includes('merge-a0-reused.txt') ? readFileSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence/T-001/merge-a0-reused.txt'), 'utf8') : '';
+    for (const c of ['typecheck', 'lint', 'test']) assert.ok(ran.includes(`merge-a0-${c}.log`) || new RegExp(`- ${c}：沿用 \\S*/T-001/precheck-a0-${c}\\.log`).test(reused), `${c}：${ran.join('、')}\n${reused}`);
     assert.deepEqual(merged('T-002'), [], '文档类任务合并时不跑命令');
     assertSingleMerging(p.store.readEvents());
   } finally { p.cleanup(); }
@@ -220,6 +224,8 @@ test('批量合并：队列里的 3 个任务一起叠加、只跑一次全量�
       };
       const { engine, merges, errors } = makeEngine(p, async (_role, nth, a) => {
         const id = a.env.task.toLowerCase();
+        // 坏的 T-003 最后进队：整批失败后逐个合并时它排在 T-001 之后，被合并验证拦下（否则先合入的 T-003 会让 T-001 背锅，见评审 F7）
+        if (bad && id === 't-003' && nth === 1) await until(() => ['T-001', 'T-002'].every((t) => p.store.readTask(p.flowId, t).status === 'queued_merge'));
         await implement(a, { [`src/server/${id}/a.ts`]: bad && id === 't-003' && nth === 1 ? 'BAD' : id });
       }, undefined, { beforeMerge });
       await engine.next(p.flowId);

@@ -3,7 +3,7 @@
 记录已核实的事实（版本、Pi API）、偏离规格（`docs/BUILD_PROMPT.md`）的决定、真实模型实验的结论。实现细节以代码与测试为准，这里只写"为什么这样做"。
 偏离记录的编号不变；新增条目往后追加，一条 1–3 行，被后来的条目修订时注明。代码注释里的"第 N 条"在 M0 迁入的文件中指 pi-flow `NOTES.md` 的编号，改编时逐步换成本文的编号。
 
-目录：[已验证版本](#已验证版本) · [Pi API（已核实）](#pi-api已核实) · [待确认与已知局限](#待确认与已知局限) · [偏离记录](#偏离记录)（第 1–70 条，按里程碑 M0–M7 分组） · [M1 删除、由 Mx 重建](#m1-删除由-mx-重建) · [M2 删除按层角色](#m2-删除按层角色) · [真实模型实验](#真实模型实验) · [缓存提醒](#缓存提醒)。用户文档见 `README.md`，流程图见 `docs/flow.md`。
+目录：[已验证版本](#已验证版本) · [Pi API（已核实）](#pi-api已核实) · [待确认与已知局限](#待确认与已知局限) · [偏离记录](#偏离记录)（第 1–79 条，按里程碑 M0–M8.5 分组） · [M1 删除、由 Mx 重建](#m1-删除由-mx-重建) · [M2 删除按层角色](#m2-删除按层角色) · [真实模型实验](#真实模型实验) · [缓存提醒](#缓存提醒)。用户文档见 `README.md`，流程图见 `docs/flow.md`。
 
 ## 已验证版本
 
@@ -61,10 +61,12 @@
 - Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。（10-10 已完成评估并把全局升级到 1.1.0，见「Pi 1.0.0 → 1.1.0 升级评估」。）
 - M4 已接上资源隔离、bash 白名单、test-author 隔离工作区与 .at、真实预检、争议、验收测试单独合并与范围申请规则；e2e 按用户要求留到全部开发完统一运行（M4 到 M7 的 e2e 都是这样处理的，M9 之前统一跑一遍）。
 - M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；M3 已接上 P1：architect 起草契约与计划、forge_propose_plan 校验、doc 预检、P1 闸门、批准后生成 S 阶段与 task 并进入 S0。真实预检、验收测试 task、审查与契约锁定检查、阶段验收分别由 M4/M5/M6 接入（均已完成，见偏离第 32、44–62 条）。主会话角色按用户决定沿用 orchestrator。
-- stage-qa 的 bash 是 full，现有 guard 拦不住 shell 重定向改源码，而规格第 14 节要求 stage-qa 不能写（临时目录除外）。M6 改为由隔离兜底：stage-qa 和阶段审查在集成分支 HEAD 的临时 detached worktree 里运行，没有任何流程从这个 worktree 提交，结束后删除。重定向和 write 工具仍按可写范围（空）拦截。仍然留着的缺口：full bash 命令参数里写主工作区的绝对路径（例如 `cp x /项目/...`）是否被拦截，没有专门的测试。留到统一 e2e 时核对。
+- stage-qa 的 bash 是 full，现有 guard 拦不住 shell 重定向改源码，而规格第 14 节要求 stage-qa 不能写（临时目录除外）。M6 改为由隔离兜底：stage-qa 和阶段审查在集成分支 HEAD 的临时 detached worktree 里运行，没有任何流程从这个 worktree 提交，结束后删除。重定向和 write 工具仍按可写范围（空）拦截。M8.5 补上：命令参数引用主工作区路径一律拒绝（偏离 79），有 e2e 与单元测试。
 - M6 的 e2e（`test/e2e/stage-acceptance.test.ts`）只写了，没有运行。旧的 `test/e2e/gates.test.ts` 按模块生成 `T-NNN` 修复任务；现在改为按 task 生成 `.fx-n`，需要在统一 e2e 时更新。测试项目的 `PROJECT_YAML` 默认 `qa: false`，M6 的测试显式打开。
 - 阶段被打回（stage_reopened）后，再跑 stage-qa 与阶段审查时，旧的轮次仍计入 `qa.max_rounds` 和 `review.max_rounds`。M7 没有处理，留作已知局限：签收被打回后，用户可以用 `/forge accept` 放行。
 - M7 的 e2e（`change-request`、`fix`）只写了，没有运行。没有为 feature 和 adopt 写 e2e，它们由单元测试覆盖。提示词已按用户决定在 M8 补上 `modifies`、adopt 与 feature 的写法（见缓存提醒 10-10）。
+- 契约追加检查有两层（提交时、预检时）。e2e 只走得到提交那一层，预检那一层由单元测试 `test/unit/precheck.test.ts` 覆盖（M8.5 消融）。
+- M8.5 未覆盖：merge-fix 与 `.fx` 的 install 失败路径没有 e2e；S0 没有清单时跳过 install，由 worker 自己装。
 - 变更请求的 `cancelled` 状态在 store 里有（`StateStore.cancelChange`），但没有接命令，也没有调用者（M8 文档阶段核对：仍然如此）。
 - 流程图按用户要求延后（含 drawio）：`docs/flow.md` 是 M8 subagent 写的 mermaid 草稿，未审阅，之后再整理。
 - 工作流视图（`scripts/forge-view.*`）按用户要求延后：M8 subagent 的改编已合入，只做过渲染冒烟（能打开、无脚本错误），界面与数据未审阅，之后再整理。
@@ -154,6 +156,14 @@
 72. 硬依赖自己 impl 的验收测试（impl 合入后才写，第 9.5 节单独合并）不算 impl 预检要等的"最新验收测试"（`awaitedAcctest`），否则 impl 与它互相等待。
 73. 第 12.2 节的契约结构化三方合并也用在预检前的同步（`syncTaskInputs`）上：预检先同步集成分支，契约追加的冲突在这里就出现，不再留到合并队列的 rebase。
 74. merge-fix 也走预检（此前停在 checking 无人处理）；合并队列加测试钩子 `beforeMerge`（取队首前调用），e2e 用它让几个任务都进队列再合并。
+
+**M8.5：评审修正（2026-10-10，见 `docs/ADVERSARIAL-REVIEW.md`）**
+
+75. 依赖准备统一为 `src/core/workspace.ts` 的 `prepareWorkspace`（F1）：所有会运行命令的工作区都先 install → codegen。只读工作区（门禁、阶段审查、批量合并临时树、验收测试隔离工作区）按"锁文件哈希 + install 命令"缓存并硬链接；可写工作区（任务 worktree、merge-fix、`.fx`、stage-qa——它有 full bash，可能原地改依赖目录）直接 install。所有工作区共用 `acctest_workspace.cache` 这一项配置（名字沿用）。没有清单与锁文件（S0 初期）或没有 install 命令时跳过。耗时记 `workspace_prepare` 事件，`--metrics` 汇总。
+76. 同一棵代码树只验证一次（F2，`src/core/verify-cache.ts`）：预检、合并验证、门禁通过的命令记下代码树 SHA、命令名、命令内容哈希和 evidence；三者都相同时沿用，不再运行，并写沿用记录 `merge-aN-reused.txt` / `gate-reused.txt` 指向被沿用的 evidence。工作区不干净时不记不用；P1 或变更请求改了命令，哈希不同即重跑。
+77. "任务在等谁"收成一处（F4，`src/core/waits.ts`）：dispatcher、state-store、合并队列、status-view 共用 `waitsOn`/`softDepsDone`/`awaitedAcctestDone`；`stalls` 找出环、等待已阻塞或已取消的任务。status-view 报停滞，doctor 按 `actionableStalls`（不含等待 pending 的情况）报错。
+78. 预检与合并后验证失败时，失败信息列出任务 writes 之外被改的文件，并提示用 `forge_request_scope`（F7 第 1 步，`src/core/scope-hint.ts`）。`tests/acceptance`、`docs/spec`、`docs/contracts` 不提示（不能申请）。F7 第 2 步（快用完时生成修复任务而不是阻塞）留到 M9 之后。
+79. stage-qa 也用隔离工作区规则（`isolatedWorkspace`）；隔离模式下 bash 的任何参数引用主工作区路径（带边界匹配）直接拒绝。补上了"已知局限"里 full bash 写主工作区绝对路径的缺口，e2e 断言写入被拦且文件不存在。
 
 ## M1 删除、由 Mx 重建
 

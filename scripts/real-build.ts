@@ -51,6 +51,8 @@ export interface Options {
   ext: string[];
   pollSec: number;
   stopAfterGates: number | null;
+  /** 只做冒烟：在 --out 里已交付的项目上只跑变更阶段（不计入结果）；有未完成的 feature 流程时接着它 */
+  changeOnly: boolean;
 }
 
 export function parseArgs(argv: string[]): Options {
@@ -71,6 +73,7 @@ export function parseArgs(argv: string[]): Options {
     ext: all('--ext').map((e) => path.resolve(e)),
     pollSec: Number(get('--poll-sec') ?? 5),
     stopAfterGates: get('--stop-after-gates') ? Number(get('--stop-after-gates')) : null,
+    changeOnly: argv.includes('--change-only'),
   };
 }
 
@@ -193,19 +196,23 @@ export async function main(argv: string[]): Promise<number> {
   // 1. 空仓库 + /forge init + 实验配置
   const env: NodeJS.ProcessEnv = { ...process.env, PI_SKIP_VERSION_CHECK: '1' };
   const id = ['-c', 'user.name=m9', '-c', 'user.email=m9@local'];
-  git(project, ['init', '-q', '-b', 'main']);
-  writeFileSync(path.join(project, 'package.json'), '{ "name": "m9-project", "version": "0.0.0", "private": true }\n');
-  git(project, ['add', '.']);
-  git(project, [...id, 'commit', '-q', '-m', '空项目']);
   const piBase = ['--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files'];
-  const init = runShell(project, 'pi', ['-p', ...piBase, '-e', EXTENSION, ...o.ext.flatMap((e) => ['-e', e]), '--model', o.mainModel, '/forge init'], 5 * 60_000, env);
-  writeFileSync(path.join(out, 'init.log'), init.out);
-  if (init.code !== 0 || !existsSync(path.join(project, 'workflow.yaml'))) throw new Error(`/forge init 失败（退出码 ${init.code}）：${init.out.slice(-500)}`);
   const wf = path.join(project, 'workflow.yaml');
-  writeFileSync(wf, applyExperimentConfig(readFileSync(wf, 'utf8'), o));
+  if (o.changeOnly) {
+    if (!existsSync(wf)) throw new Error(`--change-only 需要 ${project} 里已有项目`);
+  } else {
+    git(project, ['init', '-q', '-b', 'main']);
+    writeFileSync(path.join(project, 'package.json'), '{ "name": "m9-project", "version": "0.0.0", "private": true }\n');
+    git(project, ['add', '.']);
+    git(project, [...id, 'commit', '-q', '-m', '空项目']);
+    const init = runShell(project, 'pi', ['-p', ...piBase, '-e', EXTENSION, ...o.ext.flatMap((e) => ['-e', e]), '--model', o.mainModel, '/forge init'], 5 * 60_000, env);
+    writeFileSync(path.join(out, 'init.log'), init.out);
+    if (init.code !== 0 || !existsSync(wf)) throw new Error(`/forge init 失败（退出码 ${init.code}）：${init.out.slice(-500)}`);
+    writeFileSync(wf, applyExperimentConfig(readFileSync(wf, 'utf8'), o));
+    git(project, ['add', 'workflow.yaml']);
+    git(project, [...id, 'commit', '-q', '-m', 'M9 实验配置：角色模型与思考级别、关闭升级']);
+  }
   const config = loadConfig(wf); // 校验：模板之外的键写错会在这里报
-  git(project, ['add', 'workflow.yaml']);
-  git(project, [...id, 'commit', '-q', '-m', 'M9 实验配置：角色模型与思考级别、关闭升级']);
   const agentDir = process.env['PI_CODING_AGENT_DIR'] ?? path.join(homedir(), '.pi', 'agent');
   const plugins = pluginExtensionsFor(config, 'orchestrator', packageRoots(project, agentDir));
   const notes: string[] = [];
@@ -428,9 +435,15 @@ export async function main(argv: string[]): Promise<number> {
     await sleep(1500);
     const buildPhase = (): Phase => ({ name: 'build', command: `/forge-build --prd ${JSON.stringify(o.prd)}`, flowId: null, startMs: 0, endMs: null, delivered: false, metricsText: null, hidden: null, tests: null, hiddenMeta: {} });
     const changePhase = (): Phase => ({ name: 'change', command: `/forge-build --feature --prd ${JSON.stringify(o.change)}`, flowId: null, startMs: 0, endMs: null, delivered: false, metricsText: null, hidden: null, tests: null, hiddenMeta: {} });
+    const open = o.changeOnly ? store.listFlows().find((f) => store.readFlow(f).mode === 'feature' && !['done', 'aborted'].includes(store.readFlow(f).stage_status)) : undefined;
+    if (o.changeOnly) {
+      const c = changePhase();
+      if (open) { c.flowId = open; c.command = '继续：按已确认的决定重新提交增量规格。'; }
+      await drive(c);
+      await finishPhase(c);
+    }
     const b = buildPhase();
-    await drive(b);
-    await finishPhase(b);
+    if (!o.changeOnly) { await drive(b); await finishPhase(b); }
     if (b.delivered && !interrupted) {
       log('新建已交付');
       await score(b);

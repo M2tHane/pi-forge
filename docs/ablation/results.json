@@ -866,5 +866,115 @@
    }
   ],
   "minutes": 75.8
+ },
+ {
+  "file": "m85-baseline.json",
+  "round": "M8.5 复测（--no-real-pi）",
+  "id": "baseline",
+  "kind": "baseline",
+  "mechanism": "无改动",
+  "hypothesis": "基线：同样负载下的通过情况，用来扣除负载引起的偶发失败",
+  "commit": "dbd38c26f00dc02b13cff7796185873dd228115f",
+  "pass": 711,
+  "fail": 0,
+  "failures": [],
+  "minutes": 23.8
+ },
+ {
+  "file": "m85-contract-append-both-off.json",
+  "round": "M8.5 复测（--no-real-pi）",
+  "id": "contract-append-both-off",
+  "kind": "ablate",
+  "mechanism": "提交时与预检时的契约只能追加检查都去掉",
+  "hypothesis": "前两臂各自都没有用例失败时，用它确认\"契约只能追加\"作为整体仍有测试保护",
+  "commit": "dbd38c26f00dc02b13cff7796185873dd228115f",
+  "pass": 708,
+  "fail": 3,
+  "failures": [
+   {
+    "suite": "unit",
+    "file": "runPrecheck：worker 改了已有契约时，预检在跑命令之前就失败（contracts），并点出文件",
+    "name": "runPrecheck：worker 改了已有契约时，预检在跑命令之前就失败（contracts），并点出文件"
+   },
+   {
+    "suite": "e2e",
+    "file": "worker 改本模块已有契约：forge_submit 被拒并点出文件与位置；还原后只追加则提交成功并合入",
+    "name": "worker 改本模块已有契约：forge_submit 被拒并点出文件与位置；还原后只追加则提交成功并合入"
+   },
+   {
+    "suite": "e2e",
+    "file": "worker 改别的模块的契约文件：forge_submit 被拒；还原后提交成功",
+    "name": "worker 改别的模块的契约文件：forge_submit 被拒；还原后提交成功"
+   }
+  ],
+  "minutes": 23.8
+ },
+ {
+  "file": "m85-awaited-acctest-off.json",
+  "round": "M8.5 复测（--no-real-pi）",
+  "id": "awaited-acctest-off",
+  "kind": "ablate",
+  "mechanism": "impl 预检不等硬依赖自己的验收测试（awaitedAcctest，偏离 72）",
+  "hypothesis": "去掉后 S0 的 impl 与它的 .at 互相等待；预期 S0 相关用例卡住或失败",
+  "commit": "dbd38c26f00dc02b13cff7796185873dd228115f",
+  "pass": 706,
+  "fail": 5,
+  "failures": [
+   {
+    "suite": "unit",
+    "file": "awaitedAcctest：impl 预检要等最新一轮验收测试；硬依赖 impl 的（impl 合入后才写）不等",
+    "name": "awaitedAcctest：impl 预检要等最新一轮验收测试；硬依赖 impl 的（impl 合入后才写）不等"
+   },
+   {
+    "suite": "unit",
+    "file": "需要你处理：停滞按引擎的等待规则（偏离 72）报告——fix 的 impl 不等硬依赖它的 .at，即使 .at 已阻塞",
+    "name": "需要你处理：停滞按引擎的等待规则（偏离 72）报告——fix 的 impl 不等硬依赖它的 .at，即使 .at 已阻塞"
+   },
+   {
+    "suite": "unit",
+    "file": "偏离 72 的现场：S0 的 impl 在 awaiting_inputs，.at 硬依赖它——不等它，不成环",
+    "name": "偏离 72 的现场：S0 的 impl 在 awaiting_inputs，.at 硬依赖它——不等它，不成环"
+   },
+   {
+    "suite": "e2e",
+    "file": "单独合并：测试在已有实现上通过 → 进合并队列（全量验证）并合入",
+    "name": "单独合并：测试在已有实现上通过 → 进合并队列（全量验证）并合入"
+   },
+   {
+    "suite": "e2e",
+    "file": "单独合并：测试在已有实现上失败 → .at 以 report 结束，原 impl 得到 .fx-n（分支含这批测试），修好后测试随 .fx-n 合入",
+    "name": "单独合并：测试在已有实现上失败 → .at 以 report 结束，原 impl 得到 .fx-n（分支含这批测试），修好后测试随 .fx-n 合入"
+   }
+  ],
+  "minutes": 23.9
+ },
+ {
+  "file": "m85-verify-reuse-off.json",
+  "round": "M8.5 复测（--no-real-pi）",
+  "id": "verify-reuse-off",
+  "kind": "ablate",
+  "mechanism": "同一棵代码树只验证一次（verify-cache，偏离 76）",
+  "hypothesis": "去掉后每处都重跑，行为不变；预期只有断言沿用记录（merge-aN-reused.txt、gate-reused.txt）与 verify-cache 单元的用例失败",
+  "commit": "dbd38c26f00dc02b13cff7796185873dd228115f",
+  "pass": 708,
+  "fail": 3,
+  "failures": [
+   {
+    "suite": "unit",
+    "file": "reusableRuns：同一棵树、同名、命令内容相同才沿用；取最近一次的 evidence",
+    "name": "reusableRuns：同一棵树、同名、命令内容相同才沿用；取最近一次的 evidence"
+   },
+   {
+    "suite": "unit",
+    "file": "reusableRuns：代码树不同、命令内容变了、别的流程、工作区不干净（tree 为 null）都不沿用",
+    "name": "reusableRuns：代码树不同、命令内容变了、别的流程、工作区不干净（tree 为 null）都不沿用"
+   },
+   {
+    "suite": "e2e",
+    "file": "一个任务从 ready 走到 queued_merge 并自动合入；run 记录写入指标",
+    "name": "一个任务从 ready 走到 queued_merge 并自动合入；run 记录写入指标"
+   }
+  ],
+  "minutes": 23.9
  }
 ]

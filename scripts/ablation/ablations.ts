@@ -122,6 +122,11 @@ export const ARMS: Arm[] = [
     hypothesis: '该分支已无生产调用方；预期只有直接调用它的旧用例失败（死代码）',
     edits: [{ file: 'src/core/gates.ts', find: '  const def = stageDef(config, flow.mode, flow.stage);\n  const isLast = flow.stage === flow.stages.at(-1);', replace: "  throw new Error('ABLATED: runStageGate 实施阶段分支');\n  const def = stageDef(config, flow.mode, flow.stage);\n  const isLast = flow.stage === flow.stages.at(-1);" }] },
 
+  // —— M8.5 实现后的复测 ——
+  { id: 'verify-reuse-off', kind: 'ablate', mechanism: '同一棵代码树只验证一次（verify-cache，偏离 76）',
+    hypothesis: '去掉后每处都重跑，行为不变；预期只有断言沿用记录（merge-aN-reused.txt、gate-reused.txt）与 verify-cache 单元的用例失败',
+    edits: [{ file: 'src/core/verify-cache.ts', find: '  const out = new Map<string, string>();\n  if (!tree) return out;', replace: '  const out = new Map<string, string>();\n  if (!tree || true) return out;' }] },
+
   // —— 评审提出的简化 ——
   { id: 'proposal-skip-same-tree', kind: 'proposal', mechanism: '同一棵树只验证一次（合并：集成分支未移动时跳过 typecheck/lint/test；门禁：HEAD 即最近合并验证过的提交时跳过重复命令）',
     hypothesis: '只应有断言 evidence 文件名的用例失败；行为（谁通过、谁失败、谁被交回）不变',

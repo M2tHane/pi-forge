@@ -8,7 +8,7 @@ import type { TaskFile } from './schemas.ts';
 import { canAppendInterfaces, hashToken } from './state-machine.ts';
 import { scratchDir } from './worktree.ts';
 import { TEST_GLOBS, adjustableTests, testAdjustEnabled } from './test-adjust.ts';
-import { matchesAny } from './paths.ts';
+import { matchesAny, INTERFACES_PATH } from './paths.ts';
 import { enforceToolCall, type GuardContext, type ToolCall } from './guard.ts';
 import { failureSignature, failureSummary } from './verify-runner.ts';
 import { FlowToolError, SUBAGENT_TOOLS, type RunEnv, type SubagentToolName, type ToolResult } from '../tools/subagent-tools.ts';
@@ -97,8 +97,8 @@ export class SubagentRuntime {
       ...(role.writes.length ? { writes: [...(t.conflict_files ?? t.writes), ...(t.conflict_files ? [] : t.shared ?? [])], scratchDir: scratchDir(this.env.root, this.env.run) } : {}),
       ...(!role.writes.length && role.bash === 'full' ? { scratchDir: scratchDir(this.env.root, this.env.run) } : {}),
       ...(testAdjustEnabled(this.config, t) && t.worktree && t.base_sha ? { adjustableTests: this.adjustable(t.worktree, t.base_sha, t.writes) } : {}),
-      // merge-fix：冲突文件里原任务适配过的已有测试不在角色可写范围内，也要能改
-      ...(t.kind === 'merge-fix' && t.conflict_files ? { adjustableTests: t.conflict_files.filter((f) => matchesAny(f, TEST_GLOBS)) } : {}),
+      // merge-fix：冲突文件里原任务适配过的已有测试、契约文件（docs/contracts/**）不在角色可写范围内，也要能改
+      ...(t.kind === 'merge-fix' && t.conflict_files ? { adjustableTests: t.conflict_files.filter((f) => matchesAny(f, [...TEST_GLOBS, INTERFACES_PATH])) } : {}),
     };
   }
 

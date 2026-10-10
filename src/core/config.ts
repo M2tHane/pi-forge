@@ -145,6 +145,8 @@ export function parseConfig(source: string): FlowConfig {
   // schema 的 default 只描述配置；解析时补齐实际运行所需的默认值。
   wf.limits.max_precheck_failures ??= 3;
   wf.limits.max_merge_failures ??= 2;
+  // 状态机按 limits.review_max_rounds 判定审查轮数用尽；取自 review.max_rounds（第 10 节）
+  (wf.limits as Record<string, unknown>)['review_max_rounds'] ??= wf.review?.max_rounds ?? 2;
   const errors: string[] = [];
   const warnings: string[] = [];
 

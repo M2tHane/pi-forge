@@ -1,15 +1,17 @@
 // 来源：pi-flow src/core/merge-queue.ts @ 31f3f15
 // 合并队列：串行合并（squash → rebase → 冲突分类 → 合并后验证 → 快进集成分支 → 清理）。第 12 节。
-// 冲突一律交给程序分类：writes 内（含登记的公共文件）的文本冲突生成 merge-fix 任务，涉及受保护路径或 writes 之外的转 blocked。
+// 冲突一律交给程序分类：writes 内（含登记的公共文件、本模块的契约文件与根契约文件）的文本冲突生成 merge-fix 任务，涉及受保护路径或 writes 之外的转 blocked。
+// docs/contracts/** 的冲突先做结构化三方合并（contract-merge.ts），合并不了才走 merge-fix。
 // 引擎内的 LLM 不参与解决冲突。
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from './config.ts';
 import type { StateStore } from './state-store.ts';
 import type { TaskFile } from './schemas.ts';
 import { git, gitOk } from './git.ts';
 import { headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from './worktree.ts';
-import { matchesAny, isProtected } from './paths.ts';
+import { matchesAny, isProtected, INTERFACES_PATH } from './paths.ts';
+import { mergeContractThreeWay } from './contract-merge.ts';
 import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { testAdjustEnabled } from './test-adjust.ts';
@@ -188,8 +190,12 @@ export class MergeQueue {
       git(wt, ['rebase', '-q', integHead], { engineIdentity: true, allowFail: true });
     } catch {
       const conflicts = git(wt, ['diff', '--name-only', '--diff-filter=U']).split('\n').filter(Boolean).sort();
-      git(wt, ['rebase', '--abort']);
-      return this.conflict(flowId, t, conflicts, squashed, integHead);
+      // 契约文件（docs/contracts/**）的冲突先尝试结构化三方合并（第 12.2 节）；成功则继续原来的合并流程
+      if (!this.autoMergeContracts(wt, conflicts)) {
+        gitOk(wt, ['rebase', '--abort']);
+        return this.conflict(flowId, t, conflicts, squashed, integHead);
+      }
+      await this.store.recordEvent({ flow: flowId, task: t.id, actor: 'merge-queue', type: 'note', reason: `契约文件冲突已结构化合并：${conflicts.join('、')}`, data: { files: conflicts } });
     }
     const newBase = integHead;
     await this.store.updateTask(flowId, t.id, { base_sha: newBase }, { actor: 'merge-queue', type: 'note', reason: 'rebase 到集成分支', data: { base: newBase } });
@@ -375,11 +381,41 @@ export class MergeQueue {
     return { kind: 'blocked', task: t.id, reason };
   }
 
+  /**
+   * rebase 冲突时，冲突文件全部是 docs/contracts/** 则逐个做结构化三方合并，全部成功后 git add 并 rebase --continue。
+   * rebase 期间 git 的 stage：1 = 共同祖先（base），2 = "ours" = 被 rebase 到的上游（集成分支），3 = "theirs" = 正在应用的任务提交。
+   * 返回 true 表示 rebase 已完成；false 表示无法自动合并（调用方负责 rebase --abort，工作区内容无需还原）。
+   */
+  private autoMergeContracts(wt: string, conflicts: string[]): boolean {
+    if (!conflicts.length || !conflicts.every((f) => matchesAny(f, [INTERFACES_PATH]))) return false;
+    const merged = new Map<string, string>();
+    for (const f of conflicts) {
+      try {
+        const r = mergeContractThreeWay(f, git(wt, ['show', `:1:${f}`]), git(wt, ['show', `:2:${f}`]), git(wt, ['show', `:3:${f}`]));
+        if (!r.ok) return false;
+        merged.set(f, r.text);
+      } catch {
+        return false; // 缺少某一侧（新增/删除冲突）：不自动合并
+      }
+    }
+    for (const [f, text] of merged) writeFileSync(path.join(wt, f), text);
+    try {
+      git(wt, ['add', '--', ...merged.keys()]);
+      git(wt, ['-c', 'core.editor=true', 'rebase', '--continue'], { engineIdentity: true, env: { GIT_EDITOR: 'true' } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** 冲突分类：全部在 writes 内（含登记的公共文件）且不涉及受保护路径 → merge-fix；否则 blocked */
   private async conflict(flowId: string, t: TaskFile, conflicts: string[], squashed: string, integHead: string): Promise<MergeResult> {
     const contracts = conflicts.filter((f) => isProtected(f));
     // 适配过的已有测试（testing.adjust_tests）也算任务自己的文件，冲突交给 merge-fix
-    const outside = conflicts.filter((f) => !matchesAny(f, [...t.writes, ...(t.shared ?? [])]) && !(t.test_adjustments ?? []).includes(f));
+    // 契约文件：本 task 的 module 自己的契约文件与根 openapi.yaml / data-model.yaml 的冲突也交给 merge-fix（第 12.2 节）
+    const mod = t.module ?? (t.merge_fix_for ? this.store.readTask(flowId, t.merge_fix_for).module : undefined);
+    const ownContracts = ['openapi.yaml', 'data-model.yaml', ...(mod ? [`paths/${mod}.yaml`, `components/${mod}.yaml`, `errors/${mod}.yaml`, `modules/${mod}.md`] : [])].map((f) => `docs/contracts/${f}`);
+    const outside = conflicts.filter((f) => !matchesAny(f, [...t.writes, ...(t.shared ?? [])]) && !(t.test_adjustments ?? []).includes(f) && !ownContracts.includes(f));
     if (!conflicts.length || contracts.length || outside.length) {
       const why = contracts.length ? `冲突涉及受保护文件：${contracts.join('、')}`
         : outside.length ? `冲突文件不在任务 writes 内：${outside.join('、')}` : 'rebase 失败但没有冲突文件';

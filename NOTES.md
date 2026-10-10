@@ -115,6 +115,10 @@
 51. 新 task 字段：`acctest_round`（.at-n 的来由）、`changed_tests`（report 时记录）、`waits_for`（第 9.4 节等待的 .at-n，由 foreign_tests_broken 写入、inputs_ready 清除）。.at-n、.fx-n 的 stage 取当前阶段，保证可调度。"最新验收测试"一律忽略已取消的轮次。
 52. impl 已 done、test-author 没改测试时提交被拒（没有可单独合并的内容），需要 forge_block 说明。验收测试 task 不参与批量合并。
 53. 范围申请（第 14 节）：硬限制在 `checkScope` 里直接拒绝；与已开工 task 重叠的 forge_request_scope 直接拒绝，forge_resolve_scope 批准时再查一次（申请后才开工的也拒绝）。`forge_service` 与范围申请的授予在 M1 配置里已限定为 worker、stage-qa / worker。
+54. 契约追加的结构化判定（第 12.1 节，`contract-diff.ts`）：只在集合位置允许新增键（路径表、operation、responses、properties、content、components/errors 根、tables、columns），其他位置新增都算修改；任何数组（含 required、enum）必须不变，因此新增 property 只可能是可选字段，请求与响应用同一条规则。新增列须 `nullable: true` 或带 `default`。已有错误码只比较 http 与 message。forge_submit 与预检用同一套规则（替换原来的按行删除检查），通过的契约改动作为 `contract_additions` 不受 writes 限制。修改已有契约的提示改为 forge_block（forge_change_request 在 M7）。
+55. 契约冲突（第 12.2 节）：rebase 冲突文件全部在 docs/contracts 时做三方合并（stage 1 祖先、2 集成分支、3 任务提交，已实测）；混有其他文件或合并不了时放弃，本模块的契约文件与根 openapi.yaml、data-model.yaml 的冲突走 merge-fix，merge-fix 可写自己 conflict_files 里的契约文件。
+56. 逐任务审查：`.rv` 用被审查 task 的 worktree（只读，不新建也不删除）；审查输入完整放进提示（`reviewBrief`），不走 handoff 通道（handoff 只保留末尾 6000 字）。`review.max_rounds` 接到状态机的 `limits.review_max_rounds`：第 k 轮仍有 must 走 review_changes，k 达到上限时由计数器转 blocked（review_exhausted），不单独用 review_exhausted 触发器。strong 审查受 `escalation.enabled` 约束用升级模型。结论存 evidence（review-input/report/confirm.json），suggest 由程序提交到集成分支 `docs/review/suggestions.md`。返工前已通过的审查不重审。测试夹具 `mkTask` 默认 `review: 'skip'`，避免旧用例多出审查派发。
+57. "合并队列选第一个合格的 task"在 M1 已实现（软依赖未完成的跳过）；由于软依赖在 inputs_ready 时已检查，实际不会出现队首不合格，保留作保护。
 
 ## M1 删除、由 Mx 重建
 

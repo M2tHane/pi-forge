@@ -38,6 +38,7 @@ import { allocateResources, releaseResources, resourceEnv, resourceOptions } fro
 import { prepareAcctestWorkspace } from './acctest.ts';
 import { runPrecheck } from './precheck.ts';
 import { handOffToFix, latestAcctest, precheckAcctest, resolveDisputes } from './acceptance-flow.ts';
+import { decideReview, readReviewInput, resolveReviews, reviewWorktreeOf } from './review-flow.ts';
 import { DEFAULT_CHECKPOINT_MINUTES, createCheckpoint, dropCheckpoint, listCheckpoints } from './checkpoints.ts';
 
 const tasksHas = (store: StateStore, flowId: string, id: string) => { try { store.readTask(flowId, id); return true; } catch { return false; } };
@@ -219,8 +220,11 @@ export class Engine {
     }
     if (task.status === 'ready') {
       // merge-fix 任务的 worktree 由合并队列预先准备（含冲突标记），直接复用
+      // 审查者只读，直接用被审查任务的 worktree（不新建也不删除；guard 拦写操作）
       const wt = task.kind === 'acctest'
         ? await this.prepareAcctest(flowId, task, runId)
+        : task.kind === 'review'
+          ? (reviewWorktreeOf(store, flowId, task) ?? (() => { throw new DispatchError(`审查任务 ${taskId} 找不到被审查任务 ${task.for_task ?? ''} 的 worktree`); })())
         : task.worktree && task.branch && task.base_sha
           ? { path: task.worktree, branch: task.branch, base_sha: task.base_sha }
           : createTaskWorktree(root, flowId, taskId, flow.integration_branch, flow.integration_branch);
@@ -307,7 +311,9 @@ export class Engine {
     const critical = esc.criticalFanout > 0 && hardFanout(task, this.d.store.listTasks(flowId)) >= esc.criticalFanout;
     // 同样的原因再次失败（第六轮 B3）：不等失败次数，下一次就升级
     const failures = task.attempts + (task.precheck_failures ?? 0) + (task.merge_failures ?? 0) + (task.review_rounds ?? 0);
-    if (esc.enabled && (failures >= esc.afterFailures || critical || (task.same_failures ?? 0) >= 2)) {
+    // 第 10.1 节：strong 审查（底座、auth、高风险）用升级模型
+    const strongReview = task.kind === 'review' && task.review === 'strong';
+    if (esc.enabled && (failures >= esc.afterFailures || critical || strongReview || (task.same_failures ?? 0) >= 2)) {
       const up = escalationModel(this.d.config, this.d.roleSettings(), role, model);
       if (up) { model = up; escalated = true; }
     }
@@ -374,8 +380,12 @@ export class Engine {
     // 实施类角色的临时目录（项目与 worktree 之外）：做实验、建临时文件，run 结束后删除
     const scratch = mode === 'impl' && (config.role(role).writes.length || config.role(role).bash === 'full') ? scratchDir(root, runId) : undefined;
     if (scratch) mkdirSync(scratch, { recursive: true });
+    // 审查 task 的 handoff 就是审查输入（完整放进提示，不按 handoff 的长度截断）
+    const reviewBrief = task.kind === 'review' ? store.readHandoff(flowId, task.id).replace(/^\s*## \d{4}-[^\n]*\n+/, '') : '';
+    const confirmRound = task.kind === 'review' && (readReviewInput(store, flowId, task.id)?.prior_must.length ?? 0) > 0;
     const prompt = assemblePrompt({
-      agent, rules, skills, task, flowId, handoff: store.readHandoff(flowId, task.id), mode, commands: config.commands,
+      agent, rules, skills, task, flowId, handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
+      ...(reviewBrief ? { reviewBrief, confirmRound } : {}), commands: config.commands,
       knowledge: selectKnowledge(store.readKnowledge(), task).map(formatEntry),
       ...(scratch ? { scratchDir: scratch } : {}),
       upstream: task.depends_on.flatMap((d) => {
@@ -509,6 +519,8 @@ export class Engine {
       const flow = this.d.store.readFlow(flowId);
       if (flow.mode !== 'fix' && flow.stage_status === 'active' && flow.sync?.stage !== flow.stage) await this.sync(flowId);
     } catch (e) { report(e); }
+    // 审查结论先处理：新建的 .rv 要在随后的 promote 中变为 ready
+    try { await resolveReviews(this.d.root, this.d.store, this.d.config, flowId); } catch (e) { report(e); }
     try {
       await this.promote(flowId);
     } catch (e) { report(e); }
@@ -597,8 +609,12 @@ export class Engine {
       await store.transitionTask(flowId, taskId, { to: 'in_progress', trigger: 'precheck_fail', actor: 'engine', facts: { precheck_ok: false, reason: failure.slice(0, 4000) } });
       return;
     }
-    // 逐任务审查在 M5 接入：M4 一律不审查
-    await store.transitionTask(flowId, taskId, { to: 'queued_merge', trigger: 'precheck_pass_skip', actor: 'engine', facts: { precheck_ok: true, review_required: false } });
+    // 第 10.1 节：按 task.review 或推导决定是否审查；需要时进入 in_review，.rv / .rv-n 由 resolveReviews 创建（pump 串行，不会重复创建）
+    if (decideReview(store, config, flowId, store.readTask(flowId, taskId)) === 'skip') {
+      await store.transitionTask(flowId, taskId, { to: 'queued_merge', trigger: 'precheck_pass_skip', actor: 'engine', facts: { precheck_ok: true, review_required: false } });
+    } else {
+      await store.transitionTask(flowId, taskId, { to: 'in_review', trigger: 'precheck_pass', actor: 'engine', facts: { precheck_ok: true, review_required: true } });
+    }
   }
 
   /** 推进等待输入，并就地跑完 checking 的预检（不等其他运行结束；测试用） */
@@ -610,15 +626,16 @@ export class Engine {
       this.prechecking.add(key);
       try { await this.precheckOne(flowId, t.id); } finally { this.prechecking.delete(key); }
     }
+    await resolveReviews(this.d.root, this.d.store, this.d.config, flowId);
   }
 
-  /** 不经主会话、由程序直接派发的 ready 任务：merge-fix 与 P1 的 architect task */
+  /** 不经主会话、由程序直接派发的 ready 任务：merge-fix、逐任务审查（.rv）与 P1 的 architect task */
   private async dispatchProgramDriven(flowId: string): Promise<void> {
     const flow = this.d.store.readFlow(flowId);
     const tasks = this.d.store.listTasks(flowId);
     const ids = selectDispatchable(tasks, flow.stage, this.d.config.limits.max_parallel).filter((id) => {
       const t = tasks.find((x) => x.id === id);
-      return !!t && (t.kind === 'merge-fix' || (t.kind === 'doc' && t.stage === P1_STAGE)) && !this.pausedFor(flowId, t);
+      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || (t.kind === 'doc' && t.stage === P1_STAGE)) && !this.pausedFor(flowId, t);
     });
     for (const id of ids) {
       try { await this.dispatch(flowId, id); } catch (e) { if (!(e instanceof HandedToUser)) throw e; }

@@ -3,3 +3,4 @@ node_modules/
 .serena/
 pi-forge-prompts/
 pi-forge-prompts.zip
+.claude/worktrees/

@@ -6,6 +6,7 @@ import { listResources, resourceEnv } from '../core/resources.ts';
 import { acceptanceList, acctestDirs, applyToAccBranch, checkAcctestSubmit, revertOutside, scanAcCoverage, testFilesIn } from '../core/acctest.ts';
 import { failureSummary } from '../core/verify-runner.ts';
 import { withoutMergedAcceptance } from '../core/precheck.ts';
+import { contractViolationsAt } from '../core/contract-diff.ts';
 import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { checkoutAccWorktree, createAcctestRound, readIn, validateEvidence } from '../core/acceptance-flow.ts';
@@ -29,6 +30,8 @@ import { SERVICE_READY_MAX_S, serviceCommands, serviceLog, serviceStatus, startS
 import { SCOPE_KINDS, SCOPE_PATHS_MAX, checkScope } from '../core/scope.ts';
 import { SyncParams, flowSync } from './module-tools.ts';
 import { proposePlan } from '../core/plan-flow.ts';
+import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/review.ts';
+import { REVIEW_CONFIRM, REVIEW_REPORT, SUGGESTIONS_PATH, readReviewInput, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/review-flow.ts';
 
 export const NOTE_LIMIT = 8000;
 
@@ -82,15 +85,18 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   snapshot(t.worktree, `[${ctx.env.flow}/${t.id}] ${p.summary.split('\n')[0]}`);
   // 预检时程序合入的验收测试（与 acc 分支一致）不算 worker 的改动
   const diff = withoutMergedAcceptance(ctx.env.root, ctx.env.flow, t, changedFiles(t.worktree, t.base_sha));
-  // 模块之间的接口文档只能追加：有删除行（含修改）的接口文档由状态机拒绝（自己可写范围内的除外）
-  const rewrites = canAppendInterfaces(t) ? interfaceRewrites(t.worktree, t.base_sha).filter((f) => !t.writes.some((w) => f.startsWith(w.replace(/\*\*$/, '')))) : [];
+  // 契约只能追加（第 12.1、12.2 节，与预检同一套结构化规则）：有违规的契约文件由状态机拒绝
+  const violations = canAppendInterfaces(t) ? contractViolationsAt(ctx.env.root, t.base_sha, t.worktree, t.module) : [];
+  const rewrites = [...new Set(violations.map((v) => v.file))];
   // 适配已有测试：writes 之外只修改过的已有测试文件不算越界，记在任务上（验收时一并检查）
   const adjusted = testAdjustEnabled(ctx.config, t) ? testAdjustments(t.worktree, t.base_sha, t.writes) : [];
   try {
     await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'awaiting_inputs', trigger: 'submit', actor: actor(ctx),
-      facts: { token: ctx.env.token, diff_files: diff, interface_rewrites: rewrites, test_adjustments: adjusted } });
+      facts: { token: ctx.env.token, diff_files: diff, interface_rewrites: rewrites, test_adjustments: adjusted,
+        // 结构化检查通过的契约追加不受 writes 限制（第 12.2 节）；有违规的文件已在 interface_rewrites 里被拒
+        contract_additions: canAppendInterfaces(t) ? diff.filter((f) => f.startsWith('docs/contracts/') && !rewrites.includes(f)) : [] } });
   } catch (e) {
-    if (rewrites.length) rethrow(e, `接口文档只能追加。还原对已有内容的修改：git checkout ${t.base_sha} -- ${rewrites.join(' ')}，再只追加需要的调用；确需改已有接口时调用 forge_block 说明，由用户决定是否修订计划。`);
+    if (rewrites.length) rethrow(e, `契约只能追加（新增路径、操作、可选字段、错误码等），并且只能改本模块（${t.module ?? '未指定'}）的契约文件：\n${violations.slice(0, 10).map((v) => `- ${v.file}${v.path ? ` ${v.path}` : ''}：${v.message}`).join('\n')}\n还原对已有内容的修改（git checkout ${t.base_sha} -- <文件>）再只追加；确需修改已有契约时调用 forge_block 说明，由用户决定。`);
     rethrow(e, `只修改可写范围内的文件（登记的公共文件可以改；别的模块已有的测试可以改来适配，但不能新增或删除可写范围外的文件）。还原越界改动：新增的文件用 git rm <文件>，修改过或删除的文件用 git checkout ${t.base_sha} -- <文件>。先 forge_note 写 handoff，然后再次 forge_submit。`);
   }
   await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明：${p.summary}`, actor(ctx));
@@ -144,12 +150,6 @@ async function submitAcctest(ctx: ToolContext, t: TaskFile, summary: string): Pr
   rmSync(ws, { recursive: true, force: true });
   await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交');
   return { text: `已提交验收测试（${changed.length} 个文件，覆盖 ${(t.ac ?? []).length} 条 AC）。${implDone ? '实现已完成，程序会在已有实现上运行这些测试后单独合并。' : '测试会在实现提交后随它的预检一起运行。'}你的工作已完成，请直接结束，不要再调用工具。`, details: { files: changed } };
-}
-
-/** 相对基线删除或修改过已有行的接口文档 */
-function interfaceRewrites(worktree: string, base: string): string[] {
-  return git(worktree, ['diff', '--numstat', '--no-renames', base, 'HEAD', '--', 'docs/contracts']).split('\n').filter(Boolean)
-    .map((l) => l.split('\t')).filter(([, del]) => del !== '0').map(([, , p]) => p!);
 }
 
 export async function flowLearn(ctx: ToolContext, p: Static<typeof LearnParams>): Promise<ToolResult> {
@@ -330,6 +330,82 @@ export async function flowProposePlan(ctx: ToolContext, p: Static<typeof Propose
   return { text: r.text };
 }
 
+const ReviewIssue = Type.Object({
+  level: Type.Union([Type.Literal('must'), Type.Literal('suggest')], { description: 'must 必须改（必须有出处）；suggest 建议（不阻塞合并）' }),
+  basis: Type.String({ minLength: 1, maxLength: 500, description: 'must 只能是 rule:<文件>#<条目>、ac:<编号>、contract:<位置>、defect:<什么输入下会出什么错>；格式不对的 must 会被程序降为 suggest' }),
+  files: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 20, description: '涉及的文件（同一类问题合并成一条，列出所有文件）' })),
+  file: Type.Optional(Type.String({ minLength: 1, description: '单个文件（与 files 二选一）' })),
+  location: Type.String({ maxLength: 500, description: '函数名或行号范围' }),
+  problem: Type.String({ minLength: 1, maxLength: 2000 }),
+  expected: Type.String({ minLength: 1, maxLength: 2000, description: '期望怎么改' }),
+}, { additionalProperties: false });
+export const ReviewReportParams = Type.Object({
+  verdict: Type.Union([Type.Literal('pass'), Type.Literal('changes')]),
+  issues: Type.Array(ReviewIssue, { maxItems: 60, description: '没有问题提交空列表；程序给问题编号 R-1…' }),
+}, { additionalProperties: false });
+export const ReviewConfirmParams = Type.Object({
+  items: Type.Array(Type.Object({
+    id: Type.String({ pattern: '^R-[0-9]+$' }),
+    resolved: Type.Boolean(),
+    note: Type.Optional(Type.String({ maxLength: 1000, description: '清单之外的发现写在这里，交给阶段验收' })),
+  }, { additionalProperties: false }), { maxItems: 60 }),
+}, { additionalProperties: false });
+
+/** 审查 task 自己：必须是进行中的 review task，且有 evidence 里的输入 */
+function reviewRun(ctx: ToolContext): { t: TaskFile; input: ReviewInputFile } {
+  const t = checkRun(ctx);
+  if (t.kind !== 'review' || t.status !== 'in_progress') throw new FlowToolError('只有进行中的审查任务可以提交审查结论。');
+  const input = readReviewInput(ctx.store, ctx.env.flow, t.id);
+  if (!input) throw new FlowToolError('找不到本轮审查的输入记录，请调用 forge_block 说明。');
+  return { t, input };
+}
+
+async function finishReview(ctx: ToolContext, t: TaskFile): Promise<void> {
+  try {
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'done', trigger: 'report', actor: actor(ctx), facts: { token: ctx.env.token, diff_files: [], structured_report: true } });
+  } catch (e) { rethrow(e, '审查结论没有提交成功，请重试。'); }
+  await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交审查结论');
+}
+
+/**
+ * forge_review_report（第 10.3 节，第一轮）：程序给问题编号；must 的出处不合格（不是 rule:/ac:/contract:/defect: 开头或冒号后为空）降为 suggest；
+ * 降级后没有 must 就按 pass 处理。结论存为 evidence，由引擎的 resolveReviews 推进原 task。
+ */
+export async function flowReviewReport(ctx: ToolContext, p: Static<typeof ReviewReportParams>): Promise<ToolResult> {
+  const { t, input } = reviewRun(ctx);
+  if (input.prior_must.length) throw new FlowToolError('这是确认轮：只能用 forge_review_confirm 逐条回答上一轮的问题清单，不能提出新问题。');
+  const inputs = p.issues.map((i, n) => {
+    const files = i.files ?? (i.file ? [i.file] : []);
+    if (!files.length) throw new FlowToolError(`第 ${n + 1} 个问题没有写 files（涉及的文件）。`);
+    return { level: i.level, basis: i.basis, files, location: i.location, problem: i.problem, expected: i.expected };
+  });
+  const { issues, downgraded } = classifyIssues(inputs);
+  const verdict = effectiveVerdict(issues);
+  const file: ReviewReportFile = { round: input.round, requested: p.verdict, verdict, issues, downgraded, head: input.head };
+  await ctx.store.saveEvidence(ctx.env.flow, t.id, REVIEW_REPORT, JSON.stringify(file, null, 2), actor(ctx));
+  await finishReview(ctx, t);
+  const must = mustOf(issues);
+  const notes = [
+    downgraded.length ? `这些 must 没有合格的出处（basis 只能以 rule:、ac:、contract:、defect: 开头且冒号后有内容），已降为 suggest：${downgraded.map((d) => d.id).join('、')}。` : '',
+    p.verdict === 'changes' && !must.length ? '降级后没有 must，按 pass 处理。' : '',
+    p.verdict === 'pass' && must.length ? `你写的是 pass 但提交了 ${must.length} 条 must，程序按 changes 处理。` : '',
+  ].filter(Boolean);
+  return { text: `已提交审查结论：${verdict === 'pass' ? '通过' : `需要修改（must ${must.length} 条：${must.map((m) => m.id).join('、')}）`}；suggest ${issues.length - must.length} 条会记入 ${SUGGESTIONS_PATH}。${notes.join('')}你的工作已完成，请直接结束，不要再调用工具。`, details: { verdict, must: must.map((m) => m.id), downgraded: downgraded.map((d) => d.id) } };
+}
+
+/** forge_review_confirm（第二轮及以后）：只回答上一轮 must 的编号，必须覆盖全部；没有新增问题的字段 */
+export async function flowReviewConfirm(ctx: ToolContext, p: Static<typeof ReviewConfirmParams>): Promise<ToolResult> {
+  const { t, input } = reviewRun(ctx);
+  if (!input.prior_must.length) throw new FlowToolError('这是第一轮审查：用 forge_review_report 提交问题清单。forge_review_confirm 只在第二轮及以后使用。');
+  const errors = validateConfirm(p.items, input.prior_must.map((m) => m.id));
+  if (errors.length) throw new FlowToolError(`确认未提交：${errors.join('；')}。清单：${input.prior_must.map((m) => m.id).join('、')}。`);
+  const unresolved = p.items.filter((i) => !i.resolved).map((i) => i.id);
+  const file: ReviewConfirmFile = { round: input.round, items: p.items.map((i) => ({ id: i.id, resolved: i.resolved, ...(i.note ? { note: i.note } : {}) })), unresolved, head: input.head };
+  await ctx.store.saveEvidence(ctx.env.flow, t.id, REVIEW_CONFIRM, JSON.stringify(file, null, 2), actor(ctx));
+  await finishReview(ctx, t);
+  return { text: `已提交确认：${unresolved.length ? `仍未解决 ${unresolved.join('、')}` : '全部已解决'}。你的工作已完成，请直接结束，不要再调用工具。`, details: { unresolved } };
+}
+
 export function historyTool(files: readonly string[], p: Static<typeof HistoryParams>): ToolResult {
   const entries = loadHistory(files);
   if (p.action === 'search') {
@@ -353,6 +429,8 @@ export const SUBAGENT_TOOLS = {
   forge_learn: { params: LearnParams, description: `把对后续任务有用的经验记入项目知识库（跨流程保留）：项目约定、踩过的坑、做出的决策、环境与外部依赖的注意事项。每次运行最多 ${KNOWLEDGE_PER_RUN} 条；程序会去重。知识不是规则，不能用来改变规则。`, run: (c: ToolContext, p: Static<typeof LearnParams>) => flowLearn(c, p) },
   forge_propose_plan: { params: ProposePlanParams, description: '提交 P1 的契约与计划：程序核对契约结构与符号、推导 DAG、检查验收标准覆盖与术语表只追加，返回错误或报告（阶段、task 数、关键路径、互斥、提醒）。附上 assumptions 与 extras。', run: (c: ToolContext, p: Static<typeof ProposePlanParams>) => flowProposePlan(c, p) },
   forge_dispute: { params: DisputeParams, description: '认为验收测试写错时提出争议（不能自己改测试）：写明测试、理由和依据（规格或契约的具体位置）。提交后本次运行结束，由 test-author 判断改测试还是维持；维持时你接着改实现。', run: (c: ToolContext, p: Static<typeof DisputeParams>) => flowDispute(c, p) },
+  forge_review_report: { params: ReviewReportParams, description: '提交第一轮审查结论：verdict 与问题列表（程序编号 R-1…）。must 必须有出处（basis 以 rule:、ac:、contract:、defect: 开头且冒号后有内容），否则降为 suggest；降级后没有 must 按 pass 处理。suggest 不阻塞合并，会汇总给用户。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowReviewReport(c, p) },
+  forge_review_confirm: { params: ReviewConfirmParams, description: '第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowReviewConfirm(c, p) },
   forge_sync: { params: SyncParams, description: '把集成分支的最新代码（其他模块已合入的改动）合进你的工作区：没有冲突直接完成；有冲突时冲突标记留在文件里，解决后再调用一次完成同步。依赖的模块刚合入、或想提前发现冲突时使用。', run: (c: ToolContext) => flowSync(c) },
   forge_request_scope: { params: RequestScopeParams, description: '必须修改可写范围外的文件时申请追加范围（写明原因）：不与其他未完成任务重叠的立即批准；重叠的交给主会话决定。受保护路径、敏感文件不能申请。', run: (c: ToolContext, p: Static<typeof RequestScopeParams>) => flowRequestScope(c, p) },
   forge_service: { params: ServiceParams, description: '启动、结束、查看本次运行的长时间服务（开发服务器、数据库等）：只能启动 commands 里 serve 或 serve_* 命名的命令，start 可以用 ready 等端口或地址就绪；不要用 & 把命令放到后台。本次运行结束时程序会一并结束。', run: (c: ToolContext, p: Static<typeof ServiceParams>) => flowService(c, p) },

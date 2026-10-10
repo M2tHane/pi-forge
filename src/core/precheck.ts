@@ -5,6 +5,7 @@ import { gitOk, git } from './git.ts';
 import type { FlowConfig } from './config.ts';
 import type { TaskFile } from './schemas.ts';
 import type { StateStore } from './state-store.ts';
+import { contractViolationsAt } from './contract-diff.ts';
 import { accBranch } from './acctest.ts';
 import { branchExists } from './worktree.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
@@ -38,8 +39,15 @@ export function mergeAcceptance(root: string, flowId: string, t: TaskFile): { me
   }
 }
 
-/** M5 接入：docs/contracts/** 只能追加（第 12.1 节）。M4 只在 forge_submit 时检查删除行 */
-export const contractAppendCheck = (_root: string, _t: TaskFile): string | null => null;
+/** docs/contracts/** 只能追加（第 12.1、12.2 节）：基线 base_sha 对比任务 worktree。有违规返回中文原因（最多列 20 条），否则 null */
+export function contractAppendCheck(root: string, t: TaskFile): string | null {
+  if (!t.base_sha || !t.worktree) return null;
+  const vs = contractViolationsAt(root, t.base_sha, t.worktree, t.module);
+  if (!vs.length) return null;
+  const lines = vs.slice(0, 20).map((v) => `- ${v.file}${v.path ? ` ${v.path}` : ''}：${v.message}`);
+  const more = vs.length > 20 ? `\n……还有 ${vs.length - 20} 条` : '';
+  return `预检未通过：契约只能追加（共 ${vs.length} 处违规）。修改已有契约时用 forge_block 说明，由用户决定。\n${lines.join('\n')}${more}`;
+}
 
 /** 对一个 impl / fix task 跑预检（在任务 worktree 中，带资源） */
 export async function runPrecheck(root: string, store: StateStore, config: FlowConfig, flowId: string, t: TaskFile, timeoutMs?: number): Promise<PrecheckOutcome> {

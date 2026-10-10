@@ -56,6 +56,10 @@ export interface AssembleInput {
   continuation?: { run: string };
   /** 上一次运行超过时间预算被结束，主会话复核后继续：forked 表示接着那次的对话，否则从头开始（只带 handoff 与工作区） */
   timeoutResume?: { run: string; minutes: number; budget: number; forked: boolean; decision?: 'continue' | 'restart'; note?: string };
+  /** 逐任务审查（第 10.2 节）：reviewer 的输入（diff、AC、契约……），完整放进提示，不按 handoff 的长度截断 */
+  reviewBrief?: string;
+  /** 确认轮（.rv-2 起）：只能用 forge_review_confirm 回答上一轮的 must 清单 */
+  confirmRound?: boolean;
   /** 本任务依赖的上游任务及其 handoff（需求汇总者从这里读两方意见） */
   upstream?: { id: string; title: string; type: 'hard' | 'soft'; status: string; handoff: string }[];
 }
@@ -159,6 +163,13 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
   if (i.timeoutResume?.forked) {
     const user = timeoutContinuationPrompt(i);
     return { system, user };
+  }
+  if (i.mode === 'review' && i.reviewBrief) {
+    parts.push(i.reviewBrief.trim());
+    parts.push(i.confirmRound
+      ? '开始：这是确认轮。只核对上面清单里的编号，调用 forge_review_confirm 逐条回答（覆盖全部编号），不能提出新问题。不要修改仓库里的文件。'
+      : '开始：按上面的输入和角色提示的顺序审查，最后调用 forge_review_report 一次提交全部问题（没有问题提交空列表）。不要修改仓库里的文件。');
+    return { system, user: parts.join('\n\n') };
   }
   if (i.mode === 'review') {
     parts.push('开始：用任务说明里的 git diff 命令查看改动，按技能 code-review 逐个文件审查，最后调用 forge_review_report 一次提交全部问题（没有问题提交空列表）。不要修改仓库里的文件。');

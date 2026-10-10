@@ -177,3 +177,17 @@ test('plan.yaml：YAML 语法错误与形状错误', () => {
   assert.match(parsePlan('mode: standard\n').errors.join(), /docs\/plan\/plan\.yaml：/);
   assert.equal(parsePlan(PLAN_YAML).errors.length, 0);
 });
+
+test('test_author: false（偏离 81）：不派生 .at，impl 的 writes 加上自己的验收目录；默认行为不变', () => {
+  const plan = base();
+  const r = checkPlan(plan, ctx());
+  const scopes = { worker: ['code'], testAuthor: ['acctest'] };
+  const self = deriveTasks(plan, r.deps, scopes, { acctest: false, selfTest: true });
+  assert.deepEqual(self.map((x) => x.id), ['T-002', 'T-003']);
+  assert.deepEqual(self[0]!.writes, ['server/src/team/**', 'web/src/pages/team/**', 'package.json', 'tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**', 'tests/acceptance/T-002/**'], 'S0 的额外 writes 不变');
+  assert.equal(self[1]!.writes.at(-1), 'tests/acceptance/T-003/**');
+  assert.ok(!self[1]!.writes.some((w) => w.includes('T-002')), '只加自己的目录');
+  const normal = deriveTasks(plan, r.deps, scopes, { acctest: true });
+  assert.ok(normal.filter((x) => x.kind === 'impl').every((x) => !x.writes.includes(`tests/acceptance/${x.id}/**`)), '默认不给 impl 验收目录');
+  assert.deepEqual(normal.map((x) => x.id), ['T-002', 'T-002.at', 'T-003', 'T-003.at']);
+});

@@ -275,3 +275,21 @@ test('acctest 以结论结束时记下是否改了测试（争议裁决据此区
   assert.equal(ok(planTransition(at, 'done', 'report', facts({ diff_files: [], impl_done: false, acctest_changed_tests: true }))).task.changed_tests, true);
   assert.equal(ok(planTransition(at, 'done', 'report', facts({ diff_files: [], impl_done: false }))).task.changed_tests, false);
 });
+
+test('submit：test_author 为 false 时 impl 与它的 fix 只放开自己的验收目录（偏离 81）', () => {
+  const f = facts();
+  const own = task('in_progress', { writes: ['src/**', 'tests/acceptance/T-001/**'] });
+  ok(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: ['src/a.ts', 'tests/acceptance/T-001/a.test.ts', 'tests/acceptance/T-001/sub/b.test.ts'] }));
+  // 别的 task 的目录、_support、S0-smoke 仍然不行
+  for (const p of ['tests/acceptance/T-002/a.test.ts', 'tests/acceptance/_support/T-001/a.ts', 'tests/acceptance/S0-smoke/a.ts']) {
+    bad(planTransition({ ...own, writes: [...own.writes, 'tests/acceptance/**'] }, 'awaiting_inputs', 'submit', { ...f, diff_files: [p] }));
+  }
+  // writes 里没有自己的验收目录（默认流程）：照旧拒绝
+  bad(planTransition(task('in_progress', { writes: ['**'] }), 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
+  // 覆盖缺口的 fix：for_task 的目录
+  const fx = task('in_progress', { id: 'T-001.fx-1', kind: 'fix', for_task: 'T-001', writes: ['tests/acceptance/T-001/**'] });
+  ok(planTransition(fx, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
+  bad(planTransition(fx, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-002/a.test.ts'] }));
+  // doc 任务不放开
+  bad(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
+});

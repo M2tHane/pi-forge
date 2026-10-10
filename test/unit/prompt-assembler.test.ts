@@ -104,3 +104,17 @@ test('登记的公共文件显示在可写范围里并注明只做必要的追�
   const p = assemblePrompt({ agent, rules: [], task: mkTask('T-001', { shared: ['src/routes.ts'] }), flowId: 'B-001', handoff: '', mode: 'impl', commands: config.commands });
   assert.match(p.user, /## 可写范围（writes）\n- src\/server\/t-001\/\*\*\n- src\/routes\.ts（登记的公共文件/);
 });
+
+test('任务说明：writes 含自己的验收目录（test_author: false）时多一节验收测试说明，系统提示不变', () => {
+  const agent = { name: 'worker', tier: 'strong', thinking: null, description: '', prompt: 'ROLE-PROMPT' };
+  const plain = mkTask('T-001', { ac: ['REQ-001.AC1', '口头说明'] });
+  const own = mkTask('T-001', { ac: ['REQ-001.AC1', '口头说明'], writes: ['src/**', 'tests/acceptance/T-001/**'] });
+  const a = assemblePrompt({ agent, rules: [], task: plain, flowId: 'B-001', handoff: '', mode: 'impl', commands: config.commands });
+  const b = assemblePrompt({ agent, rules: [], task: own, flowId: 'B-001', handoff: '', mode: 'impl', commands: config.commands });
+  assert.equal(a.system, b.system);
+  assert.ok(!a.user.includes('验收测试（由你编写）'));
+  assert.match(b.user, /## 验收测试（由你编写）[\s\S]*tests\/acceptance\/T-001\/[\s\S]*\[REQ-xxx\.ACn\][\s\S]*- \[REQ-001\.AC1\]/);
+  assert.ok(!/- \[口头说明\]/.test(b.user), '只列 AC 编号');
+  const review = assemblePrompt({ agent, rules: [], task: own, flowId: 'B-001', handoff: '', mode: 'review', commands: config.commands });
+  assert.ok(!review.user.includes('由你编写'));
+});

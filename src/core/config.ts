@@ -80,6 +80,8 @@ export class FlowConfig {
     this.warnings = warnings;
   }
 
+  /** 实施阶段是否有 test-author 写验收测试（implementation_gate.test_author，默认 true；偏离 81） */
+  get testAuthor(): boolean { return this.raw.implementation_gate?.test_author !== false; }
   get limits() { return this.raw.limits; }
   get commands() { return this.raw.commands; }
   /** 触发压缩的上下文占比 */

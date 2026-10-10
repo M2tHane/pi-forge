@@ -224,6 +224,9 @@ test('implementation_gate 保留可选 auto 命令；固定阶段 gate 引用缺
   assert.ok(!Object.hasOwn(c.commands, 'e2e'));
   assert.equal(c.raw.implementation_gate?.coverage, true);
   assert.equal(c.raw.implementation_gate?.qa, true);
+  assert.equal(c.testAuthor, true);
+  assert.equal(c.raw.implementation_gate?.test_author, true);
+  assert.equal(parseConfig(changed((wf) => { wf.implementation_gate!.test_author = false; })).testAuthor, false);
   assert.match(errorsOf(changed((wf) => {
     wf.modes.build!.stages[1]!.gate.auto = ['missing'];
   })).join(), /modes\.build\.stages\[1\]\.gate\.auto\[0\].*missing/);

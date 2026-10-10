@@ -229,6 +229,18 @@ test('materializeChange：新增 task 带 .at，修改 task 硬依赖原 task，
   assert.deepEqual(byId.get('T-010'), derived[0]);
 });
 
+test('materializeChange：selfTest（test_author: false）新增与修改的 impl 不带 .at，writes 含自己的验收目录', () => {
+  const r = diff((p) => {
+    p.tasks.push(pt('T-010', 'S1', { ac: ['REQ-1.AC8'] }), pt('T-011', 'S1', { modifies: 'T-004', ac: ['REQ-1.AC9'] }));
+  });
+  const plan = next(OLD, (p) => { p.tasks.push(pt('T-010', 'S1'), pt('T-011', 'S1', { modifies: 'T-004' })); });
+  const ops = materializeChange(r.actions, plan, TASKS(), { flowStage: 'S1', scopes: { worker: ['code'], testAuthor: ['acctest'] }, verify: ['test'], changeId: 'C-001', selfTest: true });
+  const impls = ops.add.filter((t) => t.kind === 'impl');
+  assert.deepEqual(impls.map((t) => t.id), ['T-010', 'T-011']);
+  assert.ok(!ops.add.some((t) => t.id === 'T-010.at' || t.id === 'T-011.at'), '不派生新的 .at');
+  for (const t of impls) assert.ok(t.writes.includes(`tests/acceptance/${t.id}/**`), t.id);
+});
+
 // —— StateStore：一个事务里落地 ——
 
 const PLAN_STAGES = [{ id: 'S1', goal: '一', exit: ['REQ-001'] }, { id: 'S2', goal: '二', exit: ['REQ-002'] }];

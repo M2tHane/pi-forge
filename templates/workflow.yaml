@@ -73,8 +73,9 @@ modes:
 implementation_gate:              # 所有 S 阶段共用的闸门（只运行配置了的命令）
   all_tasks_done: true
   auto: [typecheck, lint, test, acceptance, e2e, contract_lint, contract_test, merge_check]
-  coverage: true                  # AC 覆盖率矩阵，有缺口则失败并生成 .at-n
+  coverage: true                  # AC 覆盖率矩阵，有缺口则失败并生成 .at-n（test_author: false 时生成 .fx-n）
   qa: true                        # stage-qa
+  test_author: true               # false：不派生 .at，worker 自己按 AC 编号写 tests/acceptance/<T>/；覆盖缺口改为 .fx-n
   human: true
 scopes:
   spec:       { writes: ["docs/spec/**"] }                         # 只经 forge_spec 由程序写入

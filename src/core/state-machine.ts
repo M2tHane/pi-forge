@@ -2,7 +2,7 @@
 // 纯函数：只根据程序推导的 facts 判断，不做 IO，也不修改入参。
 import { createHash } from 'node:crypto';
 import type { Lease, StageStatus, TaskFile, TaskStatus } from './schemas.ts';
-import { isProtected, matchesAny } from './paths.ts';
+import { isProtected, matchesAny, ownAcceptanceGlob, writesOwnAcceptance } from './paths.ts';
 import { failureSignature } from './verify-runner.ts';
 
 export type Trigger =
@@ -144,7 +144,9 @@ function submitErrors(t: TaskFile, f: Facts): string[] {
     if (protectedFiles.length) errors.push(`diff 含受保护路径：${protectedFiles.join('、')}`);
     if (workerKind(t)) {
       const forbidden = diff.filter((p) => matchesAny(p, ['tests/acceptance/**']) &&
-        !(t.kind === 'impl' && t.stage === 'S0' && matchesAny(p, ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**'])));
+        !(t.kind === 'impl' && t.stage === 'S0' && matchesAny(p, ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**'])) &&
+        // test_author 为 false（偏离 81）：impl 与它的 fix 只放开自己的验收目录，别的 task 的目录仍不能改
+        !((t.kind === 'impl' || t.kind === 'fix') && writesOwnAcceptance(t) && matchesAny(p, [ownAcceptanceGlob(t.for_task ?? t.id)])));
       if (forbidden.length) errors.push(`不能修改验收测试：${forbidden.join('、')}`);
     }
     const allowed = [...t.writes, ...(t.shared ?? [])];

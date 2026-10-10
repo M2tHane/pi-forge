@@ -2,13 +2,15 @@
 // 是否在验收测试里有带 [REQ-xxx.ACn] 标签的测试。纯函数负责矩阵与渲染，IO 部分在集成分支的某个提交上读取（git ls-tree / git show，不需要工作区）。
 import type { FlowConfig } from './config.ts';
 import type { TaskFile } from './schemas.ts';
-import type { StateStore } from './state-store.ts';
+import type { StateStore, TaskInput } from './state-store.ts';
 import { git } from './git.ts';
 import { commitFilesToBranch } from './intake.ts';
 import { effectiveSpec, type Requirement, type SpecFeature, type SpecFiles } from './spec.ts';
 import { SPEC_PATHS } from './spec-flow.ts';
 import { scanAcCoverage } from './acctest.ts';
-import { createAcctestRound, latestAcctest } from './acceptance-flow.ts';
+import { createAcctestRound, latestAcctest, nextFixId } from './acceptance-flow.ts';
+import { lastWorkerTask } from './stage-fix.ts';
+import { ownAcceptanceGlob } from './paths.ts';
 import { isSettled } from './state-machine.ts';
 import { headSha } from './worktree.ts';
 
@@ -79,7 +81,7 @@ export async function writeCoverageReport(root: string, store: StateStore, flowI
  * 为有缺口的 impl 各建一轮补充测试（.at-n，kind coverage）。该 impl 最近的验收测试 task 还没结束的跳过（skipped）；
  * 找不到负责 task 的缺口原样返回 unowned，由主会话告诉用户。
  */
-export async function createCoverageRounds(store: StateStore, flowId: string, gaps: readonly CoverageRow[], actor = 'engine'): Promise<{ tasks: string[]; unowned: CoverageRow[]; skipped: string[] }> {
+export async function createCoverageRounds(store: StateStore, flowId: string, gaps: readonly CoverageRow[], actor = 'engine', selfTest = false): Promise<{ tasks: string[]; unowned: CoverageRow[]; skipped: string[] }> {
   const byOwner = new Map<string, CoverageRow[]>();
   const unowned: CoverageRow[] = [];
   for (const g of gaps) {
@@ -89,6 +91,26 @@ export async function createCoverageRounds(store: StateStore, flowId: string, ga
   const tasks: string[] = [];
   const skipped: string[] = [];
   for (const [owner, rows] of byOwner) {
+    // test_author 为 false（偏离 81）：没有 test-author，补测交给 impl 的 worker（.fx-n，只能写自己的验收目录）
+    if (selfTest) {
+      const all = store.listTasks(flowId);
+      const open = all.find((t) => t.kind === 'fix' && t.for_task === owner && !isSettled(t));
+      if (open) { skipped.push(owner); continue; }
+      const impl = all.find((t) => t.id === owner)!;
+      const id = nextFixId(all, owner);
+      const input: TaskInput = {
+        id, stage: store.readFlow(flowId).stage, kind: 'fix', role: impl.role, scopes: [...impl.scopes], depends_on: [], inputs: [],
+        writes: [ownAcceptanceGlob(owner)], verify: [...impl.verify], for_task: owner, fork_from_task: lastWorkerTask(owner, all),
+        title: '补齐 AC 编号的验收测试', ac: rows.map((r) => r.ac),
+        ...(impl.module ? { module: impl.module } : {}),
+        ...(impl.layers?.length ? { layers: [...impl.layers] } : {}),
+      };
+      await store.addTasks(flowId, [input], actor);
+      await store.appendHandoff(flowId, id, ['## 补齐验收测试（程序生成）', '', `下面这些 AC 在 tests/acceptance/${owner}/ 里还没有带编号的测试。请补充，测试名里带 \`[REQ-xxx.ACn]\` 编号，只能写在 ${ownAcceptanceGlob(owner)}：`, '',
+        ...rows.map((r) => `- ${r.ac}${r.text ? `：${r.text}` : ''}`)].join('\n'), actor);
+      tasks.push(id);
+      continue;
+    }
     const latest = latestAcctest(store.listTasks(flowId), owner);
     if (latest && !isSettled(latest)) { skipped.push(owner); continue; }
     const brief = ['## 补充 AC 的测试（程序生成）', '', '下面这些 AC 在验收测试里还没有带编号的测试。请补充，测试名里带 `[REQ-xxx.ACn]` 编号，只写在本 task 的测试目录里：', '',

@@ -346,6 +346,7 @@ const Gate = Type.Object({
   all_tasks_done: Type.Optional(Type.Boolean()),
   coverage: Type.Optional(Type.Boolean()),
   qa: Type.Optional(Type.Boolean()),
+  test_author: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 
 /** 高层阶段：规格 → 契约与计划 → 实施；交付由最后一个 S 阶段的批准表示 */

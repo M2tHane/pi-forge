@@ -134,7 +134,8 @@ function syncIntegration(t: TaskFile, integration: string, testDirs: readonly st
   try { git(wt, ['merge', '--no-edit', '--no-ff', '--no-verify', head], { engineIdentity: true, allowFail: true }); return []; } catch { /* 冲突 */ }
   const conflicts = git(wt, ['diff', '--name-only', '--diff-filter=U']).split('\n').filter(Boolean);
   const own = (f: string) => matchesAny(f, testDirs);
-  if (!conflicts.length || !conflicts.every(own)) { gitOk(wt, ['merge', '--abort']); return conflicts; }
+  // 没有冲突文件却合并失败（例如工作区有未提交改动）也算同步失败，交给用户
+  if (!conflicts.length || !conflicts.every(own)) { gitOk(wt, ['merge', '--abort']); return conflicts.length ? conflicts : ['（合并失败，没有冲突文件，可能有未提交的改动）']; }
   for (const f of conflicts) git(wt, ['checkout', '--theirs', '--', f]);
   git(wt, ['add', '-A']);
   git(wt, ['commit', '-q', '--no-edit', '--no-verify'], { engineIdentity: true });

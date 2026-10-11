@@ -182,7 +182,8 @@
 93. merge-fix 的 T- 编号（合并冲突与阶段同步两处）统一走 `nextPlanTaskId(usedTaskIds(...))`；手写 `Number(id.slice(2))` 遇到 `.at`/`.fx-n`/`S1.rv` 得到 `T-NaN`。删掉无人使用的 `stages.nextTaskId`。
 94. 阶段修复 `.fx` 的 writes 追加原 impl 的非验收测试 glob（`tests/` 下、非 `tests/acceptance`），审查要求补回归测试时才写得进去；`test_author: false`（偏离 81）时 impl 自己的验收目录也随之保留。
 95. 阶段审查 / stage-qa 的 fix 用 `source_round: { task, round }` 关联轮次，`fixTasksOfRound` 不再靠标题里的中文标签（标题只展示）；不兼容旧状态里只有标题的 fix。
-96. 角色提示词与技能按 M9 A0 的返工教训改写（顾问意见部分采纳）：worker 加 `simplicity`、`receiving-feedback`（reviewer 加 `simplicity`，过度工程默认只作 suggest）；test-author、reviewer、architect 相关提示收紧。未采纳「黑盒试跑」（程序无此能力）；commands 在程序里全部可选，故只改提示为按项目实际配置。
+96. 角色提示词与技能按 M9 A0 的返工教训改写（顾问意见部分采纳）：worker 加 `simplicity`、`receiving-feedback`（reviewer 加 `simplicity`，过度工程默认只作 suggest）；test-author、reviewer、architect 相关提示收紧。未采纳「黑盒试跑」（程序无此能力）；commands 在程序里全部可选，故只改提示为按项目实际配置。 simplicity 另吸收 ponytail（MIT）的"方案偷懒、改动完整"几条；`test_author: false` 时 worker 另带 `acceptance-tests`。
+97. 所有 pi 子进程（`pi-adapter/launcher.ts`）与 M9 两侧脚本加 `--no-mcp`：Pi 1.1.0 内置 MCP，`--tools` 白名单不过滤 MCP 工具，用户在 `~/.pi/agent/mcp.json` 配的服务器会绕过 guard 进入子进程，也会让 N 与 A 两组工具不一致。
 
 ## M1 删除、由 Mx 重建
 

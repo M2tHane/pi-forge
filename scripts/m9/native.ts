@@ -93,7 +93,7 @@ export async function main(argv: string[]): Promise<number> {
 
   /** 跑一轮 pi（JSON 模式，-c 接着上一轮的会话）；返回最后一条 assistant 文本。看门狗在这里 */
   function round(prompt: string, cont: boolean, phase: 'build' | 'change', index: number): Promise<string> {
-    const args = ['--mode', 'json', '-p', '--session-dir', sessionDir, ...(cont ? ['-c'] : []), '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
+    const args = ['--mode', 'json', '-p', '--session-dir', sessionDir, ...(cont ? ['-c'] : []), '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-mcp',
       ...plugins.flatMap((e) => ['-e', e]), ...o.ext.flatMap((e) => ['-e', e]), '--model', o.model, '--thinking', o.thinking, '--', prompt];
     return new Promise((resolve) => {
       const r: Round = { phase, index, startMs: Date.now(), endMs: 0, killed: null };

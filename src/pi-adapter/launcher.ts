@@ -22,7 +22,7 @@ export function piInvocation(): { command: string; prefix: string[] } {
 
 /** 启动参数（提示不在参数里，经 stdin 的 prompt 命令发送） */
 export function buildPiArgs(spec: SubagentSpec): string[] {
-  const args = ['--mode', 'rpc', ...(spec.sessionDir ? ['--session-dir', spec.sessionDir, ...(spec.forkFrom ? ['--fork', spec.forkFrom] : [])] : ['--no-session']), '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files'];
+  const args = ['--mode', 'rpc', ...(spec.sessionDir ? ['--session-dir', spec.sessionDir, ...(spec.forkFrom ? ['--fork', spec.forkFrom] : [])] : ['--no-session']), '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-mcp'];
   for (const e of spec.extensions) args.push('-e', e);
   if (spec.model) args.push('--model', spec.model);
   if (spec.thinking) args.push('--thinking', spec.thinking);

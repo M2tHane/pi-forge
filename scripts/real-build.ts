@@ -196,7 +196,7 @@ export async function main(argv: string[]): Promise<number> {
   // 1. 空仓库 + /forge init + 实验配置
   const env: NodeJS.ProcessEnv = { ...process.env, PI_SKIP_VERSION_CHECK: '1' };
   const id = ['-c', 'user.name=m9', '-c', 'user.email=m9@local'];
-  const piBase = ['--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files'];
+  const piBase = ['--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-mcp'];
   const wf = path.join(project, 'workflow.yaml');
   if (o.changeOnly) {
     if (!existsSync(wf)) throw new Error(`--change-only 需要 ${project} 里已有项目`);

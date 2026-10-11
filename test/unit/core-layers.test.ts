@@ -52,7 +52,7 @@ function edges(): Array<[string, string]> {
 }
 
 test("src/core 每个目录都登记了层号", () => {
-  for (const n of readdirSync(CORE)) {
+  for (const n of readdirSync(CORE).filter((x) => !x.startsWith("."))) { // 忽略 .DS_Store 等系统文件
     assert.ok(statSync(join(CORE, n)).isDirectory(), `src/core 根下不应有文件：${n}`);
     assert.ok(n in LAYERS, `目录 ${n} 未登记到 LAYERS`);
   }

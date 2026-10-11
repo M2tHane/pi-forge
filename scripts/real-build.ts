@@ -338,7 +338,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       let flow;
       try { flow = store.readFlow(p.flowId); } catch { continue; }
-      if (flow.stage_status === 'done') { p.delivered = true; return; }
+      // 只认最后一个实施阶段的 done：阶段切换的瞬间（P0、P1 刚批准）stage_status 也会短暂是 done，此前会被误判为已交付
+      if (flow.stage_status === 'done' && flow.stage === flow.stages.at(-1) && /^S\d+$/.test(flow.stage)) { p.delivered = true; return; }
       if (flow.stage_status === 'aborted') { fail('flow_aborted', `流程 ${flow.id} 已中止`); return; }
       if (elapsed() > maxMs) { fail('timeout', `超过硬上限 ${o.maxMin} 分钟`); return; }
       if (o.stopAfterGates !== null && sim.counts.gate >= o.stopAfterGates && !live.inFlight) { fail('stop_after_gates', `按 --stop-after-gates ${o.stopAfterGates} 提前停止`, 'stopped_early'); return; }

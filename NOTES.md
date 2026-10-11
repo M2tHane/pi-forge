@@ -191,6 +191,7 @@
 102. 提示词按外部评审（reviewer2-fable）三处改：lean 不强制产物（S0 不建类型生成、客户端生成、契约检查、DOM 模拟，exit 最多 4 条 AC；commands 只配 test 与 serve，零依赖不配 typecheck 等；lean 只分 S0+S1，S1 超 40 条 AC 才拆）；测试标准统一为"关键逻辑写单元测试，AC 覆盖由验收测试负责"；must 的出处限为 `rule:rules/<层>.md#R<n>`、ac、contract、defect，单元测试写法问题只作 suggest，expected 只能要求已配置 commands 能验证的结果。
 103. 角色提示改为引用任务说明里的『允许的测试入口』『本阶段及之前已交付的接口』两节（程序侧另行渲染）；删去程序不提供的输入描述；test-author、reviewer 的 bash 说明与 guard 的 allowlist/readonly 档一致；worker、test-author、reviewer 与技能重复的段落各留一处。write-rules 规则编号统一 `R<n>`，每文件 ≤5 条规则、≤4 条清单，须可追溯到权限、界面规格、契约或安全底线。未采纳评审第 8 条（upstream handoff 裁剪，属程序）。
 104. `src/core/` 按模块拆成 10 个子目录（state、engine、workspace、spec、plan、verify、acceptance、stage、security、ops），只搬文件、只改 import 路径，不改逻辑。个别文件按依赖方向微调归属（config、paths、git、dag、waits 归 state；engine-lock、lineage 归 engine；shell 归 security）。更早条目里的旧路径对照见文末「src/core 路径对照（10-11 重组）」。
+105. M9 脚本判定"已交付"只认最后一个实施阶段（`S<n>`）的 `stage_status = done`；P0、P1 批准后阶段切换的瞬间也会短暂是 done，轮询碰巧读到时会提前进入变更阶段（e2e `m9-real-build` 间歇失败即此原因）。
 
 ## M1 删除、由 Mx 重建
 

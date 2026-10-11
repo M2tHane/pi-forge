@@ -7,6 +7,7 @@ import type { TaskFile } from '../state/schemas.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { contractViolationsAt } from '../plan/contract-diff.ts';
 import { accBranch } from '../acceptance/acctest.ts';
+import { acceptanceDirOf, writesOwnAcceptance } from '../state/paths.ts';
 import { withScopeHint } from '../workspace/scope-hint.ts';
 import { branchExists } from '../workspace/worktree.ts';
 import { evidenceText, failureSummary, noteToolMissing, runShell } from '../workspace/verify-runner.ts';
@@ -15,7 +16,7 @@ import { cleanTreeOf, recordVerified } from '../verify/verify-cache.ts';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-/** 预检要跑的命令（纯函数）：已定义且非空的 typecheck、lint、test，以及有验收测试目录时的 acceptance -- <task> */
+/** 预检要跑的命令（纯函数）：已定义且非空的 typecheck、lint、test，以及有验收测试目录时的 acceptance -- <目录名>（目录名是 impl 编号；lean 共享目录时是 suite，偏离 110） */
 export function precheckCommands(commands: Record<string, string>, implId: string, hasAcceptance: boolean): { name: string; shell: string }[] {
   const out = ['typecheck', 'lint', 'test'].filter((n) => commands[n]?.trim()).map((n) => ({ name: n, shell: commands[n]!.replace('{files}', '').trim() }));
   if (hasAcceptance && commands['acceptance']?.trim()) out.push({ name: 'acceptance', shell: `${commands['acceptance'].trim()} -- ${implId}` });
@@ -70,8 +71,10 @@ export async function runPrecheck(root: string, store: StateStore, config: FlowC
   if (acc.error) return { ok: false, reason: acc.error, command: 'merge', output: '' };
   const contract = contractAppendCheck(root, t, store.readFlow(flowId).integration_branch);
   if (contract) return { ok: false, reason: contract, command: 'contracts', output: '' };
-  const hasAcceptance = existsSync(path.join(wt, 'tests/acceptance', impl));
-  const plan = precheckCommands(config.commands, impl, hasAcceptance);
+  // lean 且 test_author 关闭：所有 task 共用 tests/acceptance/suite/，预检对它运行 `acceptance -- suite`（含此前所有 task 的集成测试）
+  const accDir = writesOwnAcceptance(t) ? acceptanceDirOf(t) : impl;
+  const hasAcceptance = existsSync(path.join(wt, 'tests/acceptance', accDir));
+  const plan = precheckCommands(config.commands, accDir, hasAcceptance);
   const attempt = t.precheck_failures ?? 0;
   // 运行前的代码树：通过后记下，合并与门禁在同一棵树上沿用（偏离 76）
   const tree = cleanTreeOf(wt);
@@ -85,7 +88,7 @@ export async function runPrecheck(root: string, store: StateStore, config: FlowC
       if (await noteToolMissing(store, r, { flow: flowId, task: t.id, actor: 'precheck' })) continue;
       if (r.exit_code === 0) passed.push({ name: c.name, shell: c.shell, evidence: ev });
       if (r.exit_code !== 0) {
-        const what = c.name === 'acceptance' ? `验收测试（tests/acceptance/${impl}/）` : c.name;
+        const what = c.name === 'acceptance' ? `验收测试（tests/acceptance/${accDir}/）` : c.name;
         return { ok: false, reason: withScopeHint(`预检未通过：${what} 退出码 ${r.exit_code}${r.timed_out ? '（超时）' : ''}\n${failureSummary(r.output)}`, r.output, t, wt), command: c.name, output: r.output };
       }
     }

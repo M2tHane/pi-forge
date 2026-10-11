@@ -22,6 +22,22 @@ description: 写边界契约：数据模型、OpenAPI、错误码、跨模块调
 - 契约批准后，实施中只能追加（新增接口、新增可选字段、新增错误码），不能修改（改 required、改 enum、新增必填字段都算修改）。所以拿不准的细节宁可不写，留给 worker 在实现时追加。
 - glossary 在 P1 只能追加新条目；要改已有条目，在 assumptions 里写明，由用户通过规格修订确认。
 
+## lean 契约：只写接口清单
+
+plan 的 `mode: lean` 时，openapi 只当接口清单用，**不写** components schema，也不写请求体、响应体的 schema。每个接口只写路径、方法、一句 summary、成功状态码、错误码。文件结构不变（根文件 paths 下仍是一条 `$ref`，path item 在 paths/<模块>.yaml），程序的契约检查只要求每个 operation 有 responses：
+
+```yaml
+# paths/board.yaml
+/api/boards:
+  post:
+    operationId: createBoard
+    summary: 创建看板，名称 1 到 50 字
+    x-req: [REQ-001]
+    responses: { '201': { description: 已创建 }, '400': { description: BOARD_NAME_INVALID }, '401': { description: UNAUTHORIZED } }
+```
+
+字段细节写在 summary 或规格里，由 worker 与共享集成测试对齐；data-model.yaml（表与字段）和 errors/<模块>.yaml 仍按下文写全，那是测试与实现要对齐的东西。standard 模式不受影响，仍按下文写 schema。
+
 ## 文件与顺序
 
 1. **data-model.yaml**（先定）

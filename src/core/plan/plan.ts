@@ -6,13 +6,24 @@ import type { EffectiveSpec } from '../spec/spec.ts';
 import { validate, type PlanFile, type TaskFile } from '../state/schemas.ts';
 import type { TaskInput } from '../state/state-store.ts';
 import { conflictsWith, dagReport, findCycle, mutexPairs, type DagReport } from '../state/dag.ts';
-import { globsOverlap, ownAcceptanceGlob } from '../state/paths.ts';
+import { globsOverlap, SHARED_ACCEPTANCE_GLOB, selfTestGlob } from '../state/paths.ts';
 
 export const PLAN_PATH = 'docs/plan/plan.yaml';
 /** S0 的 worker 额外可写的验收目录（规格第 7.5、8.2 节） */
 export const S0_EXTRA_WRITES = ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**'] as const;
 /** impl 的 writes 不能覆盖这些路径：验收测试只归 test-author，规格只经 forge_spec，契约只能由程序核实的追加修改 */
 export const FORBIDDEN_WRITES = ['tests/acceptance/**', 'docs/spec/**', 'docs/contracts/**', '.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
+
+/**
+ * lean 的计划里 writes 属于单元测试 / 测试代码的路径（偏离 110，纯函数）：任一路径段是 test、tests、__tests__、spec、specs、e2e，
+ * 或文件名带 test / spec 标记（a.test.js、foo_test.go、test-utils.js）。不用 globsOverlap：`src/**\/*.js` 与 `*.test.*` 会被误判为重叠。
+ */
+export function isTestWrite(w: string): boolean {
+  const segs = w.split('/').filter(Boolean);
+  if (segs.slice(0, -1).some((x) => /^(?:tests?|__tests__|specs?|e2e)$/.test(x))) return true;
+  const last = segs.at(-1) ?? '';
+  return /^(?:tests?|__tests__|specs?|e2e)$/.test(last) || /(?:^|[._-])(?:test|spec)s?(?:[._-]|$)/.test(last);
+}
 
 export type SymbolKind = 'api' | 'table' | 'error' | 'fn' | 'page' | 'lib';
 export interface PlanSymbol { kind: SymbolKind; /** 规范写法，例如 `api:POST /api/x` */ key: string; soft: boolean }
@@ -154,6 +165,9 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
       if (t.stage === 'S0' && (S0_EXTRA_WRITES as readonly string[]).includes(w)) continue;
       const bad = FORBIDDEN_WRITES.find((f) => globsOverlap(w, f));
       if (bad) errors.push(`${t.id} 的 writes ${w} 与 ${bad} 重叠：验收测试归 test-author，规格与契约不能由 impl 直接改写`);
+      else if (plan.mode === 'lean' && !t.unit_tests?.trim() && isTestWrite(w)) {
+        errors.push(`${t.id} 的 writes ${w} 是测试路径：精简模式（lean）不写单元测试，验收测试由程序统一放进 ${SHARED_ACCEPTANCE_GLOB}（所有 task 共用一个目录），不要写进 writes。只有算法、并发、权限矩阵、复杂状态机等复杂逻辑才需要单元测试：在这个 task 上写 unit_tests: "<是哪类复杂逻辑>"；否则从 writes 里去掉 ${w}`);
+      }
     }
     if (t.writes.length > ctx.limits.max_task_files) warnings.push(`${t.id} 的 writes 有 ${t.writes.length} 项，超过 max_task_files=${ctx.limits.max_task_files}，建议拆分`);
   }
@@ -297,14 +311,16 @@ export function deriveAcctest(impl: Pick<TaskInput, 'id' | 'stage' | 'title' | '
 
 /** 计划批准时生成的 task：每个 plan task 一个 impl（worker），以及它的 .at（test-author） */
 export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['depends_on']>, scopes: { worker: string[]; testAuthor: string[] }, opts: { acctest: boolean; verify?: string[]; selfTest?: boolean }): TaskInput[] {
-  // selfTest（test_author: false，偏离 81）：不派生 .at，impl 的 writes 加上自己的验收目录，由 worker 自己写验收测试
+  // selfTest（test_author: false，偏离 81）：不派生 .at，impl 的 writes 加上自己的验收目录，由 worker 自己写验收测试；
+  // lean 计划（偏离 110）所有 task 共用同一个验收目录 tests/acceptance/suite/
+  const sharedTests = plan.mode === 'lean';
   const out: TaskInput[] = [];
   for (const t of plan.tasks) {
     const impl: TaskInput = {
       id: t.id, stage: t.stage, kind: 'impl', role: 'worker', title: t.title, scopes: [...scopes.worker],
       depends_on: (deps.get(t.id) ?? []).map((d) => ({ ...d })), inputs: [],
       // verify 非空的任务合并时跑全量 typecheck、lint、test（merge-queue）
-      writes: [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(opts.selfTest ? [ownAcceptanceGlob(t.id)] : [])])], verify: [...(opts.verify ?? [])],
+      writes: [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(opts.selfTest ? [selfTestGlob(t.id, sharedTests)] : [])])], verify: [...(opts.verify ?? [])],
       module: t.module, size: t.size, layers: [...t.layers], ac: [...t.ac], produces: [...t.produces], requires: [...t.requires],
       test_interface: [...t.test_interface],
       ...(t.shared?.length ? { shared: [...t.shared] } : {}),

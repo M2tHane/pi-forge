@@ -11,8 +11,23 @@ export const PROTECTED_PATHS = ['.forge/**', '.git/**', 'workflow.yaml', 'rules/
 export const INTERFACES_PATH = 'docs/contracts/**';
 /** implementation_gate.test_author 为 false 时（偏离 81），impl 自己写验收测试：它自己的验收目录 */
 export const ownAcceptanceGlob = (impl: string) => `tests/acceptance/${impl}/**`;
-/** task（impl 或它的 fix）的 writes 里带有自己的验收目录，即由 worker 自己写验收测试 */
-export const writesOwnAcceptance = (t: { id: string; for_task?: string | undefined; writes: readonly string[] }) => t.writes.includes(ownAcceptanceGlob(t.for_task ?? t.id));
+/**
+ * 偏离 110：lean 且 test_author 关闭时，所有 impl / fix 共用一个验收目录（目录名避开 T-xxx，以免与 usedTaskIds、legacy 判定冲突），
+ * 辅助函数只有一份（suite/_helpers.js）。预检按目录名运行 `acceptance -- suite`。
+ */
+export const SHARED_ACCEPTANCE_DIR = 'suite';
+export const SHARED_ACCEPTANCE_GLOB = `tests/acceptance/${SHARED_ACCEPTANCE_DIR}/**`;
+/** impl 自己写验收测试时要加进 writes 的 glob：shared（lean）为共享目录，否则是 impl 自己的目录 */
+export const selfTestGlob = (impl: string, shared: boolean) => (shared ? SHARED_ACCEPTANCE_GLOB : ownAcceptanceGlob(impl));
+type WritesOf = { id: string; for_task?: string | undefined; writes: readonly string[] };
+/** task 的 writes 里带有共享验收目录 */
+export const writesSharedAcceptance = (t: Pick<WritesOf, 'writes'>) => t.writes.includes(SHARED_ACCEPTANCE_GLOB);
+/** task（impl 或它的 fix）的 writes 里带有自己的验收目录（或共享目录），即由 worker 自己写验收测试 */
+export const writesOwnAcceptance = (t: WritesOf) => writesSharedAcceptance(t) || t.writes.includes(ownAcceptanceGlob(t.for_task ?? t.id));
+/** worker 自己写验收测试时，该 task 的验收目录名：共享目录 suite，否则是 impl 编号 */
+export const acceptanceDirOf = (t: WritesOf) => (writesSharedAcceptance(t) ? SHARED_ACCEPTANCE_DIR : (t.for_task ?? t.id));
+/** 该 task 自己的验收目录 glob（writesOwnAcceptance 为真时才有意义） */
+export const selfTestGlobOf = (t: WritesOf) => selfTestGlob(t.for_task ?? t.id, writesSharedAcceptance(t));
 export const SENSITIVE_PATHS = ['**/.env*', '**/*.pem', 'secrets/**', '**/secrets/**'] as const;
 
 /** 把路径规范化为相对 root 的 posix 路径；越出 root 返回 null。不解析符号链接（由调用方用 realpath 处理）。 */

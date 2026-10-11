@@ -7,6 +7,9 @@ description: test-author 只依据规格与契约，在契约边界写验收测�
 
 本技能由 test-author 使用；`test_author` 关闭时，任务说明有『验收测试（由你编写）』一节，worker 照本技能自己写 tests/acceptance/<T>/。
 
+**精简模式（lean）且 test_author 关闭**：全项目只有一份共享的集成测试，放在 tests/acceptance/suite/，辅助函数只在 suite/_helpers.js 一份（有就复用，缺什么往里补）。
+写集成场景而不是逐条 AC 的用例：一个场景走完一条关键业务流程，测试名可带多个编号，如 `[REQ-001.AC1][REQ-001.AC2] 创建看板后列表可见`；本任务每条 AC 至少出现在一个场景的名字里。以下规则（只断言规格规定的、独立可重复）照样适用，但目录与辅助文件按这一段，不要建 tests/acceptance/<T>/ 或 _support/<T>/。
+
 验收测试决定一个 task 能不能合并。它有两种失败方式，都要避免：
 
 - **太松**：错误的实现也能通过（只检查状态码、断言过宽、什么都没测）。

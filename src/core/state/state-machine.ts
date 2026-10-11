@@ -2,7 +2,7 @@
 // 纯函数：只根据程序推导的 facts 判断，不做 IO，也不修改入参。
 import { createHash } from 'node:crypto';
 import type { Lease, StageStatus, TaskFile, TaskStatus } from './schemas.ts';
-import { isProtected, matchesAny } from './paths.ts';
+import { isProtected, matchesAny, SHARED_ACCEPTANCE_GLOB } from './paths.ts';
 import { failureSignature } from './failure-signature.ts';
 
 export type Trigger =
@@ -146,7 +146,7 @@ function submitErrors(t: TaskFile, f: Facts): string[] {
       const forbidden = diff.filter((p) => matchesAny(p, ['tests/acceptance/**']) &&
         !(t.kind === 'impl' && t.stage === 'S0' && matchesAny(p, ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**'])) &&
         // test_author 为 false（偏离 81、107）：impl 与它的 fix 只放开 writes 里的验收目录（自己的，以及程序因旧测试被打破而加入的）
-        !((t.kind === 'impl' || t.kind === 'fix') && matchesAny(p, t.writes.filter((g) => /^tests\/acceptance\/(?:_support\/)?T-\d+\/\*\*$/.test(g)))));
+        !((t.kind === 'impl' || t.kind === 'fix') && matchesAny(p, t.writes.filter((g) => g === SHARED_ACCEPTANCE_GLOB || /^tests\/acceptance\/(?:_support\/)?T-\d+\/\*\*$/.test(g)))));
       if (forbidden.length) errors.push(`不能修改验收测试：${forbidden.join('、')}`);
     }
     const allowed = [...t.writes, ...(t.shared ?? [])];

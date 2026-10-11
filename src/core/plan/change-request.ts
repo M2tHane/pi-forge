@@ -12,7 +12,7 @@ import type { ChangeActionSummary, ChangeFile, Dependency, FlowFile, PlanFile, T
 import { acctestRoundInput } from '../acceptance/acceptance-flow.ts';
 import { latestAcctest } from '../state/acctest-lookup.ts';
 import { deriveAcctest, deriveTasks, S0_EXTRA_WRITES } from './plan.ts';
-import { ownAcceptanceGlob, writesOwnAcceptance } from '../state/paths.ts';
+import { selfTestGlobOf, writesOwnAcceptance } from '../state/paths.ts';
 import type { ChangeOps } from '../state/state-store.ts';
 
 export type PlanTask = PlanFile['tasks'][number];
@@ -52,12 +52,12 @@ const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.l
 const stageDefEq = (a: PlanStageDef, b: PlanStageDef) => a.goal === b.goal && sameSet(a.exit, b.exit);
 
 /** 计划里的 task 字段 → TaskFile 的字段（用于调整未开始的 task） */
-/** ownTests：该 task 自己写验收测试（test_author: false，偏离 81），writes 里保留自己的验收目录 */
-function taskPatch(t: PlanTask, fields: readonly string[], ownTests = false): Record<string, unknown> {
+/** ownTests：该 task 自己写验收测试（test_author: false，偏离 81），writes 里保留它原来的验收目录（自己的，lean 时是共享目录 suite，偏离 110） */
+function taskPatch(t: PlanTask, fields: readonly string[], ownTests: string | null = null): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
     const v = (t as Record<string, unknown>)[f];
-    if (f === 'writes') out['writes'] = [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(ownTests ? [ownAcceptanceGlob(t.id)] : [])])];
+    if (f === 'writes') out['writes'] = [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(ownTests ? [ownTests] : [])])];
     else if (OPTIONAL_LISTS.has(f) && Array.isArray(v) && !v.length) out[f] = undefined;
     else out[f] = structuredClone(v);
   }
@@ -137,7 +137,7 @@ export function diffPlanRevision(oldPlan: CurrentPlan, newPlan: PlanFile, tasks:
       }
       if (!stageOk(t.stage)) { errors.push(`${t.id} 的阶段 ${t.stage} 在当前阶段 ${flow.stage} 之前或不存在，只能调整到当前阶段或之后`); continue; }
       if ((oldIdx.get(old.stage) ?? -1) < cur) { errors.push(`${t.id} 属于已完成的阶段 ${old.stage}，不能调整`); continue; }
-      const patch = taskPatch(t, fields, writesOwnAcceptance(l));
+      const patch = taskPatch(t, fields, writesOwnAcceptance(l) ? selfTestGlobOf(l) : null);
       if (depsChanged) patch['depends_on'] = newDeps.map((d) => ({ ...d }));
       actions.push({ kind: 'adjust', id: t.id, fields: [...fields, ...(depsChanged ? ['depends_on'] : [])], patch });
       if (fields.some((f) => ['ac', 'test_interface', 'title', 'stage', 'writes'].includes(f)) || depsChanged) {

@@ -501,6 +501,8 @@ export const PlanFile = Type.Object({
     manual_checks: Type.Optional(ManualChecks),
     review: Type.Optional(TaskReview),
     risk: Type.Optional(TaskRisk),
+    /** 精简模式（lean）默认不写单元测试（偏离 110）；复杂逻辑（算法、并发、权限矩阵、复杂状态机等）写明理由后才允许 writes 含测试路径 */
+    unit_tests: Type.Optional(Type.String({ minLength: 1 })),
     /** 只在变更请求的修订里使用：这是对已开始或已完成的 task 的修改 task，程序让它硬依赖原 task（第 12.3 节） */
     modifies: Type.Optional(Type.String({ pattern: '^T-\\d{3,}$' })),
   }, { additionalProperties: false }), { minItems: 1 }),

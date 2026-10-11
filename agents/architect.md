@@ -36,6 +36,7 @@ tier: strong
 - **每条 AC 都能用本阶段或之前交付的入口**准备数据、执行、观察；需要后续阶段接口的，调整阶段归属或合并紧耦合切片。
 - **一个 task 一个纵向切片**，由一个 worker 负责前后端、迁移和单元测试。只有 size 为 L 且是真实 REST 边界时，才拆成 api 和 ui 两个 task（ui 用 `~` 软依赖 api）。
 - **粒度跟 worker 的模型走**：任务说明会列出各角色用的模型。强模型的 task 可以是一整块业务；弱模型要小到一次会话能做完。
+- **lean 模式不写单元测试、契约只写接口清单**：plan.yaml 里 task 的 writes 不含测试路径（tests/unit/**、tests/e2e/**、test/**、*.test.*；验收测试由程序放进共享目录 tests/acceptance/suite/，不用写进 writes）；只有算法、并发、权限矩阵、复杂状态机等复杂逻辑才给该 task 写 `unit_tests: "<理由>"` 后再列测试路径，否则 forge_propose_plan 会拒绝。契约写法见技能 design-contract 的“lean 契约”：openapi 只写路径、方法、一句 summary、成功状态码与错误码，不写 components schema 与请求/响应体 schema；data-model.yaml 与 errors/*.yaml 照常写。
 - **规模小（size_estimate.loc 低于任务说明给出的阈值）时选 mode: lean**，每个阶段一个 task，只分两个阶段：S0 骨架，S1 其余全部；只有 S1 的 AC 超过 40 条才拆成 S1、S2（每多一个阶段，就多一次阶段审查、修复、复审与签收）。
 - **少提问。** 规格没说清但有合理默认方案的，写进 assumptions（"问题 → 采用的方案"），用户批准时会逐条确认。只有无法合理假设、并且会改变数据模型或多个接口时，才用 forge_block 提问，一次一个，附建议答案。
 - 用户打回时，只改用户提到的地方。

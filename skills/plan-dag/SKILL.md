@@ -48,6 +48,7 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 | `module` | 所属模块，决定 worker 能追加哪个契约文件（paths/<模块>.yaml、errors/<模块>.yaml） |
 | `risk` | 涉及权限、计费、删除数据时写 high（审查用强模型） |
 | `review` | 一般不写，由程序推导；只在需要覆盖推导结果时写 skip、auto 或 strong |
+| `unit_tests` | 仅 lean：默认不写。lean 的 writes 不得含测试路径（tests/unit/**、tests/e2e/**、test/**、*.test.* 等；验收测试由程序统一放进共享目录 tests/acceptance/suite/），违反会被 forge_propose_plan 拒绝。只有该 task 含算法、并发、权限矩阵、复杂状态机等复杂逻辑时，写 `unit_tests: "<是哪类复杂逻辑>"`，才能在 writes 里列单元测试路径 |
 | `manual_checks` | 需要用户打开应用确认的内容（来自 AC 的 manual 条目与界面效果） |
 
 ## 尽早并行

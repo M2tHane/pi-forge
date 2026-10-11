@@ -108,14 +108,19 @@ export async function prepareAcctestWorkspace(root: string, config: FlowConfig, 
   }
 }
 
-/** 扫描测试文件中的 AC 编号（纯函数）：`[REQ-012.AC2]` → 出现的文件 */
+/** 一对方括号里只有 AC 编号（可用逗号、顿号、分号、斜杠、加号、&、空格分隔），允许一个测试带多个编号（偏离 110） */
+const AC_TAG = /\[\s*(REQ-\d{3,}\.AC\d+(?:\s*[,，、;；/&+]?\s*REQ-\d{3,}\.AC\d+)*)\s*\]/g;
+
+/** 扫描测试文件中的 AC 编号（纯函数）：`[REQ-012.AC2]`、`[REQ-012.AC2][REQ-012.AC3]`、`[REQ-012.AC2, REQ-012.AC3]` → 出现的文件 */
 export function scanAcCoverage(files: readonly { path: string; content: string }[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const f of files) {
-    for (const m of f.content.matchAll(/\[(REQ-\d{3,}\.AC\d+)\]/g)) {
-      const list = out.get(m[1]!) ?? [];
-      if (!list.includes(f.path)) list.push(f.path);
-      out.set(m[1]!, list);
+    for (const tag of f.content.matchAll(AC_TAG)) {
+      for (const m of tag[1]!.matchAll(/REQ-\d{3,}\.AC\d+/g)) {
+        const list = out.get(m[0]) ?? [];
+        if (!list.includes(f.path)) list.push(f.path);
+        out.set(m[0], list);
+      }
     }
   }
   return out;

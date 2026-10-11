@@ -196,6 +196,9 @@
 107. test_author 关闭时，合并验证（impl 与 fix 共用）里失败的验收目录不属于当前 task（别的 task 的 foreign、此前流程的 legacy）不再建 .at-n 也不再只按失败退回：`decideBrokenAcceptance` 把这些目录加进当前 task 的 writes（grantScope，程序批准）并在 handoff 写明约束，提交检查放开 writes 里的 `tests/acceptance/[_support/]T-n/**`；forge_dispute / forge_request_scope 的拒绝信息改为指向该机制。M9b A0 的 F-002/T-007.fx-1 即死于此：预检只跑 `acceptance -- <impl>` 看不到旧目录，合并验证全量失败后 test_author 关闭分支返回 null，task 以 merge_verify_fail 退回但无处可改；test_author 开启时行为不变（偏离 90）。
 108. 命令因「工具不存在」失败（退出码 127，或前 10 个非空行里有 sh/bash/zsh `not found`、pnpm `Command "x" not found`、npm `could not determine executable to run` 整行格式，且其前没有测试框架标记）按跳过处理：`workspace/verify-runner.ts` 的 `detectToolMissing`/`noteToolMissing`，接在阶段门禁、预检、合并验证（单个与批量）；evidence 与 note 事件写「工具缺失，已跳过：<命令>」，不计失败、不记为已通过；status-view 对每个 (流程, 命令) 报一次待处理项，建议删掉或装上。验收测试命令（`acceptance`、`acceptance_list`）不接入。依据：M9 A0 里 `redocly` 未安装使 S0、S1 门禁转 needs_human。
 109. lean 计划加程序校验（`plan/plan.ts` 的 `leanShapeErrors`）：S0 exit 涉及的 AC ≤ 4；S0 之后实施阶段数 ≤ max(1, ceil(S0 之后 exit 的 AC 总数 / 40))，AC 按 exit 里 REQ 的全部 AC 计。此前只靠提示词（偏离 102），M9 A0 的 lean 计划仍分了 S0、S1、S2。standard 不受影响。
+110. 偏离规格：plan_mode 为 lean 且 test_author 关闭时，所有 impl / fix 的验收测试写进共享目录 `tests/acceptance/suite/**`（`state/paths.ts` 的 `SHARED_ACCEPTANCE_GLOB`，名字避开 T-xxx），辅助函数只有 `suite/_helpers.js` 一份；`deriveTasks`、变更请求的 `taskPatch`、覆盖缺口的 `.fx-n` 都按 task 现有 writes 取这个目录。预检运行 `acceptance -- suite`（目录名取 `acceptanceDirOf`，不新增命令约定，仍是"`-- <目录名>`只跑 tests/acceptance/<目录名>/"，会连同此前所有 task 的场景一起跑）。`scanAcCoverage` 支持一个括号内多个 AC 编号（`[A][B]`、`[A, B]`、顿号等）。lean 但显式开启 test_author、standard 均不变；偏离 81、107 的按 task 目录分支保留。依据：m9b 实测（545 行原生 vs 5,418 行，验收测试 2,030 行、每个目录一份 helpers）与用户决定。
+111. 偏离规格：lean 计划里 impl 的 writes 不得含测试路径（`plan/plan.ts` 的 `isTestWrite`：tests/test/__tests__/specs/e2e 目录段，或 *.test.* / *_test.* / test-utils 之类文件名），除非该 task 写了 plan.yaml 的可选字段 `unit_tests: "<理由>"`（算法、并发、权限矩阵、复杂状态机等）；违反时 forge_propose_plan（以及变更请求的修订检查）报中文错误。standard 不受限制。依据：m9b 实测 GLM-5.3-Flash 不遵守提示词里的"只测关键节点"，用户决定改为程序约束。
+112. 偏离规格：lean 的契约只写接口清单（路径、方法、一句 summary、成功状态码、错误码），不要求 components schema 与请求/响应体 schema。核对结果：`parseContracts`、追加检查、符号目录、plan 校验对 schema 没有硬性要求（只要求每个 operation 有非空 responses），所以程序未改，只由提示词（design-contract、architect）约定，并加单元测试固定"无 schema 的契约通过"；data-model.yaml、errors/*.yaml 照旧。依据：m9b 实测约 2,500 行 OpenAPI YAML 对 545 行的项目过重；用户决定。
 
 ## M1 删除、由 Mx 重建
 
@@ -281,6 +284,7 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 - 10-10（M8 后）：`agents/orchestrator.md` 的 P0 改为"有 docs/ 文档先读、只问疑点；没有文档详细访谈"；`skills/spec-from-prd/SKILL.md` 第一步加一句"没有文档时当作访谈提纲"。orchestrator 的提示缓存失效一次。
 - 10-11（M9 提示词调整）：新增 `skills/simplicity/`、`skills/receiving-feedback/`；改 `agents/worker.md`、`agents/test-author.md`、`agents/reviewer.md`、`agents/architect.md`，以及 `skills/tdd`、`acceptance-tests`、`code-review`、`plan-dag`、`design-contract`；`src/core/dispatcher.ts` 的技能映射给 worker 加两个技能、reviewer 加 simplicity。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
 - 10-11（评审三处修订，偏离 102–103）：改 `agents/worker.md`、`test-author.md`、`reviewer.md`、`architect.md`，`rules/global.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`receiving-feedback`、`code-review`、`plan-dag`、`design-contract`、`write-rules`。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
+- 10-11（lean 变轻，偏离 110–112）：改 `agents/worker.md`、`agents/architect.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`plan-dag`、`design-contract`：写明 lean 的共享验收目录与多编号测试、不写单元测试（`unit_tests` 理由例外）、契约只写接口清单。所有子进程的提示缓存失效一次。
 
 ## src/core 路径对照（10-11 重组）
 

@@ -256,10 +256,12 @@ async function approveLean(yaml?: string) {
   } finally { p.cleanup(); }
 }
 
-test('lean 且 test_author 未配置：批准 P1 不派生 .at，impl 的 writes 带自己的验收目录', async () => {
+test('lean 且 test_author 未配置：批准 P1 不派生 .at，impl 的 writes 带共享验收目录 suite（偏离 110），不带按 task 的目录', async () => {
   const tasks = await approveLean();
   assert.ok(!tasks.some((t) => t.kind === 'acctest'), '没有 .at');
-  assert.ok(tasks.find((t) => t.id === 'T-003')!.writes.includes('tests/acceptance/T-003/**'));
+  const w = tasks.find((t) => t.id === 'T-003')!.writes;
+  assert.ok(w.includes('tests/acceptance/suite/**'));
+  assert.ok(!w.includes('tests/acceptance/T-003/**'));
 });
 
 test('lean 但 test_author 显式写 true：照旧派生 .at', async () => {

@@ -2,7 +2,7 @@
 // 归属按 task 而不是按角色（pi-flow 的 gateFailed 按角色分组）：文件归"最后一个 writes 覆盖了它并且已经 done 的 impl task"。
 import type { TaskFile } from '../state/schemas.ts';
 import type { StateStore, TaskInput } from '../state/state-store.ts';
-import { matchesAny, ownAcceptanceGlob } from '../state/paths.ts';
+import { matchesAny, SHARED_ACCEPTANCE_GLOB, ownAcceptanceGlob } from '../state/paths.ts';
 import { nextFixId } from './acceptance-flow.ts';
 
 export type StageFixSource = 'gate' | 'qa' | 'review';
@@ -26,7 +26,7 @@ const createdOrder = (a: Pick<TaskFile, 'id'>, b: Pick<TaskFile, 'id'>) => { con
  */
 export function testWritesOf(impl: Pick<TaskFile, 'id' | 'writes'>): string[] {
   const own = ownAcceptanceGlob(impl.id);
-  return impl.writes.filter((g) => g === own || (g.startsWith('tests/') && !g.startsWith('tests/acceptance')));
+  return impl.writes.filter((g) => g === own || g === SHARED_ACCEPTANCE_GLOB || (g.startsWith('tests/') && !g.startsWith('tests/acceptance')));
 }
 
 /** 文件的负责 task：writes 覆盖它、已经 done 的 impl task 中编号最大的一个；找不到时为 undefined（纯函数） */

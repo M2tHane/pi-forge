@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 import { isSettled } from '../state/state-machine.ts';
+import { SHARED_ACCEPTANCE_DIR, writesSharedAcceptance } from '../state/paths.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { git } from '../state/git.ts';
 import { failingFiles } from '../workspace/scope-hint.ts';
@@ -184,6 +185,12 @@ export function gateIssues(failed: { command: string; output: string }, tasks: r
   const issues: StageIssue[] = [];
   for (const dir of failingAcceptanceDirs(failed.output)) {
     const impl = tasks.find((t) => t.id === dir && t.kind === 'impl');
+    if (impl) issues.push({ files: [], text, owner: impl.id, writes: impl.writes });
+  }
+  // lean 的共享验收目录（偏离 110）：失败归最后一个写它的 impl，可写范围用它自己的 writes
+  if (failed.output.includes(`tests/acceptance/${SHARED_ACCEPTANCE_DIR}/`)) {
+    const num = (id: string) => Number(/^T-(\d+)/.exec(id)?.[1] ?? 0);
+    const impl = tasks.filter((t) => t.kind === 'impl' && writesSharedAcceptance(t)).sort((a, b) => num(a.id) - num(b.id)).at(-1);
     if (impl) issues.push({ files: [], text, owner: impl.id, writes: impl.writes });
   }
   const files = failingFiles(failed.output, tracked).filter((f) => !f.startsWith('tests/acceptance/'));

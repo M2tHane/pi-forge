@@ -11,7 +11,7 @@ import { scanAcCoverage } from './acctest.ts';
 import { createAcctestRound, nextFixId } from './acceptance-flow.ts';
 import { latestAcctest } from '../state/acctest-lookup.ts';
 import { lastWorkerTask } from './stage-fix.ts';
-import { ownAcceptanceGlob } from '../state/paths.ts';
+import { acceptanceDirOf, SHARED_ACCEPTANCE_DIR, selfTestGlobOf } from '../state/paths.ts';
 import { isSettled } from '../state/state-machine.ts';
 import { headSha } from '../workspace/worktree.ts';
 
@@ -101,13 +101,13 @@ export async function createCoverageRounds(store: StateStore, flowId: string, ga
       const id = nextFixId(all, owner);
       const input: TaskInput = {
         id, stage: store.readFlow(flowId).stage, kind: 'fix', role: impl.role, scopes: [...impl.scopes], depends_on: [], inputs: [],
-        writes: [...new Set([...impl.writes, ownAcceptanceGlob(owner)])], verify: [...impl.verify], for_task: owner, fork_from_task: lastWorkerTask(owner, all),
+        writes: [...new Set([...impl.writes, selfTestGlobOf(impl)])], verify: [...impl.verify], for_task: owner, fork_from_task: lastWorkerTask(owner, all),
         title: '补齐 AC 编号的验收测试', ac: rows.map((r) => r.ac),
         ...(impl.module ? { module: impl.module } : {}),
         ...(impl.layers?.length ? { layers: [...impl.layers] } : {}),
       };
       await store.addTasks(flowId, [input], actor);
-      await store.appendHandoff(flowId, id, ['## 补齐验收测试（程序生成）', '', `下面这些 AC 在 tests/acceptance/${owner}/ 里还没有带编号的测试。请补充，测试名里带 \`[REQ-xxx.ACn]\` 编号，写在 ${ownAcceptanceGlob(owner)}；测试暴露出实现缺漏时也可以改实现：`, '',
+      await store.appendHandoff(flowId, id, ['## 补齐验收测试（程序生成）', '', `下面这些 AC 在 tests/acceptance/${acceptanceDirOf(impl)}/ 里还没有带编号的测试。请补充，测试名里带 \`[REQ-xxx.ACn]\` 编号（一个测试可带多个编号，如 \`[REQ-001.AC1][REQ-001.AC2]\`），写在 ${selfTestGlobOf(impl)}${acceptanceDirOf(impl) === SHARED_ACCEPTANCE_DIR ? '（共享目录：复用 _helpers.js，不要另建辅助文件）' : ''}；测试暴露出实现缺漏时也可以改实现：`, '',
         ...rows.map((r) => `- ${r.ac}${r.text ? `：${r.text}` : ''}`)].join('\n'), actor);
       tasks.push(id);
       continue;

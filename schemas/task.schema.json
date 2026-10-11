@@ -162,6 +162,23 @@
       "type": "string",
       "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
     },
+    "source_round": {
+      "type": "object",
+      "required": [
+        "task",
+        "round"
+      ],
+      "properties": {
+        "task": {
+          "type": "string",
+          "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+        },
+        "round": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "acctest_round": {
       "type": "object",
       "required": [

@@ -559,7 +559,7 @@ export class Engine {
     try {
       await this.promote(flowId);
     } catch (e) { report(e); }
-    try { await resolveDisputes(this.d.store, flowId); } catch (e) { report(e); }
+    try { await resolveDisputes(this.d.store, flowId, this.d.root); } catch (e) { report(e); }
     try { await advanceInputs(this.d.store, flowId); } catch (e) { report(e); }
     try { this.startPrechecks(flowId); } catch (e) { report(e); }
     for (const listed of this.d.store.listTasks(flowId)) {

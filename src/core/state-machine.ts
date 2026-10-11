@@ -229,7 +229,8 @@ export const TRANSITIONS: readonly Rule[] = [
   },
   {
     from: ['in_progress'], to: 'checking', trigger: 'submit',
-    check: (t, f) => [...acctestOnly(t, f), ...submitErrors(t, f)], effect: submitted,
+    // acctest 走 submit 只发生在单独合并（impl 已 done 且改了测试）；争议裁决靠它认出"改了测试"
+    check: (t, f) => [...acctestOnly(t, f), ...submitErrors(t, f)], effect: (t, f) => { submitted(t, f); if (t.kind === 'acctest') t.changed_tests = true; },
   },
   {
     from: ['awaiting_inputs'], to: 'checking', trigger: 'inputs_ready',

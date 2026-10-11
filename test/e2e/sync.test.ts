@@ -49,7 +49,10 @@ test('阶段边界同步主分支：无冲突直接合入；writes 内冲突生�
     await p.store.addTasks(flowId, [
       mkTask('T-001', { stage: 'S3', verify: ['test'] }),
       mkTask('T-002', { stage: 'S4', verify: [], writes: ['src/server/t-002/**'] }),
+      // 混合编号不能让同步冲突的 merge-fix 编号变成 T-NaN
+      mkTask('T-009.fx-1', { stage: 'S3', kind: 'fix', writes: [], verify: [] }), mkTask('S3.rv', { stage: 'S3', kind: 'review', writes: [], verify: [] }),
     ], 'architect');
+    for (const id of ['T-009.fx-1', 'S3.rv']) await p.store.transitionTask(flowId, id, { to: 'cancelled', trigger: 'cancel', actor: 'human', facts: { reason: '只占编号' } });
     const integ = p.store.readFlow(flowId).integration_branch;
     let mergeFixSaw = '';
     const { engine, errors } = makeEngine({ ...p, flowId }, async (_role, _n, a) => {
@@ -80,6 +83,7 @@ test('阶段边界同步主分支：无冲突直接合入；writes 内冲突生�
     // writes 内的冲突：生成 merge-fix（角色取写过该文件的任务的角色），看到冲突标记
     const fix = p.store.listTasks(flowId).find((t) => t.kind === 'merge-fix')!;
     assert.ok(fix, '应生成同步冲突的 merge-fix');
+    assert.equal(fix.id, 'T-010');
     assert.equal(fix.role, 'worker');
     assert.deepEqual(fix.conflict_files, ['src/server/t-001/a.ts']);
     assert.match(mergeFixSaw, /<<<<<<< [\s\S]*集成分支上的版本[\s\S]*=======[\s\S]*main 上的版本/);

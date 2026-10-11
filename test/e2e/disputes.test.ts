@@ -208,3 +208,31 @@ test('偏离 87：.fx-1（继承 tests/acceptance/_support/**）提出争议后�
     assert.equal(p.store.readTask(p.flowId, 'T-001.at-2').status, 'done');
   } finally { p.cleanup(); }
 });
+
+test('缺陷：impl 已 done 后 .fx 争议，.at-n 改测试单独合并 → 记录 changed_tests，fx 走 dispute_fixed 并重跑预检（不是 dispute_upheld）', async () => {
+  const p = await setupProject({ yaml: YAML.replace(/  test:      ".*"/, '  test:      "true"'), files: FILES, tasks: [
+    mkTask('T-001', { ac: ['REQ-001.AC1'] }), at('T-001', [hard('T-001')]),
+  ] });
+  const e = engineEnv(p, async (_role, _nth, a) => {
+    const id = a.env.task;
+    await a.call('forge_claim');
+    if (id === 'T-001') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n' }); return submitWork(a, '实现'); }
+    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': "test('[REQ-001.AC1] STRICT', () => {});\n" }); return submitWork(a, 'AC1'); }
+    if (id === 'T-001.fx-1') {
+      const r = await a.call('forge_dispute', { test: 'tests/acceptance/T-001/a.test.ts', reason: '规格没有要求 STRICT', evidence: 'docs/spec/requirements.md#REQ-001' });
+      assert.ok(r.ok, r.text);
+      return;
+    }
+    assert.equal(id, 'T-001.at-2');
+    await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': "test('[REQ-001.AC1] 按规格断言', () => {});\n" });
+    await submitWork(a, '按规格改测试');
+  });
+  try {
+    await drive(e, p.flowId, 30);
+    assert.equal(p.store.readTask(p.flowId, 'T-001.at-2').changed_tests, true);
+    const evs = p.store.readEvents().filter((ev) => ev.task === 'T-001.fx-1');
+    assert.ok(evs.some((ev) => ev.trigger === "dispute_fixed"), JSON.stringify(evs.map((ev) => ev.reason)));
+    assert.ok(!evs.some((ev) => ev.trigger === 'dispute_upheld'));
+    assert.equal(e.launcher.launched.filter((s) => s.env['PI_FORGE_TASK'] === 'T-001.fx-1').length, 1, '不再派 worker 重做');
+  } finally { p.cleanup(); }
+});

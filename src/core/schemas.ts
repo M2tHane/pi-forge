@@ -173,6 +173,8 @@ export const TaskFile = Type.Object({
   risk: Type.Optional(TaskRisk),
   /** 派生任务所属的原任务 */
   for_task: Type.Optional(TaskId),
+  /** 阶段审查或 stage-qa 的哪一轮生成了这个 fix（task 是该轮的 .rv-n / .qa-n）；标题只负责展示，认轮次看这个字段 */
+  source_round: Type.Optional(Type.Object({ task: TaskId, round: Type.Integer({ minimum: 1 }) })),
   /** 验收测试的返工轮次（.at-n，第 9.3–9.5 节）：争议、被别的 task 的契约追加破坏、用户裁决改测试 */
   acctest_round: Type.Optional(Type.Object({
     kind: Type.Enum(['dispute', 'foreign', 'decide', 'coverage', 'change', 'legacy']),

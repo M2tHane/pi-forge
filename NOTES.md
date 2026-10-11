@@ -178,6 +178,10 @@
 89. 规划用的"已用 task 编号"包括此前各流程的 task 与主分支 `tests/acceptance/` 下的目录名（`usedTaskIds`）。验收测试目录全仓库共用；此前 feature 流程从 T-001 重新编号，会和旧流程写进同一个目录。M9 冒烟发现。
 90. 合并验证时失败的验收目录不属于本流程的任何 task（此前流程留下的测试被新需求打破）：给本 task 建一轮 `legacy` 的 `.at-n`，writes 加上旧目录，不等未开始的 `.at`、不要求覆盖 AC，由 test-author 按最新规格只改冲突的断言；`.at` 的提交检查、补丁与导出改为按 task 的 writes。找不到任何负责的 task 时按本 task 的合并验证失败处理（此前会尝试非法转移，task 卡在 merging、合并队列被占）。
 91. `git()` 封装统一设 `core.quotePath=false`（经环境变量注入），路径按 UTF-8 原样输出。此前中文文件名会被转义加引号，按行解析的 `ls-tree`/`diff --name-only` 读不到文件；M9 冒烟里 feature 规格叫"删除待办"，P1 预检按 ref 读规格时漏掉增量需求，architect 反复被拒。
+92. 争议裁决读 `changed_tests`：acctest 单独合并（`submit → checking`）此前不记录它，被当成"维持测试"，.fx 白干一轮。现在 submit 的 effect 记 true；缺失时 `resolveDisputes` 阻塞交给用户，不再静默判维持。改测试后 .fx 的 worktree 先合入集成分支（acc 分支合并后已删；测试目录内的旧版本冲突时以集成分支为准）再预检。
+93. merge-fix 的 T- 编号（合并冲突与阶段同步两处）统一走 `nextPlanTaskId(usedTaskIds(...))`；手写 `Number(id.slice(2))` 遇到 `.at`/`.fx-n`/`S1.rv` 得到 `T-NaN`。删掉无人使用的 `stages.nextTaskId`。
+94. 阶段修复 `.fx` 的 writes 追加原 impl 的非验收测试 glob（`tests/` 下、非 `tests/acceptance`），审查要求补回归测试时才写得进去；`test_author: false`（偏离 81）时 impl 自己的验收目录也随之保留。
+95. 阶段审查 / stage-qa 的 fix 用 `source_round: { task, round }` 关联轮次，`fixTasksOfRound` 不再靠标题里的中文标签（标题只展示）；不兼容旧状态里只有标题的 fix。
 
 ## M1 删除、由 Mx 重建
 

@@ -2,7 +2,7 @@
 // 归属按 task 而不是按角色（pi-flow 的 gateFailed 按角色分组）：文件归"最后一个 writes 覆盖了它并且已经 done 的 impl task"。
 import type { TaskFile } from './schemas.ts';
 import type { StateStore, TaskInput } from './state-store.ts';
-import { matchesAny } from './paths.ts';
+import { matchesAny, ownAcceptanceGlob } from './paths.ts';
 import { nextFixId } from './acceptance-flow.ts';
 
 export type StageFixSource = 'gate' | 'qa' | 'review';
@@ -18,6 +18,16 @@ const SOURCE_LABEL: Record<StageFixSource, string> = { gate: '阶段门禁', qa:
 /** task 没有时间戳：按编号排序（T-003 < T-010；T-003.fx-2 < T-003.fx-10） */
 const idKey = (id: string) => [Number(/^T-(\d+)/.exec(id)?.[1] ?? 0), Number(/\.fx-(\d+)$/.exec(id)?.[1] ?? 0)] as const;
 const createdOrder = (a: Pick<TaskFile, 'id'>, b: Pick<TaskFile, 'id'>) => { const [x, y] = [idKey(a.id), idKey(b.id)]; return x[0] - y[0] || x[1] - y[1]; };
+
+/**
+ * fix 额外带上的、原 impl task 自己的测试写权限（纯函数）：writes 里 tests/ 下非验收的 glob（单元、e2e、契约测试等），
+ * 审查要求补回归测试时 worker 才写得进去。tests/acceptance/** 永远不带；只有 test_author 为 false（偏离 81）、
+ * impl 自己写验收测试时，才保留它自己的验收目录。
+ */
+export function testWritesOf(impl: Pick<TaskFile, 'id' | 'writes'>): string[] {
+  const own = ownAcceptanceGlob(impl.id);
+  return impl.writes.filter((g) => g === own || (g.startsWith('tests/') && !g.startsWith('tests/acceptance')));
+}
 
 /** 文件的负责 task：writes 覆盖它、已经 done 的 impl task 中编号最大的一个；找不到时为 undefined（纯函数） */
 export function ownerOf<T extends Pick<TaskFile, 'id' | 'kind' | 'status' | 'writes'>>(file: string, tasks: readonly T[]): T | undefined {
@@ -57,10 +67,10 @@ export function groupIssuesByOwner<T extends Pick<TaskFile, 'id' | 'kind' | 'sta
 }
 
 /**
- * 为阶段验收发现的问题创建 fix task（T-003.fx-n）：kind fix、角色同原 task（worker）、writes 是问题涉及的文件、
+ * 为阶段验收发现的问题创建 fix task（T-003.fx-n）：kind fix、角色同原 task（worker）、writes 是问题涉及的文件加原 task 的非验收测试目录、
  * fork 原 task 最后一次 worker 会话。worktree 在派发时从集成分支新建。没有新的 .at，不做逐任务审查，合并时跑全量（第 11.1 节）。
  */
-export async function createStageFixTasks(store: StateStore, flowId: string, source: StageFixSource, issues: readonly StageIssue[], round: string, actor = 'engine'): Promise<{ tasks: string[]; unowned: string[] }> {
+export async function createStageFixTasks(store: StateStore, flowId: string, source: StageFixSource, issues: readonly StageIssue[], round: string, actor = 'engine', sourceRound?: { task: string; round: number }): Promise<{ tasks: string[]; unowned: string[] }> {
   const flow = store.readFlow(flowId);
   const tasks = store.listTasks(flowId);
   const { groups, unowned } = groupIssuesByOwner(issues, tasks);
@@ -72,15 +82,17 @@ export async function createStageFixTasks(store: StateStore, flowId: string, sou
     const id = nextFixId(taken, implId);
     taken.push({ id });
     const files = [...g.files].sort();
+    const writes = [...new Set([...files, ...testWritesOf(impl)])];
     inputs.push({
       id, stage: flow.stage, kind: 'fix', role: impl.role, scopes: [...impl.scopes], depends_on: [], inputs: [],
-      writes: files, verify: [...impl.verify], for_task: implId, fork_from_task: lastWorkerTask(implId, tasks),
+      writes, verify: [...impl.verify], for_task: implId, fork_from_task: lastWorkerTask(implId, tasks),
       title: `修复${SOURCE_LABEL[source]}的问题（${round}）：${files.slice(0, 3).join('、')}`.slice(0, 200),
       ac: [`修复${SOURCE_LABEL[source]}指出的问题，修好后原 task 的验收测试与单元测试通过`, '原因不在这些文件里时，用 forge_block 写明是哪个模块、什么输入、期望与实际'],
       ...(impl.module ? { module: impl.module } : {}),
       ...(impl.layers?.length ? { layers: [...impl.layers] } : {}),
+      ...(sourceRound ? { source_round: { ...sourceRound } } : {}),
     });
-    briefs[id] = [`## ${SOURCE_LABEL[source]}发现的问题（程序生成，${round}）`, `可写范围只有问题涉及的文件：${files.join('、')}`, '', ...g.texts.map((x) => x.trim())].join('\n').slice(0, 12000);
+    briefs[id] = [`## ${SOURCE_LABEL[source]}发现的问题（程序生成，${round}）`, `可写范围只有问题涉及的文件${writes.length > files.length ? '与原 task 的测试目录' : ''}：${writes.join('、')}`, '', ...g.texts.map((x) => x.trim())].join('\n').slice(0, 12000);
   }
   if (!inputs.length) return { tasks: [], unowned };
   await store.addTasks(flowId, inputs, actor);

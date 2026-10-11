@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupIssuesByOwner, lastWorkerTask, ownerOf } from '../../src/core/stage-fix.ts';
+import { createStageFixTasks, groupIssuesByOwner, lastWorkerTask, ownerOf, testWritesOf } from '../../src/core/stage-fix.ts';
+import { setupProject } from '../helpers/project.ts';
+import { mkTask } from '../helpers/tasks.ts';
 
 import type { TaskFile } from '../../src/core/schemas.ts';
 type T = Pick<TaskFile, 'id' | 'kind' | 'status' | 'writes' | 'for_task'>;
@@ -46,4 +48,27 @@ test('groupIssuesByOwner：指定 owner 的问题跳过 ownerOf，可写范围�
   assert.deepEqual([...groups.keys()].sort(), ['T-001', 'T-003']);
   assert.deepEqual([...groups.get('T-003')!.files], ['src/c/**']);
   assert.deepEqual(unowned, ['tests/x.ts']);
+});
+
+test('testWritesOf：带上非验收测试的 glob；tests/acceptance/** 不带，只保留 impl 自己的验收目录（test_author: false）', () => {
+  assert.deepEqual(testWritesOf({ id: 'T-001', writes: ['src/a/**', 'tests/unit/a/**', 'tests/e2e/**', 'tests/contract/**', 'tests/acceptance/T-001/x/**', 'tests/acceptance/**', 'docs/x.md'] }),
+    ['tests/unit/a/**', 'tests/e2e/**', 'tests/contract/**']);
+  assert.deepEqual(testWritesOf({ id: 'T-001', writes: ['src/a/**', 'tests/acceptance/T-001/**', 'tests/acceptance/T-002/**'] }), ['tests/acceptance/T-001/**']);
+  assert.deepEqual(testWritesOf({ id: 'T-001', writes: ['src/a/**'] }), []);
+});
+
+test('createStageFixTasks：fix 的 writes = 问题文件 + 原 impl 的非验收测试 glob；原 task 没有测试 glob 时不加；记录 source_round', async () => {
+  const p = await setupProject({ tasks: [
+    mkTask('T-001', { writes: ['src/a/**', 'tests/unit/a/**', 'tests/acceptance/T-001/**'] }), mkTask('T-002', { writes: ['src/b/**'] }),
+  ] });
+  try {
+    const r = await createStageFixTasks(p.store, p.flowId, 'review', [
+      { files: ['src/a/x.ts'], text: '问题 A', owner: 'T-001' }, { files: ['src/b/y.ts'], text: '问题 B', owner: 'T-002' },
+    ], 'S1.rv 第 1 轮', 'engine', { task: 'S1.rv', round: 1 });
+    assert.deepEqual(r.tasks, ['T-001.fx-1', 'T-002.fx-1']);
+    const a = p.store.readTask(p.flowId, 'T-001.fx-1');
+    assert.deepEqual(a.writes, ['src/a/x.ts', 'tests/unit/a/**', 'tests/acceptance/T-001/**']);
+    assert.deepEqual(a.source_round, { task: 'S1.rv', round: 1 });
+    assert.deepEqual(p.store.readTask(p.flowId, 'T-002.fx-1').writes, ['src/b/y.ts']);
+  } finally { p.cleanup(); }
 });

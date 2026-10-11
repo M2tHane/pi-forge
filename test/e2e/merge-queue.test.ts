@@ -121,9 +121,11 @@ test('文本冲突在 writes 内：生成 merge-fix，原任务挂起让出名�
   const p = await setupProject({
     yaml: withTest("! grep -rq '<<<<<<<' src"),
     files: { 'src/server/t-001/a.ts': 'line1\nbase\nline3\n' },
-    tasks: [mkTask('T-001', { verify: ['test'] })],
+    // 混合编号（审查 .rv、修复 .fx-n）不能让 merge-fix 编号变成 T-NaN
+    tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('S1.rv', { kind: 'review', writes: [], verify: [] }), mkTask('T-009.fx-1', { kind: 'fix', writes: [], verify: [] })],
   });
   try {
+    for (const id of ['S1.rv', 'T-009.fx-1']) await p.store.transitionTask(p.flowId, id, { to: 'cancelled', trigger: 'cancel', actor: 'human', facts: { reason: '只占编号' } });
     let fixPrompt = '';
     const { engine, merges, errors } = makeEngine(p, async (_role, _n, a) => {
       if (a.env.task === 'T-001') {
@@ -149,13 +151,14 @@ test('文本冲突在 writes 内：生成 merge-fix，原任务挂起让出名�
     assert.deepEqual(mf.conflicts, ['src/server/t-001/a.ts']);
     const fix = p.store.readTask(p.flowId, mf.mergeFix);
     assert.equal(fix.kind, 'merge-fix');
+    assert.equal(fix.id, 'T-010');
     assert.equal(fix.merge_fix_for, 'T-001');
     assert.deepEqual(fix.writes, ['src/server/t-001/a.ts']);
     assert.equal(fix.status, 'done');
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
     assert.match(fixPrompt, /合并冲突（程序生成）/);
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), 'line1\nhuman+task\nline3');
-    assert.match(p.git('log', '-1', '--format=%s', `flow/${p.flowId}/integration`), /^\[B-001\/T-001\] 任务 T-001（经 T-002 解决合并冲突）$/);
+    assert.match(p.git('log', '-1', '--format=%s', `flow/${p.flowId}/integration`), /^\[B-001\/T-001\] 任务 T-001（经 T-010 解决合并冲突）$/);
     assert.ok(p.store.readEvents().some((e) => e.type === 'merge_conflict' && e.task === 'T-001'));
     assert.deepEqual(p.store.readMergeQueue().suspended ?? [], []);
     assertSingleMerging(p.store.readEvents());

@@ -114,6 +114,10 @@ test('阶段审查全流程：临时 worktree → 打回生成 fix → 确认轮
     assert.deepEqual([r1.kind, 'tasks' in r1 ? r1.tasks : null], ['fix', ['T-001.fx-1']]);
     assert.equal(existsSync(path.join(worktreesRoot(p.dir), `${p.flowId}-S1.rv`)), false, '结论处理后删除临时 worktree');
     assert.deepEqual(await resolveStageReview(p.dir, p.store, p.config, p.flowId, 'S1'), r1, '幂等');
+    assert.deepEqual(p.store.readTask(p.flowId, 'T-001.fx-1').source_round, { task: 'S1.rv', round: 1 });
+    // 轮次靠 source_round 认，标题被改写后仍认得本轮 fix、不重复生成
+    force(p, 'T-001.fx-1', { title: '人改过的标题' });
+    assert.deepEqual(await resolveStageReview(p.dir, p.store, p.config, p.flowId, 'S1'), r1, '标题改写后仍是同一个 fix');
     assert.equal(p.store.readTask(p.flowId, 'T-001.fx-1').fork_from_task, 'T-001', 'fork 原 worker');
     assert.equal(p.store.listTasks(p.flowId).filter((t) => t.kind === 'fix').length, 1);
 

@@ -6,7 +6,8 @@ import type { TaskFile } from './schemas.ts';
 import type { StateStore, TaskInput } from './state-store.ts';
 import { accBranch, acctestDirs } from './acctest.ts';
 import { git, gitOk } from './git.ts';
-import { headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from './worktree.ts';
+import { matchesAny } from './paths.ts';
+import { branchExists, headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from './worktree.ts';
 import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
 import { resourceOptions, withResources } from './resources.ts';
 import { prepareWorkspaceRecorded } from './workspace.ts';
@@ -122,9 +123,28 @@ export async function createFixRound(root: string, store: StateStore, config: Fl
   return t!;
 }
 
+/**
+ * 把集成分支合入 task 的 worktree。冲突若全在验收测试目录内（worker 无权修改，旧版本来自 acc 分支），以集成分支的版本为准；
+ * 其余冲突放弃合并并返回冲突文件（空数组表示已同步）。
+ */
+function syncIntegration(t: TaskFile, integration: string, testDirs: readonly string[]): string[] {
+  const wt = t.worktree!;
+  const head = git(wt, ['rev-parse', integration]).trim();
+  if (gitOk(wt, ['merge-base', '--is-ancestor', head, 'HEAD'])) return [];
+  try { git(wt, ['merge', '--no-edit', '--no-ff', '--no-verify', head], { engineIdentity: true, allowFail: true }); return []; } catch { /* 冲突 */ }
+  const conflicts = git(wt, ['diff', '--name-only', '--diff-filter=U']).split('\n').filter(Boolean);
+  const own = (f: string) => matchesAny(f, testDirs);
+  if (!conflicts.length || !conflicts.every(own)) { gitOk(wt, ['merge', '--abort']); return conflicts; }
+  for (const f of conflicts) git(wt, ['checkout', '--theirs', '--', f]);
+  git(wt, ['add', '-A']);
+  git(wt, ['commit', '-q', '--no-edit', '--no-verify'], { engineIdentity: true });
+  return [];
+}
+
 /** 争议裁决（第 9.3 节）：最新 .at-n 改了测试 → 重跑预检；维持 → 接着 worker 的会话并附上理由；交给用户 → 阻塞 */
-export async function resolveDisputes(store: StateStore, flowId: string): Promise<string[]> {
+export async function resolveDisputes(store: StateStore, flowId: string, root: string): Promise<string[]> {
   const out: string[] = [];
+  const flow = store.readFlow(flowId);
   for (const listed of store.listTasks(flowId)) {
     if (listed.status !== 'disputed') continue;
     const t = store.readTask(flowId, listed.id);
@@ -135,7 +155,24 @@ export async function resolveDisputes(store: StateStore, flowId: string): Promis
         facts: { acctest_escalated: true, reason: `争议交给你裁决（${at.id}：${at.blocked_reason ?? ''}）。处理：/forge-decide ${t.id} keep-test 或 /forge-decide ${t.id} fix-test "<说明>"` } });
       out.push(t.id);
     } else if (at.status === 'done') {
-      const changed = at.changed_tests === true;
+      // 缺失说明 .at-n 没经过任何记录结论的路径，属于异常；不能当成"维持测试"，交给用户
+      if (at.changed_tests === undefined) {
+        await store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'dispute_escalated', actor: 'engine',
+          facts: { acctest_escalated: true, reason: `${at.id} 已完成，但没有记录是否修改了测试，程序无法裁决争议。处理：/forge-decide ${t.id} keep-test 或 /forge-decide ${t.id} fix-test "<说明>"` } });
+        out.push(t.id);
+        continue;
+      }
+      const changed = at.changed_tests;
+      // impl 已 done 时 .at-n 是单独合并，acc 分支合并后即删除，新测试只在集成分支上：先把集成分支同步进 worktree，预检才跑得到新测试
+      if (changed && t.worktree && !branchExists(root, accBranch(flowId, t.for_task ?? t.id))) {
+        const conflicts = syncIntegration(t, flow.integration_branch, acctestDirs(t.for_task ?? t.id));
+        if (conflicts.length) {
+          await store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'dispute_escalated', actor: 'engine',
+            facts: { acctest_escalated: true, reason: `争议已由 ${at.id} 修改测试，但把集成分支同步进 ${t.id} 的工作区时冲突：${conflicts.join('、')}。处理冲突后 /forge unblock ${t.id}` } });
+          out.push(t.id);
+          continue;
+        }
+      }
       if (!changed) {
         const why = store.readHandoff(flowId, at.id).trim().split('\n').slice(-20).join('\n');
         await store.appendHandoff(flowId, t.id, `## 争议结论：维持测试（${at.id}）\n${why}\n按测试修改实现；仍认为测试不符合规格时再 forge_dispute，超过次数会交给用户。`, 'engine');

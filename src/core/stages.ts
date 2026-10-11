@@ -11,11 +11,6 @@ import { deliveryReport } from './signoff.ts';
 
 export interface StageDeps { root: string; store: StateStore; config: FlowConfig }
 
-export function nextTaskId(store: StateStore, flowId: string, offset = 0): string {
-  const nums = store.listTasks(flowId).map((t) => Number(t.id.match(/^T-(\d+)/)?.[1] ?? 0));
-  return `T-${String(Math.max(0, ...nums) + 1 + offset).padStart(3, '0')}`;
-}
-
 export async function startFlow(d: StageDeps, mode: 'build' | 'feature', description: string): Promise<FlowFile> {
   const def = d.config.raw.modes[mode];
   if (!def) throw new Error(`workflow.yaml 没有定义 modes.${mode}`);

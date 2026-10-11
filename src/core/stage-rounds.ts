@@ -17,7 +17,7 @@ import { cleanupStageWorktrees } from './stage-worktree.ts';
  * - fix：有未解决的 must 且轮数没用完：已生成（或之前已生成）fix task（tasks）；其中还有没做完的，等它们合并，不要重复调用 createXxx；
  * - fix-done：fix task 全部 done（或被取消）。调用方在门禁、覆盖率重跑通过后调用 createXxx 开下一轮（只确认）；
  * - exhausted：轮数用尽仍有 must，或问题涉及的文件找不到负责的 task（无法生成 fix）；阶段转 needs_human。
- * 重复调用是幂等的：fix task 靠标题里的"<task 编号> 第 k 轮"识别，不会重复生成；suggest 按 [task R-n] 去重，只追加一次。
+ * 重复调用是幂等的：fix task 靠 source_round（轮次的 task 与序号）识别，不会重复生成；suggest 按 [task R-n] 去重，只追加一次。
  */
 export type StageRoundOutcome =
   | { kind: 'none' }
@@ -49,9 +49,11 @@ export function unresolvedIn(store: StateStore, flowId: string, id: string, file
   return null;
 }
 
-/** 这一轮对应的 fix task（纯函数）：fix task 标题里带着 "（<task 编号> 第 k 轮）" */
+/** 轮次的展示名（写进 fix 的标题与说明；认轮次不看它） */
 export const roundLabel = (taskId: string, round: number) => `${taskId} 第 ${round} 轮`;
-export const fixTasksOfRound = (tasks: readonly TaskFile[], label: string): TaskFile[] => tasks.filter((t) => t.kind === 'fix' && t.title.includes(`（${label}）`));
+/** 这一轮对应的 fix task（纯函数）：按 fix 的 source_round 字段认，标题被改写也不影响 */
+export const fixTasksOfRound = (tasks: readonly TaskFile[], taskId: string, round: number): TaskFile[] =>
+  tasks.filter((t) => t.kind === 'fix' && t.source_round?.task === taskId && t.source_round.round === round);
 
 export async function resolveRounds(root: string, store: StateStore, flowId: string, stage: string, spec: RoundSpec): Promise<StageRoundOutcome> {
   const tasks = store.listTasks(flowId);
@@ -69,13 +71,13 @@ export async function resolveRounds(root: string, store: StateStore, flowId: str
 
   const round = spec.roundOf(latest.id);
   const label = roundLabel(latest.id, round);
-  let fixes = fixTasksOfRound(tasks, label);
+  let fixes = fixTasksOfRound(tasks, latest.id, round);
   let unowned: string[] = [];
   if (!fixes.length) {
     if (rounds.length >= spec.maxRounds) {
       return { kind: 'exhausted', reason: `${spec.label}共 ${rounds.length} 轮（上限 ${spec.maxRounds}）后仍有 ${left.length} 条 must 未解决：${left.map((m) => `${m.id} ${m.problem.replace(/\s+/g, ' ').slice(0, 100)}`).join('；')}`.slice(0, 1500) };
     }
-    const created = await createStageFixTasks(store, flowId, spec.source, left.map((m) => ({ files: m.files, text: formatMust(m) })), label);
+    const created = await createStageFixTasks(store, flowId, spec.source, left.map((m) => ({ files: m.files, text: formatMust(m) })), label, 'engine', { task: latest.id, round });
     unowned = created.unowned;
     if (!created.tasks.length) {
       return { kind: 'exhausted', reason: `${spec.label} ${latest.id} 的 ${left.length} 条 must 涉及的文件找不到负责的 task（${created.unowned.slice(0, 10).join('、') || '未列出文件'}），无法生成修复任务，需要你处理` };

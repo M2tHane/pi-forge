@@ -276,6 +276,12 @@ test('acctest 以结论结束时记下是否改了测试（争议裁决据此区
   assert.equal(ok(planTransition(at, 'done', 'report', facts({ diff_files: [], impl_done: false }))).task.changed_tests, false);
 });
 
+test('acctest 单独合并（submit → checking）时记下 changed_tests = true，争议裁决据此走 dispute_fixed', () => {
+  const at = task('in_progress', { id: 'T-001.at-2', kind: 'acctest', role: 'test-author', for_task: 'T-001', writes: ['tests/acceptance/T-001/**'] });
+  const r = ok(planTransition(at, 'checking', 'submit', facts({ impl_done: true, diff_files: ['tests/acceptance/T-001/a.test.ts'] })));
+  assert.equal(r.task.changed_tests, true);
+});
+
 test('submit：test_author 为 false 时 impl 与它的 fix 只放开自己的验收目录（偏离 81）', () => {
   const f = facts();
   const own = task('in_progress', { writes: ['src/**', 'tests/acceptance/T-001/**'] });

@@ -20,6 +20,8 @@ import { softDepsDone } from './waits.ts';
 import { cleanTreeOf, recordVerified, reusableRuns, reuseText } from './verify-cache.ts';
 import { prepareWorkspaceRecorded } from './workspace.ts';
 import { resourceOptions, withResources } from './resources.ts';
+import { nextPlanTaskId } from './plan.ts';
+import { usedTaskIds } from './plan-flow.ts';
 import { classifyAcceptanceFailure, failingAcceptanceDirs, handOffToFix, handleForeignBreak } from './acceptance-flow.ts';
 
 
@@ -462,8 +464,7 @@ export class MergeQueue {
     }
 
     // 准备 merge-fix 的 worktree：集成分支 HEAD + 原任务的改动（冲突文件保留冲突标记），作为它的基线提交
-    const ids = this.store.listTasks(flowId).map((x) => Number(x.id.slice(2)));
-    const fixId = `T-${String(Math.max(0, ...ids) + 1).padStart(3, '0')}`;
+    const fixId = nextPlanTaskId(usedTaskIds(this.root, this.store, flowId, this.config));
     const fixWt = worktreePath(this.root, flowId, fixId);
     const fixBranch = taskBranch(flowId, fixId);
     mkdirSync(path.dirname(fixWt), { recursive: true });
@@ -584,8 +585,7 @@ export class MergeQueue {
       git(temp, ['add', '-A']);
       git(temp, ['commit', '-q', '--no-verify', '-m', `${msg}（冲突文件含冲突标记，待解决）`], { engineIdentity: true });
       const merged = headSha(temp);
-      const ids = tasks.map((x) => Number(x.id.slice(2)));
-      const fixId = `T-${String(Math.max(0, ...ids) + 1).padStart(3, '0')}`;
+      const fixId = nextPlanTaskId(usedTaskIds(this.root, this.store, flowId, this.config));
       const fixWt = worktreePath(this.root, flowId, fixId);
       const fixBranch = taskBranch(flowId, fixId);
       git(this.root, ['worktree', 'add', '-q', '-b', fixBranch, fixWt, merged]);

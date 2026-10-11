@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import type { Lease, StageStatus, TaskFile, TaskStatus } from './schemas.ts';
 import { isProtected, matchesAny, ownAcceptanceGlob, writesOwnAcceptance } from './paths.ts';
-import { failureSignature } from '../verify/verify-runner.ts';
+import { failureSignature } from './failure-signature.ts';
 
 export type Trigger =
   | 'schedule' | 'dispatch' | 'submit' | 'inputs_ready' | 'sync_conflict'

@@ -9,7 +9,7 @@ import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory, type KnowledgeEntry, type
 import { globsOverlap } from '../state/paths.ts';
 import { DRAFT_DIR } from '../plan/rules-draft.ts';
 import { git, gitOk } from '../state/git.ts';
-import { GLOBAL_RULES } from '../engine/prompt-assembler.ts';
+import { GLOBAL_RULES } from './prompt-assembler.ts';
 
 export const KNOWLEDGE_CONTENT_MAX = 500;
 export const KNOWLEDGE_PER_RUN = 3;

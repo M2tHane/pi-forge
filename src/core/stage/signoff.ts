@@ -4,7 +4,7 @@
 // 计算部分都是对普通数据（事件、task、run）的纯函数，可以不依赖 git 单元测试；读取 git/磁盘的部分集中在 flowMetrics 与 stageSignoff。
 import { existsSync, readFileSync } from 'node:fs';
 import type { FlowConfig } from '../state/config.ts';
-import { costReport, formatRow, type CostRow } from '../engine/cost.ts';
+import { costReport, formatRow, type CostRow } from '../insight/cost.ts';
 import { git } from '../state/git.ts';
 import type { FlowEvent, FlowFile, RunFile, TaskFile } from '../state/schemas.ts';
 import { evidenceRel, type StateStore } from '../state/state-store.ts';

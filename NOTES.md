@@ -192,6 +192,7 @@
 103. 角色提示改为引用任务说明里的『允许的测试入口』『本阶段及之前已交付的接口』两节（程序侧另行渲染）；删去程序不提供的输入描述；test-author、reviewer 的 bash 说明与 guard 的 allowlist/readonly 档一致；worker、test-author、reviewer 与技能重复的段落各留一处。write-rules 规则编号统一 `R<n>`，每文件 ≤5 条规则、≤4 条清单，须可追溯到权限、界面规格、契约或安全底线。未采纳评审第 8 条（upstream handoff 裁剪，属程序）。
 104. `src/core/` 按模块拆成 10 个子目录（state、engine、workspace、spec、plan、verify、acceptance、stage、security、ops），只搬文件、只改 import 路径，不改逻辑。个别文件按依赖方向微调归属（config、paths、git、dag、waits 归 state；engine-lock、lineage 归 engine；shell 归 security）。更早条目里的旧路径对照见文末「src/core 路径对照（10-11 重组）」。
 105. M9 脚本判定"已交付"只认最后一个实施阶段（`S<n>`）的 `stage_status = done`；P0、P1 批准后阶段切换的瞬间也会短暂是 done，轮询碰巧读到时会提前进入变更阶段（e2e `m9-real-build` 间歇失败即此原因）。
+106. `src/core` 目录依赖改为无环分层（state → security/workspace → verify/insight → spec → acceptance → plan → stage → engine → ops），由 `test/unit/core-layers.test.ts` 约束；搬了 19 个文件（verify-runner、resources、services、forge-read 下沉到 workspace；cost 系与 forge-watch 进新目录 insight；adopt、feature-spec 进 plan；gates、release 进 stage；merge-queue、precheck、knowledge、notes 进 engine；engine-lock、notify 进 ops；stage-fix 进 acceptance），并抽出 5 处纯函数（去向见路径对照表末），函数体原样，没有参数注入。
 
 ## M1 删除、由 Mx 重建
 
@@ -286,7 +287,7 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 |---|---|
 | `src/core/acceptance-flow.ts` | `src/core/acceptance/acceptance-flow.ts` |
 | `src/core/acctest.ts` | `src/core/acceptance/acctest.ts` |
-| `src/core/adopt.ts` | `src/core/ops/adopt.ts` |
+| `src/core/adopt.ts` | `src/core/plan/adopt.ts` |
 | `src/core/agents.ts` | `src/core/engine/agents.ts` |
 | `src/core/change-flow.ts` | `src/core/plan/change-flow.ts` |
 | `src/core/change-request.ts` | `src/core/plan/change-request.ts` |
@@ -297,60 +298,60 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 | `src/core/contract-check.ts` | `src/core/plan/contract-check.ts` |
 | `src/core/contract-diff.ts` | `src/core/plan/contract-diff.ts` |
 | `src/core/contract-merge.ts` | `src/core/plan/contract-merge.ts` |
-| `src/core/cost-control.ts` | `src/core/engine/cost-control.ts` |
-| `src/core/cost.ts` | `src/core/engine/cost.ts` |
+| `src/core/cost-control.ts` | `src/core/insight/cost-control.ts` |
+| `src/core/cost.ts` | `src/core/insight/cost.ts` |
 | `src/core/coverage.ts` | `src/core/acceptance/coverage.ts` |
 | `src/core/dag.ts` | `src/core/state/dag.ts` |
 | `src/core/dependencies.ts` | `src/core/workspace/dependencies.ts` |
 | `src/core/dispatcher.ts` | `src/core/engine/dispatcher.ts` |
 | `src/core/doctor.ts` | `src/core/ops/doctor.ts` |
-| `src/core/engine-lock.ts` | `src/core/engine/engine-lock.ts` |
+| `src/core/engine-lock.ts` | `src/core/ops/engine-lock.ts` |
 | `src/core/event-log.ts` | `src/core/state/event-log.ts` |
-| `src/core/feature-spec.ts` | `src/core/spec/feature-spec.ts` |
-| `src/core/forge-read.ts` | `src/core/ops/forge-read.ts` |
-| `src/core/forge-watch.ts` | `src/core/ops/forge-watch.ts` |
-| `src/core/gates.ts` | `src/core/verify/gates.ts` |
+| `src/core/feature-spec.ts` | `src/core/plan/feature-spec.ts` |
+| `src/core/forge-read.ts` | `src/core/workspace/forge-read.ts` |
+| `src/core/forge-watch.ts` | `src/core/insight/forge-watch.ts` |
+| `src/core/gates.ts` | `src/core/stage/gates.ts` |
 | `src/core/git.ts` | `src/core/state/git.ts` |
 | `src/core/guard.ts` | `src/core/security/guard.ts` |
 | `src/core/history.ts` | `src/core/ops/history.ts` |
 | `src/core/init.ts` | `src/core/ops/init.ts` |
 | `src/core/intake.ts` | `src/core/spec/intake.ts` |
-| `src/core/knowledge.ts` | `src/core/ops/knowledge.ts` |
+| `src/core/knowledge.ts` | `src/core/engine/knowledge.ts` |
 | `src/core/launcher.ts` | `src/core/engine/launcher.ts` |
 | `src/core/lineage.ts` | `src/core/engine/lineage.ts` |
-| `src/core/merge-queue.ts` | `src/core/verify/merge-queue.ts` |
+| `src/core/merge-queue.ts` | `src/core/engine/merge-queue.ts` |
 | `src/core/metrics.ts` | `src/core/engine/metrics.ts` |
 | `src/core/migrations.ts` | `src/core/state/migrations.ts` |
 | `src/core/model-pause.ts` | `src/core/engine/model-pause.ts` |
-| `src/core/notes.ts` | `src/core/ops/notes.ts` |
-| `src/core/notify.ts` | `src/core/engine/notify.ts` |
+| `src/core/notes.ts` | `src/core/engine/notes.ts` |
+| `src/core/notify.ts` | `src/core/ops/notify.ts` |
 | `src/core/paths.ts` | `src/core/state/paths.ts` |
 | `src/core/plan-flow.ts` | `src/core/plan/plan-flow.ts` |
 | `src/core/plan.ts` | `src/core/plan/plan.ts` |
-| `src/core/precheck.ts` | `src/core/verify/precheck.ts` |
+| `src/core/precheck.ts` | `src/core/engine/precheck.ts` |
 | `src/core/preflight.ts` | `src/core/spec/preflight.ts` |
 | `src/core/prompt-assembler.ts` | `src/core/engine/prompt-assembler.ts` |
 | `src/core/redact.ts` | `src/core/security/redact.ts` |
-| `src/core/release.ts` | `src/core/ops/release.ts` |
-| `src/core/resources.ts` | `src/core/engine/resources.ts` |
+| `src/core/release.ts` | `src/core/stage/release.ts` |
+| `src/core/resources.ts` | `src/core/workspace/resources.ts` |
 | `src/core/resume.ts` | `src/core/ops/resume.ts` |
 | `src/core/review-flow.ts` | `src/core/stage/review-flow.ts` |
 | `src/core/review.ts` | `src/core/stage/review.ts` |
-| `src/core/role-settings.ts` | `src/core/engine/role-settings.ts` |
+| `src/core/role-settings.ts` | `src/core/insight/role-settings.ts` |
 | `src/core/rules-draft.ts` | `src/core/plan/rules-draft.ts` |
 | `src/core/run-budget.ts` | `src/core/engine/run-budget.ts` |
 | `src/core/scheduler.ts` | `src/core/engine/scheduler.ts` |
 | `src/core/schemas.ts` | `src/core/state/schemas.ts` |
 | `src/core/scope-hint.ts` | `src/core/workspace/scope-hint.ts` |
 | `src/core/scope.ts` | `src/core/workspace/scope.ts` |
-| `src/core/services.ts` | `src/core/engine/services.ts` |
+| `src/core/services.ts` | `src/core/workspace/services.ts` |
 | `src/core/session-log.ts` | `src/core/engine/session-log.ts` |
 | `src/core/shell.ts` | `src/core/security/shell.ts` |
 | `src/core/signoff.ts` | `src/core/stage/signoff.ts` |
 | `src/core/spec-flow.ts` | `src/core/spec/spec-flow.ts` |
 | `src/core/spec.ts` | `src/core/spec/spec.ts` |
 | `src/core/stage-acceptance.ts` | `src/core/stage/stage-acceptance.ts` |
-| `src/core/stage-fix.ts` | `src/core/stage/stage-fix.ts` |
+| `src/core/stage-fix.ts` | `src/core/acceptance/stage-fix.ts` |
 | `src/core/stage-qa.ts` | `src/core/stage/stage-qa.ts` |
 | `src/core/stage-review.ts` | `src/core/stage/stage-review.ts` |
 | `src/core/stage-rounds.ts` | `src/core/stage/stage-rounds.ts` |
@@ -366,7 +367,19 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 | `src/core/timing.ts` | `src/core/engine/timing.ts` |
 | `src/core/tool-params.ts` | `src/core/security/tool-params.ts` |
 | `src/core/verify-cache.ts` | `src/core/verify/verify-cache.ts` |
-| `src/core/verify-runner.ts` | `src/core/verify/verify-runner.ts` |
+| `src/core/verify-runner.ts` | `src/core/workspace/verify-runner.ts` |
 | `src/core/waits.ts` | `src/core/state/waits.ts` |
 | `src/core/workspace.ts` | `src/core/workspace/workspace.ts` |
 | `src/core/worktree.ts` | `src/core/workspace/worktree.ts` |
+
+### 106 之后的调整（消除目录循环依赖）
+
+目录分层（下层不得 import 上层，`test/unit/core-layers.test.ts` 检查）：state → security、workspace → verify、insight → spec → acceptance → plan → stage → engine → ops。上表「新路径」列已更新为最终位置；另有以下拆分：
+
+| 原位置 | 新位置 |
+|---|---|
+| `failureSignature`（`workspace/verify-runner.ts`） | `src/core/state/failure-signature.ts` |
+| `roundOf`、`latestAcctest`、`awaitedAcctest`（`acceptance/acceptance-flow.ts`） | `src/core/state/acctest-lookup.ts` |
+| `failingFiles`（`stage/gates.ts`） | `src/core/workspace/scope-hint.ts` |
+| `dirtyFiles`（`engine/context-injector.ts`） | `src/core/state/git.ts` |
+| `approveSpecAmend`、`approvalTargets`、`ApprovalTarget`、`specStatus`（`spec/spec-flow.ts`） | `src/core/plan/spec-amend.ts`（新文件） |

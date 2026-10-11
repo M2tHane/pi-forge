@@ -5,7 +5,7 @@ import path from 'node:path';
 import { StateStore, handoffRel, evidenceRel } from '../src/core/state/state-store.ts';
 import { STAGE_TRANSITIONS, TRANSITIONS } from '../src/core/state/state-machine.ts';
 import { flowMetrics } from '../src/core/stage/signoff.ts';
-import { isAdoptFlow } from '../src/core/ops/adopt.ts';
+import { isAdoptFlow } from '../src/core/plan/adopt.ts';
 import { redactDeep, redactSecrets } from '../src/core/security/redact.ts';
 import type { FlowFile, TaskFile } from '../src/core/state/schemas.ts';
 

@@ -9,9 +9,9 @@ import { contractViolationsAt } from '../plan/contract-diff.ts';
 import { accBranch } from '../acceptance/acctest.ts';
 import { withScopeHint } from '../workspace/scope-hint.ts';
 import { branchExists } from '../workspace/worktree.ts';
-import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
-import { resourceOptions, withResources } from '../engine/resources.ts';
-import { cleanTreeOf, recordVerified } from './verify-cache.ts';
+import { evidenceText, failureSummary, runShell } from '../workspace/verify-runner.ts';
+import { resourceOptions, withResources } from '../workspace/resources.ts';
+import { cleanTreeOf, recordVerified } from '../verify/verify-cache.ts';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 

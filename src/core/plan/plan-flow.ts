@@ -13,8 +13,8 @@ import { acTexts, effectiveSpec, glossaryTerms, type SpecFeature, type SpecFiles
 import { SPEC_PATHS } from '../spec/spec-flow.ts';
 import { isSettled } from '../state/state-machine.ts';
 import { applyDrafts, commandsDraftProblems, formatDrafts, listDrafts } from './rules-draft.ts';
-import { ADOPT_STAGE, ADOPT_WRITES, adoptBrief, adoptPrecheck, adoptScope } from '../ops/adopt.ts';
-import { hasContracts, lockedContractProblems, readSpecAt, scopeSpecToFeature } from '../spec/feature-spec.ts';
+import { ADOPT_STAGE, ADOPT_WRITES, adoptBrief, adoptPrecheck, adoptScope } from './adopt.ts';
+import { hasContracts, lockedContractProblems, readSpecAt, scopeSpecToFeature } from './feature-spec.ts';
 
 export const P1_STAGE = 'P1';
 /** 由程序派发 architect 的阶段：P1 契约与计划，以及 --adopt 的 ADOPT */

@@ -12,7 +12,7 @@ import { changeRel, flowRel, taskRel, type TaskInput } from '../../src/core/stat
 import { hashToken } from '../../src/core/state/state-machine.ts';
 import { actionsNeeded, renderStatus, statusLine } from '../../src/core/ops/status-view.ts';
 import { renderDetail, renderMetricsView, renderCostView, sortTasks, taskTable } from '../../src/core/ops/status-detail.ts';
-import { startAdoptFlow } from '../../src/core/ops/adopt.ts';
+import { startAdoptFlow } from '../../src/core/plan/adopt.ts';
 import type { TaskFile } from '../../src/core/state/schemas.ts';
 
 const SNAP_DIR = path.join(import.meta.dirname, '__snapshots__/status');

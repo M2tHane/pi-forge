@@ -7,7 +7,7 @@ import path from 'node:path';
 import type { StateStore } from '../state/state-store.ts';
 import { git } from '../state/git.ts';
 import { isSensitive, normalizeRelPath } from '../state/paths.ts';
-import { IMAGE_MIME_TYPES } from '../ops/forge-read.ts';
+import { IMAGE_MIME_TYPES } from '../workspace/forge-read.ts';
 import { isUtf8 } from 'node:buffer';
 import { createHash } from 'node:crypto';
 

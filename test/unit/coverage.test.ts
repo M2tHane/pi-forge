@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { coverageMatrix, createCoverageRounds, renderCoverageMarkdown, stageCoverage, writeCoverageReport } from '../../src/core/acceptance/coverage.ts';
-import { createCoverageGapRound, gateFailed, gateIssues, MAX_GATE_ROUNDS, runImplementationChecks } from '../../src/core/verify/gates.ts';
+import { createCoverageGapRound, gateFailed, gateIssues, MAX_GATE_ROUNDS, runImplementationChecks } from '../../src/core/stage/gates.ts';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { Requirement } from '../../src/core/spec/spec.ts';

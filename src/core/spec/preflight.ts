@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { loadConfig, type FlowConfig } from '../state/config.ts';
-import { resolveRoleModel } from '../engine/role-settings.ts';
+import { resolveRoleModel } from '../insight/role-settings.ts';
 import type { RoleSettingsFile } from '../state/schemas.ts';
 import { gitOk } from '../state/git.ts';
 import { checkDependencies, type DependencyDeps } from '../workspace/dependencies.ts';

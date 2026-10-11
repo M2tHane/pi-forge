@@ -3,7 +3,7 @@
 import type { TaskFile } from '../state/schemas.ts';
 import type { StateStore, TaskInput } from '../state/state-store.ts';
 import { matchesAny, ownAcceptanceGlob } from '../state/paths.ts';
-import { nextFixId } from '../acceptance/acceptance-flow.ts';
+import { nextFixId } from './acceptance-flow.ts';
 
 export type StageFixSource = 'gate' | 'qa' | 'review';
 /**

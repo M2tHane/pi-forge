@@ -5,8 +5,8 @@ import { THINKING_LEVELS, type ThinkingLevel } from '../core/state/schemas.ts';
 import type { FlowConfig } from '../core/state/config.ts';
 import {
   loadRoleSettings, resolveRoleModel, saveRoleSettings, setEscalation, setRole, unsetRole, type RoleSetting,
-} from '../core/engine/role-settings.ts';
-import { escalationModel } from '../core/engine/cost-control.ts';
+} from '../core/insight/role-settings.ts';
+import { escalationModel } from '../core/insight/cost-control.ts';
 import { splitArgs } from './args.ts';
 import type { RoleRow, TableModel } from './role-table.ts';
 

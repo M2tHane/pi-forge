@@ -2,7 +2,7 @@
 // 设计参考 pi-flow 5100d6b^:src/core/stage-review.ts（第二轮只确认、must 必须有出处）。不依赖 Pi，不读写 .forge。
 import type { FlowConfig } from '../state/config.ts';
 import type { ReviewFinding, TaskFile } from '../state/schemas.ts';
-import { escalationPolicy, hardFanout } from '../engine/cost-control.ts';
+import { escalationPolicy, hardFanout } from '../insight/cost-control.ts';
 
 export type ReviewMode = 'skip' | 'auto' | 'strong';
 

@@ -11,7 +11,7 @@ import type { StateStore } from '../state/state-store.ts';
 import { isSettled } from '../state/state-machine.ts';
 import { isOpenChange } from '../plan/change-request.ts';
 import { headSha } from '../workspace/worktree.ts';
-import { createCoverageGapRound, gateFailed, stageDef, type ImplementationChecks } from '../verify/gates.ts';
+import { createCoverageGapRound, gateFailed, stageDef, type ImplementationChecks } from './gates.ts';
 import { QA_INPUT, createQaTask, qaTasksOf, resolveQa } from './stage-qa.ts';
 import { createStageReview, resolveStageReview } from './stage-review.ts';
 import { isStageLevelTask } from '../workspace/stage-worktree.ts';

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseConfig } from '../../src/core/state/config.ts';
-import { addEntry, appliesTo, checkInput, selectKnowledge, formatEntry, defaultRuleTarget, KnowledgeError, KNOWLEDGE_PROMPT_MAX } from '../../src/core/ops/knowledge.ts';
+import { addEntry, appliesTo, checkInput, selectKnowledge, formatEntry, defaultRuleTarget, KnowledgeError, KNOWLEDGE_PROMPT_MAX } from '../../src/core/engine/knowledge.ts';
 import { assemblePrompt, upstreamSection, UPSTREAM_TOTAL } from '../../src/core/engine/prompt-assembler.ts';
 import type { KnowledgeFile, KnowledgeEntry } from '../../src/core/state/schemas.ts';
 import { TEST_YAML } from '../helpers/config.ts';

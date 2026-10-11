@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { NotesError, applyNoteOps, emptyNotes, notesContextMessage, renderNotes, seedTaskNotes } from '../../src/core/ops/notes.ts';
+import { NotesError, applyNoteOps, emptyNotes, notesContextMessage, renderNotes, seedTaskNotes } from '../../src/core/engine/notes.ts';
 import { formatSearch, loadHistory, readHistoryEntry, searchHistory, READ_CHUNK } from '../../src/core/ops/history.ts';
 import { MAIN_NOTES_REL, StateStore, taskNotesRel } from '../../src/core/state/state-store.ts';
 import { tmpRepo } from '../helpers/repo.ts';

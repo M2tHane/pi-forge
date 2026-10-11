@@ -1,7 +1,7 @@
 // e2e 共用：命令层的 CommandEnv、带命令环境的引擎、fake agent 的常用动作、反复 next 直到没有新的派发。
 import assert from 'node:assert/strict';
 import type { CommandEnv } from '../../src/commands/forge.ts';
-import type { MergeHooks } from '../../src/core/verify/merge-queue.ts';
+import type { MergeHooks } from '../../src/core/engine/merge-queue.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { ALL_FAKE, makeEngine, type RoleScript } from './engine.ts';
 import { formatStalls, stalls } from '../../src/core/state/waits.ts';

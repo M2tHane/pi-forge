@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { commitToBranch } from '../helpers/engine.ts';
-import type { MergeHooks } from '../../src/core/verify/merge-queue.ts';
+import type { MergeHooks } from '../../src/core/engine/merge-queue.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
 import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
 import { nextStep, turnContext } from '../../src/core/engine/context-injector.ts';

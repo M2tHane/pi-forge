@@ -3,7 +3,7 @@
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowFile, RoleSettingsFile, TaskFile } from '../state/schemas.ts';
-import { activeMinutes } from '../ops/forge-watch.ts';
+import { activeMinutes } from './forge-watch.ts';
 
 const isPlaceholder = (m: string) => /^<.*>$/.test(m.trim());
 

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { MergeQueue } from '../../src/core/verify/merge-queue.ts';
+import { MergeQueue } from '../../src/core/engine/merge-queue.ts';
 import { hashToken } from '../../src/core/state/state-machine.ts';
 import { createTaskWorktree, snapshot, worktreesRoot } from '../../src/core/workspace/worktree.ts';
 import { setupProject, type Project } from '../helpers/project.ts';
@@ -89,7 +89,7 @@ test('预检合入最新验收测试并运行 acceptance -- <task>；返工再�
     await engineOf(p).precheck(p.flowId);
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'queued_merge');
     assert.equal(readFileSync(path.join(wt.path, 'tests/acceptance/T-001/a.test.sh'), 'utf8'), 'ok\n');
-    const { withoutMergedAcceptance } = await import('../../src/core/verify/precheck.ts');
+    const { withoutMergedAcceptance } = await import('../../src/core/engine/precheck.ts');
     assert.deepEqual(withoutMergedAcceptance(p.dir, p.flowId, p.store.readTask(p.flowId, 'T-001'), ['src/server/t-001/a.ts', 'tests/acceptance/T-001/a.test.sh']), ['src/server/t-001/a.ts']);
     writeFileSync(path.join(wt.path, 'tests/acceptance/T-001/a.test.sh'), '改了\n');
     snapshot(wt.path, '改测试');

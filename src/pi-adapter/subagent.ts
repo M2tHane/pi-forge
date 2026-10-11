@@ -9,10 +9,10 @@ import { StateStore } from '../core/state/state-store.ts';
 import { SubagentRuntime } from '../core/engine/subagent-runtime.ts';
 import { SUBAGENT_TOOLS, runEnvFrom, type SubagentToolName } from '../tools/subagent-tools.ts';
 import { MISSING_TOOLS_REASON } from '../core/workspace/dependencies.ts';
-import { notesContextMessage } from '../core/ops/notes.ts';
+import { notesContextMessage } from '../core/engine/notes.ts';
 import { taskNotesRel } from '../core/state/state-store.ts';
 import { installMemory } from './memory.ts';
-import { stopAllServices } from '../core/engine/services.ts';
+import { stopAllServices } from '../core/workspace/services.ts';
 import { redactToolResult } from './redact-hook.ts';
 import { scratchDir } from '../core/workspace/worktree.ts';
 

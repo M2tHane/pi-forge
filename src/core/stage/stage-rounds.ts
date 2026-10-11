@@ -5,7 +5,7 @@ import type { StateStore } from '../state/state-store.ts';
 import type { ReviewConfirmFile, ReviewInputFile, ReviewReportFile } from './review-flow.ts';
 import { appendSuggestions, readReviewEvidence } from './review-flow.ts';
 import { formatMust, mustOf } from './review.ts';
-import { createStageFixTasks, type StageFixSource } from './stage-fix.ts';
+import { createStageFixTasks, type StageFixSource } from '../acceptance/stage-fix.ts';
 import { cleanupStageWorktrees } from '../workspace/stage-worktree.ts';
 
 /**

@@ -2,7 +2,7 @@
 // 派发器（advanceInputs）、状态仓库（转移的 facts、合并队列的合格判断）、合并队列、状态视图、doctor 与测试辅助都从这里取，
 // 不再各写一份；规则变了（例如偏离 72 的 awaitedAcctest）只改这里和 acceptance-flow.ts。
 import type { TaskFile } from './schemas.ts';
-import { awaitedAcctest, latestAcctest } from '../acceptance/acceptance-flow.ts';
+import { awaitedAcctest, latestAcctest } from './acctest-lookup.ts';
 
 type WaitTask = Pick<TaskFile, 'id' | 'kind' | 'for_task' | 'status' | 'depends_on' | 'waits_for' | 'acctest_round' | 'blocked_reason'>;
 

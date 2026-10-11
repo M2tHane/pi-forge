@@ -7,7 +7,7 @@ import type { FlowConfig } from '../core/state/config.ts';
 import type { FlowEvent, FlowFile, ReviewFinding, TaskFile } from '../core/state/schemas.ts';
 import type { StateStore, TaskInput } from '../core/state/state-store.ts';
 import { git } from '../core/state/git.ts';
-import { costReport, formatRow, type CostReport } from '../core/engine/cost.ts';
+import { costReport, formatRow, type CostReport } from '../core/insight/cost.ts';
 import { headSha } from '../core/workspace/worktree.ts';
 import { isSettled } from '../core/state/state-machine.ts';
 import { isStageLevelTask } from '../core/workspace/stage-worktree.ts';
@@ -15,7 +15,7 @@ import { qaEnabled as qaEnabledOf } from '../core/stage/stage-acceptance.ts';
 import { QA_FILES, QA_INPUT, buildQaBrief, nextQaId, qaRoundOf, qaTasksOf, resolveQa, stageBaseFor, stageDiffStat } from '../core/stage/stage-qa.ts';
 import { unresolvedIn } from '../core/stage/stage-rounds.ts';
 import { readReviewEvidence, type ReviewInputFile } from '../core/stage/review-flow.ts';
-import { serviceCommands } from '../core/engine/services.ts';
+import { serviceCommands } from '../core/workspace/services.ts';
 
 export interface FixContext {
   root: string;

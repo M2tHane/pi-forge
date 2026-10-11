@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { splitArgs } from '../../src/commands/args.ts';
 import { runFlowConfig, type UiPort, type ModelOption } from '../../src/commands/forge-config.ts';
-import { loadRoleSettings } from '../../src/core/engine/role-settings.ts';
+import { loadRoleSettings } from '../../src/core/insight/role-settings.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
 import { REAL_TEMPLATE_YAML } from '../helpers/config.ts';
 

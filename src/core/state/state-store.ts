@@ -849,7 +849,7 @@ export class StateStore {
     return this.readJsonRel<KnowledgeFile>(KNOWLEDGE_REL) ?? { entries: [], version: 0 };
   }
 
-  /** 修改知识库：mutate 在事务内收到当前库（可原地修改），返回值原样返回；业务校验见 core/ops/knowledge.ts */
+  /** 修改知识库：mutate 在事务内收到当前库（可原地修改），返回值原样返回；业务校验见 core/engine/knowledge.ts */
   async writeKnowledge<T>(mutate: (k: KnowledgeFile, ts: string) => T, event: { actor: string; flow?: string | null; task?: string; reason: string; data?: Record<string, unknown> }): Promise<T> {
     return this.transaction((tx) => {
       const cur = tx.readJson<KnowledgeFile>(KNOWLEDGE_REL);
@@ -883,7 +883,7 @@ export class StateStore {
     return this.readJsonRel<NotesFile>(rel);
   }
 
-  /** 修改结构化笔记：mutate 在事务内收到当前笔记（没有时为空笔记，可原地修改）；业务校验见 core/ops/notes.ts */
+  /** 修改结构化笔记：mutate 在事务内收到当前笔记（没有时为空笔记，可原地修改）；业务校验见 core/engine/notes.ts */
   async writeNotes<T>(rel: string, mutate: (n: NotesFile, ts: string) => T, event: { actor: string; flow?: string | null; task?: string; reason: string }): Promise<T> {
     if (schemaKindOf(rel) !== 'notes') throw new StateError(`不是笔记文件：${rel}`);
     return this.transaction((tx) => {

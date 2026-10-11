@@ -9,7 +9,8 @@
 // - 验收测试：AC 变化或实现被修改时，为受影响 task 改 .at（还没开始）或新建 .at-n（kind 为 change）；
 // - 阶段：已完成的阶段与当前阶段的目标不能改（当前阶段的 exit 只能追加），之后的阶段可以新增、调整、删除。
 import type { ChangeActionSummary, ChangeFile, Dependency, FlowFile, PlanFile, TaskFile } from '../state/schemas.ts';
-import { acctestRoundInput, latestAcctest } from '../acceptance/acceptance-flow.ts';
+import { acctestRoundInput } from '../acceptance/acceptance-flow.ts';
+import { latestAcctest } from '../state/acctest-lookup.ts';
 import { deriveAcctest, deriveTasks, S0_EXTRA_WRITES } from './plan.ts';
 import { ownAcceptanceGlob, writesOwnAcceptance } from '../state/paths.ts';
 import type { ChangeOps } from '../state/state-store.ts';

@@ -8,8 +8,8 @@ import { createServer } from 'node:net';
 import {
   PORT_BLOCK, PORT_RANGE, allocateResources, dbNameFor, isStaleResource, listResources, pickPortBase, portBlockFree, reclaimResources,
   releaseResources, resourceEnv, resourcesPath, withResources, type ResourceEntry,
-} from '../../src/core/engine/resources.ts';
-import { runShell } from '../../src/core/verify/verify-runner.ts';
+} from '../../src/core/workspace/resources.ts';
+import { runShell } from '../../src/core/workspace/verify-runner.ts';
 
 function project() {
   const base = mkdtempSync(path.join(tmpdir(), 'pi-forge-res-'));

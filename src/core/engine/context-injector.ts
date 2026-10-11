@@ -1,12 +1,11 @@
 // 来源：pi-flow src/core/context-injector.ts @ 31f3f15（M1 改编）
 // 每轮注入程序状态与主会话可执行的下一步；主工作区改动检测保留。
-import { approvalTargets, specStatus } from '../spec/spec-flow.ts';
+import { approvalTargets, specStatus } from '../plan/spec-amend.ts';
 import { P1_STAGE, planApprovalSummary } from '../plan/plan-flow.ts';
-import { ADOPT_STAGE, adoptScope } from '../ops/adopt.ts';
+import { ADOPT_STAGE, adoptScope } from '../plan/adopt.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowConfig } from '../state/config.ts';
-import { budgetState } from './cost-control.ts';
-import { git } from '../state/git.ts';
+import { budgetState } from '../insight/cost-control.ts';
 import type { ModelPause, TaskFile } from '../state/schemas.ts';
 import { REVIEW_GUIDE, awaitingReview } from './run-budget.ts';
 
@@ -64,9 +63,5 @@ export function turnContext(store: StateStore, maxParallel: number, activeRunCou
   const inputs = flow?.stage === 'P0' ? flow.intake?.files.map((f) => `- ${f.path}（${f.size} 字节，${f.type}）`).join('\n') : '';
   const rejected = id ? store.listAmends(id).filter((a) => a.status === 'rejected').at(-1) : undefined;
   return `[pi-forge 状态] ${s.summary}\n[唯一允许的下一步] ${s.next}${inputs ? `\n[输入清单：用 forge_read 阅读]\n${inputs}` : ''}${rejected ? `\n[最近修订打回意见] amend:${rejected.id}：${rejected.feedback}` : ''}`;
-}
-export function dirtyFiles(root: string): Set<string> {
-  const out = git(root, ['status', '--porcelain', '-uall', '--', '.', ':(exclude).forge']).split('\n').filter(Boolean);
-  return new Set(out.map((l) => l.slice(3)));
 }
 export function newDrift(before: Set<string>, after: Set<string>): string[] { return [...after].filter((f) => !before.has(f)).sort(); }

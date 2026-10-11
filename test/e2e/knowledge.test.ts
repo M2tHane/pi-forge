@@ -8,7 +8,7 @@ import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { commitToBranch, makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-import { acceptCandidate, retireEntries, promoteToDraft, markPromoted, selectKnowledge } from '../../src/core/ops/knowledge.ts';
+import { acceptCandidate, retireEntries, promoteToDraft, markPromoted, selectKnowledge } from '../../src/core/engine/knowledge.ts';
 import { applyDrafts, listDrafts } from '../../src/core/plan/rules-draft.ts';
 import { renderStatus } from '../../src/core/ops/status-view.ts';
 

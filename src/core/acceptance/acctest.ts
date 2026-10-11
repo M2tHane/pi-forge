@@ -8,7 +8,7 @@ import type { TaskFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
 import { isSensitive, matchesAny } from '../state/paths.ts';
 import { branchExists, headSha, removeWorktree, taskBranch, worktreesRoot } from '../workspace/worktree.ts';
-import { runShell } from '../verify/verify-runner.ts';
+import { runShell } from '../workspace/verify-runner.ts';
 import { acctestCacheRoot, cacheDirsOf, hardlinkTree, lockHash, LOCKFILES, prepareWorkspace, type SetupLog, type WorkspaceResult } from '../workspace/workspace.ts';
 
 // 这些原本定义在本文件，抽到 workspace.ts 后在此再导出，保持原有引用不变

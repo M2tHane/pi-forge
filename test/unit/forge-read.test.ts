@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { forgeRead, FORGE_READ_MAX_BYTES, FORGE_READ_MAX_LINES } from '../../src/core/ops/forge-read.ts';
+import { forgeRead, FORGE_READ_MAX_BYTES, FORGE_READ_MAX_LINES } from '../../src/core/workspace/forge-read.ts';
 import { commitFilesToBranch } from '../../src/core/spec/intake.ts';
 import { setupProject } from '../helpers/project.ts';
 

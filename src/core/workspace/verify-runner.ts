@@ -1,7 +1,6 @@
 // 来源：pi-flow src/core/verify-runner.ts @ 31f3f15
 // 运行 workflow.yaml 中的命令（合并后验证与阶段闸门共用）：清理过的环境、超时、输出截断与 evidence 文本。
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 
 export interface VerifyResult { command: string; exit_code: number }
 
@@ -81,17 +80,4 @@ export function failureSummary(output: string, limit = SUMMARY_LIMIT): string {
     text = `${text.slice(0, half)}\n…\n${text.slice(-half)}`;
   }
   return text.trim();
-}
-
-/** 失败签名：摘要归一化（数字、耗时、十六进制、临时路径）后的短哈希。同样的失败重复出现时签名相同 */
-export function failureSignature(summary: string): string {
-  const norm = summary
-    .replace(/(\/[\w.@+-]+)*\/(tmp|var\/folders|worktrees)\/[\w./@+-]*/g, '<path>')
-    .replace(/\br-[0-9a-z]{6,}\b/g, '<run>')
-    .replace(/\b[0-9a-f]{7,40}\b/gi, '<hex>')
-    .replace(/\d+(\.\d+)?\s*(ms|s|sec|seconds)\b/g, '<t>')
-    .replace(/\d+/g, '#')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return createHash('sha1').update(norm).digest('hex').slice(0, 12);
 }

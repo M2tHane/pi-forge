@@ -17,7 +17,8 @@ import { changeSummary, changeTouched, diffPlanRevision, isOpenChange, materiali
 import { approveChange, changeDocPrecheck, currentPlan, ensureChangeTask, ChangeError, pendingChanges, proposeChange, rejectChange, requestChange } from '../../src/core/plan/change-flow.ts';
 import { flowRel, taskRel } from '../../src/core/state/state-store.ts';
 import { createTaskWorktree, snapshot } from '../../src/core/workspace/worktree.ts';
-import { approvalTargets, approveSpecAmend, proposeSpecAmend } from '../../src/core/spec/spec-flow.ts';
+import { proposeSpecAmend } from '../../src/core/spec/spec-flow.ts';
+import { approvalTargets, approveSpecAmend } from '../../src/core/plan/spec-amend.ts';
 
 // —— 纯函数：diffPlanRevision ——
 

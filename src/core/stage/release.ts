@@ -4,9 +4,8 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
-import { git, gitOk } from '../state/git.ts';
+import { dirtyFiles, git, gitOk } from '../state/git.ts';
 import { worktreesRoot, removeWorktree } from '../workspace/worktree.ts';
-import { dirtyFiles } from '../engine/context-injector.ts';
 
 export async function mergeToMain(root: string, store: StateStore, config: FlowConfig, flowId: string): Promise<string> {
   const flow = store.readFlow(flowId);

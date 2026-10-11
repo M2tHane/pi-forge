@@ -9,7 +9,7 @@ import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
 import { REVIEW_CONFIRM, REVIEW_INPUT, REVIEW_REPORT, resolveReviews, readReviewEvidence } from '../../src/core/stage/review-flow.ts';
 import { createStageReview, nextStageReviewId, resolveStageReview, stageReviewRoundOf, stageReviewRounds, stageReviewsOf } from '../../src/core/stage/stage-review.ts';
-import { leanForkFrom } from '../../src/core/stage/stage-fix.ts';
+import { leanForkFrom } from '../../src/core/acceptance/stage-fix.ts';
 import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
 import { taskRel } from '../../src/core/state/state-store.ts';
 import type { TaskFile } from '../../src/core/state/schemas.ts';

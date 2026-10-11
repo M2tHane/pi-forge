@@ -3,7 +3,7 @@
 // 事件 JSON 从标准输入传入（例如 macOS 的 osascript、发到 webhook 的脚本）。独立进程组、10 秒超时，失败不影响流程。
 import { spawn } from 'node:child_process';
 import type { FlowConfig } from '../state/config.ts';
-import type { StatusSnapshot } from '../ops/status-view.ts';
+import type { StatusSnapshot } from './status-view.ts';
 
 export interface NotifyEvent { type: 'action' | 'done'; flow: string | null; key: string; text: string; command?: string; at: string }
 

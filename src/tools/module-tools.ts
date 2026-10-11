@@ -7,7 +7,7 @@ import type { TaskFile } from '../core/state/schemas.ts';
 import type { StateStore } from '../core/state/state-store.ts';
 import { git, gitOk } from '../core/state/git.ts';
 import { snapshot } from '../core/workspace/worktree.ts';
-import { resolveContractConflicts } from '../core/verify/merge-queue.ts';
+import { resolveContractConflicts } from '../core/engine/merge-queue.ts';
 import { FlowToolError, checkRunOf, type ToolContext, type ToolResult } from './tool-common.ts';
 
 export const SyncParams = Type.Object({}, { additionalProperties: false });

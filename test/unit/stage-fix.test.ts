@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStageFixTasks, groupIssuesByOwner, lastWorkerTask, ownerOf, testWritesOf } from '../../src/core/stage/stage-fix.ts';
+import { createStageFixTasks, groupIssuesByOwner, lastWorkerTask, ownerOf, testWritesOf } from '../../src/core/acceptance/stage-fix.ts';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 

@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { createServer } from 'node:net';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
-import { worktreesRoot } from '../workspace/worktree.ts';
-import { runShell } from '../verify/verify-runner.ts';
+import { worktreesRoot } from './worktree.ts';
+import { runShell } from './verify-runner.ts';
 
 /** 每次分配的端口数（limits.port_block 的默认值） */
 export const PORT_BLOCK = 10;

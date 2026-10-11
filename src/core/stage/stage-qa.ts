@@ -11,7 +11,7 @@ import { effectiveSpec } from '../spec/spec.ts';
 import { formatMust } from './review.ts';
 import { readReviewEvidence, type ReviewInputFile } from './review-flow.ts';
 import { resolveRounds, unresolvedIn, type RoundSpec, type StageRoundOutcome } from './stage-rounds.ts';
-import { serviceCommands } from '../engine/services.ts';
+import { serviceCommands } from '../workspace/services.ts';
 import { createStageTempWorktree, stageBaseOf } from '../workspace/stage-worktree.ts';
 import type { TaskWorktree } from '../workspace/worktree.ts';
 

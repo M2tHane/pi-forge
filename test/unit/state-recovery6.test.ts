@@ -10,7 +10,7 @@ import { TEST_YAML } from '../helpers/config.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
 import { commandsDraftProblems } from '../../src/core/plan/rules-draft.ts';
 import { createCheckpoint, dropCheckpoint, listCheckpoints, restoreCheckpoint } from '../../src/core/state/checkpoints.ts';
-import { notifyEvents, runNotify } from '../../src/core/engine/notify.ts';
+import { notifyEvents, runNotify } from '../../src/core/ops/notify.ts';
 
 function repoWithWorkflow() {
   const r = tmpRepo();

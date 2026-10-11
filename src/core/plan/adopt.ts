@@ -6,8 +6,8 @@ import type { FlowFile, TaskFile } from '../state/schemas.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { git, gitOk } from '../state/git.ts';
 import { ensureIntegrationBranch } from '../workspace/worktree.ts';
-import { CONTRACTS_DIR, contractFilesAt, contractFilesInDir, parseContracts } from '../plan/contract-check.ts';
-import { hasContracts, lockedContractProblems } from '../spec/feature-spec.ts';
+import { CONTRACTS_DIR, contractFilesAt, contractFilesInDir, parseContracts } from './contract-check.ts';
+import { hasContracts, lockedContractProblems } from './feature-spec.ts';
 
 export const ADOPT_STAGE = 'ADOPT';
 export const ADOPT_WRITES = ['docs/contracts/**', 'docs/arch/**'] as const;

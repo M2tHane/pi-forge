@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { Engine, type EngineDeps } from '../../src/core/engine/dispatcher.ts';
-import type { MergeHooks, MergeResult } from '../../src/core/verify/merge-queue.ts';
+import type { MergeHooks, MergeResult } from '../../src/core/engine/merge-queue.ts';
 import type { RoleSettingsFile } from '../../src/core/state/schemas.ts';
 import { FakeLauncher, type FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import type { Project } from './project.ts';

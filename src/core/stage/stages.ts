@@ -5,7 +5,7 @@ import type { StateStore } from '../state/state-store.ts';
 import type { FlowFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
 import { ensureIntegrationBranch } from '../workspace/worktree.ts';
-import { mergeToMain } from '../ops/release.ts';
+import { mergeToMain } from './release.ts';
 import { materializePlan, P1_STAGE, isArchitectStage } from '../plan/plan-flow.ts';
 import { deliveryReport } from './signoff.ts';
 

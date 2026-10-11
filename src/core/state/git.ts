@@ -54,3 +54,9 @@ export function gitOk(cwd: string, args: string[]): boolean {
     return false;
   }
 }
+
+/** 工作区未提交的文件（含未跟踪，排除 .forge）；从 engine/context-injector.ts 移入（偏离 106，stage/release 也要用） */
+export function dirtyFiles(root: string): Set<string> {
+  const out = git(root, ['status', '--porcelain', '-uall', '--', '.', ':(exclude).forge']).split('\n').filter(Boolean);
+  return new Set(out.map((l) => l.slice(3)));
+}

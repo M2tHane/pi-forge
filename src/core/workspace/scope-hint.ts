@@ -2,9 +2,23 @@
 // 语义冲突时，后合并的 task 在预检或合并验证里失败，失败的文件常常不在它的可写范围里；
 // worker 不知道可以用 forge_request_scope 申请，只会把预检次数用完。纯函数 + 一个读 git 的小辅助。
 import { git } from '../state/git.ts';
-import { failingFiles } from '../verify/gates.ts';
 import { matchesAny } from '../state/paths.ts';
 import type { TaskFile } from '../state/schemas.ts';
+
+// 来自 stage/gates.ts（偏离 106）：workspace 在 stage 之下，不能反过来 import 它。
+/** 从失败输出中找出仓库里的文件（测试文件、报错位置） */
+export function failingFiles(output: string, tracked: ReadonlySet<string>): string[] {
+  const out = new Set<string>();
+  for (const m of output.matchAll(/[\w@.\-/]+\.[A-Za-z0-9]+/g)) {
+    let p = m[0].replace(/^\.\//, '');
+    if (!tracked.has(p)) {
+      const parts = p.split('/');
+      p = parts.map((_, i) => parts.slice(i).join('/')).find((x) => tracked.has(x)) ?? '';
+    }
+    if (p) out.add(p);
+  }
+  return [...out].slice(0, 20);
+}
 
 export const SCOPE_HINT_MAX_FILES = 10;
 const UNREQUESTABLE = ['tests/acceptance/**', 'docs/spec/**', 'docs/contracts/**'];

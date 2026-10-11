@@ -1,11 +1,12 @@
 // 来源：pi-flow src/tools/orchestrator-tools.ts @ 31f3f15
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
 import { checkScope } from '../core/workspace/scope.ts';
-import { submitSpec, proposeSpecAmend, amendSummary, specStatus } from '../core/spec/spec-flow.ts';
-import { ADOPT_STAGE, adoptApprovalSummary } from '../core/ops/adopt.ts';
-import { featurePermissionSummary, submitFeatureSpec } from '../core/spec/feature-spec.ts';
+import { submitSpec, proposeSpecAmend, amendSummary } from '../core/spec/spec-flow.ts';
+import { specStatus } from '../core/plan/spec-amend.ts';
+import { ADOPT_STAGE, adoptApprovalSummary } from '../core/plan/adopt.ts';
+import { featurePermissionSummary, submitFeatureSpec } from '../core/plan/feature-spec.ts';
 import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan/plan-flow.ts';
-import { runStageGate } from '../core/verify/gates.ts';
+import { runStageGate } from '../core/stage/gates.ts';
 import { activePauses, describePause } from '../core/engine/model-pause.ts';
 import { Type, type Static } from 'typebox';
 import type { StateStore } from '../core/state/state-store.ts';

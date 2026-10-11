@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { worktreesRoot } from '../workspace/worktree.ts';
-import { processAlive } from '../ops/resume.ts';
+import { processAlive } from './resume.ts';
 
 export const engineLockPath = (root: string) => path.join(worktreesRoot(root), '.engine.lock');
 

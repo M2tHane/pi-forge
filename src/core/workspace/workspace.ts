@@ -10,7 +10,7 @@ import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { git } from '../state/git.ts';
 import { worktreesRoot } from './worktree.ts';
-import { failureSummary, runShell } from '../verify/verify-runner.ts';
+import { failureSummary, runShell } from './verify-runner.ts';
 
 /** 计算缓存键的锁文件名（任意目录层级） */
 export const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'Cargo.lock', 'poetry.lock', 'uv.lock', 'go.sum', 'Gemfile.lock', 'composer.lock'];

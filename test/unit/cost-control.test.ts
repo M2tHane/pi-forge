@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseConfig } from '../../src/core/state/config.ts';
-import { escalationModel, resolveModelRef } from '../../src/core/engine/cost-control.ts';
+import { escalationModel, resolveModelRef } from '../../src/core/insight/cost-control.ts';
 import { TEMPLATE_YAML, TEST_YAML } from '../helpers/config.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
 

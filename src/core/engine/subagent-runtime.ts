@@ -10,7 +10,8 @@ import { scratchDir } from '../workspace/worktree.ts';
 import { TEST_GLOBS, adjustableTests, testAdjustEnabled } from '../verify/test-adjust.ts';
 import { matchesAny, INTERFACES_PATH } from '../state/paths.ts';
 import { enforceToolCall, type GuardContext, type ToolCall } from '../security/guard.ts';
-import { failureSignature, failureSummary } from '../verify/verify-runner.ts';
+import { failureSummary } from '../workspace/verify-runner.ts';
+import { failureSignature } from '../state/failure-signature.ts';
 import { FlowToolError, SUBAGENT_TOOLS, type RunEnv, type SubagentToolName, type ToolResult } from '../../tools/subagent-tools.ts';
 import { withoutPlaceholders } from '../security/tool-params.ts';
 

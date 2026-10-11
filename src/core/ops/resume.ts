@@ -8,7 +8,7 @@ import type { StateStore } from '../state/state-store.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import { git } from '../state/git.ts';
 import { removeWorktree } from '../workspace/worktree.ts';
-import { MergeQueue } from '../verify/merge-queue.ts';
+import { MergeQueue } from '../engine/merge-queue.ts';
 import { statusText } from '../../tools/orchestrator-tools.ts';
 import { actionsNeeded } from './status-view.ts';
 
@@ -22,7 +22,7 @@ export interface ResumeDecision {
 
 export type DecisionAnswer = 'continue' | 'discard';
 
-import { isStaleResource, reclaimResources } from '../engine/resources.ts';
+import { isStaleResource, reclaimResources } from '../workspace/resources.ts';
 
 export interface ResumeDeps {
   root: string;

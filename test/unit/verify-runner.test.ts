@@ -1,7 +1,8 @@
 // 来源：pi-flow test/unit/verify-runner.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { failureSignature, failureSummary } from '../../src/core/verify/verify-runner.ts';
+import { failureSummary } from '../../src/core/workspace/verify-runner.ts';
+import { failureSignature } from '../../src/core/state/failure-signature.ts';
 
 test('failureSummary：优先错误行与上下文，去掉 ANSI', () => {
   const out = [

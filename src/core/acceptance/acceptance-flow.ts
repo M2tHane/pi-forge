@@ -8,23 +8,12 @@ import { accBranch, acctestDirs } from './acctest.ts';
 import { git, gitOk } from '../state/git.ts';
 import { matchesAny } from '../state/paths.ts';
 import { branchExists, headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from '../workspace/worktree.ts';
-import { evidenceText, failureSummary, runShell } from '../verify/verify-runner.ts';
-import { resourceOptions, withResources } from '../engine/resources.ts';
+import { evidenceText, failureSummary, runShell } from '../workspace/verify-runner.ts';
+import { resourceOptions, withResources } from '../workspace/resources.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { isSettled } from '../state/state-machine.ts';
+import { latestAcctest, roundOf } from '../state/acctest-lookup.ts';
 
-const roundOf = (id: string) => Number(/\.at-(\d+)$/.exec(id)?.[1] ?? 1);
-
-/** 某个 impl 最新的验收测试 task（忽略已取消的）；没有时为 undefined */
-export function latestAcctest<T extends Pick<TaskFile, 'id' | 'kind' | 'for_task' | 'status'>>(tasks: readonly T[], impl: string): T | undefined {
-  return tasks.filter((t) => t.kind === 'acctest' && t.for_task === impl && t.status !== 'cancelled').sort((a, b) => roundOf(a.id) - roundOf(b.id)).at(-1);
-}
-
-/** impl 合入前要等的验收测试：最新一轮，但硬依赖 impl 的（impl 合入后才写，第 9.5 节单独合并）不等；纯函数 */
-export function awaitedAcctest<T extends Pick<TaskFile, 'id' | 'kind' | 'for_task' | 'status' | 'depends_on'>>(tasks: readonly T[], impl: string): T | undefined {
-  const latest = latestAcctest(tasks, impl);
-  return latest && !latest.depends_on.some((d) => d.type === 'hard' && d.task === impl) ? latest : undefined;
-}
 
 /** 下一轮验收测试的编号：T-003.at → T-003.at-2 → T-003.at-3 */
 export function nextAcctestId(tasks: readonly Pick<TaskFile, 'id'>[], impl: string): string {

@@ -8,20 +8,21 @@ import type { FlowConfig } from '../state/config.ts';
 import { isSettled } from '../state/state-machine.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { git } from '../state/git.ts';
+import { failingFiles } from '../workspace/scope-hint.ts';
 import { worktreesRoot, removeWorktree } from '../workspace/worktree.ts';
-import { evidenceText, failureSummary, runShell } from './verify-runner.ts';
+import { evidenceText, failureSummary, runShell } from '../workspace/verify-runner.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
-import { resourceOptions, withResources } from '../engine/resources.ts';
+import { resourceOptions, withResources } from '../workspace/resources.ts';
 
-import type { StageDeps } from '../stage/stages.ts';
+import type { StageDeps } from './stages.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import { P1_STAGE, isArchitectStage, p1GateProblems } from '../plan/plan-flow.ts';
-import { adoptGateProblems } from '../ops/adopt.ts';
-import { featurePermissionSummary } from '../spec/feature-spec.ts';
+import { adoptGateProblems } from '../plan/adopt.ts';
+import { featurePermissionSummary } from '../plan/feature-spec.ts';
 import { headSha } from '../workspace/worktree.ts';
-import { recordVerified, reusableRuns, reuseText, treeOfCommit } from './verify-cache.ts';
+import { recordVerified, reusableRuns, reuseText, treeOfCommit } from '../verify/verify-cache.ts';
 import { failingAcceptanceDirs } from '../acceptance/acceptance-flow.ts';
-import { createStageFixTasks, type StageIssue } from '../stage/stage-fix.ts';
+import { createStageFixTasks, type StageIssue } from '../acceptance/stage-fix.ts';
 import { createCoverageRounds, stageCoverage, writeCoverageReport, type CoverageResult, type CoverageRow } from '../acceptance/coverage.ts';
 
 /** failed：失败的闸门命令与输出；引擎据此生成有限轮次的修复任务。 */
@@ -167,20 +168,6 @@ export function gateFailedWithoutChange(store: StateStore, flowId: string, stage
 
 // M6 由 stage-qa 取代：暂时保留 HEAD 的有限门禁修复。
 export const MAX_GATE_ROUNDS = 2;
-/** 从失败输出中找出仓库里的文件（测试文件、报错位置） */
-export function failingFiles(output: string, tracked: ReadonlySet<string>): string[] {
-  const out = new Set<string>();
-  for (const m of output.matchAll(/[\w@.\-/]+\.[A-Za-z0-9]+/g)) {
-    let p = m[0].replace(/^\.\//, '');
-    if (!tracked.has(p)) {
-      const parts = p.split('/');
-      p = parts.map((_, i) => parts.slice(i).join('/')).find((x) => tracked.has(x)) ?? '';
-    }
-    if (p) out.add(p);
-  }
-  return [...out].slice(0, 20);
-}
-
 function safeGit(cwd: string, args: string[]): string {
   try { return git(cwd, args).trim(); } catch { return ''; }
 }

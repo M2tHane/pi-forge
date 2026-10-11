@@ -3,12 +3,12 @@
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
-import { commitFilesToBranch } from './intake.ts';
-import { SPEC_PATHS, SpecFlowError } from './spec-flow.ts';
-import { diffAcs, effectiveSpec, lintSpec, type EffectiveSpec, type LintResult, type SpecFeature, type SpecFiles, type SpecPermission } from './spec.ts';
+import { commitFilesToBranch } from '../spec/intake.ts';
+import { SPEC_PATHS, SpecFlowError } from '../spec/spec-flow.ts';
+import { diffAcs, effectiveSpec, lintSpec, type EffectiveSpec, type LintResult, type SpecFeature, type SpecFiles, type SpecPermission } from '../spec/spec.ts';
 import { planStageTransition } from '../state/state-machine.ts';
-import { CONTRACTS_DIR, contractFilesAt, type ContractFiles } from '../plan/contract-check.ts';
-import { contractDiff } from '../plan/contract-diff.ts';
+import { CONTRACTS_DIR, contractFilesAt, type ContractFiles } from './contract-check.ts';
+import { contractDiff } from './contract-diff.ts';
 
 export const FEATURES_DIR = 'docs/spec/features';
 export const FEATURE_NAME = /^[\p{L}\p{N}_-]{1,80}$/u;

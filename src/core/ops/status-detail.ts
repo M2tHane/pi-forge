@@ -1,8 +1,8 @@
 // M8：/forge-status 的 --detail、--metrics、--cost 视图。纯函数：只读 store，当前时间由调用者传入（测试用固定时钟）。
 // 默认视图（status-view.ts）只显示高层阶段；内部状态、任务类型、计数器都放在这里。
 import type { FlowConfig } from '../state/config.ts';
-import { budgetState, formatBudget } from '../engine/cost-control.ts';
-import { costReport, formatCost } from '../engine/cost.ts';
+import { budgetState, formatBudget } from '../insight/cost-control.ts';
+import { costReport, formatCost } from '../insight/cost.ts';
 import { flowMetrics, renderMetrics } from '../stage/signoff.ts';
 import type { FlowEvent, FlowFile, TaskFile } from '../state/schemas.ts';
 import type { StateStore } from '../state/state-store.ts';

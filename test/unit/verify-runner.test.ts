@@ -41,6 +41,8 @@ test('detectToolMissing（偏离 108）：明确的工具层报错格式', () =>
   const tool = (code: number, out: string) => detectToolMissing(code, out)?.tool ?? null;
   // 证据：pnpm exec 找不到 redocly
   assert.equal(tool(1, ' ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "redocly" not found\n'), 'redocly');
+  // 真实运行（m9b STD）里的输出：错误码带方括号，前面还有一行 undefined
+  assert.equal(tool(1, 'undefined\n[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command "redocly" not found\n'), 'redocly');
   assert.equal(tool(1, 'Command "redocly" not found'), 'redocly');
   assert.equal(tool(1, '> p@1 lint\n> redocly lint x\n\nsh: 1: redocly: not found\n ELIFECYCLE  Command failed with exit code 127.'), 'redocly');
   assert.equal(tool(127, 'sh: 1: redocly: not found'), 'redocly');

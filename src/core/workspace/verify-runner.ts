@@ -57,8 +57,8 @@ const TOOL_MISSING_PATTERNS: { re: RegExp; tool: (m: RegExpExecArray) => string 
   { re: /^(?:\/\S+\/)?(?:ba|da|z|a)?sh: (?:line )?(?:\d+: )?([^\s:]+): (?:command )?not found$/, tool: (m) => m[1]! },
   // zsh：`zsh: command not found: redocly`
   { re: /^(?:\/\S+\/)?(?:ba|da|z|a)?sh: command not found: (\S+)$/, tool: (m) => m[1]! },
-  // pnpm：`ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "redocly" not found`，旧版本只有 `Command "x" not found`
-  { re: /^(?:ERR_PNPM_\w+\s+)?Command "([^"]+)" not found\b/, tool: (m) => m[1]! },
+  // pnpm：`ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "redocly" not found`，新版本错误码带方括号（`[ERR_PNPM_…] Command "x" not found`），旧版本只有 `Command "x" not found`
+  { re: /^(?:\[?ERR_PNPM_\w+\]?\s+)?Command "([^"]+)" not found\b/, tool: (m) => m[1]! },
   // npm / npx
   { re: /^npm (?:error|ERR!) could not determine executable to run\b/, tool: () => 'npx' },
   { re: /^npx: (?:command )?not found$/, tool: () => 'npx' },

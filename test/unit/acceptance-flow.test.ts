@@ -1,7 +1,7 @@
 // 第 9.3–9.5 节：验收测试返工与单独合并的纯函数部分。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyAcceptanceFailure, failingAcceptanceDirs, nextAcctestId, nextFixId, validateEvidence } from '../../src/core/acceptance/acceptance-flow.ts';
+import { classifyAcceptanceFailure, decideBrokenAcceptance, disputeRefusalText, failingAcceptanceDirs, nextAcctestId, nextFixId, validateEvidence } from '../../src/core/acceptance/acceptance-flow.ts';
 import { awaitedAcctest, latestAcctest } from '../../src/core/state/acctest-lookup.ts';
 import type { TaskStatus } from '../../src/core/state/schemas.ts';
 
@@ -51,4 +51,23 @@ test('validateEvidence：认可存在的规格或契约文件（行号在范围�
   assert.equal(validateEvidence('REQ-001.AC9', read, acs).ok, false);
   assert.equal(validateEvidence('src/server/ds.ts:3', read, acs).ok, false, '实现代码不算依据');
   assert.match(validateEvidence('我觉得不对', read, acs).reason!, /规格或契约的具体位置/);
+});
+
+test('偏离 107 decideBrokenAcceptance：test_author 开启走 .at-n（仅 foreign），关闭把别的目录加进 writes', () => {
+  assert.deepEqual(decideBrokenAcceptance('T-007', ['T-004'], true), { action: 'acctest' });
+  assert.deepEqual(decideBrokenAcceptance('T-007', ['T-004', 'T-007'], true), { action: 'none' }, 'mixed 开启时不处理');
+  assert.deepEqual(decideBrokenAcceptance('T-007', ['T-004', 'T-005'], false), { action: 'widen_writes', dirs: ['T-004', 'T-005'] });
+  assert.deepEqual(decideBrokenAcceptance('T-007', ['T-004', 'T-007'], false), { action: 'widen_writes', dirs: ['T-004'] }, 'mixed 只加别的目录');
+  for (const on of [true, false]) {
+    assert.deepEqual(decideBrokenAcceptance('T-007', ['T-007'], on), { action: 'none' }, 'own');
+    assert.deepEqual(decideBrokenAcceptance('T-007', [], on), { action: 'none' }, 'unknown');
+  }
+});
+
+test('偏离 107 disputeRefusalText：自己的目录提示直接改；已在 writes 的别的目录提示直接改；不在的说明程序会加入可写范围', () => {
+  const writes = ['src/x/**', 'tests/acceptance/T-007/**'];
+  assert.match(disputeRefusalText('tests/acceptance/T-007/a.test.js', 'T-007', writes), /你自己编写[\s\S]*直接修改测试/);
+  assert.match(disputeRefusalText('[REQ-001.AC1] 名称', 'T-007', writes), /你自己编写/);
+  assert.match(disputeRefusalText('tests/acceptance/T-004/p.test.js', 'T-007', writes), /会在合并验证失败时把该目录加入你的可写范围/);
+  assert.match(disputeRefusalText('tests/acceptance/T-004/p.test.js', 'T-007', [...writes, 'tests/acceptance/T-004/**']), /已在你的可写范围内/);
 });

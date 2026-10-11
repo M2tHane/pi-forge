@@ -9,7 +9,7 @@ import { contractBaseOf, withoutMergedAcceptance } from '../core/engine/precheck
 import { contractViolationsAt } from '../core/plan/contract-diff.ts';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { checkoutAccWorktree, createAcctestRound, readIn, validateEvidence } from '../core/acceptance/acceptance-flow.ts';
+import { checkoutAccWorktree, createAcctestRound, disputeRefusalText, readIn, validateEvidence } from '../core/acceptance/acceptance-flow.ts';
 import { readSpec } from '../core/spec/spec-flow.ts';
 import { acTexts, effectiveSpec } from '../core/spec/spec.ts';
 import { Type, type Static } from 'typebox';
@@ -242,7 +242,7 @@ export const DisputeParams = Type.Object({
 export async function flowDispute(ctx: ToolContext, p: Static<typeof DisputeParams>): Promise<ToolResult> {
   const t = checkRun(ctx);
   if (t.status !== 'in_progress' || !t.worktree) throw new FlowToolError(`任务当前是 ${t.status}，不能提出争议。`);
-  if (writesOwnAcceptance(t)) throw new FlowToolError('本任务的验收测试由你自己编写，没有争议流程：测试写错了直接修改测试。');
+  if (writesOwnAcceptance(t)) throw new FlowToolError(disputeRefusalText(p.test, t.for_task ?? t.id, t.writes));
   const impl = t.for_task ?? t.id;
   const test = p.test.trim();
   const ownTest = test.startsWith(`tests/acceptance/${impl}/`) ? existsSync(path.join(t.worktree, test)) : (t.ac ?? []).some((a) => test.includes(a));
@@ -293,7 +293,7 @@ export async function flowRequestScope(ctx: ToolContext, p: Static<typeof Reques
   if (t.scope_request) throw new FlowToolError(`已有一份申请（${t.scope_request.paths.join('、')}）等主会话决定，先做范围内的部分，稍后用 forge_claim 查看可写范围。`);
   const paths = [...new Set(p.paths.map((x) => x.trim()))].filter((x) => !t.writes.includes(x));
   if (!paths.length) return { text: '这些路径已经在可写范围内。' };
-  const c = checkScope(t, ctx.store.listTasks(ctx.env.flow), paths, ctx.config.role(ctx.env.role).writes);
+  const c = checkScope(t, ctx.store.listTasks(ctx.env.flow), paths, ctx.config.role(ctx.env.role).writes, { testAuthorOff: writesOwnAcceptance(t) });
   if (c.invalid.length) throw new FlowToolError(`不能申请：${c.invalid.join('；')}`);
   if (c.started.length) throw new FlowToolError(`不能申请：与已开工的 task 范围重叠（${c.started.map((x) => `${x.path} ↔ ${x.task}`).join('；')}），主会话也不能批准。需要它们的改动时写进 handoff，或用 forge_block 说明。`);
   if (!c.conflicts.length && !c.outsideRole.length) {

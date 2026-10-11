@@ -76,3 +76,68 @@ test('test_author: false：覆盖缺口建 .fx-n（补齐 AC 编号的验收测�
     assert.match(p.git('show', `${integ}:docs/qa/S1.md`), /缺口：无/);
   } finally { p.cleanup(); }
 });
+
+// 偏离 107：test_author 关闭时，合并验证里失败的验收目录不属于当前 task（此前流程留下的 legacy），不建 .at-n，
+// 程序把该目录加进当前 task（impl 或 fix）的 writes 退回 worker，worker 自己按新需求改旧测试。
+// 旧测试里有 OLD 且 src/server/t-001/b.ts 存在时 acceptance 失败（模拟"新需求让旧断言过时"）。
+const ACC_SH = 'd=tests/acceptance; [ "$1" = "--" ] && d="tests/acceptance/$2"; for f in $(find $d -name "*.test.ts"); do if grep -q OLD "$f" && test -f src/server/t-001/b.ts; then echo "FAIL $f"; exit 1; fi; done\n';
+const LEGACY_YAML = PROJECT_YAML.replace('acceptance: "true"', 'acceptance: "sh tests/acc.sh"').replace(/^  qa: false$/m, '  qa: false\n  test_author: false');
+const OLD_TEST = "test('[REQ-009.AC1] OLD 旧行为', () => {});\n";
+const NEW_TEST = "test('[REQ-009.AC1] 按新需求调整', () => {});\n";
+
+async function legacyProject(): Promise<Project> {
+  const p = await setupProject({ yaml: LEGACY_YAML, files: { ...FILES, 'tests/acc.sh': ACC_SH, 'tests/acceptance/T-009/old.test.ts': OLD_TEST }, stages: ['S1'], tasks: [impl] });
+  await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }], 'standard');
+  return p;
+}
+
+async function expectLegacyRework(p: Project, a: { call: (name: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; text: string }> }, id: string): Promise<void> {
+  const t = p.store.readTask(p.flowId, id);
+  assert.ok(t.writes.includes('tests/acceptance/T-009/**'), t.writes.join());
+  assert.match(p.store.readHandoff(p.flowId, id), /tests\/acceptance\/T-009\/[\s\S]*不能删用例[\s\S]*FAIL tests\/acceptance\/T-009\/old\.test\.ts/);
+  const r = await a.call('forge_dispute', { test: 'tests/acceptance/T-009/old.test.ts', reason: 'x', evidence: 'docs/spec/requirements.md#REQ-001' });
+  assert.ok(!r.ok && /已在你的可写范围内/.test(r.text), r.text);
+  await writeFiles(a as never, { 'tests/acceptance/T-009/old.test.ts': NEW_TEST });
+}
+
+test('偏离 107：test_author 关闭，impl 合并验证时旧流程的验收目录失败 → 加进 impl 的 writes 退回 worker，改旧测试后合入，不建 .at-n', async () => {
+  const p = await legacyProject();
+  let n = 0;
+  const e = engineEnv(p, async (role, _n, a) => {
+    await a.call('forge_claim');
+    assert.equal(role, 'worker');
+    n++;
+    if (n === 1) return submitWork(a, '实现并写测试', { 'src/server/t-001/a.ts': 'ok\n', 'src/server/t-001/b.ts': 'ok\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST });
+    await expectLegacyRework(p, a, 'T-001');
+    return submitWork(a, '旧测试按新需求调整');
+  });
+  try {
+    await drive(e, p.flowId, 30);
+    assert.deepEqual(e.errors, []);
+    assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done', p.store.readTask(p.flowId, 'T-001').blocked_reason ?? undefined);
+    assert.ok(!p.store.listTasks(p.flowId).some((t) => t.kind === 'acctest'), '没有 .at-n');
+    assert.doesNotMatch(p.git('show', `${p.store.readFlow(p.flowId).integration_branch}:tests/acceptance/T-009/old.test.ts`), /OLD/);
+  } finally { p.cleanup(); }
+});
+
+test('偏离 107：test_author 关闭，.fx-n 合并验证时旧流程的验收目录失败 → 加进 fix 的 writes 退回 worker，改旧测试后合入，不建 .at-n', async () => {
+  const p = await legacyProject();
+  const e = engineEnv(p, async (_role, _n, a) => {
+    await a.call('forge_claim');
+    const id = a.env.task;
+    if (id === 'T-001') return submitWork(a, '只写了 AC1 的测试', { 'src/server/t-001/a.ts': 'ok\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST });
+    assert.equal(id, 'T-001.fx-1');
+    if (!p.store.readTask(p.flowId, id).writes.includes('tests/acceptance/T-009/**')) {
+      return submitWork(a, '补上 AC2', { 'src/server/t-001/b.ts': 'ok\n', 'tests/acceptance/T-001/b.test.ts': AC2_TEST });
+    }
+    await expectLegacyRework(p, a, id);
+    return submitWork(a, '旧测试按新需求调整');
+  });
+  try {
+    await drive(e, p.flowId, 40);
+    assert.deepEqual(e.errors, []);
+    assert.equal(p.store.readTask(p.flowId, 'T-001.fx-1').status, 'done');
+    assert.ok(!p.store.listTasks(p.flowId).some((t) => t.kind === 'acctest'), '没有 .at-n');
+    assert.doesNotMatch(p.git('show', `${p.store.readFlow(p.flowId).integration_branch}:tests/acceptance/T-009/old.test.ts`), /OLD/);
+  } finally { p.cleanup(); }
+});

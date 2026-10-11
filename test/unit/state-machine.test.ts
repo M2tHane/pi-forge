@@ -296,6 +296,10 @@ test('submit：test_author 为 false 时 impl 与它的 fix 只放开自己的�
   const fx = task('in_progress', { id: 'T-001.fx-1', kind: 'fix', for_task: 'T-001', writes: ['tests/acceptance/T-001/**'] });
   ok(planTransition(fx, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
   bad(planTransition(fx, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-002/a.test.ts'] }));
+  // 偏离 107：程序因旧测试被打破而加入的别的 task 目录（含 _support）放开；没加入的仍然不行
+  const widened = task('in_progress', { id: 'T-001.fx-1', kind: 'fix', for_task: 'T-001', writes: ['tests/acceptance/T-001/**', 'tests/acceptance/T-009/**', 'tests/acceptance/_support/T-009/**'] });
+  ok(planTransition(widened, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-009/old.test.js', 'tests/acceptance/_support/T-009/h.js'] }));
+  bad(planTransition(widened, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-004/a.test.js'] }));
   // doc 任务不放开
   bad(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
 });

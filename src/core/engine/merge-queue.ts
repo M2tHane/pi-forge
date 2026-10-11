@@ -22,7 +22,7 @@ import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { resourceOptions, withResources } from '../workspace/resources.ts';
 import { nextPlanTaskId } from '../plan/plan.ts';
 import { usedTaskIds } from '../plan/plan-flow.ts';
-import { classifyAcceptanceFailure, failingAcceptanceDirs, handOffToFix, handleForeignBreak } from '../acceptance/acceptance-flow.ts';
+import { classifyAcceptanceFailure, decideBrokenAcceptance, failingAcceptanceDirs, handOffToFix, handleForeignBreak, widenWritesForBrokenAcceptance } from '../acceptance/acceptance-flow.ts';
 
 
 /**
@@ -412,8 +412,14 @@ export class MergeQueue {
         facts: { post_verify_ok: false, failed_tests_own_directory: false, reason: `只合入验收测试，本目录之外的测试失败（${dirs.filter((d) => d !== impl).join('、')}），集成分支本身已坏：${v.reason}` } });
       return { kind: 'blocked', task: t.id, reason: v.reason };
     }
-    // test_author 为 false（偏离 81）：没有 test-author 修测试，破坏别人验收测试的按本 task 合并后验证失败处理
-    if (kind !== 'foreign' || !this.config.testAuthorFor(this.store.readFlow(flowId))) return null;
+    // impl / fix 的失败目录归属由 decideBrokenAcceptance 统一决定（偏离 90、107）
+    const decision = decideBrokenAcceptance(impl, dirs, this.config.testAuthorFor(this.store.readFlow(flowId)));
+    if (decision.action === 'widen_writes') {
+      // test_author 关闭（偏离 81、107）：没有 test-author，别的目录加进本 task 的 writes，退回 worker 自己改
+      await widenWritesForBrokenAcceptance(this.store, flowId, t, decision.dirs, v.output ?? '', 'merge-queue');
+      return this.verifyFailed(flowId, t, `${v.reason}\n以下验收目录已加入你的可写范围：${decision.dirs.map((d) => `tests/acceptance/${d}/`).join('、')}（见 handoff）`, []);
+    }
+    if (decision.action !== 'acctest') return null;
     const waits = await handleForeignBreak(this.root, this.store, flowId, t, dirs, v.output ?? '', 'merge-queue');
     // 找不到负责修测试的 task（偏离 90）：按本 task 的合并验证失败处理
     if (!waits.length) return null;

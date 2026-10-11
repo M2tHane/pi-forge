@@ -42,6 +42,52 @@ export function classifyAcceptanceFailure(ownImpl: string, dirs: readonly string
   return own && foreign ? 'mixed' : own ? 'own' : 'foreign';
 }
 
+export type BrokenAcceptanceAction = { action: 'none' } | { action: 'acctest' } | { action: 'widen_writes'; dirs: string[] };
+
+/**
+ * 合并验证里失败的验收目录怎么处理（偏离 107，纯函数；impl / fix 共用）：
+ * test_author 开启：只有"都在别的目录"时建 .at-n（handleForeignBreak，偏离 90 含 legacy），其余不处理；
+ * test_author 关闭：没有 test-author 可派，别的目录（别的 task 的 foreign、此前流程的 legacy，含 mixed）加进当前 task 的 writes，由 worker 改；
+ * 失败都在本目录或认不出目录：不在这里处理（own 由 worker 自己的目录承担）。
+ */
+export function decideBrokenAcceptance(impl: string, dirs: readonly string[], testAuthorOn: boolean): BrokenAcceptanceAction {
+  const kind = classifyAcceptanceFailure(impl, dirs);
+  if (kind === 'own' || kind === 'unknown') return { action: 'none' };
+  if (testAuthorOn) return kind === 'foreign' ? { action: 'acctest' } : { action: 'none' };
+  return { action: 'widen_writes', dirs: dirs.filter((d) => d !== impl) };
+}
+
+/** 某个验收目录（含 _support）的可写 glob */
+export const acceptanceDirGlobs = (dir: string): string[] => [`tests/acceptance/${dir}/**`, `tests/acceptance/_support/${dir}/**`];
+
+/**
+ * test_author 关闭时 forge_dispute 的拒绝信息（纯函数，偏离 107）：测试在自己的验收目录 → 直接改；
+ * 在别的目录 → 说明程序会在合并验证失败时把该目录加入可写范围（已在范围内则直接改）。
+ */
+export function disputeRefusalText(test: string, impl: string, writes: readonly string[]): string {
+  const dir = /^tests\/acceptance\/(?:_support\/)?(T-\d{3,})\//.exec(test.trim())?.[1];
+  if (!dir || dir === impl) return '本任务的验收测试由你自己编写，没有争议流程：测试写错了直接修改测试。';
+  if (matchesAny(`tests/acceptance/${dir}/x`, writes)) return `${dir} 的验收测试已在你的可写范围内，没有争议流程：按最新规格直接改与新需求冲突的断言（不删用例，不放宽无关断言）。`;
+  return `tests/acceptance/${dir}/ 不是你的验收目录，本流程没有 test-author，也没有争议流程。如果它因本任务的改动失败，程序会在合并验证失败时把该目录加入你的可写范围并退回给你，那时按最新规格只改与新需求冲突的断言（不删用例，不放宽无关断言）；现在先完成本任务自己的部分。`;
+}
+
+/**
+ * test_author 关闭（偏离 107）：别的 task 或此前流程的验收目录被本 task 的改动打破 → 目录加进本 task 的 writes（程序批准），
+ * handoff 写清目录、失败输出与约束。调用方随后把 task 退回 worker（merge_verify_fail）。
+ */
+export async function widenWritesForBrokenAcceptance(store: StateStore, flowId: string, t: TaskFile, dirs: readonly string[], output: string, actor: string): Promise<void> {
+  const globs = dirs.flatMap(acceptanceDirGlobs);
+  const dirText = dirs.map((d) => `tests/acceptance/${d}/`).join('、');
+  await store.grantScope(flowId, t.id, { paths: globs, reason: `合并验证时 ${dirText} 的验收测试失败（被本次需求或契约变化打破）`, by: 'program' }, actor);
+  await store.appendHandoff(flowId, t.id, [
+    `# 此前或别的任务的验收测试被本次改动打破：${dirText}`,
+    `这些目录已加入你的可写范围（${globs.join('、')}）。它们的失败来自新需求或契约变化与旧断言冲突，不是你要修的实现回归时才改测试。`,
+    '只按最新规格（docs/spec、docs/contracts）修改与新需求冲突的断言；不能删用例，不能放宽与本次需求无关的断言。',
+    `如果失败与本次需求无关（是你引入的回归），改实现，不要改测试。`,
+    `失败输出：\n${failureSummary(output, 3000)}`,
+  ].join('\n\n'), actor);
+}
+
 /**
  * 争议的依据（第 9.3 节）：必须引用规格或契约的具体位置。认可的写法：
  * docs/spec/… 或 docs/contracts/… 的文件（可带 :行号 或 #标题），或规格里存在的 AC 编号（REQ-012.AC2）。

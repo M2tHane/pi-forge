@@ -193,6 +193,7 @@
 104. `src/core/` 按模块拆成 10 个子目录（state、engine、workspace、spec、plan、verify、acceptance、stage、security、ops），只搬文件、只改 import 路径，不改逻辑。个别文件按依赖方向微调归属（config、paths、git、dag、waits 归 state；engine-lock、lineage 归 engine；shell 归 security）。更早条目里的旧路径对照见文末「src/core 路径对照（10-11 重组）」。
 105. M9 脚本判定"已交付"只认最后一个实施阶段（`S<n>`）的 `stage_status = done`；P0、P1 批准后阶段切换的瞬间也会短暂是 done，轮询碰巧读到时会提前进入变更阶段（e2e `m9-real-build` 间歇失败即此原因）。
 106. `src/core` 目录依赖改为无环分层（state → security/workspace → verify/insight → spec → acceptance → plan → stage → engine → ops），由 `test/unit/core-layers.test.ts` 约束；搬了 19 个文件（verify-runner、resources、services、forge-read 下沉到 workspace；cost 系与 forge-watch 进新目录 insight；adopt、feature-spec 进 plan；gates、release 进 stage；merge-queue、precheck、knowledge、notes 进 engine；engine-lock、notify 进 ops；stage-fix 进 acceptance），并抽出 5 处纯函数（去向见路径对照表末），函数体原样，没有参数注入。
+107. test_author 关闭时，合并验证（impl 与 fix 共用）里失败的验收目录不属于当前 task（别的 task 的 foreign、此前流程的 legacy）不再建 .at-n 也不再只按失败退回：`decideBrokenAcceptance` 把这些目录加进当前 task 的 writes（grantScope，程序批准）并在 handoff 写明约束，提交检查放开 writes 里的 `tests/acceptance/[_support/]T-n/**`；forge_dispute / forge_request_scope 的拒绝信息改为指向该机制。M9b A0 的 F-002/T-007.fx-1 即死于此：预检只跑 `acceptance -- <impl>` 看不到旧目录，合并验证全量失败后 test_author 关闭分支返回 null，task 以 merge_verify_fail 退回但无处可改；test_author 开启时行为不变（偏离 90）。
 
 ## M1 删除、由 Mx 重建
 

@@ -24,7 +24,7 @@ export interface ScopeCheck {
 }
 
 /** roleWrites：角色按 scopes 推导的可写范围；超出的不自动批准（交给主会话） */
-export function checkScope(task: TaskFile, tasks: readonly TaskFile[], paths: readonly string[], roleWrites: readonly string[]): ScopeCheck {
+export function checkScope(task: TaskFile, tasks: readonly TaskFile[], paths: readonly string[], roleWrites: readonly string[], opts: { testAuthorOff?: boolean } = {}): ScopeCheck {
   const invalid: string[] = [];
   const started: ScopeCheck['started'] = [];
   const conflicts: ScopeCheck['conflicts'] = [];
@@ -32,7 +32,9 @@ export function checkScope(task: TaskFile, tasks: readonly TaskFile[], paths: re
   for (const p of paths) {
     if (path.isAbsolute(p) || p.split('/').includes('..') || p.startsWith('./')) { invalid.push(`${p}：要写相对仓库根的路径或 glob（不带 ./ 与 ..）`); continue; }
     if (PROTECTED_PATHS.some((g) => globsOverlap(p, g))) { invalid.push(`${p}：受保护路径（${PROTECTED_PATHS.join('、')}）`); continue; }
-    if (globsOverlap(p, 'tests/acceptance/**')) { invalid.push(`${p}：验收测试只由 test-author 编写；认为测试写错时用 forge_dispute`); continue; }
+    if (globsOverlap(p, 'tests/acceptance/**')) { invalid.push(opts.testAuthorOff
+      ? `${p}：验收测试不能申请。本任务自己的验收目录已在可写范围内，直接改；别的 task 或此前流程的验收测试被你的改动打破时，程序会在合并验证失败后把该目录加入可写范围并退回给你，不需要申请，也没有争议流程`
+      : `${p}：验收测试只由 test-author 编写；认为测试写错时用 forge_dispute`); continue; }
     if (globsOverlap(p, 'docs/spec/**')) { invalid.push(`${p}：规格只能经规格修订改动`); continue; }
     if (SENSITIVE_PATHS.some((g) => globsOverlap(p, g))) { invalid.push(`${p}：敏感文件`); continue; }
     if (globsOverlap(p, INTERFACES_PATH)) { invalid.push(`${p}：契约只能追加本模块的内容，不用申请；别的模块的契约文件不能改`); continue; }

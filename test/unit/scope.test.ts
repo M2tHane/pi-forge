@@ -37,3 +37,10 @@ test('角色范围外的交给主会话；路径写法与范围大小校验保�
   assert.deepEqual(c.outsideRole, ['web/src/x.ts']);
   assert.equal(c.invalid.length, 2);
 });
+
+test('偏离 107：test_author 关闭时对验收测试的拒绝不再指向 forge_dispute', () => {
+  const c = checkScope(me, [me], ['tests/acceptance/T-004/x.ts'], ROLE, { testAuthorOff: true });
+  assert.equal(c.invalid.length, 1);
+  assert.doesNotMatch(c.invalid[0]!, /用 forge_dispute/);
+  assert.match(c.invalid[0]!, /加入可写范围并退回给你/);
+});

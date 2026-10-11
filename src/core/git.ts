@@ -7,6 +7,12 @@ export const ENGINE_GIT_ENV = {
   GIT_COMMITTER_NAME: 'pi-forge', GIT_COMMITTER_EMAIL: 'pi-forge@localhost',
 };
 
+/**
+ * 路径按 UTF-8 原样输出（core.quotePath=false）：默认会把中文等非 ASCII 路径转义并加引号，按行解析时读不到文件
+ * （M9 冒烟：feature 规格文件名是中文，P1 预检按 ref 读规格时漏掉了增量需求，偏离 91）。用环境变量注入，不改参数。
+ */
+const QUOTE_PATH_ENV = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.quotePath', GIT_CONFIG_VALUE_0: 'false' };
+
 export class GitError extends Error {
   readonly stderr: string;
   constructor(args: string[], stderr: string) {
@@ -23,7 +29,7 @@ export function git(cwd: string, args: string[], opts: { engineIdentity?: boolea
     try {
       return execFileSync('git', args, {
         cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
-        env: { ...process.env, ...(opts.engineIdentity ? ENGINE_GIT_ENV : {}), ...opts.env, GIT_TERMINAL_PROMPT: '0' },
+        env: { ...process.env, ...QUOTE_PATH_ENV, ...(opts.engineIdentity ? ENGINE_GIT_ENV : {}), ...opts.env, GIT_TERMINAL_PROMPT: '0' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (e) {

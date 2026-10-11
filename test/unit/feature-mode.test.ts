@@ -10,7 +10,7 @@ import { lintSpec, effectiveSpec } from '../../src/core/spec.ts';
 import { FEATURES_DIR, featureFileName, featurePermissionSummary, featurePrecondition, formatPermissionChanges, lockedContractProblems, permissionChanges, readSpecAt, scopeSpecToFeature, submitFeatureSpec } from '../../src/core/feature-spec.ts';
 import { startFlow } from '../../src/core/stages.ts';
 import { runStageGate } from '../../src/core/gates.ts';
-import { architectBrief, checkP1, usedTaskIds } from '../../src/core/plan-flow.ts';
+import { architectBrief, checkP1, readSpecFrom, usedTaskIds } from '../../src/core/plan-flow.ts';
 import { nextStep } from '../../src/core/context-injector.ts';
 import { flowSpec } from '../../src/tools/orchestrator-tools.ts';
 import { runFlowBuild, runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
@@ -254,5 +254,14 @@ test('feature 流程的 task 编号避开此前流程的 task 与主分支 tests
     const ids = usedTaskIds(p.dir, p.store, p.flowId, p.config);
     assert.ok(ids.includes('T-007'), ids.join());
     assert.ok(!ids.includes('_support'));
+  } finally { p.cleanup(); }
+});
+
+test('中文文件名的 feature 规格按 ref 也能读到（git 输出不转义非 ASCII 路径，偏离 91）', async () => {
+  const p = await setupProject({ files: { ...BASELINE_FILES, 'docs/spec/features/2026-10-11-000-删除待办.md': '# 删除待办\n' } });
+  try {
+    const r = readSpecFrom({ root: p.dir, ref: 'HEAD' });
+    assert.ok(typeof r !== 'string', String(r));
+    assert.deepEqual((r as Exclude<typeof r, string>).features.map((f) => f.name), ['2026-10-11-000-删除待办.md']);
   } finally { p.cleanup(); }
 });

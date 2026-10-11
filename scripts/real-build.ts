@@ -2,7 +2,7 @@
 // 用法：
 //   node scripts/real-build.ts --arm A0|A1 --prd <requirement.md> --change <change.md> --hidden <hidden.mjs>
 //        [--out <目录>] [--max-min 240] [--stuck-min 30] [--planner-model ..] [--planner-thinking medium]
-//        [--coder-model ..] [--coder-thinking high] [--main-model ..] [--ext <扩展>]... [--poll-sec 5] [--stop-after-gates N]
+//        [--coder-model ..] [--coder-thinking high] [--main-model ..] [--ext <扩展>]... [--poll-sec 5] [--stop-after-gates N] [--plan-mode lean|standard]
 // 做的事（docs/M9-PLAN.md 第 2、4、5、6 节）：
 //   建空仓库 → /forge init → 写实验配置（按角色设模型与思考级别、关闭升级、A1 关闭 test-author）→ 用 `pi --mode rpc` 拉起主会话
 //   → /forge-build --prd → 把 extension_ui_request 与 .forge/ 状态交给 simulator.ts 的规则表 → 交付后 /forge-build --feature --prd
@@ -51,6 +51,7 @@ export interface Options {
   ext: string[];
   pollSec: number;
   stopAfterGates: number | null;
+  planMode: 'lean' | 'standard';
   /** 只做冒烟：在 --out 里已交付的项目上只跑变更阶段（不计入结果）；有未完成的 feature 流程时接着它 */
   changeOnly: boolean;
 }
@@ -74,6 +75,8 @@ export function parseArgs(argv: string[]): Options {
     pollSec: Number(get('--poll-sec') ?? 5),
     stopAfterGates: get('--stop-after-gates') ? Number(get('--stop-after-gates')) : null,
     changeOnly: argv.includes('--change-only'),
+    // standard：lean_below_loc 设为 0、模拟用户不再要求精简模式，让 architect 出多任务并行的计划
+    planMode: get('--plan-mode') === 'standard' ? 'standard' as const : 'lean' as const,
   };
 }
 
@@ -87,7 +90,7 @@ export const CODER_ROLES = ['worker', 'test-author'] as const;
  * thinking 写在角色上——这是 workflow.yaml 本来支持的方式，不动 ~/.pi/agent/pi-forge.json），escalation.enabled=false，A1 关闭 test-author。
  * 用 yaml 的 Document 改，保留模板里的注释与行内写法。
  */
-export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' | 'plannerModel' | 'plannerThinking' | 'coderModel' | 'coderThinking'>): string {
+export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' | 'plannerModel' | 'plannerThinking' | 'coderModel' | 'coderThinking'> & { planMode?: Options['planMode'] }): string {
   const doc = parseDocument(yamlText);
   doc.setIn(['models', 'planner'], o.plannerModel);
   doc.setIn(['models', 'coder'], o.coderModel);
@@ -99,6 +102,7 @@ export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' |
   for (const r of CODER_ROLES) { doc.setIn(['roles', r, 'model'], 'coder'); doc.setIn(['roles', r, 'thinking'], o.coderThinking); }
   doc.setIn(['escalation', 'enabled'], false);
   if (o.arm === 'A1') doc.setIn(['implementation_gate', 'test_author'], false);
+  if (o.planMode === 'standard') doc.setIn(['limits', 'lean_below_loc'], 0);
   return String(doc);
 }
 
@@ -191,7 +195,7 @@ export async function main(argv: string[]): Promise<number> {
   const runStart = Date.now();
   let scoringMs = 0;
   const log = (s: string) => console.log(`[${Math.round((Date.now() - runStart) / 1000)}s] ${s}`);
-  log(`输出目录：${out}\nPi ${piVersion}；pi-forge ${sha?.slice(0, 8) ?? '?'}${dirty ? '（有未提交改动）' : ''}\n组 ${o.arm}；规划模型 ${o.plannerModel}（${o.plannerThinking}）；写代码模型 ${o.coderModel}（${o.coderThinking}）`);
+  log(`输出目录：${out}\nPi ${piVersion}；pi-forge ${sha?.slice(0, 8) ?? '?'}${dirty ? '（有未提交改动）' : ''}\n组 ${o.arm}（${o.planMode}）；规划模型 ${o.plannerModel}（${o.plannerThinking}）；写代码模型 ${o.coderModel}（${o.coderThinking}）`);
 
   // 1. 空仓库 + /forge init + 实验配置
   const env: NodeJS.ProcessEnv = { ...process.env, PI_SKIP_VERSION_CHECK: '1' };
@@ -240,7 +244,7 @@ export async function main(argv: string[]): Promise<number> {
   let stopping = false;
   const phases: Phase[] = [];
   const intervene = (a: Exclude<Action, { kind: 'stuck' }>, result: Record<string, unknown> = {}) => {
-    const snap = phase?.flowId ? safe(() => readSnapshot(store, project, phase!.flowId, { nowMs: Date.now(), requireLean: true, turnEnded: false, lastAssistantText: '' })) : null;
+    const snap = phase?.flowId ? safe(() => readSnapshot(store, project, phase!.flowId, { nowMs: Date.now(), requireLean: o.planMode === 'lean', turnEnded: false, lastAssistantText: '' })) : null;
     appendFileSync(interventionsFile, `${JSON.stringify({
       ts: new Date().toISOString(), elapsed_s: Math.round((Date.now() - runStart) / 1000), phase: phase?.name ?? null,
       category: a.category, counts: a.counts, key: a.key, kind: a.kind,
@@ -290,8 +294,8 @@ export async function main(argv: string[]): Promise<number> {
 
   function handleUi(r: RpcRecord): void {
     const ui: UiRequest = { id: String(r['id']), method: r['method'] as UiRequest['method'], title: String(r['title'] ?? ''), ...(Array.isArray(r['options']) ? { options: r['options'] as string[] } : {}) };
-    const snap = safe(() => readSnapshot(store, project, phase?.flowId ?? null, { nowMs: Date.now(), requireLean: true, turnEnded: false, lastAssistantText: live.lastText, ui }))
-      ?? ({ nowMs: Date.now(), requireLean: true, turnEnded: false, flow: null, tasks: [], ui } as Snapshot);
+    const snap = safe(() => readSnapshot(store, project, phase?.flowId ?? null, { nowMs: Date.now(), requireLean: o.planMode === 'lean', turnEnded: false, lastAssistantText: live.lastText, ui }))
+      ?? ({ nowMs: Date.now(), requireLean: o.planMode === 'lean', turnEnded: false, flow: null, tasks: [], ui } as Snapshot);
     const asked = Date.now();
     const action = decide(snap, sim);
     if (!action || action.kind === 'stuck') {
@@ -349,7 +353,7 @@ export async function main(argv: string[]): Promise<number> {
       // 活动：事件日志、子进程会话、主会话 RPC 输出
       lastActivity = Math.max(lastActivity, rpc.lastRecordAt, safe(() => statSync(path.join(project, '.forge', 'events.jsonl')).mtimeMs) ?? 0, newestMtime(sessionsRoot(project)));
       if (now - lastDetailAt > 60_000) { lastDetailAt = now; live.lastDetail = safe(() => renderDetail(store, config)) ?? live.lastDetail; }
-      const snap = safe(() => readSnapshot(store, project, p.flowId, { nowMs: now, requireLean: true, turnEnded: live.turnEnded, lastAssistantText: live.lastText }));
+      const snap = safe(() => readSnapshot(store, project, p.flowId, { nowMs: now, requireLean: o.planMode === 'lean', turnEnded: live.turnEnded, lastAssistantText: live.lastText }));
       if (!snap) continue;
       const action = live.inFlight ? null : decide(snap, sim);
       if (action?.kind === 'stuck') { fail(action.failure === 'plan_not_lean' ? 'plan_not_lean' : action.failure === 'limit' ? 'limit' : action.failure === 'repeat' ? 'repeat' : 'out_of_table', action.reason); return; }

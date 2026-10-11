@@ -17,8 +17,8 @@ description: 写分层的项目规则草案（docs/rules-draft/<layer>.md）与�
 | `backend.md` | 框架用法、分层（路由、服务、仓储）与依赖方向、错误处理（如何抛出 errors/*.yaml 里的错误码）、权限检查放在哪一层、日志、配置读取 |
 | `database.md` | ORM 或查询库、迁移的命名与写法、主键与时间等通用字段、事务、禁止的写法（拼接 SQL）、多租户过滤（team_id） |
 | `frontend.md` | 框架、目录、请求方式（只用生成的客户端）、状态管理、路由、表单校验、四种页面状态的统一组件 |
-| `ui.md` | 设计变量与组件库、怎样对照原型、可访问名称（验收测试靠它定位元素） |
-| `commands.yaml` | install、typecheck、lint、test、acceptance、acceptance_list、e2e、contract_lint、contract_test、codegen、serve、merge_check；gui_commands；acctest_workspace.include |
+| `ui.md` | 设计变量与组件库、怎样对照原型、可访问名称与四种状态的呈现方式（验收测试靠可访问名称定位元素）。不写焦点管理、键盘循环等交互细节，它们进 manual_checks |
+| `commands.yaml` | 必配 test、serve（acceptance、acceptance_list 用同一个测试器指定目录）。typecheck、lint、codegen、e2e、contract_lint、contract_test、merge_check 只在项目已有现成工具时配置，零第三方依赖一律不配；gui_commands；acctest_workspace.include 按需 |
 
 不适用的层不写。通用规则在 rules/global.md 里，不要重复。
 
@@ -34,11 +34,14 @@ description: 写分层的项目规则草案（docs/rules-draft/<layer>.md）与�
 
 ## 写法
 
-- 每条一句话，可以检查：写"服务层抛出 `AppError('DATASOURCE_NAME_TAKEN')`（server/src/shared/errors.ts）"，不写"注意错误处理"。
+- **每条规则都要能追溯到 permissions.md、screens.md、契约或安全底线（注入、越权、密钥）**。追溯不到的不写。
+- **每个文件不超过 5 条规则、不超过 4 条审查清单。**
+- 规则编号 `R<n>`，每条一句话，可以检查：`- R2 服务层抛出 AppError('DATASOURCE_NAME_TAKEN')（server/src/shared/errors.ts）`，不写"注意错误处理"。
 - 关键条目给出最短的正确与错误写法对照，各一两行代码。
 - 按重要性排列：违反了会出错或有安全问题的放前面。
 - 能被 lint、类型检查或测试自动发现的，不写成规则，交给工具。
-- 每个文件不超过 100 行。**文件末尾附 3 到 8 条审查清单**（`- [ ] R1 ...`），编号稳定；reviewer 引用它作为"必须改"的出处，例如 `rule:backend.md#R3`。
+- **文件末尾附审查清单**：每项以它检查的规则编号开头，如 `- [ ] R2 抛出的错误码都在 errors/*.yaml 里`。编号不要变。
+  reviewer 只能用文件里存在的 R 编号当"必须改"的出处，格式 `rule:rules/backend.md#R2`；编号不存在的引用会被程序降为建议。
 
 ## 自检
 

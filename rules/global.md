@@ -3,7 +3,7 @@
 （改编自 pi-flow rules/global.md。与 rules/<layer>.md 冲突时，以分层规则为准。）
 
 ## 完成与范围
-1. 完成的定义：本 task 的 AC 都有测试且通过、本 task 相关的测试全部通过之后，才能 forge_submit。
+1. 完成的定义：本 task 相关的测试全部通过，并且每条 AC 都能通过任务说明指定的验收入口演示；之后才能 forge_submit。
 2. 只修改 task 的 writes 与 shared 中的文件；需要改其他文件时，用 forge_block 说明原因，不要绕过。
 3. 只实现 AC 要求的内容，不顺手添加"以后可能用到"的功能、参数或抽象。
 4. 接口、字段、状态码、错误码以 docs/contracts/ 为准。契约缺了可以追加，不能修改已有内容；要修改时调用 forge_change_request。
@@ -11,7 +11,7 @@
 6. 新增依赖只加本 task 确实需要的，并在 handoff 中写明；不升级、不删除别的 task 在用的依赖。
 
 ## 测试
-7. 不删除、不跳过、不放宽失败的测试；测试失败就修代码。tests/acceptance/ 由 test-author 负责，worker 不修改（S0 的公共工具与冒烟测试除外）；认为写错时用 forge_dispute。
+7. 不删除、不跳过、不放宽失败的测试；测试失败就修代码。tests/acceptance/ 由 test-author 负责，worker 不修改（S0 的公共工具与冒烟测试除外；任务说明写明『验收测试（由你编写）』时，只写自己 task 的目录）；认为写错时用 forge_dispute。
 8. 测试期望值来自规格、契约或已知正确的例子，不用和被测代码相同的算法去算。
 9. 只在系统边界上 mock（外部 API、时间、随机数）；不 mock 自己写的模块。
 

@@ -12,16 +12,17 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 
 ## 阶段
 
-- **S0 骨架**（固定，只能有 1 个 task，只建最小骨架，规模按 exit 涉及的 AC 数量衡量）：项目脚手架、配置了的命令可运行、（项目需要且有工具时）按 OpenAPI 生成类型或客户端、数据库连接与初始迁移、认证桩、
-  验收测试框架与 tests/acceptance/_support/，以及一条贯穿 前端或客户端 → API → 数据库 的最薄链路（桩实现也可以）。
-  所有命令都要遵守程序注入的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP，以便并行运行；acceptance_list 要能在只导出了文档、验收测试与配置清单的隔离工作区里运行（需要额外导出的子包清单与可缓存的依赖目录，写进 commands.yaml 的 `acctest_workspace: { include, cache }`）。
-  S0 的 worker 自己写 tests/acceptance/_support/ 公共工具和一个冒烟测试 tests/acceptance/S0-smoke/（唯一例外）；S0 exit 的 AC 测试由 test-author 在 worker 完成后写。
-  S0 的 exit 选一两条最核心的 REQ。
+- **S0 骨架**（固定，只能有 1 个 task）：启动脚本、数据库连接与初始迁移、测试运行命令、tests/acceptance/_support/ 的登录与请求助手、一条最薄的端到端链路（桩实现也可以）。
+  **不建**类型生成、客户端生成、契约检查、DOM 模拟；exit 涉及的 AC 最多 4 条，选一两条最核心的 REQ。
+  所有命令都要遵守程序注入的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP，以便并行运行。
+  项目有 test-author 且 acceptance_list 要在隔离工作区里运行时，需要额外导出的子包清单与可缓存的依赖目录，写进 commands.yaml 的 `acctest_workspace: { include, cache }`。
+  S0 的 worker 自己写 tests/acceptance/_support/ 公共工具和一个冒烟测试 tests/acceptance/S0-smoke/（唯一例外）；S0 exit 的 AC 测试由 test-author 在 worker 完成后写（`test_author` 关闭时由 worker 自己写）。
 - **S1…Sn**：每个阶段交付一组用户能感知、能演示的能力。按依赖排序：被依赖的业务（团队、权限）在前。
-  阶段数通常是 2 到 5 个；阶段越多，阶段之间的串行屏障越多。
+  标准模式阶段数通常是 2 到 5 个；阶段越多，阶段之间的串行屏障越多。
+  **lean 模式只分 S0 + S1 两个阶段**，S1 的 AC 超过 40 条才拆成 S1、S2：每多一个阶段，就多一次阶段审查、修复、复审与签收（实测 S0 的这一段 19 分钟，S1 13 分钟）。
 - 每条 MVP REQ 恰好出现在一个阶段的 exit 中。
 - 每条本阶段 AC 都要能用本阶段或之前交付的入口准备数据、执行动作、观察结果。需要后续接口时，调整阶段归属或合并紧耦合的切片，不留隐含的反向依赖。
-- 不适用的工程产物（代码生成、类型检查、lint）不要列进 S0；不让 worker 为凑命令而自建工具。
+- 不适用的工程产物（代码生成、类型检查、lint、e2e）不要列进 S0，也不配进 commands；不让 worker 为凑命令而自建工具。零第三方依赖的项目，前端交互写进 manual_checks。
 
 ## 任务
 
@@ -41,7 +42,7 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 | `shared` | 几个 task 都要追加的公共文件（路由注册、菜单、i18n 文案）。登记后不算互斥 |
 | `produces` | 本 task 实现的契约符号：`api:POST /api/x`、`table:x`、`error:X`、`fn:m#name`、`page:/x`、`lib:name` |
 | `requires` | 本 task 用到的、别的 task 产出的符号。只需要契约就能开工的加 `~` 前缀（软依赖：并行开工，预检和合并都排在生产方之后） |
-| `test_interface` | test-author 允许的测试入口：`HTTP /api/datasources*`、`page /datasources`、`fn:m#name` |
+| `test_interface` | 允许的测试入口（任务说明里渲染成『允许的测试入口』一节）：`HTTP /api/datasources*`、`page /datasources`、`fn:m#name` |
 | `size` | S、M、L，决定时间预算 |
 | `layers` | 涉及的层，决定注入哪些 rules/<layer>.md |
 | `module` | 所属模块，决定 worker 能追加哪个契约文件（paths/<模块>.yaml、errors/<模块>.yaml） |

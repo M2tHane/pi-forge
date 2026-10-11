@@ -188,6 +188,8 @@
 99. 任务说明（用户消息）新增 `## 允许的测试入口`（impl 或 for_task 的 test_interface）与 `## 本阶段及之前已交付的接口`（已 done 的 impl 的 api:/page: 产出 + 本 task 自己的 produces，最多 40 项）；给 worker、test-author、reviewer。此前提示词要求只在 test_interface 上验证，程序却从不渲染它。
 100. reviewer 的 `rule:` 出处必须指向项目里存在的 `rules/*.md`，`#` 后的条目（编号 R3/3 或文字）要在文件里出现，否则 must 降为 suggest 并写明原因（此前 `rule:skills/tdd#…` 被接受）。无读取器时仍只看前缀。
 101. 上游 handoff 只带上游最后一次 run（actor 为 `run:<id>`）写的段，跳过 dispatcher / engine / merge-queue 等程序段（过时的「依赖准备失败」把下游首条消息撑到 10–17KB）；没有 run 段时只丢程序段，无段落头的文本原样保留。
+102. 提示词按外部评审（reviewer2-fable）三处改：lean 不强制产物（S0 不建类型生成、客户端生成、契约检查、DOM 模拟，exit 最多 4 条 AC；commands 只配 test 与 serve，零依赖不配 typecheck 等；lean 只分 S0+S1，S1 超 40 条 AC 才拆）；测试标准统一为"关键逻辑写单元测试，AC 覆盖由验收测试负责"；must 的出处限为 `rule:rules/<层>.md#R<n>`、ac、contract、defect，单元测试写法问题只作 suggest，expected 只能要求已配置 commands 能验证的结果。
+103. 角色提示改为引用任务说明里的『允许的测试入口』『本阶段及之前已交付的接口』两节（程序侧另行渲染）；删去程序不提供的输入描述；test-author、reviewer 的 bash 说明与 guard 的 allowlist/readonly 档一致；worker、test-author、reviewer 与技能重复的段落各留一处。write-rules 规则编号统一 `R<n>`，每文件 ≤5 条规则、≤4 条清单，须可追溯到权限、界面规格、契约或安全底线。未采纳评审第 8 条（upstream handoff 裁剪，属程序）。
 
 ## M1 删除、由 Mx 重建
 
@@ -272,3 +274,4 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 - 10-10（M8）：`agents/architect.md` 增加 feature 模式、变更请求（完整计划与 `modifies`）、纳管（--adopt）三节；`skills/change-request/SKILL.md` 改为写完整计划、已开始的 task 用 `modifies`，删掉 N-001 编号；`agents/orchestrator.md` 增加 feature 模式的增量规格写法。architect 与 orchestrator 的提示缓存各失效一次。
 - 10-10（M8 后）：`agents/orchestrator.md` 的 P0 改为"有 docs/ 文档先读、只问疑点；没有文档详细访谈"；`skills/spec-from-prd/SKILL.md` 第一步加一句"没有文档时当作访谈提纲"。orchestrator 的提示缓存失效一次。
 - 10-11（M9 提示词调整）：新增 `skills/simplicity/`、`skills/receiving-feedback/`；改 `agents/worker.md`、`agents/test-author.md`、`agents/reviewer.md`、`agents/architect.md`，以及 `skills/tdd`、`acceptance-tests`、`code-review`、`plan-dag`、`design-contract`；`src/core/dispatcher.ts` 的技能映射给 worker 加两个技能、reviewer 加 simplicity。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
+- 10-11（评审三处修订，偏离 102–103）：改 `agents/worker.md`、`test-author.md`、`reviewer.md`、`architect.md`，`rules/global.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`receiving-feedback`、`code-review`、`plan-dag`、`design-contract`、`write-rules`。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。

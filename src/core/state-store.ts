@@ -18,7 +18,7 @@ import {
 import {
   EventCache, GENESIS_HASH, appendEvents, buildEvent, commitStateRef, readEvents, readLastEvent, sha256, untrackStateDir, verifyChain, type EventInput,
 } from './event-log.ts';
-import { conflictsWith, depStatus } from './dag.ts';
+import { conflictsWith, sameLineageAcctest, depStatus } from './dag.ts';
 
 export const FLOW_DIRNAME = '.forge';
 const JOURNAL = 'tx.json';
@@ -605,7 +605,7 @@ export class StateStore {
         soft_deps_done: softDepsDone(task, others),
         impl_done: task.kind === 'acctest' && !!task.for_task && others.some((t) => t.id === task.for_task && t.status === 'done'),
         running_count: others.filter((t) => t.status === 'in_progress').length,
-        conflicting_running: others.filter((t) => IN_FLIGHT.includes(t.status) && t.id !== task.merge_fix_for && conflictsWith(t, task)).map((t) => t.id),
+        conflicting_running: others.filter((t) => IN_FLIGHT.includes(t.status) && t.id !== task.merge_fix_for && !sameLineageAcctest(t, task) && conflictsWith(t, task)).map((t) => t.id),
         merging_other: merging && merging !== me ? merging : null,
         queue_head: eligible ? key(eligible) === me : false,
         handoff_written: (tx.readText(handoffRel(flowId, taskId)) ?? '').trim().length > 0,

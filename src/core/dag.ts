@@ -184,6 +184,15 @@ export function conflictsWith(a: Pick<TaskFile, 'writes'>, b: Pick<TaskFile, 'wr
   return a.writes.some((x) => b.writes.some((y) => globsOverlap(x, y)));
 }
 
+/**
+ * 同一 impl 谱系（impl 本身、它的 .fx-n、.at、.at-n）里一方是验收测试 task：二者由争议与单独合并协调，.at 在隔离工作区里写、
+ * 补丁只进 acc 分支，不按 writes 互斥（偏离 87；调度与状态机都用它）。M9 冒烟：S0 的 .fx-1（继承 tests/acceptance/_support/**）
+ * 提出争议后等 .at-2，.at-2 的 tests/acceptance/_support/T-002/** 与它重叠被互斥挡住，两边互等。
+ */
+export function sameLineageAcctest(a: Pick<TaskFile, 'id' | 'kind' | 'for_task'>, b: Pick<TaskFile, 'id' | 'kind' | 'for_task'>): boolean {
+  return (a.kind === 'acctest' || b.kind === 'acctest') && (a.for_task ?? a.id) === (b.for_task ?? b.id);
+}
+
 export function mutexPairs(tasks: readonly Pick<TaskFile, 'id' | 'writes'>[]): [string, string][] {
   const out: [string, string][] = [];
   for (let i = 0; i < tasks.length; i++) {

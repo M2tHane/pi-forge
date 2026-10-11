@@ -181,3 +181,30 @@ test('偏离 90：合并时此前流程留下的验收测试失败（目录不�
     assert.doesNotMatch(p.git('show', `${p.store.readFlow(p.flowId).integration_branch}:tests/acceptance/T-009/old.test.ts`), /BRITTLE/);
   } finally { p.cleanup(); }
 });
+
+test('偏离 87：.fx-1（继承 tests/acceptance/_support/**）提出争议后，同一谱系的 .at-2 照常派发，不因 writes 重叠互等', async () => {
+  const p = await setupProject({ yaml: YAML.replace(/  test:      ".*"/, '  test:      "true"'), files: FILES, tasks: [
+    mkTask('T-001', { ac: ['REQ-001.AC1'], writes: ['src/server/t-001/**', 'tests/acceptance/_support/**'] }), at('T-001', [hard('T-001')]),
+  ] });
+  const seen: string[] = [];
+  const e = engineEnv(p, async (role, _nth, a) => {
+    const id = a.env.task;
+    seen.push(id);
+    await a.call('forge_claim');
+    if (id === 'T-001') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n' }); return submitWork(a, '实现'); }
+    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': "test('[REQ-001.AC1] STRICT', () => {});\n" }); return submitWork(a, 'AC1'); }
+    if (id === 'T-001.fx-1') {
+      const r = await a.call('forge_dispute', { test: 'tests/acceptance/T-001/a.test.ts', reason: '规格没有要求 STRICT', evidence: 'docs/spec/requirements.md#REQ-001' });
+      assert.ok(r.ok, r.text);
+      return;
+    }
+    assert.equal(id, 'T-001.at-2');
+    await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': "test('[REQ-001.AC1] 按规格断言', () => {});\n" });
+    await submitWork(a, '按规格改测试');
+  });
+  try {
+    await drive(e, p.flowId, 20);
+    assert.ok(seen.includes('T-001.at-2'), seen.join());
+    assert.equal(p.store.readTask(p.flowId, 'T-001.at-2').status, 'done');
+  } finally { p.cleanup(); }
+});

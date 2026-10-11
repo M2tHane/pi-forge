@@ -173,7 +173,7 @@
 84. 精简模式不做逐任务审查（`decideReview` 按流程的 plan_mode 关掉 per_task），与 workflow.yaml 注释"精简模式自动为 false"和第 7.6 节一致；此前只读配置，精简模式下仍派 `.rv`。M9 冒烟发现。
 85. test-author 隔离工作区默认还导出 `scripts/**` 与根目录 `tsconfig*.json`（规格第 9.2 节只列了规格、契约、验收目录与 include）。M9 冒烟里 S0 把验收运行器和 codegen 放在 `scripts/`，隔离工作区里 codegen 失败、`.at` 卡住；worker 改不了 `workflow.yaml` 的 include。S0 完成标准第 5 条（隔离工作区里 install 与 acceptance_list 能运行）程序仍未在 S0 检查，记入已知局限。
 86. 只读档位 bash 但有 write 工具的角色（architect）执行 `rm`、`mv`、`git rm`、`git mv` 时，拒绝信息改为给出做法：在新路径写入、把旧文件清空（配合偏离 83 的"空文件视为不存在"）。M9 冒烟里 architect 因无法改名契约文件连续阻塞。
-87. 调度互斥不作用于同一 impl 谱系里的验收测试 task 与实现 task（二者由争议与单独合并协调，`.at` 在隔离工作区里写）。M9 冒烟：S0 的 `.fx-1` 继承 `tests/acceptance/_support/**`，提出争议后等 `.at-2`，而 `.at-2` 被互斥挡住，两边互等；`waits.ts` 的停滞检查不含互斥，没有报出来（已知局限）。
+87. 调度与状态机的互斥都不作用于同一 impl 谱系里的验收测试 task 与实现 task（二者由争议与单独合并协调，`.at` 在隔离工作区里写）。M9 冒烟：S0 的 `.fx-1` 继承 `tests/acceptance/_support/**`，提出争议后等 `.at-2`，而 `.at-2` 被互斥挡住，两边互等；`waits.ts` 的停滞检查不含互斥，没有报出来（已知局限）。（修订：最初只改了调度器，状态机在 ready → in_progress 仍按互斥拒绝，第二次冒烟才暴露；现在两处共用 `dag.ts` 的 `sameLineageAcctest`。）
 88. spec-lint 的占位词规则只认大写、独立成词的 `TODO`、`TBD` 与"待定"（此前不区分大小写，把 `Todo`、`TodoCollection` 这类合法术语当成占位）。M9 冒烟：待办项目的基线 glossary 让 feature 流程的增量规格无法提交。
 89. 规划用的"已用 task 编号"包括此前各流程的 task 与主分支 `tests/acceptance/` 下的目录名（`usedTaskIds`）。验收测试目录全仓库共用；此前 feature 流程从 T-001 重新编号，会和旧流程写进同一个目录。M9 冒烟发现。
 90. 合并验证时失败的验收目录不属于本流程的任何 task（此前流程留下的测试被新需求打破）：给本 task 建一轮 `legacy` 的 `.at-n`，writes 加上旧目录，不等未开始的 `.at`、不要求覆盖 AC，由 test-author 按最新规格只改冲突的断言；`.at` 的提交检查、补丁与导出改为按 task 的 writes。找不到任何负责的 task 时按本 task 的合并验证失败处理（此前会尝试非法转移，task 卡在 merging、合并队列被占）。

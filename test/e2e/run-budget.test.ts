@@ -8,9 +8,9 @@ import { setupProject } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { FLOW5_YAML, SETTINGS5 } from '../helpers/flow5.ts';
-import { sessionDirOf } from '../../src/core/session-log.ts';
-import { runBudgetMinutes } from '../../src/core/run-budget.ts';
-import { nextStep } from '../../src/core/context-injector.ts';
+import { sessionDirOf } from '../../src/core/engine/session-log.ts';
+import { runBudgetMinutes } from '../../src/core/engine/run-budget.ts';
+import { nextStep } from '../../src/core/engine/context-injector.ts';
 import { flowResolveTimeout, flowWait, statusText } from '../../src/tools/orchestrator-tools.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 

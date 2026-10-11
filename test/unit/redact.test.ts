@@ -2,7 +2,7 @@
 // 敏感内容打码（第六轮 D4）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { REDACTED, redactSecrets } from '../../src/core/redact.ts';
+import { REDACTED, redactSecrets } from '../../src/core/security/redact.ts';
 import { redactToolResult } from '../../src/pi-adapter/redact-hook.ts';
 
 test('常见密钥形态打码', () => {

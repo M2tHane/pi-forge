@@ -7,11 +7,21 @@
 - Pi 的 API 先查文档或源码再用，不凭记忆。Pi 安装在 `$(npm root -g)/@earendil-works/pi-coding-agent`。
 
 ## 结构（与 pi-flow 相同）
-- `src/core/`：业务逻辑，不依赖 Pi。`state-store.ts` 是 `.forge/` 唯一的读写入口；`state-machine.ts` 是转移表（不在表中的转移一律拒绝）；`dispatcher.ts` 是引擎。
+- `src/core/`：业务逻辑，不依赖 Pi，按模块分子目录（依赖大体自下而上，旧路径对照见 `NOTES.md` 末节）：
+  - `state/`：`.forge/` 状态层。`state-store.ts` 是 `.forge/` 唯一的读写入口；`state-machine.ts` 是转移表（不在表中的转移一律拒绝）；另有 schemas、event-log、migrations、checkpoints、config、paths、git、dag、waits。
+  - `engine/`：引擎。`dispatcher.ts` 是引擎；调度、子进程运行时、提示组装、上下文注入、角色设置、预算与成本、引擎锁、谱系、指标与通知。
+  - `workspace/`：worktree、阶段 worktree、工作区合并、范围（scope）与越界检测、依赖准备。
+  - `spec/`：规格解析与检查、规格流程、需求接入、feature 规格、预检。
+  - `plan/`：契约与计划：计划流程、契约检查/差异/合并、规则草稿、变更请求。
+  - `verify/`：预检、验证运行与缓存、闸门、合并队列、测试调整。
+  - `acceptance/`：验收测试（acctest）、验收流程、覆盖率。
+  - `stage/`：阶段：审查、阶段审查/QA/验收/fix/轮次、阶段定义、签收。
+  - `security/`：guard（命令与路径校验）、shell 解析、redact、工具参数。
+  - `ops/`：运维与查看：init、adopt、resume、release、doctor、状态视图、forge-read/watch、history、knowledge、notes、codegraph。
 - `src/tools/`：`forge_*` 工具的业务实现；`src/commands/`：斜杠命令的业务实现；`src/modes/`：阶段计划与 fix 流程。
 - `src/pi-adapter/`：**唯一**可以调用 Pi API 的目录。
 - `agents/`、`rules/`、`skills/`、`templates/`：角色提示、规则、技能、项目模板。
-- `schemas/*.json` 由 `npm run gen:schemas` 从 `src/core/schemas.ts` 生成。
+- `schemas/*.json` 由 `npm run gen:schemas` 从 `src/core/state/schemas.ts` 生成。
 
 ## 约定
 - 状态只能由程序写；agent 只通过 `forge_*` 工具提交申请。约束靠移除能力和程序校验，不靠提示词。

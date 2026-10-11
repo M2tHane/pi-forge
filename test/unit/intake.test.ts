@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { importInputs, prepareInputs } from '../../src/core/intake.ts';
+import { importInputs, prepareInputs } from '../../src/core/spec/intake.ts';
 import { setupProject } from '../helpers/project.ts';
 
 const write = (root: string, rel: string, content: string | Buffer) => {

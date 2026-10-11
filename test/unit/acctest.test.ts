@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   accBranch, applyToAccBranch, checkAcctestSubmit, exportLayers, exportPatterns, filesAt, lockHash, prepareAcctestWorkspace, revertOutside, scanAcCoverage, testFilesIn,
-} from '../../src/core/acctest.ts';
-import { parseConfig } from '../../src/core/config.ts';
+} from '../../src/core/acceptance/acctest.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 import { mkTask } from '../helpers/tasks.ts';
 

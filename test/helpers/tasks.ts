@@ -1,5 +1,5 @@
 // 来源：pi-flow test/helpers/tasks.ts @ 31f3f15
-import type { TaskFile, Dependency, TaskKind } from '../../src/core/schemas.ts';
+import type { TaskFile, Dependency, TaskKind } from '../../src/core/state/schemas.ts';
 
 export function mkTask(id: string, over: Partial<TaskFile> & { deps?: Dependency[] } = {}): TaskFile {
   const { deps, ...rest } = over;

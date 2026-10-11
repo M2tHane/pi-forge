@@ -7,12 +7,12 @@ import { makeEngine, commitToBranch, type RoleScript } from '../helpers/engine.t
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
-import { REVIEW_CONFIRM, REVIEW_INPUT, REVIEW_REPORT, resolveReviews, readReviewEvidence } from '../../src/core/review-flow.ts';
-import { createStageReview, nextStageReviewId, resolveStageReview, stageReviewRoundOf, stageReviewRounds, stageReviewsOf } from '../../src/core/stage-review.ts';
-import { leanForkFrom } from '../../src/core/stage-fix.ts';
-import { worktreesRoot } from '../../src/core/worktree.ts';
-import { taskRel } from '../../src/core/state-store.ts';
-import type { TaskFile } from '../../src/core/schemas.ts';
+import { REVIEW_CONFIRM, REVIEW_INPUT, REVIEW_REPORT, resolveReviews, readReviewEvidence } from '../../src/core/stage/review-flow.ts';
+import { createStageReview, nextStageReviewId, resolveStageReview, stageReviewRoundOf, stageReviewRounds, stageReviewsOf } from '../../src/core/stage/stage-review.ts';
+import { leanForkFrom } from '../../src/core/stage/stage-fix.ts';
+import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
+import { taskRel } from '../../src/core/state/state-store.ts';
+import type { TaskFile } from '../../src/core/state/schemas.ts';
 
 const FILES = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));
 const must1 = { level: 'must' as const, basis: 'ac:REQ-001.AC1', files: ['src/server/t-001/a.ts'], location: 'a', problem: '没有返回看板编号', expected: '返回编号' };

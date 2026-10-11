@@ -7,7 +7,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import { summarizeSession } from '../src/core/session-log.ts';
+import { summarizeSession } from '../src/core/engine/session-log.ts';
 
 const argv = process.argv.slice(2);
 const opt = (k: string, d: string) => (argv.includes(k) ? argv[argv.indexOf(k) + 1]! : d);

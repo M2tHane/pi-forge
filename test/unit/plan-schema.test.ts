@@ -1,9 +1,9 @@
 // M1：plan.yaml 与任务、流程新增字段的形状校验；语义校验留给 M3。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SCHEMAS, TASK_KINDS, TASK_STATUSES, validate, type PlanFile } from '../../src/core/schemas.ts';
+import { SCHEMAS, TASK_KINDS, TASK_STATUSES, validate, type PlanFile } from '../../src/core/state/schemas.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { SCHEMA_VERSION, MIGRATIONS, migrationChain } from '../../src/core/migrations.ts';
+import { SCHEMA_VERSION, MIGRATIONS, migrationChain } from '../../src/core/state/migrations.ts';
 
 const plan = (): PlanFile => ({
   size_estimate: { loc: 18000, modules: 9 }, mode: 'standard',

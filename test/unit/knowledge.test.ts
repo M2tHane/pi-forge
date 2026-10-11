@@ -1,10 +1,10 @@
 // 改编自 pi-flow test/unit/knowledge.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConfig } from '../../src/core/config.ts';
-import { addEntry, appliesTo, checkInput, selectKnowledge, formatEntry, defaultRuleTarget, KnowledgeError, KNOWLEDGE_PROMPT_MAX } from '../../src/core/knowledge.ts';
-import { assemblePrompt, upstreamSection, UPSTREAM_TOTAL } from '../../src/core/prompt-assembler.ts';
-import type { KnowledgeFile, KnowledgeEntry } from '../../src/core/schemas.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
+import { addEntry, appliesTo, checkInput, selectKnowledge, formatEntry, defaultRuleTarget, KnowledgeError, KNOWLEDGE_PROMPT_MAX } from '../../src/core/ops/knowledge.ts';
+import { assemblePrompt, upstreamSection, UPSTREAM_TOTAL } from '../../src/core/engine/prompt-assembler.ts';
+import type { KnowledgeFile, KnowledgeEntry } from '../../src/core/state/schemas.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 import { mkTask } from '../helpers/tasks.ts';
 

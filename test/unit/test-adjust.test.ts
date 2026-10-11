@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { adjustableTests, testAdjustEnabled, testAdjustments } from '../../src/core/test-adjust.ts';
-import { parseConfig } from '../../src/core/config.ts';
+import { adjustableTests, testAdjustEnabled, testAdjustments } from '../../src/core/verify/test-adjust.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 import { tmpRepo } from '../helpers/repo.ts';
-import type { TaskFile } from '../../src/core/schemas.ts';
+import type { TaskFile } from '../../src/core/state/schemas.ts';
 
 test('可适配的已有测试：基线上已有、writes 之外的测试文件；改动只算修改，新增与删除不算', () => {
   const r = tmpRepo();

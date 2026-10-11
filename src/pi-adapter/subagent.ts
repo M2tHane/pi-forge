@@ -4,17 +4,17 @@
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { tolerantArgs } from './tool-args.ts';
-import { loadConfig } from '../core/config.ts';
-import { StateStore } from '../core/state-store.ts';
-import { SubagentRuntime } from '../core/subagent-runtime.ts';
+import { loadConfig } from '../core/state/config.ts';
+import { StateStore } from '../core/state/state-store.ts';
+import { SubagentRuntime } from '../core/engine/subagent-runtime.ts';
 import { SUBAGENT_TOOLS, runEnvFrom, type SubagentToolName } from '../tools/subagent-tools.ts';
-import { MISSING_TOOLS_REASON } from '../core/dependencies.ts';
-import { notesContextMessage } from '../core/notes.ts';
-import { taskNotesRel } from '../core/state-store.ts';
+import { MISSING_TOOLS_REASON } from '../core/workspace/dependencies.ts';
+import { notesContextMessage } from '../core/ops/notes.ts';
+import { taskNotesRel } from '../core/state/state-store.ts';
 import { installMemory } from './memory.ts';
-import { stopAllServices } from '../core/services.ts';
+import { stopAllServices } from '../core/engine/services.ts';
 import { redactToolResult } from './redact-hook.ts';
-import { scratchDir } from '../core/worktree.ts';
+import { scratchDir } from '../core/workspace/worktree.ts';
 
 /** 子进程 bash 命令的超时上限（秒），workflow.yaml 的 limits.bash_timeout_s，默认 300 */
 export const DEFAULT_BASH_TIMEOUT_S = 300;

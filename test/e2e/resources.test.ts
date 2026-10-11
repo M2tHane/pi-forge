@@ -6,7 +6,7 @@ import path from 'node:path';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { listResources } from '../../src/core/resources.ts';
+import { listResources } from '../../src/core/engine/resources.ts';
 
 test('forge_service 启动的服务拿到本次运行的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP；运行结束后资源释放', async () => {
   const yaml = PROJECT_YAML.replace('limits:', '  serve: "echo $PORT $FORGE_PORT_BASE $FORGE_DB_NAME $FORGE_TMP > ../serve-env.txt; sleep 30"\nlimits:');

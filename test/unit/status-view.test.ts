@@ -1,9 +1,9 @@
 // 改编自 pi-flow test/unit/status-view.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConfig, ConfigError } from '../../src/core/config.ts';
-import { phaseOfStage, renderStatus, taskActivity, notices, snapshotOf, actionsNeeded, statusLine } from '../../src/core/status-view.ts';
-import { hashToken } from '../../src/core/state-machine.ts';
+import { parseConfig, ConfigError } from '../../src/core/state/config.ts';
+import { phaseOfStage, renderStatus, taskActivity, notices, snapshotOf, actionsNeeded, statusLine } from '../../src/core/ops/status-view.ts';
+import { hashToken } from '../../src/core/state/state-machine.ts';
 import { setupProject } from '../helpers/project.ts';
 import { TEST_YAML, REAL_TEMPLATE_YAML } from '../helpers/config.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';

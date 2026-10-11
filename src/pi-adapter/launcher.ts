@@ -4,8 +4,8 @@
 // 已核实（Pi 1.0.0 docs/rpc.md、rpc-commands.md、json.md）：prompt / steer 命令；事件流与 json 模式相同；关闭 stdin 即请求退出。
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import type { SubagentHandle, SubagentLauncher, SubagentSpec, RunOutcome } from '../core/launcher.ts';
-import { UsageAccumulator } from '../core/metrics.ts';
+import type { SubagentHandle, SubagentLauncher, SubagentSpec, RunOutcome } from '../core/engine/launcher.ts';
+import { UsageAccumulator } from '../core/engine/metrics.ts';
 
 const STDERR_TAIL = 4000;
 

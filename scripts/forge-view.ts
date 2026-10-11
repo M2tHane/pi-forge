@@ -6,7 +6,7 @@
 // 默认输出到 <项目目录>.forge-view.html（项目目录之外，不污染工作区）。只读，不修改 .forge/；内嵌的自由文本都经过打码。
 import { existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { StateStore } from '../src/core/state-store.ts';
+import { StateStore } from '../src/core/state/state-store.ts';
 import { buildViewData, renderViewHtml } from './forge-view-data.ts';
 
 const argv = process.argv.slice(2);

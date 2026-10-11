@@ -6,7 +6,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { StateStore } from '../../src/core/state-store.ts';
+import { StateStore } from '../../src/core/state/state-store.ts';
 import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';

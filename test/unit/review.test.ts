@@ -5,8 +5,8 @@ import {
   REVIEW_DIFF_MAX, buildReviewBrief, classifyIssues, contractFilesFor, effectiveVerdict, fitSnippets, isValidMustBasis, mustHandoff, mustOf, ruleBasisProblem,
   nextReviewId, reviewMode, reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, touchesContracts, truncateDiff, validateConfirm,
   type ReviewPolicy,
-} from '../../src/core/review.ts';
-import type { ReviewFinding } from '../../src/core/schemas.ts';
+} from '../../src/core/stage/review.ts';
+import type { ReviewFinding } from '../../src/core/state/schemas.ts';
 import { hard, mkTask } from '../helpers/tasks.ts';
 
 const policy: ReviewPolicy = { perTask: true, skipSizes: ['S'], criticalFanout: 3, maxRounds: 2 };

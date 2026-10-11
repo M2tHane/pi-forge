@@ -7,8 +7,8 @@ import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts'
 import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-import { readReviewEvidence, REVIEW_CONFIRM, REVIEW_INPUT, REVIEW_REPORT, SUGGESTIONS_PATH, type ReviewInputFile } from '../../src/core/review-flow.ts';
-import type { RoleSettingsFile } from '../../src/core/schemas.ts';
+import { readReviewEvidence, REVIEW_CONFIRM, REVIEW_INPUT, REVIEW_REPORT, SUGGESTIONS_PATH, type ReviewInputFile } from '../../src/core/stage/review-flow.ts';
+import type { RoleSettingsFile } from '../../src/core/state/schemas.ts';
 
 // 全量测试命令改为恒通过：本组用例关心的是审查而不是预检
 const YAML = PROJECT_YAML.replace(/test: +"test -f[^\n]*/, 'test:      "true"');

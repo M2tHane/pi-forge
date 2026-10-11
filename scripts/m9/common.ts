@@ -4,8 +4,8 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { stageDurations } from '../../src/core/signoff.ts';
-import type { FlowEvent, FlowFile } from '../../src/core/schemas.ts';
+import { stageDurations } from '../../src/core/stage/signoff.ts';
+import type { FlowEvent, FlowFile } from '../../src/core/state/schemas.ts';
 
 // —— 隐藏测试 ——
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { CONTRACTS } from '../helpers/contracts.ts';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { contractDiff, contractViolationsAt, isNullableColumn } from '../../src/core/contract-diff.ts';
+import { contractDiff, contractViolationsAt, isNullableColumn } from '../../src/core/plan/contract-diff.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 
 const edit = (over: Record<string, string | null>): Record<string, string> => {

@@ -2,9 +2,9 @@
 // 崩溃测试用的引擎进程：在独立的 node 进程中运行引擎（真实 pi 子进程），由测试 SIGKILL。
 // 用法：node crash-driver.ts <项目目录> <角色设置 JSON>
 import path from 'node:path';
-import { Engine } from '../../src/core/dispatcher.ts';
-import { StateStore } from '../../src/core/state-store.ts';
-import { loadConfig } from '../../src/core/config.ts';
+import { Engine } from '../../src/core/engine/dispatcher.ts';
+import { StateStore } from '../../src/core/state/state-store.ts';
+import { loadConfig } from '../../src/core/state/config.ts';
 import { PiLauncher } from '../../src/pi-adapter/launcher.ts';
 
 const [dir, settingsJson] = process.argv.slice(2);

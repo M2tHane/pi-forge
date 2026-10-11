@@ -1,7 +1,7 @@
 // 来源：pi-flow test/unit/paths.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { globsOverlap, globWithin, matchesAny, matchesReadPaths, normalizeRelPath, isProtected } from '../../src/core/paths.ts';
+import { globsOverlap, globWithin, matchesAny, matchesReadPaths, normalizeRelPath, isProtected } from '../../src/core/state/paths.ts';
 
 test('globsOverlap：目录嵌套与通配', () => {
   assert.equal(globsOverlap('src/server/**', 'src/server/export/**'), true);

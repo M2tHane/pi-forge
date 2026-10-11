@@ -8,8 +8,8 @@ import { setupProject, type Project } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-import { mergeToMain } from '../../src/core/release.ts';
-import { actionsNeeded } from '../../src/core/status-view.ts';
+import { mergeToMain } from '../../src/core/ops/release.ts';
+import { actionsNeeded } from '../../src/core/ops/status-view.ts';
 import { runFlowCommand } from '../../src/commands/forge.ts';
 import { commandEnv } from '../helpers/commands.ts';
 

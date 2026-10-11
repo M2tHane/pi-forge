@@ -1,8 +1,8 @@
 // 第 9.3–9.5 节：验收测试返工与单独合并的纯函数部分。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { awaitedAcctest, classifyAcceptanceFailure, failingAcceptanceDirs, latestAcctest, nextAcctestId, nextFixId, validateEvidence } from '../../src/core/acceptance-flow.ts';
-import type { TaskStatus } from '../../src/core/schemas.ts';
+import { awaitedAcctest, classifyAcceptanceFailure, failingAcceptanceDirs, latestAcctest, nextAcctestId, nextFixId, validateEvidence } from '../../src/core/acceptance/acceptance-flow.ts';
+import type { TaskStatus } from '../../src/core/state/schemas.ts';
 
 const at = (id: string, status: TaskStatus, for_task = 'T-003') => ({ id, kind: 'acctest' as const, for_task, status });
 

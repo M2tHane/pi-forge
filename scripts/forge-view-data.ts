@@ -2,12 +2,12 @@
 // 所有内嵌的自由文本（handoff、备注、证据摘录、事件原因、变更内容）一律经 redactDeep 打码后才进入页面。
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { StateStore, handoffRel, evidenceRel } from '../src/core/state-store.ts';
-import { STAGE_TRANSITIONS, TRANSITIONS } from '../src/core/state-machine.ts';
-import { flowMetrics } from '../src/core/signoff.ts';
-import { isAdoptFlow } from '../src/core/adopt.ts';
-import { redactDeep, redactSecrets } from '../src/core/redact.ts';
-import type { FlowFile, TaskFile } from '../src/core/schemas.ts';
+import { StateStore, handoffRel, evidenceRel } from '../src/core/state/state-store.ts';
+import { STAGE_TRANSITIONS, TRANSITIONS } from '../src/core/state/state-machine.ts';
+import { flowMetrics } from '../src/core/stage/signoff.ts';
+import { isAdoptFlow } from '../src/core/ops/adopt.ts';
+import { redactDeep, redactSecrets } from '../src/core/security/redact.ts';
+import type { FlowFile, TaskFile } from '../src/core/state/schemas.ts';
 
 /** 七个角色（规格第 14 节） */
 export const ROLES = ['orchestrator', 'architect', 'worker', 'test-author', 'reviewer', 'stage-qa', 'researcher'] as const;

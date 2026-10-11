@@ -4,11 +4,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { NotesError, applyNoteOps, emptyNotes, notesContextMessage, renderNotes, seedTaskNotes } from '../../src/core/notes.ts';
-import { formatSearch, loadHistory, readHistoryEntry, searchHistory, READ_CHUNK } from '../../src/core/history.ts';
-import { MAIN_NOTES_REL, StateStore, taskNotesRel } from '../../src/core/state-store.ts';
+import { NotesError, applyNoteOps, emptyNotes, notesContextMessage, renderNotes, seedTaskNotes } from '../../src/core/ops/notes.ts';
+import { formatSearch, loadHistory, readHistoryEntry, searchHistory, READ_CHUNK } from '../../src/core/ops/history.ts';
+import { MAIN_NOTES_REL, StateStore, taskNotesRel } from '../../src/core/state/state-store.ts';
 import { tmpRepo } from '../helpers/repo.ts';
-import { NOTE_SECTION_MAX_ITEMS } from '../../src/core/schemas.ts';
+import { NOTE_SECTION_MAX_ITEMS } from '../../src/core/state/schemas.ts';
 
 test('notes：add、replace、remove、set 按顺序执行；序号越界与缺字段报错', () => {
   const n = emptyNotes('t');

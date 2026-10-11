@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
-import { StateStore, StateError } from '../../src/core/state-store.ts';
-import { hashToken } from '../../src/core/state-machine.ts';
-import { appendEvents, buildEvent, readEvents } from '../../src/core/event-log.ts';
+import { StateStore, StateError } from '../../src/core/state/state-store.ts';
+import { hashToken } from '../../src/core/state/state-machine.ts';
+import { appendEvents, buildEvent, readEvents } from '../../src/core/state/event-log.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import { mkTask, hard, soft } from '../helpers/tasks.ts';
 

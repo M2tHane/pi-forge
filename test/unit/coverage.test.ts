@@ -1,11 +1,11 @@
 // 第 11.1 节：阶段验收覆盖率（矩阵、渲染、报告提交、补测轮次）与实施阶段程序检查。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { coverageMatrix, createCoverageRounds, renderCoverageMarkdown, stageCoverage, writeCoverageReport } from '../../src/core/coverage.ts';
-import { createCoverageGapRound, gateFailed, gateIssues, MAX_GATE_ROUNDS, runImplementationChecks } from '../../src/core/gates.ts';
+import { coverageMatrix, createCoverageRounds, renderCoverageMarkdown, stageCoverage, writeCoverageReport } from '../../src/core/acceptance/coverage.ts';
+import { createCoverageGapRound, gateFailed, gateIssues, MAX_GATE_ROUNDS, runImplementationChecks } from '../../src/core/verify/gates.ts';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import type { Requirement } from '../../src/core/spec.ts';
+import type { Requirement } from '../../src/core/spec/spec.ts';
 
 const req = (id: string, priority: 'MVP' | 'LATER', acs: [string, boolean][]) => ({ id, priority, acs: acs.map(([a, manual]) => ({ id: a, manual, text: `${a} 的内容`, line: 1 })) }) as Pick<Requirement, 'id' | 'priority' | 'acs'>;
 const REQS = [req('REQ-001', 'MVP', [['AC1', false], ['AC2', false], ['AC3', true]]), req('REQ-002', 'LATER', [['AC1', false]]), req('REQ-003', 'MVP', [['AC1', false]])];

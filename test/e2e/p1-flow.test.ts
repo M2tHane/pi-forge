@@ -5,13 +5,13 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { commitToBranch } from '../helpers/engine.ts';
-import type { MergeHooks } from '../../src/core/merge-queue.ts';
+import type { MergeHooks } from '../../src/core/verify/merge-queue.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
 import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
-import { nextStep, turnContext } from '../../src/core/context-injector.ts';
-import { renderStatus } from '../../src/core/status-view.ts';
+import { nextStep, turnContext } from '../../src/core/engine/context-injector.ts';
+import { renderStatus } from '../../src/core/ops/status-view.ts';
 import { flowSpec, statusText } from '../../src/tools/orchestrator-tools.ts';
-import { parseConfig } from '../../src/core/config.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { engineEnv } from '../helpers/commands.ts';
 

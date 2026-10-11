@@ -2,8 +2,8 @@
 // pi-adapter 接口草案（M0 产出）：core 与 commands 只依赖这些接口，由 src/pi-adapter/ 用 Pi API 实现。
 // 每个接口后注明对应的、已在 Pi 0.99.2 上实测或读源码核实的能力，详见 NOTES.md 的 API 矩阵。
 
-import type { ThinkingLevel } from '../core/schemas.ts';
-import type { ToolCall } from '../core/guard.ts';
+import type { ThinkingLevel } from '../core/state/schemas.ts';
+import type { ToolCall } from '../core/security/guard.ts';
 
 /** 交互 UI（ctx.ui.select/confirm/input/notify；RPC 模式经 extension_ui_request 转发；print/json 模式无 UI） */
 export interface UiPort {
@@ -29,7 +29,7 @@ export interface SessionHooks {
   onBeforeTurn(provider: () => string): void;
 }
 
-export type { SubagentSpec, SubagentHandle, SubagentLauncher, RunOutcome } from '../core/launcher.ts';
+export type { SubagentSpec, SubagentHandle, SubagentLauncher, RunOutcome } from '../core/engine/launcher.ts';
 
 /** 用户级配置目录（getAgentDir()，默认 ~/.pi/agent，可由 PI_CODING_AGENT_DIR 覆盖） */
 export interface PiPaths {

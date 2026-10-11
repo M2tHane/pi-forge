@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeMetrics, criticalPath, filterSuggestions, parseCoverageMatrix, qaConclusion, qaCounts, renderMetrics, reworkCounts, stageDurations, taskTimings, deliveryReport, stageSignoff, flowMetrics } from '../../src/core/signoff.ts';
-import type { FlowEvent, FlowFile, RunFile } from '../../src/core/schemas.ts';
-import { renderCoverageMarkdown } from '../../src/core/coverage.ts';
+import { computeMetrics, criticalPath, filterSuggestions, parseCoverageMatrix, qaConclusion, qaCounts, renderMetrics, reworkCounts, stageDurations, taskTimings, deliveryReport, stageSignoff, flowMetrics } from '../../src/core/stage/signoff.ts';
+import type { FlowEvent, FlowFile, RunFile } from '../../src/core/state/schemas.ts';
+import { renderCoverageMarkdown } from '../../src/core/acceptance/coverage.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
 import { setupProject } from '../helpers/project.ts';
-import { needsHumanReason, renderStatus, actionsNeeded } from '../../src/core/status-view.ts';
+import { needsHumanReason, renderStatus, actionsNeeded } from '../../src/core/ops/status-view.ts';
 
 const T0 = Date.parse('2026-01-01T00:00:00Z');
 const at = (min: number) => new Date(T0 + min * 60_000).toISOString();

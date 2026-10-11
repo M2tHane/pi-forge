@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Value } from 'typebox/value';
-import { withoutPlaceholders } from '../../src/core/tool-params.ts';
+import { withoutPlaceholders } from '../../src/core/security/tool-params.ts';
 import { SpecParams, WaitParams } from '../../src/tools/orchestrator-tools.ts';
 
 test('withoutPlaceholders：去掉可选参数里的 N/A、空串、null；必填与正常值原样保留', () => {

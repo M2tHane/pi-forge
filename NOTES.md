@@ -190,6 +190,7 @@
 101. 上游 handoff 只带上游最后一次 run（actor 为 `run:<id>`）写的段，跳过 dispatcher / engine / merge-queue 等程序段（过时的「依赖准备失败」把下游首条消息撑到 10–17KB）；没有 run 段时只丢程序段，无段落头的文本原样保留。
 102. 提示词按外部评审（reviewer2-fable）三处改：lean 不强制产物（S0 不建类型生成、客户端生成、契约检查、DOM 模拟，exit 最多 4 条 AC；commands 只配 test 与 serve，零依赖不配 typecheck 等；lean 只分 S0+S1，S1 超 40 条 AC 才拆）；测试标准统一为"关键逻辑写单元测试，AC 覆盖由验收测试负责"；must 的出处限为 `rule:rules/<层>.md#R<n>`、ac、contract、defect，单元测试写法问题只作 suggest，expected 只能要求已配置 commands 能验证的结果。
 103. 角色提示改为引用任务说明里的『允许的测试入口』『本阶段及之前已交付的接口』两节（程序侧另行渲染）；删去程序不提供的输入描述；test-author、reviewer 的 bash 说明与 guard 的 allowlist/readonly 档一致；worker、test-author、reviewer 与技能重复的段落各留一处。write-rules 规则编号统一 `R<n>`，每文件 ≤5 条规则、≤4 条清单，须可追溯到权限、界面规格、契约或安全底线。未采纳评审第 8 条（upstream handoff 裁剪，属程序）。
+104. `src/core/` 按模块拆成 10 个子目录（state、engine、workspace、spec、plan、verify、acceptance、stage、security、ops），只搬文件、只改 import 路径，不改逻辑。个别文件按依赖方向微调归属（config、paths、git、dag、waits 归 state；engine-lock、lineage 归 engine；shell 归 security）。更早条目里的旧路径对照见文末「src/core 路径对照（10-11 重组）」。
 
 ## M1 删除、由 Mx 重建
 
@@ -275,3 +276,96 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 - 10-10（M8 后）：`agents/orchestrator.md` 的 P0 改为"有 docs/ 文档先读、只问疑点；没有文档详细访谈"；`skills/spec-from-prd/SKILL.md` 第一步加一句"没有文档时当作访谈提纲"。orchestrator 的提示缓存失效一次。
 - 10-11（M9 提示词调整）：新增 `skills/simplicity/`、`skills/receiving-feedback/`；改 `agents/worker.md`、`agents/test-author.md`、`agents/reviewer.md`、`agents/architect.md`，以及 `skills/tdd`、`acceptance-tests`、`code-review`、`plan-dag`、`design-contract`；`src/core/dispatcher.ts` 的技能映射给 worker 加两个技能、reviewer 加 simplicity。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
 - 10-11（评审三处修订，偏离 102–103）：改 `agents/worker.md`、`test-author.md`、`reviewer.md`、`architect.md`，`rules/global.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`receiving-feedback`、`code-review`、`plan-dag`、`design-contract`、`write-rules`。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
+
+## src/core 路径对照（10-11 重组）
+
+历史条目中的 `src/core/xxx.ts` 均指重组前的平铺路径，对照如下。
+
+| 旧路径 | 新路径 |
+|---|---|
+| `src/core/acceptance-flow.ts` | `src/core/acceptance/acceptance-flow.ts` |
+| `src/core/acctest.ts` | `src/core/acceptance/acctest.ts` |
+| `src/core/adopt.ts` | `src/core/ops/adopt.ts` |
+| `src/core/agents.ts` | `src/core/engine/agents.ts` |
+| `src/core/change-flow.ts` | `src/core/plan/change-flow.ts` |
+| `src/core/change-request.ts` | `src/core/plan/change-request.ts` |
+| `src/core/checkpoints.ts` | `src/core/state/checkpoints.ts` |
+| `src/core/codegraph.ts` | `src/core/ops/codegraph.ts` |
+| `src/core/config.ts` | `src/core/state/config.ts` |
+| `src/core/context-injector.ts` | `src/core/engine/context-injector.ts` |
+| `src/core/contract-check.ts` | `src/core/plan/contract-check.ts` |
+| `src/core/contract-diff.ts` | `src/core/plan/contract-diff.ts` |
+| `src/core/contract-merge.ts` | `src/core/plan/contract-merge.ts` |
+| `src/core/cost-control.ts` | `src/core/engine/cost-control.ts` |
+| `src/core/cost.ts` | `src/core/engine/cost.ts` |
+| `src/core/coverage.ts` | `src/core/acceptance/coverage.ts` |
+| `src/core/dag.ts` | `src/core/state/dag.ts` |
+| `src/core/dependencies.ts` | `src/core/workspace/dependencies.ts` |
+| `src/core/dispatcher.ts` | `src/core/engine/dispatcher.ts` |
+| `src/core/doctor.ts` | `src/core/ops/doctor.ts` |
+| `src/core/engine-lock.ts` | `src/core/engine/engine-lock.ts` |
+| `src/core/event-log.ts` | `src/core/state/event-log.ts` |
+| `src/core/feature-spec.ts` | `src/core/spec/feature-spec.ts` |
+| `src/core/forge-read.ts` | `src/core/ops/forge-read.ts` |
+| `src/core/forge-watch.ts` | `src/core/ops/forge-watch.ts` |
+| `src/core/gates.ts` | `src/core/verify/gates.ts` |
+| `src/core/git.ts` | `src/core/state/git.ts` |
+| `src/core/guard.ts` | `src/core/security/guard.ts` |
+| `src/core/history.ts` | `src/core/ops/history.ts` |
+| `src/core/init.ts` | `src/core/ops/init.ts` |
+| `src/core/intake.ts` | `src/core/spec/intake.ts` |
+| `src/core/knowledge.ts` | `src/core/ops/knowledge.ts` |
+| `src/core/launcher.ts` | `src/core/engine/launcher.ts` |
+| `src/core/lineage.ts` | `src/core/engine/lineage.ts` |
+| `src/core/merge-queue.ts` | `src/core/verify/merge-queue.ts` |
+| `src/core/metrics.ts` | `src/core/engine/metrics.ts` |
+| `src/core/migrations.ts` | `src/core/state/migrations.ts` |
+| `src/core/model-pause.ts` | `src/core/engine/model-pause.ts` |
+| `src/core/notes.ts` | `src/core/ops/notes.ts` |
+| `src/core/notify.ts` | `src/core/engine/notify.ts` |
+| `src/core/paths.ts` | `src/core/state/paths.ts` |
+| `src/core/plan-flow.ts` | `src/core/plan/plan-flow.ts` |
+| `src/core/plan.ts` | `src/core/plan/plan.ts` |
+| `src/core/precheck.ts` | `src/core/verify/precheck.ts` |
+| `src/core/preflight.ts` | `src/core/spec/preflight.ts` |
+| `src/core/prompt-assembler.ts` | `src/core/engine/prompt-assembler.ts` |
+| `src/core/redact.ts` | `src/core/security/redact.ts` |
+| `src/core/release.ts` | `src/core/ops/release.ts` |
+| `src/core/resources.ts` | `src/core/engine/resources.ts` |
+| `src/core/resume.ts` | `src/core/ops/resume.ts` |
+| `src/core/review-flow.ts` | `src/core/stage/review-flow.ts` |
+| `src/core/review.ts` | `src/core/stage/review.ts` |
+| `src/core/role-settings.ts` | `src/core/engine/role-settings.ts` |
+| `src/core/rules-draft.ts` | `src/core/plan/rules-draft.ts` |
+| `src/core/run-budget.ts` | `src/core/engine/run-budget.ts` |
+| `src/core/scheduler.ts` | `src/core/engine/scheduler.ts` |
+| `src/core/schemas.ts` | `src/core/state/schemas.ts` |
+| `src/core/scope-hint.ts` | `src/core/workspace/scope-hint.ts` |
+| `src/core/scope.ts` | `src/core/workspace/scope.ts` |
+| `src/core/services.ts` | `src/core/engine/services.ts` |
+| `src/core/session-log.ts` | `src/core/engine/session-log.ts` |
+| `src/core/shell.ts` | `src/core/security/shell.ts` |
+| `src/core/signoff.ts` | `src/core/stage/signoff.ts` |
+| `src/core/spec-flow.ts` | `src/core/spec/spec-flow.ts` |
+| `src/core/spec.ts` | `src/core/spec/spec.ts` |
+| `src/core/stage-acceptance.ts` | `src/core/stage/stage-acceptance.ts` |
+| `src/core/stage-fix.ts` | `src/core/stage/stage-fix.ts` |
+| `src/core/stage-qa.ts` | `src/core/stage/stage-qa.ts` |
+| `src/core/stage-review.ts` | `src/core/stage/stage-review.ts` |
+| `src/core/stage-rounds.ts` | `src/core/stage/stage-rounds.ts` |
+| `src/core/stage-worktree.ts` | `src/core/workspace/stage-worktree.ts` |
+| `src/core/stages.ts` | `src/core/stage/stages.ts` |
+| `src/core/state-machine.ts` | `src/core/state/state-machine.ts` |
+| `src/core/state-store.ts` | `src/core/state/state-store.ts` |
+| `src/core/status-detail.ts` | `src/core/ops/status-detail.ts` |
+| `src/core/status-view.ts` | `src/core/ops/status-view.ts` |
+| `src/core/strays.ts` | `src/core/workspace/strays.ts` |
+| `src/core/subagent-runtime.ts` | `src/core/engine/subagent-runtime.ts` |
+| `src/core/test-adjust.ts` | `src/core/verify/test-adjust.ts` |
+| `src/core/timing.ts` | `src/core/engine/timing.ts` |
+| `src/core/tool-params.ts` | `src/core/security/tool-params.ts` |
+| `src/core/verify-cache.ts` | `src/core/verify/verify-cache.ts` |
+| `src/core/verify-runner.ts` | `src/core/verify/verify-runner.ts` |
+| `src/core/waits.ts` | `src/core/state/waits.ts` |
+| `src/core/workspace.ts` | `src/core/workspace/workspace.ts` |
+| `src/core/worktree.ts` | `src/core/workspace/worktree.ts` |

@@ -6,9 +6,9 @@ import { createServer } from 'node:net';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { alive } from '../../src/core/services.ts';
+import { alive } from '../../src/core/engine/services.ts';
 import { flowResolveScope } from '../../src/tools/orchestrator-tools.ts';
-import { nextStep } from '../../src/core/context-injector.ts';
+import { nextStep } from '../../src/core/engine/context-injector.ts';
 
 const freePort = () => new Promise<number>((resolve) => {
   const s = createServer();

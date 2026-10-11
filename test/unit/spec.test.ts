@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { acTexts, diffAcs, effectiveSpec, lintSpec, parseRequirements, UNTESTABLE_WORDS } from '../../src/core/spec.ts';
-import type { SpecFiles, SpecFeature } from '../../src/core/spec.ts';
+import { acTexts, diffAcs, effectiveSpec, lintSpec, parseRequirements, UNTESTABLE_WORDS } from '../../src/core/spec/spec.ts';
+import type { SpecFiles, SpecFeature } from '../../src/core/spec/spec.ts';
 
 const requirement = (id = 'REQ-001', ac = '- AC1：Given 已登录 When 创建看板 Then 返回看板编号', priority = 'MVP'): string =>
   `### ${id} 创建看板 [${priority}]\n角色：管理员、成员\n${ac}`;

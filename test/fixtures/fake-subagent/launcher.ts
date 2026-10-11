@@ -1,14 +1,14 @@
 // 来源：pi-flow test/fixtures/fake-subagent/launcher.ts @ 31f3f15
 // fake-subagent：实现 SubagentLauncher，用脚本代替模型调用工具。
 // 每次调用都经过真实的 SubagentRuntime（guard + forge_* 工具）；内置工具在 worktree 中真实执行。
-import { redactSecrets } from '../../../src/core/redact.ts';
+import { redactSecrets } from '../../../src/core/security/redact.ts';
 import { execSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { SubagentHandle, SubagentLauncher, SubagentSpec, RunOutcome } from '../../../src/core/launcher.ts';
-import type { StateStore } from '../../../src/core/state-store.ts';
-import type { FlowConfig } from '../../../src/core/config.ts';
-import { SubagentRuntime } from '../../../src/core/subagent-runtime.ts';
+import type { SubagentHandle, SubagentLauncher, SubagentSpec, RunOutcome } from '../../../src/core/engine/launcher.ts';
+import type { StateStore } from '../../../src/core/state/state-store.ts';
+import type { FlowConfig } from '../../../src/core/state/config.ts';
+import { SubagentRuntime } from '../../../src/core/engine/subagent-runtime.ts';
 import { runEnvFrom, type RunEnv } from '../../../src/tools/subagent-tools.ts';
 
 export class Terminated extends Error {}

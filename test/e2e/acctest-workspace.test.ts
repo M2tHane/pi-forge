@@ -6,7 +6,7 @@ import path from 'node:path';
 import { setupProject } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { accBranch } from '../../src/core/acctest.ts';
+import { accBranch } from '../../src/core/acceptance/acctest.ts';
 
 const AT = mkTask('T-001.at', {
   kind: 'acctest', role: 'test-author', scopes: ['acctest'], for_task: 'T-001', verify: [], ac: ['REQ-001.AC1', 'REQ-001.AC2'],

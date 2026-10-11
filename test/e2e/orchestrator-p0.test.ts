@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setupProject } from '../helpers/project.ts';
-import { StateStore } from '../../src/core/state-store.ts';
+import { StateStore } from '../../src/core/state/state-store.ts';
 import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
 const ROOT = path.join(import.meta.dirname, '../..');
 const SCRIPTS = path.join(ROOT, 'test/fixtures/fake-llm/scripts');

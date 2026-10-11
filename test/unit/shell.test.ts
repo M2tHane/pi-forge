@@ -1,7 +1,7 @@
 // 来源：pi-flow test/unit/shell.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseShell } from '../../src/core/shell.ts';
+import { parseShell } from '../../src/core/security/shell.ts';
 
 const argvs = (s: string) => parseShell(s).commands.map((c) => c.words.map((w) => w.text));
 

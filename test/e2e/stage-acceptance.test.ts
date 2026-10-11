@@ -10,8 +10,8 @@ import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts'
 import { hard, mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
 import { runFlowCommand } from '../../src/commands/forge.ts';
-import { worktreesRoot } from '../../src/core/worktree.ts';
-import { sessionDirOf } from '../../src/core/session-log.ts';
+import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
+import { sessionDirOf } from '../../src/core/engine/session-log.ts';
 import { drive, engineEnv, submitWork, writeFiles } from '../helpers/commands.ts';
 
 const REQS = P0_SPEC.requirements.replace('- AC1：Given 已登录 When 创建看板 Then 返回看板编号', '- AC1：Given 已登录 When 创建看板 Then 返回看板编号\n- AC2：Given 名称为空 When 创建看板 Then 返回 400');

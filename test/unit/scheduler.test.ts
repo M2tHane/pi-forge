@@ -1,7 +1,7 @@
 // 来源：pi-flow test/unit/scheduler.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectDispatchable } from '../../src/core/scheduler.ts';
+import { selectDispatchable } from '../../src/core/engine/scheduler.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
 
 test('优先关键路径上的任务；同长度按 id', () => {

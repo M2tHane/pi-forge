@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseContracts } from '../../src/core/contract-check.ts';
-import { effectiveSpec } from '../../src/core/spec.ts';
-import { checkPlan, deriveAcctest, deriveTasks, formatPlanReport, parsePlan, parseSymbol, type PlanContext } from '../../src/core/plan.ts';
-import type { PlanFile } from '../../src/core/schemas.ts';
+import { parseContracts } from '../../src/core/plan/contract-check.ts';
+import { effectiveSpec } from '../../src/core/spec/spec.ts';
+import { checkPlan, deriveAcctest, deriveTasks, formatPlanReport, parsePlan, parseSymbol, type PlanContext } from '../../src/core/plan/plan.ts';
+import type { PlanFile } from '../../src/core/state/schemas.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
 
 const base = (): PlanFile => structuredClone(parsePlan(PLAN_YAML).plan!);

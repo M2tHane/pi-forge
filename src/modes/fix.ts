@@ -3,19 +3,19 @@
 // 修复日志。每一步由程序推进，不建 DAG、不跑阶段门禁；stage-qa 发现 must 时交回 worker 的会话修复（最多 2 轮），仍不过转"需要你处理"。
 // 流程只有一个阶段 X1。X1 的状态：active（修复、合并、复现确认都在这里）→ done；轮数用尽或任务阻塞时 needs_human，由 /forge accept 放行。
 import { existsSync, readFileSync } from 'node:fs';
-import type { FlowConfig } from '../core/config.ts';
-import type { FlowEvent, FlowFile, ReviewFinding, TaskFile } from '../core/schemas.ts';
-import type { StateStore, TaskInput } from '../core/state-store.ts';
-import { git } from '../core/git.ts';
-import { costReport, formatRow, type CostReport } from '../core/cost.ts';
-import { headSha } from '../core/worktree.ts';
-import { isSettled } from '../core/state-machine.ts';
-import { isStageLevelTask } from '../core/stage-worktree.ts';
-import { qaEnabled as qaEnabledOf } from '../core/stage-acceptance.ts';
-import { QA_FILES, QA_INPUT, buildQaBrief, nextQaId, qaRoundOf, qaTasksOf, resolveQa, stageBaseFor, stageDiffStat } from '../core/stage-qa.ts';
-import { unresolvedIn } from '../core/stage-rounds.ts';
-import { readReviewEvidence, type ReviewInputFile } from '../core/review-flow.ts';
-import { serviceCommands } from '../core/services.ts';
+import type { FlowConfig } from '../core/state/config.ts';
+import type { FlowEvent, FlowFile, ReviewFinding, TaskFile } from '../core/state/schemas.ts';
+import type { StateStore, TaskInput } from '../core/state/state-store.ts';
+import { git } from '../core/state/git.ts';
+import { costReport, formatRow, type CostReport } from '../core/engine/cost.ts';
+import { headSha } from '../core/workspace/worktree.ts';
+import { isSettled } from '../core/state/state-machine.ts';
+import { isStageLevelTask } from '../core/workspace/stage-worktree.ts';
+import { qaEnabled as qaEnabledOf } from '../core/stage/stage-acceptance.ts';
+import { QA_FILES, QA_INPUT, buildQaBrief, nextQaId, qaRoundOf, qaTasksOf, resolveQa, stageBaseFor, stageDiffStat } from '../core/stage/stage-qa.ts';
+import { unresolvedIn } from '../core/stage/stage-rounds.ts';
+import { readReviewEvidence, type ReviewInputFile } from '../core/stage/review-flow.ts';
+import { serviceCommands } from '../core/engine/services.ts';
 
 export interface FixContext {
   root: string;

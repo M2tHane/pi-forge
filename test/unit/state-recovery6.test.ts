@@ -7,10 +7,10 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { tmpRepo } from '../helpers/repo.ts';
 import { TEST_YAML } from '../helpers/config.ts';
-import { parseConfig } from '../../src/core/config.ts';
-import { commandsDraftProblems } from '../../src/core/rules-draft.ts';
-import { createCheckpoint, dropCheckpoint, listCheckpoints, restoreCheckpoint } from '../../src/core/checkpoints.ts';
-import { notifyEvents, runNotify } from '../../src/core/notify.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
+import { commandsDraftProblems } from '../../src/core/plan/rules-draft.ts';
+import { createCheckpoint, dropCheckpoint, listCheckpoints, restoreCheckpoint } from '../../src/core/state/checkpoints.ts';
+import { notifyEvents, runNotify } from '../../src/core/engine/notify.ts';
 
 function repoWithWorkflow() {
   const r = tmpRepo();

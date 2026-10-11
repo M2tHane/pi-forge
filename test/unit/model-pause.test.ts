@@ -1,8 +1,8 @@
 // 来源：pi-flow test/unit/model-pause.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyUnavailable, matchPausedModel, parseRetryAfter, pauseDuration } from '../../src/core/model-pause.ts';
-import type { ModelPause } from '../../src/core/schemas.ts';
+import { classifyUnavailable, matchPausedModel, parseRetryAfter, pauseDuration } from '../../src/core/engine/model-pause.ts';
+import type { ModelPause } from '../../src/core/state/schemas.ts';
 
 test('classifyUnavailable：额度用完', () => {
   for (const msg of [

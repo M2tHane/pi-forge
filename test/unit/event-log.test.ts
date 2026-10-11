@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { GENESIS_HASH, buildEvent, verifyChain, appendEvents, readEvents, canonicalJson, gitCommitPaths, STATE_COMMIT_PREFIX } from '../../src/core/event-log.ts';
-import type { FlowEvent } from '../../src/core/schemas.ts';
+import { GENESIS_HASH, buildEvent, verifyChain, appendEvents, readEvents, canonicalJson, gitCommitPaths, STATE_COMMIT_PREFIX } from '../../src/core/state/event-log.ts';
+import type { FlowEvent } from '../../src/core/state/schemas.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 
 function chain(n: number): FlowEvent[] {

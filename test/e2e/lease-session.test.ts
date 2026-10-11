@@ -8,11 +8,11 @@ import path from 'node:path';
 import { setupProject } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { SubagentRuntime } from '../../src/core/subagent-runtime.ts';
+import { SubagentRuntime } from '../../src/core/engine/subagent-runtime.ts';
 import { runEnvFrom } from '../../src/tools/subagent-tools.ts';
 import { runFlowCommand } from '../../src/commands/forge.ts';
-import { doctor } from '../../src/core/doctor.ts';
-import { sessionDirOf, summarizeSession } from '../../src/core/session-log.ts';
+import { doctor } from '../../src/core/ops/doctor.ts';
+import { sessionDirOf, summarizeSession } from '../../src/core/engine/session-log.ts';
 import { commandEnv } from '../helpers/commands.ts';
 
 const MIN = 60_000;

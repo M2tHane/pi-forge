@@ -1,7 +1,7 @@
 // F7 第一步：失败提示里引导范围申请。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SCOPE_HINT_MAX_FILES, scopeHint } from '../../src/core/scope-hint.ts';
+import { SCOPE_HINT_MAX_FILES, scopeHint } from '../../src/core/workspace/scope-hint.ts';
 
 const tracked = new Set(['docs/contracts/paths/b.yaml', 'docs/spec/requirements.md', 'src/a/x.ts', 'src/b/y.ts', 'src/c/z.ts', 'tests/acceptance/T-009/a.test.ts', 'tests/unit/old.test.ts', 'src/shared/routes.ts']);
 const task = { writes: ['src/a/**'], shared: ['src/shared/routes.ts'], test_adjustments: [] as string[] };

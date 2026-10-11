@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { checkToolCall, scriptOpensGui, type GuardContext, type GuardDecision } from '../../src/core/guard.ts';
-import { parseConfig } from '../../src/core/config.ts';
+import { checkToolCall, scriptOpensGui, type GuardContext, type GuardDecision } from '../../src/core/security/guard.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 
 // 扩展 worker 的只读搜索工具，以验证路径归一化；权限仍由真实七角色与 task writes 约束。
@@ -445,8 +445,8 @@ test('allowlist（test-author）：bash_allow 引用的命令按前缀放行，�
 });
 
 test('allowlistPrefixes / allowedByList：{files} 占位与之后的词去掉；多段命令拆开；逐词前缀匹配', async () => {
-  const { allowlistPrefixes, allowedByList } = await import('../../src/core/guard.ts');
-  const { parseShell } = await import('../../src/core/shell.ts');
+  const { allowlistPrefixes, allowedByList } = await import('../../src/core/security/guard.ts');
+  const { parseShell } = await import('../../src/core/security/shell.ts');
   const p = allowlistPrefixes(['pnpm vitest run {files} --reporter dot', 'cd web && npm run e2e --', 'CI=1 pnpm acc']);
   assert.deepEqual(p, [['pnpm', 'vitest', 'run'], ['cd', 'web'], ['npm', 'run', 'e2e', '--'], ['CI=1', 'pnpm', 'acc']]);
   const words = (s: string) => parseShell(s).commands[0]!.words;
@@ -457,7 +457,7 @@ test('allowlistPrefixes / allowedByList：{files} 占位与之后的词去掉；
 });
 
 test('只读与白名单档位：能读出其他提交内容的 git 用法被拦，工作区内的 diff、log、blame 放行', async () => {
-  const { gitReadsOtherCommits } = await import('../../src/core/guard.ts');
+  const { gitReadsOtherCommits } = await import('../../src/core/security/guard.ts');
   for (const role of ['reviewer', 'test-author']) {
     const c = ctx(role, role === 'test-author' ? { writes: ['tests/acceptance/T-001/**'] } : {});
     for (const cmd of ['git show HEAD~1:src/a.ts', 'git show abc123', 'git cat-file -p HEAD:src/a.ts', 'git log -p', 'git log --patch -1 -- src',

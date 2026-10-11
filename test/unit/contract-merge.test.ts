@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from 'yaml';
-import { mergeContractThreeWay } from '../../src/core/contract-merge.ts';
+import { mergeContractThreeWay } from '../../src/core/plan/contract-merge.ts';
 
 const BASE = `# 根文件
 openapi: 3.1.0

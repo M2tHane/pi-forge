@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { loadRoleSettings, saveRoleSettings, setRole, unsetRole, resolveRoleModel } from '../../src/core/role-settings.ts';
-import { parseConfig } from '../../src/core/config.ts';
+import { loadRoleSettings, saveRoleSettings, setRole, unsetRole, resolveRoleModel } from '../../src/core/engine/role-settings.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 
 const tmp = () => {

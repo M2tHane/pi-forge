@@ -6,7 +6,7 @@ import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { makeEngine, ALL_FAKE } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-import { lineageRoot, lineageTasks } from '../../src/core/lineage.ts';
+import { lineageRoot, lineageTasks } from '../../src/core/engine/lineage.ts';
 
 const task1 = () => mkTask('T-001', { verify: ['test'] });
 

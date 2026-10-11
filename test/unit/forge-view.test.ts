@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { hashToken } from '../../src/core/state-machine.ts';
+import { hashToken } from '../../src/core/state/state-machine.ts';
 import { buildViewData, renderViewHtml, ROLES } from '../../scripts/forge-view-data.ts';
 
 const SECRET = 'sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx';

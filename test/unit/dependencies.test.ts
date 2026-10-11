@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseConfig } from '../../src/core/config.ts';
-import { checkDependencies, compareVersions, inRange, PI_REQUIREMENT } from '../../src/core/dependencies.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
+import { checkDependencies, compareVersions, inRange, PI_REQUIREMENT } from '../../src/core/workspace/dependencies.ts';
 import { REAL_TEMPLATE_YAML, TEST_YAML } from '../helpers/config.ts';
 
 const config = parseConfig(TEST_YAML);

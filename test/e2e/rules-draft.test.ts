@@ -1,12 +1,12 @@
 // 改编自 pi-flow test/e2e/rules-draft.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 规则与命令草案：architect 写在 docs/rules-draft/（随文档合入集成分支），用户确认后程序写入 rules/ 与 workflow.yaml。
 import { test } from 'node:test';
-import { parseConfig } from '../../src/core/config.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { runFlowCommand } from '../../src/commands/forge.ts';
-import { listDrafts } from '../../src/core/rules-draft.ts';
+import { listDrafts } from '../../src/core/plan/rules-draft.ts';
 import { setupProject } from '../helpers/project.ts';
 import { makeEngine, commitToBranch } from '../helpers/engine.ts';
 import { TEMPLATE_YAML } from '../helpers/config.ts';

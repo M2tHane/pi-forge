@@ -5,7 +5,7 @@ import type { Project } from './project.ts';
 import type { makeEngine } from './engine.ts';
 import { REAL_TEMPLATE_YAML } from './config.ts';
 import type { CommandEnv } from '../../src/commands/forge.ts';
-import type { RoleSettingsFile } from '../../src/core/schemas.ts';
+import type { RoleSettingsFile } from '../../src/core/state/schemas.ts';
 const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 /** 全量测试：仓库里有 BROKEN 文件时失败 */

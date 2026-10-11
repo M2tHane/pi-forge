@@ -4,16 +4,16 @@ import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
-import { parseConfig } from '../../src/core/config.ts';
-import { evidenceRel, isFinished, taskRel } from '../../src/core/state-store.ts';
-import { QA_INPUT, QA_REPORT, QA_CONFIRM } from '../../src/core/stage-qa.ts';
-import { readReviewEvidence, type ReviewInputFile } from '../../src/core/review-flow.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
+import { evidenceRel, isFinished, taskRel } from '../../src/core/state/state-store.ts';
+import { QA_INPUT, QA_REPORT, QA_CONFIRM } from '../../src/core/stage/stage-qa.ts';
+import { readReviewEvidence, type ReviewInputFile } from '../../src/core/stage/review-flow.ts';
 import {
   FIX_TASK, acceptFix, buildFixHandoff, buildFixQaBrief, fixLogName, fixPhase, fixStatusLine, readFixLog, regressionTestsOf, renderFixLog, fixStep,
 } from '../../src/modes/fix.ts';
 import { fixDescription, fixRefusal, runFlowFix, type CommandEnv } from '../../src/commands/forge.ts';
 import { statusText } from '../../src/tools/orchestrator-tools.ts';
-import { renderStatus } from '../../src/core/status-view.ts';
+import { renderStatus } from '../../src/core/ops/status-view.ts';
 
 const YAML = PROJECT_YAML.replace(/^  qa: false$/m, '  qa: true');
 const must = { id: 'R-1', level: 'must' as const, basis: 'defect:仍然复现', files: ['src/login.ts'], location: 'login', problem: '登录仍然失败', expected: '登录成功' };

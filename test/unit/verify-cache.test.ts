@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { VERIFIED, cleanTreeOf, commandHash, reusableRuns, reuseText, treeOfCommit } from '../../src/core/verify-cache.ts';
+import { VERIFIED, cleanTreeOf, commandHash, reusableRuns, reuseText, treeOfCommit } from '../../src/core/verify/verify-cache.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 
 const ev = (flow: string, tree: string, runs: { name: string; shell: string; evidence: string }[]) =>

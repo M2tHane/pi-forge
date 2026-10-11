@@ -1,24 +1,24 @@
 // 来源：pi-flow src/tools/orchestrator-tools.ts @ 31f3f15
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
-import { checkScope } from '../core/scope.ts';
-import { submitSpec, proposeSpecAmend, amendSummary, specStatus } from '../core/spec-flow.ts';
-import { ADOPT_STAGE, adoptApprovalSummary } from '../core/adopt.ts';
-import { featurePermissionSummary, submitFeatureSpec } from '../core/feature-spec.ts';
-import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan-flow.ts';
-import { runStageGate } from '../core/gates.ts';
-import { activePauses, describePause } from '../core/model-pause.ts';
+import { checkScope } from '../core/workspace/scope.ts';
+import { submitSpec, proposeSpecAmend, amendSummary, specStatus } from '../core/spec/spec-flow.ts';
+import { ADOPT_STAGE, adoptApprovalSummary } from '../core/ops/adopt.ts';
+import { featurePermissionSummary, submitFeatureSpec } from '../core/spec/feature-spec.ts';
+import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan/plan-flow.ts';
+import { runStageGate } from '../core/verify/gates.ts';
+import { activePauses, describePause } from '../core/engine/model-pause.ts';
 import { Type, type Static } from 'typebox';
-import type { StateStore } from '../core/state-store.ts';
-import type { Engine } from '../core/dispatcher.ts';
-import { TASK_STATUSES, type TaskFile } from '../core/schemas.ts';
+import type { StateStore } from '../core/state/state-store.ts';
+import type { Engine } from '../core/engine/dispatcher.ts';
+import { TASK_STATUSES, type TaskFile } from '../core/state/schemas.ts';
 import { FlowToolError, type ToolResult } from './subagent-tools.ts';
-import type { FlowConfig } from '../core/config.ts';
-import { actionsNeeded } from '../core/status-view.ts';
-import { REVIEW_GUIDE, awaitingReview, timeoutReviewText } from '../core/run-budget.ts';
-import { DispatchError } from '../core/dispatcher.ts';
+import type { FlowConfig } from '../core/state/config.ts';
+import { actionsNeeded } from '../core/ops/status-view.ts';
+import { REVIEW_GUIDE, awaitingReview, timeoutReviewText } from '../core/engine/run-budget.ts';
+import { DispatchError } from '../core/engine/dispatcher.ts';
 import { fixHelpHint, fixStatusLine, readFixLog } from '../modes/fix.ts';
-import { isFinished } from '../core/state-store.ts';
-import { ChangeError, changeStatus, requestChange } from '../core/change-flow.ts';
+import { isFinished } from '../core/state/state-store.ts';
+import { ChangeError, changeStatus, requestChange } from '../core/plan/change-flow.ts';
 import { ChangeRequestParams } from './subagent-tools.ts';
 
 export const SpecParams = Type.Object({

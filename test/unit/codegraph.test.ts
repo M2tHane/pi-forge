@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { codegraphSync } from '../../src/core/codegraph.ts';
+import { codegraphSync } from '../../src/core/ops/codegraph.ts';
 
 // 用假的 codegraph 可执行文件验证调用与降级，不依赖本机安装
 function fakeBin(dir: string, script: string): string {

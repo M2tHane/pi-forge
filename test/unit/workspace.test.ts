@@ -5,9 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseConfig } from '../../src/core/config.ts';
-import { acctestCacheRoot, cacheKey, hasManifest, prepareWorkspace } from '../../src/core/workspace.ts';
-import { workspaceStats } from '../../src/core/signoff.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
+import { acctestCacheRoot, cacheKey, hasManifest, prepareWorkspace } from '../../src/core/workspace/workspace.ts';
+import { workspaceStats } from '../../src/core/stage/signoff.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();

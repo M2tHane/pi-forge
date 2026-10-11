@@ -2,8 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse, stringify } from 'yaml';
-import { parseConfig, ConfigError } from '../../src/core/config.ts';
-import { PHASES, type WorkflowFile } from '../../src/core/schemas.ts';
+import { parseConfig, ConfigError } from '../../src/core/state/config.ts';
+import { PHASES, type WorkflowFile } from '../../src/core/state/schemas.ts';
 import { TEMPLATE_YAML, TEST_YAML, REAL_TEMPLATE_YAML } from '../helpers/config.ts';
 
 const errorsOf = (yaml: string): string[] => {

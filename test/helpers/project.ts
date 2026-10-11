@@ -2,10 +2,10 @@
 // 测试项目夹具：临时 git 仓库 + workflow.yaml + 规则 + 已初始化的 .forge/ + 一个 build 流程与集成分支。
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { StateStore } from '../../src/core/state-store.ts';
-import { parseConfig, type FlowConfig } from '../../src/core/config.ts';
-import { ensureIntegrationBranch, worktreesRoot } from '../../src/core/worktree.ts';
-import type { TaskInput } from '../../src/core/state-store.ts';
+import { StateStore } from '../../src/core/state/state-store.ts';
+import { parseConfig, type FlowConfig } from '../../src/core/state/config.ts';
+import { ensureIntegrationBranch, worktreesRoot } from '../../src/core/workspace/worktree.ts';
+import type { TaskInput } from '../../src/core/state/state-store.ts';
 import { tmpRepo } from './repo.ts';
 import { TEST_YAML } from './config.ts';
 

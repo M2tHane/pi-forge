@@ -6,7 +6,7 @@ import {
   BASE_TOTAL, type Summary,
 } from '../../scripts/m9/common.ts';
 import { a4Triggered, judgeFirstBatch, judgeMechanism, renderResults, type Measure } from '../../scripts/m9/score.ts';
-import type { FlowEvent } from '../../src/core/schemas.ts';
+import type { FlowEvent } from '../../src/core/state/schemas.ts';
 
 // —— hidden.mjs 输出 ——
 

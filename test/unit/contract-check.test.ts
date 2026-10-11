@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { contractFilesAt, contractFilesInDir, errorPrefix, parseContracts } from '../../src/core/contract-check.ts';
+import { contractFilesAt, contractFilesInDir, errorPrefix, parseContracts } from '../../src/core/plan/contract-check.ts';
 import { CONTRACTS } from '../helpers/contracts.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 

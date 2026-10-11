@@ -3,12 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { Engine } from '../../src/core/dispatcher.ts';
+import { Engine } from '../../src/core/engine/dispatcher.ts';
 import { flowWait, statusText } from '../../src/tools/orchestrator-tools.ts';
 import { FakeLauncher } from '../fixtures/fake-subagent/launcher.ts';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
-import { parseConfig } from '../../src/core/config.ts';
-import { nextStep } from '../../src/core/context-injector.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
+import { nextStep } from '../../src/core/engine/context-injector.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
 import { AGENTS } from '../helpers/engine.ts';
 

@@ -3,11 +3,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Type } from 'typebox';
-import type { TaskFile } from '../core/schemas.ts';
-import type { StateStore } from '../core/state-store.ts';
-import { git, gitOk } from '../core/git.ts';
-import { snapshot } from '../core/worktree.ts';
-import { resolveContractConflicts } from '../core/merge-queue.ts';
+import type { TaskFile } from '../core/state/schemas.ts';
+import type { StateStore } from '../core/state/state-store.ts';
+import { git, gitOk } from '../core/state/git.ts';
+import { snapshot } from '../core/workspace/worktree.ts';
+import { resolveContractConflicts } from '../core/verify/merge-queue.ts';
 import { FlowToolError, checkRunOf, type ToolContext, type ToolResult } from './tool-common.ts';
 
 export const SyncParams = Type.Object({}, { additionalProperties: false });

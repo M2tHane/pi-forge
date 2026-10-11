@@ -1,8 +1,8 @@
 // M1 集成：动态阶段与程序事实在 StateStore 中落盘。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { StateStore } from '../../src/core/state-store.ts';
-import { hashToken } from '../../src/core/state-machine.ts';
+import { StateStore } from '../../src/core/state/state-store.ts';
+import { hashToken } from '../../src/core/state/state-machine.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import { mkTask, soft } from '../helpers/tasks.ts';
 

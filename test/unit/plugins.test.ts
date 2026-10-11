@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pluginExtensionsFor, packageRoots } from '../../src/pi-adapter/plugins.ts';
-import { parseConfig } from '../../src/core/config.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 
 test('按角色的工具组解析插件：项目级优先，未安装的报告缺失', () => {
@@ -30,7 +30,7 @@ test('按角色的工具组解析插件：项目级优先，未安装的报告�
 });
 
 test('角色启用 codemode 时显式加载 Pi 内置扩展 builtin:codemode（子进程以 --no-extensions 运行）', async () => {
-  const { parseConfig } = await import('../../src/core/config.ts');
+  const { parseConfig } = await import('../../src/core/state/config.ts');
   const { TEST_YAML } = await import('../helpers/config.ts');
   const { pluginExtensionsFor } = await import('../../src/pi-adapter/plugins.ts');
   const config = parseConfig(TEST_YAML);

@@ -7,11 +7,11 @@ import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts'
 import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
 import { commitToBranch } from '../helpers/engine.ts';
-import { parseConfig } from '../../src/core/config.ts';
-import { afterChecks, gatePassedHead, stageStep, stageWorkSettled } from '../../src/core/stage-acceptance.ts';
-import { taskRel } from '../../src/core/state-store.ts';
-import { QA_INPUT, QA_REPORT } from '../../src/core/stage-qa.ts';
-import { evidenceRel } from '../../src/core/state-store.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
+import { afterChecks, gatePassedHead, stageStep, stageWorkSettled } from '../../src/core/stage/stage-acceptance.ts';
+import { taskRel } from '../../src/core/state/state-store.ts';
+import { QA_INPUT, QA_REPORT } from '../../src/core/stage/stage-qa.ts';
+import { evidenceRel } from '../../src/core/state/state-store.ts';
 import { mkdirSync } from 'node:fs';
 
 const FILES = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));

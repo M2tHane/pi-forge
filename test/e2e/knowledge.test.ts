@@ -8,9 +8,9 @@ import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { commitToBranch, makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-import { acceptCandidate, retireEntries, promoteToDraft, markPromoted, selectKnowledge } from '../../src/core/knowledge.ts';
-import { applyDrafts, listDrafts } from '../../src/core/rules-draft.ts';
-import { renderStatus } from '../../src/core/status-view.ts';
+import { acceptCandidate, retireEntries, promoteToDraft, markPromoted, selectKnowledge } from '../../src/core/ops/knowledge.ts';
+import { applyDrafts, listDrafts } from '../../src/core/plan/rules-draft.ts';
+import { renderStatus } from '../../src/core/ops/status-view.ts';
 
 // 有 FAIL 的代码只有和集成分支上的 src/server/later.ts 放在一起才失败：预检能过，合并后验证才拦下
 const YAML = `${PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "! { grep -rqs FAIL src/server && test -e src/server/later.ts; }"')}

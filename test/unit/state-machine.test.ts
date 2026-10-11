@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import {
   planTransition, planStageTransition, hashToken, IN_FLIGHT,
   MAX_INTERRUPTIONS, type Facts, type Trigger, type StageTrigger, type StageFacts,
-} from '../../src/core/state-machine.ts';
-import { TASK_STATUSES, STAGE_STATUSES, validate, type TaskFile, type TaskStatus, type StageStatus } from '../../src/core/schemas.ts';
+} from '../../src/core/state/state-machine.ts';
+import { TASK_STATUSES, STAGE_STATUSES, validate, type TaskFile, type TaskStatus, type StageStatus } from '../../src/core/state/schemas.ts';
 import { mkTask, hard, soft } from '../helpers/tasks.ts';
 
 const NOW = new Date('2026-01-01T00:00:00Z');

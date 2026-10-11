@@ -3,7 +3,7 @@
 // 已核实：-e 可以指向包根目录（按包规则加载 pi.extensions）；pi-web-access 的工具注册后需 setActiveTools 激活（subagent 扩展会做）。
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import type { FlowConfig } from '../core/config.ts';
+import type { FlowConfig } from '../core/state/config.ts';
 
 /** 工具组 → 提供这些工具的 Pi 包 */
 export const GROUP_PACKAGES: Record<string, string> = {

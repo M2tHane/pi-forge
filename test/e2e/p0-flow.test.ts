@@ -9,12 +9,12 @@ import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC, P0_AMEND } from '../helpers/spec.ts';
 import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
 import { flowSpec, flowSpecAmend, statusText } from '../../src/tools/orchestrator-tools.ts';
-import { approveSpecAmend, proposeSpecAmend, submitSpec, readSpec } from '../../src/core/spec-flow.ts';
-import { commitFilesToBranch, importInputs } from '../../src/core/intake.ts';
-import { runStageGate } from '../../src/core/gates.ts';
-import { turnContext, nextStep } from '../../src/core/context-injector.ts';
-import { renderStatus } from '../../src/core/status-view.ts';
-import { StateStore } from '../../src/core/state-store.ts';
+import { approveSpecAmend, proposeSpecAmend, submitSpec, readSpec } from '../../src/core/spec/spec-flow.ts';
+import { commitFilesToBranch, importInputs } from '../../src/core/spec/intake.ts';
+import { runStageGate } from '../../src/core/verify/gates.ts';
+import { turnContext, nextStep } from '../../src/core/engine/context-injector.ts';
+import { renderStatus } from '../../src/core/ops/status-view.ts';
+import { StateStore } from '../../src/core/state/state-store.ts';
 const ROOT = path.join(import.meta.dirname, '../..');
 function env(p: Project): { cmd: CommandEnv; engine: ReturnType<typeof makeEngine>['engine']; launched: () => number } {
   // P0 不派发子进程；进入 P1 后 architect 被派发（这里只计数，P1 的流程见 p1-flow）

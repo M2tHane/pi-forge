@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateDag, computeReady, dagStats, mutexPairs, conflictsWith, remainingPath, type DagCatalog,
-  dagReport, serialHeads } from '../../src/core/dag.ts';
+  dagReport, serialHeads } from '../../src/core/state/dag.ts';
 import { mkTask, hard, soft } from '../helpers/tasks.ts';
 
 const catalog: DagCatalog = {

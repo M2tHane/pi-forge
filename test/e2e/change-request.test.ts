@@ -7,12 +7,12 @@ import assert from 'node:assert/strict';
 import { stringify } from 'yaml';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
-import { deriveTasks, checkPlan, parsePlan } from '../../src/core/plan.ts';
-import { parseContracts } from '../../src/core/contract-check.ts';
-import { effectiveSpec } from '../../src/core/spec.ts';
-import { flowRel, taskRel } from '../../src/core/state-store.ts';
+import { deriveTasks, checkPlan, parsePlan } from '../../src/core/plan/plan.ts';
+import { parseContracts } from '../../src/core/plan/contract-check.ts';
+import { effectiveSpec } from '../../src/core/spec/spec.ts';
+import { flowRel, taskRel } from '../../src/core/state/state-store.ts';
 import { runFlowCommand } from '../../src/commands/forge.ts';
-import type { PlanFile } from '../../src/core/schemas.ts';
+import type { PlanFile } from '../../src/core/state/schemas.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { engineEnv } from '../helpers/commands.ts';
 

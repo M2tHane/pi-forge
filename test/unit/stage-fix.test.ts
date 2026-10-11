@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStageFixTasks, groupIssuesByOwner, lastWorkerTask, ownerOf, testWritesOf } from '../../src/core/stage-fix.ts';
+import { createStageFixTasks, groupIssuesByOwner, lastWorkerTask, ownerOf, testWritesOf } from '../../src/core/stage/stage-fix.ts';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 
-import type { TaskFile } from '../../src/core/schemas.ts';
+import type { TaskFile } from '../../src/core/state/schemas.ts';
 type T = Pick<TaskFile, 'id' | 'kind' | 'status' | 'writes' | 'for_task'>;
 const t = (id: string, kind: string, status: string, writes: string[], for_task?: string) => ({ id, kind, status, writes, ...(for_task ? { for_task } : {}) }) as T;
 const TASKS = [

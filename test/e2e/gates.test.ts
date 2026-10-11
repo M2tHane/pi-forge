@@ -2,8 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runFlowCommand } from '../../src/commands/forge.ts';
-import { approveStage } from '../../src/core/stages.ts';
-import { stageDef } from '../../src/core/gates.ts';
+import { approveStage } from '../../src/core/stage/stages.ts';
+import { stageDef } from '../../src/core/verify/gates.ts';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';

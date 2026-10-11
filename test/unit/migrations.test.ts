@@ -1,8 +1,8 @@
 // 来源：pi-flow test/unit/migrations.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { StateStore } from '../../src/core/state-store.ts';
-import type { Migration } from '../../src/core/migrations.ts';
+import { StateStore } from '../../src/core/state/state-store.ts';
+import type { Migration } from '../../src/core/state/migrations.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import { mkTask } from '../helpers/tasks.ts';
 

@@ -9,15 +9,15 @@ import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts'
 import { tmpRepo } from '../helpers/repo.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
-import { effectiveSpec } from '../../src/core/spec.ts';
-import { SUGGESTIONS_PATH, readReviewEvidence } from '../../src/core/review-flow.ts';
+import { effectiveSpec } from '../../src/core/spec/spec.ts';
+import { SUGGESTIONS_PATH, readReviewEvidence } from '../../src/core/stage/review-flow.ts';
 import {
   QA_CONFIRM, QA_INPUT, QA_REPORT, buildQaBrief, createQaTask, exitReqsOf, nextQaId, qaRoundOf, qaRounds, qaTasksOf, resolveQa,
-} from '../../src/core/stage-qa.ts';
-import { cleanupStageWorktrees, createStageTempWorktree, isStageLevelTask, removeStageTempWorktree, stageBaseOf } from '../../src/core/stage-worktree.ts';
+} from '../../src/core/stage/stage-qa.ts';
+import { cleanupStageWorktrees, createStageTempWorktree, isStageLevelTask, removeStageTempWorktree, stageBaseOf } from '../../src/core/workspace/stage-worktree.ts';
 import { serviceCwd } from '../../src/tools/subagent-tools.ts';
-import { worktreesRoot } from '../../src/core/worktree.ts';
-import { evidenceRel, taskRel } from '../../src/core/state-store.ts';
+import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
+import { evidenceRel, taskRel } from '../../src/core/state/state-store.ts';
 
 const YAML = PROJECT_YAML.replace('acceptance_list: "true"', 'acceptance_list: "true"\n  serve:     "true"');
 const FILES = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));

@@ -2,8 +2,8 @@
 // 前三个用例由 scripts/ablation/faults/liveness.test.ts 的原型移入（对抗性评审 F4）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { TaskFile } from '../../src/core/schemas.ts';
-import { actionableStalls, softDepsDone, stalls, waitsOn } from '../../src/core/waits.ts';
+import type { TaskFile } from '../../src/core/state/schemas.ts';
+import { actionableStalls, softDepsDone, stalls, waitsOn } from '../../src/core/state/waits.ts';
 import { hard, mkTask, soft } from '../helpers/tasks.ts';
 
 const acctest = (id: string, forTask: string, over: Parameters<typeof mkTask>[1] = {}) => mkTask(id, { kind: 'acctest', role: 'test-author', for_task: forTask, ...over });

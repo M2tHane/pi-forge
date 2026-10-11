@@ -8,10 +8,10 @@ import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { runFlowCommand } from '../../src/commands/forge.ts';
-import { actionsNeeded } from '../../src/core/status-view.ts';
-import { nextStep } from '../../src/core/context-injector.ts';
-import { DispatchError } from '../../src/core/dispatcher.ts';
-import type { RoleSettingsFile } from '../../src/core/schemas.ts';
+import { actionsNeeded } from '../../src/core/ops/status-view.ts';
+import { nextStep } from '../../src/core/engine/context-injector.ts';
+import { DispatchError } from '../../src/core/engine/dispatcher.ts';
+import type { RoleSettingsFile } from '../../src/core/state/schemas.ts';
 import { commandEnv } from '../helpers/commands.ts';
 
 const YAML = PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "true"');

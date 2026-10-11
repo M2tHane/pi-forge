@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, existsSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { createTaskWorktree, ensureIntegrationBranch, snapshot, changedFiles, isClean, removeWorktree, worktreesRoot } from '../../src/core/worktree.ts';
+import { createTaskWorktree, ensureIntegrationBranch, snapshot, changedFiles, isClean, removeWorktree, worktreesRoot } from '../../src/core/workspace/worktree.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 
 function setup() {
@@ -47,7 +47,7 @@ test('从集成分支建 worktree，快照与 diff，复用与清理', () => {
   } finally { cleanup(); }
 });
 
-import { ensureLocalExcludes } from '../../src/core/worktree.ts';
+import { ensureLocalExcludes } from '../../src/core/workspace/worktree.ts';
 
 test('插件产物写入 info/exclude，不进入任务快照；重复执行不重复写入', () => {
   const { dir, git, cleanup } = setup();

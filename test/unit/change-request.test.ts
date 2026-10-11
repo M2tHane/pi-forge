@@ -7,17 +7,17 @@ import { stringify } from 'yaml';
 import { setupProject, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { commitToBranch, makeEngine } from '../helpers/engine.ts';
-import { stageStep } from '../../src/core/stage-acceptance.ts';
+import { stageStep } from '../../src/core/stage/stage-acceptance.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
-import { deriveTasks, checkPlan, parsePlan } from '../../src/core/plan.ts';
-import { parseContracts } from '../../src/core/contract-check.ts';
-import { effectiveSpec } from '../../src/core/spec.ts';
-import type { ChangeFile, PlanFile, TaskFile } from '../../src/core/schemas.ts';
-import { changeSummary, changeTouched, diffPlanRevision, isOpenChange, materializeChange, pausedByChange, summarizeActions, summarizeText, type ChangeAction, type CurrentPlan } from '../../src/core/change-request.ts';
-import { approveChange, changeDocPrecheck, currentPlan, ensureChangeTask, ChangeError, pendingChanges, proposeChange, rejectChange, requestChange } from '../../src/core/change-flow.ts';
-import { flowRel, taskRel } from '../../src/core/state-store.ts';
-import { createTaskWorktree, snapshot } from '../../src/core/worktree.ts';
-import { approvalTargets, approveSpecAmend, proposeSpecAmend } from '../../src/core/spec-flow.ts';
+import { deriveTasks, checkPlan, parsePlan } from '../../src/core/plan/plan.ts';
+import { parseContracts } from '../../src/core/plan/contract-check.ts';
+import { effectiveSpec } from '../../src/core/spec/spec.ts';
+import type { ChangeFile, PlanFile, TaskFile } from '../../src/core/state/schemas.ts';
+import { changeSummary, changeTouched, diffPlanRevision, isOpenChange, materializeChange, pausedByChange, summarizeActions, summarizeText, type ChangeAction, type CurrentPlan } from '../../src/core/plan/change-request.ts';
+import { approveChange, changeDocPrecheck, currentPlan, ensureChangeTask, ChangeError, pendingChanges, proposeChange, rejectChange, requestChange } from '../../src/core/plan/change-flow.ts';
+import { flowRel, taskRel } from '../../src/core/state/state-store.ts';
+import { createTaskWorktree, snapshot } from '../../src/core/workspace/worktree.ts';
+import { approvalTargets, approveSpecAmend, proposeSpecAmend } from '../../src/core/spec/spec-flow.ts';
 
 // —— 纯函数：diffPlanRevision ——
 

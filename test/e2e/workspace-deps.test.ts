@@ -9,7 +9,7 @@ import { makeEngine } from '../helpers/engine.ts';
 import { hard, mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
 import { drive, engineEnv, submitWork, writeFiles } from '../helpers/commands.ts';
-import { flowMetrics, renderMetrics } from '../../src/core/signoff.ts';
+import { flowMetrics, renderMetrics } from '../../src/core/stage/signoff.ts';
 
 const withDeps = (yaml: string, test: string) => yaml
   .replace('install:   "true"', 'install:   "touch .deps-installed"')

@@ -2,39 +2,39 @@
 // subagent 使用的 forge_* 工具：forge_claim、forge_note、forge_submit、forge_block、forge_learn、notes、history，
 // forge_sync 的共用同步实现见 module-tools.ts；旧验收与审查入口已删除。
 // 纯业务实现，不依赖 Pi；由 pi-adapter 注册为 Pi 工具，测试中由 fake-subagent 直接调用。run token 只来自环境变量，模型看不到也不需要传。
-import { listResources, resourceEnv } from '../core/resources.ts';
-import { acceptanceList, acctestDirs, applyToAccBranch, checkAcctestSubmit, revertOutside, scanAcCoverage, testFilesIn } from '../core/acctest.ts';
-import { failureSummary } from '../core/verify-runner.ts';
-import { contractBaseOf, withoutMergedAcceptance } from '../core/precheck.ts';
-import { contractViolationsAt } from '../core/contract-diff.ts';
+import { listResources, resourceEnv } from '../core/engine/resources.ts';
+import { acceptanceList, acctestDirs, applyToAccBranch, checkAcctestSubmit, revertOutside, scanAcCoverage, testFilesIn } from '../core/acceptance/acctest.ts';
+import { failureSummary } from '../core/verify/verify-runner.ts';
+import { contractBaseOf, withoutMergedAcceptance } from '../core/verify/precheck.ts';
+import { contractViolationsAt } from '../core/plan/contract-diff.ts';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { checkoutAccWorktree, createAcctestRound, readIn, validateEvidence } from '../core/acceptance-flow.ts';
-import { readSpec } from '../core/spec-flow.ts';
-import { acTexts, effectiveSpec } from '../core/spec.ts';
+import { checkoutAccWorktree, createAcctestRound, readIn, validateEvidence } from '../core/acceptance/acceptance-flow.ts';
+import { readSpec } from '../core/spec/spec-flow.ts';
+import { acTexts, effectiveSpec } from '../core/spec/spec.ts';
 import { Type, type Static } from 'typebox';
-import type { StateStore } from '../core/state-store.ts';
-import { KNOWLEDGE_CATEGORIES, type TaskFile } from '../core/schemas.ts';
-import { KnowledgeError, learn, KNOWLEDGE_CONTENT_MAX, KNOWLEDGE_PER_RUN } from '../core/knowledge.ts';
-import { changedFiles, cleanStrayUntracked, snapshot } from '../core/worktree.ts';
-import { git } from '../core/git.ts';
-import { canAppendInterfaces } from '../core/state-machine.ts';
-import { testAdjustEnabled, testAdjustments } from '../core/test-adjust.ts';
-import { NOTES_DESCRIPTION, NotesError, NotesParams, applyNoteOps, renderNotes } from '../core/notes.ts';
-import { HISTORY_DESCRIPTION, HistoryParams, formatSearch, loadHistory, readHistoryEntry, searchHistory } from '../core/history.ts';
-import { listSessionFiles, sessionDirOf } from '../core/session-log.ts';
-import { taskNotesRel } from '../core/state-store.ts';
-import { scratchDir } from '../core/worktree.ts';
-import { GUI_REASON, opensGui } from '../core/guard.ts';
-import { SERVICE_READY_MAX_S, serviceCommands, serviceLog, serviceStatus, startService, stopService } from '../core/services.ts';
-import { SCOPE_KINDS, SCOPE_PATHS_MAX, checkScope } from '../core/scope.ts';
+import type { StateStore } from '../core/state/state-store.ts';
+import { KNOWLEDGE_CATEGORIES, type TaskFile } from '../core/state/schemas.ts';
+import { KnowledgeError, learn, KNOWLEDGE_CONTENT_MAX, KNOWLEDGE_PER_RUN } from '../core/ops/knowledge.ts';
+import { changedFiles, cleanStrayUntracked, snapshot } from '../core/workspace/worktree.ts';
+import { git } from '../core/state/git.ts';
+import { canAppendInterfaces } from '../core/state/state-machine.ts';
+import { testAdjustEnabled, testAdjustments } from '../core/verify/test-adjust.ts';
+import { NOTES_DESCRIPTION, NotesError, NotesParams, applyNoteOps, renderNotes } from '../core/ops/notes.ts';
+import { HISTORY_DESCRIPTION, HistoryParams, formatSearch, loadHistory, readHistoryEntry, searchHistory } from '../core/ops/history.ts';
+import { listSessionFiles, sessionDirOf } from '../core/engine/session-log.ts';
+import { taskNotesRel } from '../core/state/state-store.ts';
+import { scratchDir } from '../core/workspace/worktree.ts';
+import { GUI_REASON, opensGui } from '../core/security/guard.ts';
+import { SERVICE_READY_MAX_S, serviceCommands, serviceLog, serviceStatus, startService, stopService } from '../core/engine/services.ts';
+import { SCOPE_KINDS, SCOPE_PATHS_MAX, checkScope } from '../core/workspace/scope.ts';
 import { SyncParams, flowSync } from './module-tools.ts';
-import { proposePlan } from '../core/plan-flow.ts';
-import { ChangeError, changeOfTask, proposeChange, requestChange } from '../core/change-flow.ts';
-import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/review.ts';
-import { writesOwnAcceptance } from '../core/paths.ts';
-import { REVIEW_FILES, SUGGESTIONS_PATH, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/review-flow.ts';
-import { QA_FILES } from '../core/stage-qa.ts';
+import { proposePlan } from '../core/plan/plan-flow.ts';
+import { ChangeError, changeOfTask, proposeChange, requestChange } from '../core/plan/change-flow.ts';
+import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/stage/review.ts';
+import { writesOwnAcceptance } from '../core/state/paths.ts';
+import { REVIEW_FILES, SUGGESTIONS_PATH, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/stage/review-flow.ts';
+import { QA_FILES } from '../core/stage/stage-qa.ts';
 
 export const NOTE_LIMIT = 8000;
 

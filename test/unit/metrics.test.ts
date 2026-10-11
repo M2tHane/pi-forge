@@ -1,7 +1,7 @@
 // 来源：pi-flow test/unit/metrics.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { UsageAccumulator } from '../../src/core/metrics.ts';
+import { UsageAccumulator } from '../../src/core/engine/metrics.ts';
 
 const msg = (usage: Record<string, number>, extra: Record<string, unknown> = {}) => JSON.stringify({
   type: 'message_end', message: { role: 'assistant', provider: 'Workbuddy', model: 'glm-5.3-flash', usage, stopReason: 'toolUse',

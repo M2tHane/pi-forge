@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { runFlowCommand, runFlowBuild } from '../../src/commands/forge.ts';
 import { setupProject, DIRECT_YAML } from '../helpers/project.ts';
-import { StateStore } from '../../src/core/state-store.ts';
+import { StateStore } from '../../src/core/state/state-store.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { commandEnv } from '../helpers/commands.ts';
@@ -129,7 +129,7 @@ test('/forge knowledge：列出、确认改写、废弃、提升；/forge rules 
     const { engine } = makeEngine(p, async () => {});
     const e = commandEnv(p, engine);
     assert.match(await runFlowCommand('knowledge', e), /知识库还是空的/);
-    const { learn } = await import('../../src/core/knowledge.ts');
+    const { learn } = await import('../../src/core/ops/knowledge.ts');
     const src = { kind: 'review' as const, flow: p.flowId, task: 'T-001', run: null, role: null };
     await learn(p.store, p.config, { category: 'convention', content: '审查打回：缺少参数校验', scopes: ['code'], source: src, status: 'candidate' }, 'engine');
     await learn(p.store, p.config, { category: 'pitfall', content: '本地测试需要先启动 redis', source: { ...src, kind: 'agent' }, status: 'active' }, 'engine');

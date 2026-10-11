@@ -1,13 +1,13 @@
 // 来源：pi-flow test/unit/flow-watch.test.ts @ 31f3f15（M1 改编）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { activeMinutes, stuckTasks } from '../../src/core/forge-watch.ts';
-import { budgetState } from '../../src/core/cost-control.ts';
-import { actionsNeeded } from '../../src/core/status-view.ts';
+import { activeMinutes, stuckTasks } from '../../src/core/ops/forge-watch.ts';
+import { budgetState } from '../../src/core/engine/cost-control.ts';
+import { actionsNeeded } from '../../src/core/ops/status-view.ts';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
-import type { FlowEvent, FlowFile } from '../../src/core/schemas.ts';
+import type { FlowEvent, FlowFile } from '../../src/core/state/schemas.ts';
 
 const MIN = 60_000;
 const T0 = Date.parse('2026-01-01T00:00:00Z');

@@ -1,9 +1,9 @@
 // 第 14 节：扩大可写范围的申请。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkScope, STARTED_STATUSES } from '../../src/core/scope.ts';
+import { checkScope, STARTED_STATUSES } from '../../src/core/workspace/scope.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import type { TaskStatus } from '../../src/core/schemas.ts';
+import type { TaskStatus } from '../../src/core/state/schemas.ts';
 
 const me = mkTask('T-001', { status: 'in_progress', writes: ['src/server/team/**'] });
 const other = (status: TaskStatus, writes = ['src/server/ds/**']) => mkTask('T-002', { status, writes });

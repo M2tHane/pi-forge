@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import { setupProject, type Project } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { CONTRACTS } from '../helpers/contracts.ts';
-import { DOCS_INPUT_DEST, gitBlobId, pickDocInputs, prepareInputs } from '../../src/core/intake.ts';
-import { nextStep } from '../../src/core/context-injector.ts';
+import { DOCS_INPUT_DEST, gitBlobId, pickDocInputs, prepareInputs } from '../../src/core/spec/intake.ts';
+import { nextStep } from '../../src/core/engine/context-injector.ts';
 import { p0Opening, parseBuildArgs, runFlowBuild, type CommandEnv } from '../../src/commands/forge.ts';
 
 const ROOT = path.join(import.meta.dirname, '../..');

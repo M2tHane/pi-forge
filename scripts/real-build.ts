@@ -13,14 +13,14 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statS
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parseDocument, parse as parseYaml } from 'yaml';
-import { loadConfig } from '../src/core/config.ts';
-import { pendingChanges } from '../src/core/change-flow.ts';
-import { activePauses } from '../src/core/model-pause.ts';
-import { renderDetail } from '../src/core/status-detail.ts';
-import { flowMetrics, renderMetrics } from '../src/core/signoff.ts';
-import { sessionsRoot } from '../src/core/session-log.ts';
-import { StateStore } from '../src/core/state-store.ts';
-import { worktreesRoot } from '../src/core/worktree.ts';
+import { loadConfig } from '../src/core/state/config.ts';
+import { pendingChanges } from '../src/core/plan/change-flow.ts';
+import { activePauses } from '../src/core/engine/model-pause.ts';
+import { renderDetail } from '../src/core/ops/status-detail.ts';
+import { flowMetrics, renderMetrics } from '../src/core/stage/signoff.ts';
+import { sessionsRoot } from '../src/core/engine/session-log.ts';
+import { StateStore } from '../src/core/state/state-store.ts';
+import { worktreesRoot } from '../src/core/workspace/worktree.ts';
 import { packageRoots, pluginExtensionsFor } from '../src/pi-adapter/plugins.ts';
 import {
   agentTime, parseTestSummary, runHidden, runProjectTests, scoreRun, sessionUsage, toMin,

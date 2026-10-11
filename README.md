@@ -249,14 +249,20 @@ feature 模式同样扫描 `docs/`，但跳过之前流程已经入库过的文�
 规格是 `docs/BUILD_PROMPT.md`（不要修改）。所有偏离规格的决定、已核实的 Pi API 与版本、真实模型实验的结论都记在 `NOTES.md`。
 
 ```
-src/core/        业务逻辑，不依赖 Pi。state-store.ts 是 .forge/ 唯一的读写入口；
-                 state-machine.ts 是转移表（不在表中的转移一律拒绝）；dispatcher.ts 是引擎
+src/core/        业务逻辑，不依赖 Pi，按模块分子目录：
+  state/         .forge/ 状态层：state-store.ts 是唯一的读写入口；state-machine.ts 是转移表
+                 （不在表中的转移一律拒绝）；schemas、event-log、config、paths、git、dag 等
+  engine/        引擎：dispatcher.ts 是引擎；调度、子进程运行时、提示组装、预算与成本
+  workspace/     worktree、阶段 worktree、范围与越界检测、依赖准备
+  spec/ plan/ verify/ acceptance/ stage/   规格、契约与计划、验证与闸门、验收测试、阶段
+  security/      guard、shell 解析、redact
+  ops/           init、adopt、resume、release、doctor、状态视图、history、knowledge 等
 src/tools/       forge_* 工具的业务实现
 src/commands/    斜杠命令的业务实现
 src/modes/       阶段计划与 fix 流程
 src/pi-adapter/  唯一可以调用 Pi API 的目录
 agents/ rules/ skills/ templates/   角色提示、规则、技能、项目模板
-schemas/*.json   由 npm run gen:schemas 从 src/core/schemas.ts 生成
+schemas/*.json   由 npm run gen:schemas 从 src/core/state/schemas.ts 生成
 scripts/         forge-view（事件查看器）、gen-schemas、real-build 与 baseline-build（M9 用）
 test/            unit、e2e、fixtures
 docs/            规格、决定记录、流程图（flow.md）
@@ -269,7 +275,7 @@ legacy/          pi-flow 的参考代码，不参与构建
 npm run typecheck                 # tsc --noEmit
 npm test                          # 先跑 test/unit，再跑 test/e2e
 node --test --test-reporter=spec "test/unit/**/*.test.ts"   # 只跑单元测试
-npm run gen:schemas               # 从 src/core/schemas.ts 生成 schemas/*.json
+npm run gen:schemas               # 从 src/core/state/schemas.ts 生成 schemas/*.json
 ```
 
 测试不依赖真实 LLM：单元测试直接测纯函数；e2e 用 `test/fixtures/fake-subagent`（用脚本代替模型调用工具，仍经过真实的 guard 与 `forge_*` 工具）和 `test/fixtures/fake-llm`（假模型服务，供真实 pi 进程使用）。真实模型只在 M9 和 `scripts/real-build.ts` 中使用。

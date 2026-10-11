@@ -1,7 +1,7 @@
 // 第 8.2 节：预检要跑的命令。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { precheckCommands } from '../../src/core/precheck.ts';
+import { precheckCommands } from '../../src/core/verify/precheck.ts';
 import { readFileSync } from 'node:fs';
 
 test('precheckCommands：只跑已定义且非空的 typecheck、lint、test；有验收测试目录时加 acceptance -- <task>', () => {
@@ -15,7 +15,7 @@ test('precheckCommands：只跑已定义且非空的 typecheck、lint、test；�
 
 test('contractBaseOf：同步过集成分支后，基线是合并基点（含已批准变更对契约的修改）；没有集成分支时用 base_sha', async () => {
   const { tmpRepo } = await import('../helpers/repo.ts');
-  const { contractBaseOf } = await import('../../src/core/precheck.ts');
+  const { contractBaseOf } = await import('../../src/core/verify/precheck.ts');
   const { writeFileSync } = await import('node:fs');
   const path = (await import('node:path')).default;
   const r = tmpRepo();
@@ -40,7 +40,7 @@ test('contractBaseOf：同步过集成分支后，基线是合并基点（含已
 test('runPrecheck：worker 改了已有契约时，预检在跑命令之前就失败（contracts），并点出文件', async () => {
   const { setupProject, PROJECT_YAML } = await import('../helpers/project.ts');
   const { mkTask } = await import('../helpers/tasks.ts');
-  const { runPrecheck } = await import('../../src/core/precheck.ts');
+  const { runPrecheck } = await import('../../src/core/verify/precheck.ts');
   const { mkdirSync, writeFileSync, mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const path = (await import('node:path')).default;
@@ -71,7 +71,7 @@ test('runPrecheck：worker 改了已有契约时，预检在跑命令之前就�
 test('contractAppendCheck：同步集成分支后，已批准变更对契约的修改不算 worker 的违规；worker 自己的修改算', async () => {
   const { tmpRepo } = await import('../helpers/repo.ts');
   const { mkTask } = await import('../helpers/tasks.ts');
-  const { contractAppendCheck } = await import('../../src/core/precheck.ts');
+  const { contractAppendCheck } = await import('../../src/core/verify/precheck.ts');
   const { mkdirSync, writeFileSync, mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const path = (await import('node:path')).default;

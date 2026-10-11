@@ -9,7 +9,7 @@ import { contractViolationsAt } from '../plan/contract-diff.ts';
 import { accBranch } from '../acceptance/acctest.ts';
 import { withScopeHint } from '../workspace/scope-hint.ts';
 import { branchExists } from '../workspace/worktree.ts';
-import { evidenceText, failureSummary, runShell } from '../workspace/verify-runner.ts';
+import { evidenceText, failureSummary, noteToolMissing, runShell } from '../workspace/verify-runner.ts';
 import { resourceOptions, withResources } from '../workspace/resources.ts';
 import { cleanTreeOf, recordVerified } from '../verify/verify-cache.ts';
 import { existsSync } from 'node:fs';
@@ -82,6 +82,7 @@ export async function runPrecheck(root: string, store: StateStore, config: FlowC
       const r = { command: c.name, ...(await runShell(c.shell, wt, timeoutMs, env)) };
       const ev = await store.saveEvidence(flowId, t.id, `precheck-a${attempt}-${c.name}.log`, evidenceText(r, c.shell), 'precheck');
       evidence.push(ev);
+      if (await noteToolMissing(store, r, { flow: flowId, task: t.id, actor: 'precheck' })) continue;
       if (r.exit_code === 0) passed.push({ name: c.name, shell: c.shell, evidence: ev });
       if (r.exit_code !== 0) {
         const what = c.name === 'acceptance' ? `验收测试（tests/acceptance/${impl}/）` : c.name;

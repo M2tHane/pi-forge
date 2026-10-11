@@ -10,7 +10,7 @@ import type { StateStore } from '../state/state-store.ts';
 import { git } from '../state/git.ts';
 import { failingFiles } from '../workspace/scope-hint.ts';
 import { worktreesRoot, removeWorktree } from '../workspace/worktree.ts';
-import { evidenceText, failureSummary, runShell } from '../workspace/verify-runner.ts';
+import { evidenceText, failureSummary, noteToolMissing, runShell } from '../workspace/verify-runner.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { resourceOptions, withResources } from '../workspace/resources.ts';
 
@@ -128,6 +128,7 @@ export async function runImplementationChecks(root: string, store: StateStore, c
         for (const { name, shell } of plan) {
           const r = { command: name, ...(await runShell(shell, wt, timeoutMs, env)) };
           const ev = await store.saveStageEvidence(flowId, flow.stage, `gate-${name}.log`, evidenceText(r, shell), 'gate');
+          if (await noteToolMissing(store, r, { flow: flowId, stage: flow.stage, actor: 'gate' })) continue;
           if (r.exit_code === 0) passed.push({ name, shell, evidence: ev });
           if (r.exit_code !== 0) {
             reasons.push(`闸门命令 ${name} 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1200)}`);

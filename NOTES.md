@@ -194,6 +194,8 @@
 105. M9 脚本判定"已交付"只认最后一个实施阶段（`S<n>`）的 `stage_status = done`；P0、P1 批准后阶段切换的瞬间也会短暂是 done，轮询碰巧读到时会提前进入变更阶段（e2e `m9-real-build` 间歇失败即此原因）。
 106. `src/core` 目录依赖改为无环分层（state → security/workspace → verify/insight → spec → acceptance → plan → stage → engine → ops），由 `test/unit/core-layers.test.ts` 约束；搬了 19 个文件（verify-runner、resources、services、forge-read 下沉到 workspace；cost 系与 forge-watch 进新目录 insight；adopt、feature-spec 进 plan；gates、release 进 stage；merge-queue、precheck、knowledge、notes 进 engine；engine-lock、notify 进 ops；stage-fix 进 acceptance），并抽出 5 处纯函数（去向见路径对照表末），函数体原样，没有参数注入。
 107. test_author 关闭时，合并验证（impl 与 fix 共用）里失败的验收目录不属于当前 task（别的 task 的 foreign、此前流程的 legacy）不再建 .at-n 也不再只按失败退回：`decideBrokenAcceptance` 把这些目录加进当前 task 的 writes（grantScope，程序批准）并在 handoff 写明约束，提交检查放开 writes 里的 `tests/acceptance/[_support/]T-n/**`；forge_dispute / forge_request_scope 的拒绝信息改为指向该机制。M9b A0 的 F-002/T-007.fx-1 即死于此：预检只跑 `acceptance -- <impl>` 看不到旧目录，合并验证全量失败后 test_author 关闭分支返回 null，task 以 merge_verify_fail 退回但无处可改；test_author 开启时行为不变（偏离 90）。
+108. 命令因「工具不存在」失败（退出码 127，或前 10 个非空行里有 sh/bash/zsh `not found`、pnpm `Command "x" not found`、npm `could not determine executable to run` 整行格式，且其前没有测试框架标记）按跳过处理：`workspace/verify-runner.ts` 的 `detectToolMissing`/`noteToolMissing`，接在阶段门禁、预检、合并验证（单个与批量）；evidence 与 note 事件写「工具缺失，已跳过：<命令>」，不计失败、不记为已通过；status-view 对每个 (流程, 命令) 报一次待处理项，建议删掉或装上。验收测试命令（`acceptance`、`acceptance_list`）不接入。依据：M9 A0 里 `redocly` 未安装使 S0、S1 门禁转 needs_human。
+109. lean 计划加程序校验（`plan/plan.ts` 的 `leanShapeErrors`）：S0 exit 涉及的 AC ≤ 4；S0 之后实施阶段数 ≤ max(1, ceil(S0 之后 exit 的 AC 总数 / 40))，AC 按 exit 里 REQ 的全部 AC 计。此前只靠提示词（偏离 102），M9 A0 的 lean 计划仍分了 S0、S1、S2。standard 不受影响。
 
 ## M1 删除、由 Mx 重建
 

@@ -13,7 +13,7 @@ import { headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from
 import { matchesAny, isProtected, INTERFACES_PATH } from '../state/paths.ts';
 import { mergeContractThreeWay } from '../plan/contract-merge.ts';
 import { proposeCandidate } from './knowledge.ts';
-import { evidenceText, failureSummary, runShell } from '../workspace/verify-runner.ts';
+import { evidenceText, failureSummary, noteToolMissing, runShell } from '../workspace/verify-runner.ts';
 import { testAdjustEnabled } from '../verify/test-adjust.ts';
 import { withScopeHint } from '../workspace/scope-hint.ts';
 import { softDepsDone } from '../state/waits.ts';
@@ -163,6 +163,7 @@ export class MergeQueue {
             const r = await runShell(c.shell, temp, this.hooks.verifyTimeoutMs, env);
             let ev = '';
             for (const a of applied) ev = await this.store.saveEvidence(flowId, a.t.id, `merge-a${a.t.merge_failures ?? 0}-batch-${c.name}.log`, evidenceText({ command: c.name, ...r }, c.shell), 'merge-queue');
+            if (await noteToolMissing(this.store, { command: c.name, ...r }, { flow: flowId, actor: 'merge-queue' })) continue;
             if (r.exit_code === 0) passed.push({ name: c.name, shell: c.shell, evidence: ev });
             if (r.exit_code !== 0) {
               await this.store.recordEvent({ flow: flowId, actor: 'merge-queue', type: 'note', reason: `批量合并 ${applied.map((a) => a.t.id).join('、')} 的全量 ${c.name} 失败，改为逐个合并`, data: { tasks: applied.map((a) => a.t.id), summary: failureSummary(r.output, 800) } });
@@ -370,8 +371,9 @@ export class MergeQueue {
       const passed: { name: string; shell: string; evidence: string }[] = [];
       for (const c of plan) {
         const r = { command: c.name, ...(await runShell(c.shell, wt, this.hooks.verifyTimeoutMs, env)) };
-        results.push({ command: c.name, exit_code: r.exit_code });
         const ev = await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-${c.name}.log`, evidenceText(r, c.shell), 'merge-queue');
+        if (await noteToolMissing(this.store, r, { flow: flowId, task: t.id, actor: 'merge-queue' })) continue;
+        results.push({ command: c.name, exit_code: r.exit_code });
         if (r.exit_code === 0) passed.push({ name: c.name, shell: c.shell, evidence: ev });
         if (r.exit_code !== 0) {
           // 全量验证的失败多半是任务自己的问题，日志多给一些

@@ -89,6 +89,30 @@ const acKeys = (spec: PlanContext['spec']) => {
   return out;
 };
 
+/** lean 计划的阶段上限：S0 之后每 40 条 AC 一个实施阶段 */
+export const LEAN_AC_PER_STAGE = 40;
+/** lean 的 S0 exit 最多涉及的 AC 数 */
+export const LEAN_S0_MAX_AC = 4;
+
+/**
+ * lean 计划的形状检查（纯函数，偏离 109）：S0 exit 涉及的 AC ≤ 4；S0 之后的实施阶段数 ≤ max(1, ceil(S0 之后 exit 的 AC 总数 / 40))。
+ * AC 数按 exit 里 REQ 的全部 AC 计算；不存在的 REQ 不计（另有错误报告）。
+ */
+export function leanShapeErrors(stages: readonly { id: string; exit: readonly string[] }[], reqs: readonly { id: string; acs: readonly unknown[] }[]): string[] {
+  const acOf = (ids: readonly string[]) => ids.reduce((n, id) => n + (reqs.find((r) => r.id === id)?.acs.length ?? 0), 0);
+  const errors: string[] = [];
+  const s0 = stages.find((s) => s.id === 'S0');
+  if (s0) {
+    const n = acOf(s0.exit);
+    if (n > LEAN_S0_MAX_AC) errors.push(`精简模式（lean）的 S0 exit 最多涉及 ${LEAN_S0_MAX_AC} 条 AC，现在 ${s0.exit.join('、')} 共 ${n} 条；把多余的 REQ 移到 S1 的 exit（S0 只做骨架和能跑通的最小闭环）`);
+  }
+  const rest = stages.filter((s) => s.id !== 'S0');
+  const total = rest.reduce((n, s) => n + acOf(s.exit), 0);
+  const limit = Math.max(1, Math.ceil(total / LEAN_AC_PER_STAGE));
+  if (rest.length > limit) errors.push(`精简模式（lean）S0 之后现在分了 ${rest.length} 个实施阶段（${rest.map((s) => s.id).join('、')}），S0 之后 exit 共 ${total} 条 AC，上限是 ${limit} 个（每 ${LEAN_AC_PER_STAGE} 条 AC 才可多分一个阶段，至少 1 个）；请合并成 ${limit} 个阶段`);
+  return errors;
+}
+
 export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -140,6 +164,7 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
     else if (n === 0) errors.push(`阶段 ${s.id} 没有 task`);
     if (n > ctx.limits.max_parallel * 3) warnings.push(`阶段 ${s.id} 有 ${n} 个 task，超过 max_parallel × 3 = ${ctx.limits.max_parallel * 3}，固定开销会很高，考虑合并`);
   }
+  if (plan.mode === 'lean') errors.push(...leanShapeErrors(plan.stages, ctx.spec.reqs));
   if (plan.mode === 'standard' && plan.size_estimate.loc < ctx.limits.lean_below_loc) {
     warnings.push(`预估 ${plan.size_estimate.loc} 行，低于 lean_below_loc=${ctx.limits.lean_below_loc}，建议选 mode: lean（每个阶段一个 task）`);
   }

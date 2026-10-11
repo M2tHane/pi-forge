@@ -91,6 +91,13 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
         command: s.kind === 'blocked' ? `/forge unblock ${s.target}` : '/forge-status --detail 查看等待关系；无法自行恢复时 /forge abort' });
     }
     if (stuck?.length) out.push({ key: `${flow.id}:stuck:${stuck.map((t) => `${t.id}@${t.version}`).join(',')}`, text: `流程卡住：剩下的任务都被 ${stuck.map((t) => t.id).join('、')} 挡住`, command: '/forge unblock <任务>' });
+    // 命令因工具不存在被跳过（偏离 108）：每个 (流程, 命令) 一项，commands.yaml 里删掉或装上之后自然消失
+    const missing = new Map<string, string>();
+    for (const e of store.readEvents()) if (e.flow === flow.id && e.type === 'note' && typeof e.data?.['tool_missing'] === 'string') missing.set(e.data['tool_missing'], String(e.data['tool'] ?? ''));
+    for (const [name, tool] of missing) {
+      if (config.commands[name] === undefined) continue;
+      out.push({ key: `${flow.id}:tool-missing:${name}`, text: `命令 ${name} 的工具${tool && tool !== '未知' ? `（${tool}）` : ''}未安装，已跳过（不计失败）`, command: `在 workflow.yaml 的 commands 里删掉 ${name}，或安装该工具` });
+    }
     const budget = budgetState(store, config, flow, now);
     // 预算用尽、同步冲突本身就是停下来的原因，下面各有一条；不再重复报"停滞"
     const stall = budget?.exceeded || flow.sync?.status === 'conflict' ? null : stallOf(store, config, flow, now);

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseContracts } from '../../src/core/plan/contract-check.ts';
 import { effectiveSpec } from '../../src/core/spec/spec.ts';
-import { checkPlan, deriveAcctest, deriveTasks, formatPlanReport, parsePlan, parseSymbol, type PlanContext } from '../../src/core/plan/plan.ts';
+import { checkPlan, leanShapeErrors, deriveAcctest, deriveTasks, formatPlanReport, parsePlan, parseSymbol, type PlanContext } from '../../src/core/plan/plan.ts';
 import type { PlanFile } from '../../src/core/state/schemas.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
 
@@ -201,4 +201,28 @@ test('S0 的 writes 写出 _support/ 与 S0-smoke/ 也接受，派生时去重�
   const impl = deriveTasks(p, r.deps, { worker: [], testAuthor: [] }, { acctest: false }).find((x) => x.id === 'T-002')!;
   assert.equal(impl.writes.filter((w) => w === 'tests/acceptance/_support/**').length, 1);
   assert.match(errs(run((p2) => { t(p2, 'T-003').writes.push('tests/acceptance/_support/**'); })), /与 tests\/acceptance\/\*\* 重叠/);
+});
+
+test('lean 形状（偏离 109）：S0 exit 最多 4 条 AC；S0 之后阶段数 ≤ max(1, ceil(AC 总数 / 40))', () => {
+  const reqs = (n: number, id = 'REQ-A') => ({ id, acs: Array.from({ length: n }, (_, i) => i) });
+  const st = (...ex: string[][]) => ex.map((exit, i) => ({ id: `S${i}`, exit }));
+  // S0：恰好 4 条通过，5 条报错
+  assert.deepEqual(leanShapeErrors(st(['REQ-A'], ['REQ-B']), [reqs(4), reqs(1, 'REQ-B')]), []);
+  const s0 = leanShapeErrors(st(['REQ-A'], ['REQ-B']), [reqs(5), reqs(1, 'REQ-B')]);
+  assert.match(s0.join(), /S0 exit 最多涉及 4 条 AC，现在 REQ-A 共 5 条.*移到 S1/);
+  // 阶段数：40 条 AC 一个阶段；两个阶段共 40 条也只允许 1 个
+  assert.deepEqual(leanShapeErrors(st([], ['REQ-A']), [reqs(40)]), []);
+  assert.match(leanShapeErrors(st([], ['REQ-A'], ['REQ-B']), [reqs(20), reqs(20, 'REQ-B')]).join(), /分了 2 个实施阶段（S1、S2），S0 之后 exit 共 40 条 AC，上限是 1 个/);
+  // 41 条 → 上限 2：2 个通过，3 个报错
+  assert.deepEqual(leanShapeErrors(st([], ['REQ-A'], ['REQ-B']), [reqs(21), reqs(20, 'REQ-B')]), []);
+  assert.match(leanShapeErrors(st([], ['REQ-A'], ['REQ-B'], ['REQ-C']), [reqs(21), reqs(10, 'REQ-B'), reqs(10, 'REQ-C')]).join(), /分了 3 个实施阶段.*共 41 条 AC，上限是 2 个/);
+  // 没有任何 AC 时上限仍是 1
+  assert.deepEqual(leanShapeErrors(st([], []), []), []);
+});
+
+test('lean 形状经 checkPlan 生效，standard 不受影响', () => {
+  const split = (p: PlanFile) => { p.stages.push({ id: 'S2', goal: '第三段', exit: [] }); p.tasks.push({ ...structuredClone(t(p, 'T-003')), id: 'T-004', stage: 'S2', ac: [], produces: [], requires: [], writes: ['z/**'] }); };
+  assert.match(errs(run((p) => { p.mode = 'lean'; split(p); })), /精简模式（lean）S0 之后现在分了 2 个实施阶段（S1、S2）.*上限是 1 个/);
+  assert.deepEqual(run(split).errors, []);
+  assert.deepEqual(run((p) => { p.mode = 'lean'; }).errors, []);
 });

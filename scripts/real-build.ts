@@ -75,7 +75,7 @@ export function parseArgs(argv: string[]): Options {
     pollSec: Number(get('--poll-sec') ?? 5),
     stopAfterGates: get('--stop-after-gates') ? Number(get('--stop-after-gates')) : null,
     changeOnly: argv.includes('--change-only'),
-    // standard：lean_below_loc 设为 0、模拟用户不再要求精简模式，让 architect 出多任务并行的计划
+    // standard：lean_below_loc 设为 1（最小合法值）、模拟用户不再要求精简模式，让 architect 出多任务并行的计划
     planMode: get('--plan-mode') === 'standard' ? 'standard' as const : 'lean' as const,
   };
 }
@@ -102,7 +102,7 @@ export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' |
   for (const r of CODER_ROLES) { doc.setIn(['roles', r, 'model'], 'coder'); doc.setIn(['roles', r, 'thinking'], o.coderThinking); }
   doc.setIn(['escalation', 'enabled'], false);
   if (o.arm === 'A1') doc.setIn(['implementation_gate', 'test_author'], false);
-  if (o.planMode === 'standard') doc.setIn(['limits', 'lean_below_loc'], 0);
+  if (o.planMode === 'standard') doc.setIn(['limits', 'lean_below_loc'], 1);
   return String(doc);
 }
 

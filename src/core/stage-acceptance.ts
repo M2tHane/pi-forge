@@ -139,7 +139,7 @@ export async function afterChecks(d: AcceptanceDeps, flowId: string, g: Implemen
     return { done: false };
   }
   if (g.coverage?.gaps.length) {
-    const c = await createCoverageGapRound(store, flowId, g.coverage.gaps, !d.config.testAuthor);
+    const c = await createCoverageGapRound(store, flowId, g.coverage.gaps, !d.config.testAuthorFor(flow));
     const unowned = c.unowned.map((x) => x.ac);
     if (c.reason || !c.tasks.length) {
       const why = c.reason ?? (unowned.length ? `覆盖率缺口找不到负责的 task：${unowned.join('、')}` : `覆盖率缺口的补测还在进行：${c.skipped.join('、')}`);

@@ -80,8 +80,14 @@ export class FlowConfig {
     this.warnings = warnings;
   }
 
-  /** 实施阶段是否有 test-author 写验收测试（implementation_gate.test_author，默认 true；偏离 81） */
-  get testAuthor(): boolean { return this.raw.implementation_gate?.test_author !== false; }
+  /**
+   * 该流程的实施阶段是否有 test-author 写验收测试（偏离 81、98）：implementation_gate.test_author 显式写了 true/false 就照办；
+   * 没写时按流程的 plan_mode 决定：lean 不要，standard（以及 P1 还没确定模式时）要。
+   */
+  testAuthorFor(flow: { plan_mode?: 'lean' | 'standard' | undefined }): boolean {
+    const v = this.raw.implementation_gate?.test_author;
+    return typeof v === 'boolean' ? v : flow.plan_mode !== 'lean';
+  }
   get limits() { return this.raw.limits; }
   get commands() { return this.raw.commands; }
   /** 触发压缩的上下文占比 */

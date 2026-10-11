@@ -239,7 +239,7 @@ export async function materializePlan(root: string, store: StateStore, config: F
   const proposal = proposalProblem(store, flowId, r.planText);
   if (proposal) problems.push(proposal);
   if (problems.length || !r.plan || !r.check || !r.spec) throw new Error(`计划未通过校验，不能批准：\n${problems.map((p) => `- ${p}`).join('\n')}`);
-  const tasks = deriveTasks(r.plan, r.check.deps, { worker: config.role('worker').scopes, testAuthor: config.role('test-author').scopes }, { acctest: config.testAuthor, selfTest: !config.testAuthor, verify: ['typecheck', 'lint', 'test'].filter((c) => config.commands[c]?.trim()) });
+  const tasks = deriveTasks(r.plan, r.check.deps, { worker: config.role('worker').scopes, testAuthor: config.role('test-author').scopes }, { acctest: config.testAuthorFor({ plan_mode: r.plan.mode }), selfTest: !config.testAuthorFor({ plan_mode: r.plan.mode }), verify: ['typecheck', 'lint', 'test'].filter((c) => config.commands[c]?.trim()) });
   const drafts = listDrafts(root, flow.integration_branch);
   const applied = applyDrafts(root, drafts, flowId);
   if (applied.commands) Object.assign(config.raw.commands, applied.commands);

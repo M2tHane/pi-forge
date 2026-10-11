@@ -224,9 +224,15 @@ test('implementation_gate 保留可选 auto 命令；固定阶段 gate 引用缺
   assert.ok(!Object.hasOwn(c.commands, 'e2e'));
   assert.equal(c.raw.implementation_gate?.coverage, true);
   assert.equal(c.raw.implementation_gate?.qa, true);
-  assert.equal(c.testAuthor, true);
-  assert.equal(c.raw.implementation_gate?.test_author, true);
-  assert.equal(parseConfig(changed((wf) => { wf.implementation_gate!.test_author = false; })).testAuthor, false);
+  // 模板不写 test_author：按 plan_mode 决定（偏离 98）
+  assert.equal(c.raw.implementation_gate?.test_author, undefined);
+  assert.equal(c.testAuthorFor({ plan_mode: 'standard' }), true);
+  assert.equal(c.testAuthorFor({}), true);
+  assert.equal(c.testAuthorFor({ plan_mode: 'lean' }), false);
+  const off = parseConfig(changed((wf) => { wf.implementation_gate!.test_author = false; }));
+  assert.equal(off.testAuthorFor({ plan_mode: 'standard' }), false);
+  const on = parseConfig(changed((wf) => { wf.implementation_gate!.test_author = true; }));
+  assert.equal(on.testAuthorFor({ plan_mode: 'lean' }), true);
   assert.match(errorsOf(changed((wf) => {
     wf.modes.build!.stages[1]!.gate.auto = ['missing'];
   })).join(), /modes\.build\.stages\[1\]\.gate\.auto\[0\].*missing/);

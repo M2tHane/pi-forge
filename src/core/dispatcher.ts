@@ -397,6 +397,7 @@ export class Engine {
     const agent = loadAgent(role, root, this.d.packageAgentsDir);
     const { rules } = ruleFilesFor(config, root, task.scopes, task.layers ?? []);
     const mode = ['review', 'qa'].includes(task.kind) ? 'review' : 'impl';
+    const flow = store.readFlow(flowId);
     // 重新派发时告诉实施者 worktree 里已有的改动（含未提交的），避免重做或覆盖
     let existingWork: string | undefined;
     if (mode === 'impl' && task.worktree && task.base_sha) {
@@ -405,7 +406,7 @@ export class Engine {
       if (status || stat) existingWork = [stat, status && `未提交：\n${status}`].filter(Boolean).join('\n\n');
     }
     // test_author 为 false（偏离 81）时 worker 自己写验收测试，带上 acceptance-tests
-    const skillNames = [...new Set([...(role === 'architect' ? ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules', ...(task.stage !== P1_STAGE ? ['change-request'] : [])] : role === 'test-author' ? ['acceptance-tests'] : role === 'reviewer' ? ['code-review', 'tdd', 'simplicity'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd', 'simplicity', 'receiving-feedback', ...(config.testAuthor ? [] : ['acceptance-tests'])]), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
+    const skillNames = [...new Set([...(role === 'architect' ? ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules', ...(task.stage !== P1_STAGE ? ['change-request'] : [])] : role === 'test-author' ? ['acceptance-tests'] : role === 'reviewer' ? ['code-review', 'tdd', 'simplicity'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd', 'simplicity', 'receiving-feedback', ...(config.testAuthorFor(flow) ? [] : ['acceptance-tests'])]), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
     const skills = skillNames.map((n) => {
       const f = this.d.packageSkillsDir ? path.join(this.d.packageSkillsDir, n, 'SKILL.md') : '';
       return f && existsSync(f) ? { path: `skills/${n}`, content: readFileSync(f, 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim() } : null;
@@ -418,7 +419,7 @@ export class Engine {
     const reviewBrief = task.kind === 'review' || task.kind === 'qa' ? store.readHandoff(flowId, task.id).replace(/^\s*## \d{4}-[^\n]*\n+/, '') : '';
     const confirmRound = (task.kind === 'review' || task.kind === 'qa') && (readReviewEvidence<ReviewInputFile>(store, flowId, task.id, task.kind === 'qa' ? QA_INPUT : REVIEW_INPUT)?.prior_must.length ?? 0) > 0;
     const prompt = assemblePrompt({
-      agent, rules, skills, task, flowId, handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
+      agent, rules, skills, task, flowId, flowTasks: tasks, handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
       ...(reviewBrief ? { reviewBrief, confirmRound } : {}), commands: config.commands,
       knowledge: selectKnowledge(store.readKnowledge(), task).map(formatEntry),
       ...(scratch ? { scratchDir: scratch } : {}),

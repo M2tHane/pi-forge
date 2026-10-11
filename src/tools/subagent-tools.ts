@@ -7,7 +7,7 @@ import { acceptanceList, acctestDirs, applyToAccBranch, checkAcctestSubmit, reve
 import { failureSummary } from '../core/verify-runner.ts';
 import { contractBaseOf, withoutMergedAcceptance } from '../core/precheck.ts';
 import { contractViolationsAt } from '../core/contract-diff.ts';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { checkoutAccWorktree, createAcctestRound, readIn, validateEvidence } from '../core/acceptance-flow.ts';
 import { readSpec } from '../core/spec-flow.ts';
@@ -426,14 +426,14 @@ async function submitReport(ctx: ToolContext, p: Static<typeof ReviewReportParam
     if (!files.length) throw new FlowToolError(`第 ${n + 1} 个问题没有写 files（涉及的文件）。`);
     return { level: i.level, basis: i.basis, files, location: i.location, problem: i.problem, expected: i.expected };
   });
-  const { issues, downgraded } = classifyIssues(inputs);
+  const { issues, downgraded } = classifyIssues(inputs, 1, (rel) => { const abs = path.join(ctx.env.root, rel); return existsSync(abs) ? readFileSync(abs, 'utf8') : null; });
   const verdict = effectiveVerdict(issues);
   const file: ReviewReportFile = { round: input.round, requested: p.verdict, verdict, issues, downgraded, head: input.head };
   await ctx.store.saveEvidence(ctx.env.flow, t.id, f.files.report, JSON.stringify(file, null, 2), actor(ctx));
   await finishReview(ctx, t);
   const must = mustOf(issues);
   const notes = [
-    downgraded.length ? `这些 must 没有合格的出处（basis 只能以 rule:、ac:、contract:、defect: 开头且冒号后有内容），已降为 suggest：${downgraded.map((d) => d.id).join('、')}。` : '',
+    downgraded.length ? `这些 must 没有合格的出处（basis 只能以 rule:、ac:、contract:、defect: 开头且冒号后有内容；rule: 必须指向存在的 rules/*.md 及其中的条目），已降为 suggest：${downgraded.map((d) => `${d.id}${d.reason ? `（${d.reason}）` : ''}`).join('、')}。` : '',
     p.verdict === 'changes' && !must.length ? '降级后没有 must，按 pass 处理。' : '',
     p.verdict === 'pass' && must.length ? `你写的是 pass 但提交了 ${must.length} 条 must，程序按 changes 处理。` : '',
   ].filter(Boolean);

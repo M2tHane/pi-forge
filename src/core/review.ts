@@ -56,6 +56,31 @@ export function reviewMode(task: Pick<TaskFile, 'id' | 'kind' | 'review' | 'risk
 const MUST_BASIS = /^(rule|ac|contract|defect):\s*\S/;
 export const isValidMustBasis = (basis: string): boolean => MUST_BASIS.test(basis.trim());
 
+/** 读项目里的规则文件（相对项目根的路径）；不存在返回 null */
+export type RuleReader = (rel: string) => string | null;
+
+/**
+ * rule: 出处必须指向真实存在的规则文件（偏离 100）：rules/ 下的 .md，`#` 后的条目要在该文件里出现。
+ * 条目可以是编号（R3、3、#3：匹配以该编号开头的行，如 `3.`、`R3 `、`- [ ] R3 `、`## R3`），也可以是文件里的一段文字。
+ * 不是 rule: 开头的出处返回 null（别的前缀不在这里校验）；通过返回 null，否则返回不通过的原因。
+ */
+export function ruleBasisProblem(basis: string, read: RuleReader): string | null {
+  const m = /^rule:\s*([^#\s]+)\s*(?:#\s*(.*\S))?\s*$/.exec(basis.trim());
+  if (!/^rule:/.test(basis.trim())) return null;
+  if (!m) return 'rule: 出处的格式应为 rule:rules/<文件>.md#<条目>';
+  const rel = m[1]!.replace(/^\.\//, '');
+  if (!/^rules\/[\w./-]+\.md$/.test(rel) || rel.includes('..')) return `${rel} 不是项目的规则文件（只能是 rules/ 下的 .md；技能、AGENTS.md、任务笔记都不能当出处）`;
+  const text = read(rel);
+  if (text === null) return `规则文件 ${rel} 不存在`;
+  const anchor = m[2]?.trim();
+  if (!anchor) return null;
+  const num = /^#?R?(\d+)$/i.exec(anchor);
+  const found = num
+    ? new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\[.\\]\\s*)?(?:#+\\s*)?R?${num[1]}(?!\\d)(?=[\\s.、)）:：]|$)`, 'im').test(text)
+    : text.toLowerCase().includes(anchor.replace(/^#/, '').toLowerCase());
+  return found ? null : `${rel} 里找不到条目 ${anchor}`;
+}
+
 export interface ReviewIssueInput {
   level: 'must' | 'suggest';
   basis: string;
@@ -64,16 +89,19 @@ export interface ReviewIssueInput {
   problem: string;
   expected: string;
 }
-export interface Downgraded { id: string; basis: string }
+export interface Downgraded { id: string; basis: string; reason?: string }
 
-/** 给问题编号 R-<start>…；没有合格出处的 must 降为 suggest（返回被降级的编号，供回复说明） */
-export function classifyIssues(inputs: readonly ReviewIssueInput[], start = 1): { issues: ReviewFinding[]; downgraded: Downgraded[] } {
+/** 给问题编号 R-<start>…；没有合格出处的 must 降为 suggest（返回被降级的编号与原因，供回复说明）。给了 readRule 才校验 rule: 指向的文件与条目 */
+export function classifyIssues(inputs: readonly ReviewIssueInput[], start = 1, readRule?: RuleReader): { issues: ReviewFinding[]; downgraded: Downgraded[] } {
   const downgraded: Downgraded[] = [];
   const issues = inputs.map((i, n): ReviewFinding => {
     const id = `R-${start + n}`;
     const basis = i.basis.trim();
     let level = i.level;
-    if (level === 'must' && !isValidMustBasis(basis)) { level = 'suggest'; downgraded.push({ id, basis }); }
+    if (level === 'must') {
+      const reason = !isValidMustBasis(basis) ? undefined : readRule ? ruleBasisProblem(basis, readRule) ?? undefined : undefined;
+      if (!isValidMustBasis(basis) || reason) { level = 'suggest'; downgraded.push({ id, basis, ...(reason ? { reason } : {}) }); }
+    }
     return { id, level, basis: basis || '（未写出处）', files: [...i.files], location: i.location.trim(), problem: i.problem.trim(), expected: i.expected.trim() };
   });
   return { issues, downgraded };

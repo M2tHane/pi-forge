@@ -62,6 +62,8 @@ export interface AssembleInput {
   /** 确认轮（.rv-2 起）：只能用 forge_review_confirm 回答上一轮的 must 清单 */
   confirmRound?: boolean;
   /** 本任务依赖的上游任务及其 handoff（需求汇总者从这里读两方意见） */
+  /** 本流程的全部 task，用来渲染「允许的测试入口」与「已交付的接口」（worker、test-author、reviewer） */
+  flowTasks?: readonly TaskFile[];
   upstream?: { id: string; title: string; type: 'hard' | 'soft'; status: string; handoff: string }[];
 }
 
@@ -74,17 +76,63 @@ function tail(text: string, n: number): string {
   return `…${nl >= 0 && nl < n / 2 ? cut.slice(nl + 1) : cut}`;
 }
 
+/** handoff 的段落头：appendHandoff 写的 `## <时间> <actor>` */
+const SEGMENT_HEAD = /^## \d{4}-\S+ (\S+)[ \t]*$/gm;
+/** 程序写的段（依赖准备失败、冲突说明、失败原因等）：对下游多半已过时，不带给下游 */
+const PROGRAM_ACTORS = new Set(['dispatcher', 'engine', 'merge-queue', 'forge-submit']);
+
+/**
+ * 给下游任务看的上游 handoff：只取上游任务最后一次 run（actor 为 run:<id>）写的段，丢掉 dispatcher / engine 等程序段（偏离 101）。
+ * 没有任何 run 写的段时（例如由程序或用户完成的任务）保留非程序段；没有段落头的纯文本原样返回。
+ */
+export function usefulHandoff(handoff: string): string {
+  const heads = [...handoff.matchAll(SEGMENT_HEAD)];
+  if (!heads.length) return handoff;
+  const segs = heads.map((m, n) => ({ actor: m[1]!, text: handoff.slice(m.index, heads[n + 1]?.index ?? handoff.length).trimEnd() }));
+  const runs = segs.filter((x) => x.actor.startsWith('run:'));
+  const lastRun = runs.at(-1)?.actor;
+  const keep = lastRun ? runs.filter((x) => x.actor === lastRun) : segs.filter((x) => !PROGRAM_ACTORS.has(x.actor));
+  return keep.map((x) => x.text).join('\n\n');
+}
+
 /** 上游任务的 handoff 摘要；没有上游或上游都没有 handoff 时返回空 */
 export function upstreamSection(ups: NonNullable<AssembleInput['upstream']>): string {
   const blocks: string[] = [];
   let used = 0;
   for (const u of ups) {
-    if (!u.handoff.trim() || used >= UPSTREAM_TOTAL) continue;
-    const body = tail(u.handoff, Math.min(UPSTREAM_TAIL, UPSTREAM_TOTAL - used));
+    const handoff = usefulHandoff(u.handoff);
+    if (!handoff.trim() || used >= UPSTREAM_TOTAL) continue;
+    const body = tail(handoff, Math.min(UPSTREAM_TAIL, UPSTREAM_TOTAL - used));
     used += body.length;
     blocks.push(`### ${u.id}「${u.title}」（${u.type === 'hard' ? '硬依赖' : '软依赖'}，${u.status}）\n${body}`);
   }
   return blocks.length ? `## 上游任务的 handoff\n上游任务留下的意见、进展与约定；内容太长时只保留最近部分，需要细节时读取对应文件。\n\n${blocks.join('\n\n')}` : '';
+}
+
+/** 渲染接口清单的角色：这些角色的任务说明里带「允许的测试入口」与「已交付的接口」（stage-qa、architect 不需要） */
+const INTERFACE_ROLES: readonly string[] = ['worker', 'test-author', 'reviewer'];
+/** 已交付的接口最多列出的条数，超出的截断并注明总数 */
+export const DELIVERED_MAX = 40;
+const DELIVERED_KEY = /^(api|page):/;
+
+/**
+ * 任务说明里的两节接口信息（偏离 99）：本 task（.at / .fx / .rv 取 for_task 的 impl）的 test_interface，以及
+ * 本流程中已 done 的 impl 的 api: / page: 产出加上本 task 自己的 produces。没有内容的节不输出。
+ */
+export function interfaceSections(task: TaskFile, all: readonly TaskFile[]): string[] {
+  const impl = task.for_task ? all.find((x) => x.id === task.for_task) ?? task : task;
+  const out: string[] = [];
+  const ti = impl.test_interface ?? [];
+  if (ti.length) out.push(`## 允许的测试入口\n测试只能从下面这些入口验证（test_interface）：\n${list(ti)}`);
+  const mine = (impl.produces ?? []).map((p) => `${p}（${impl.id} 正在实现）`);
+  const done = all.filter((x) => x.kind === 'impl' && x.status === 'done' && x.id !== impl.id)
+    .flatMap((x) => (x.produces ?? []).filter((p) => DELIVERED_KEY.test(p)).map((p) => `${p}（${x.id}）`));
+  const items = [...done, ...mine];
+  if (items.length) {
+    const shown = items.length > DELIVERED_MAX ? [...items.slice(0, DELIVERED_MAX - mine.length), ...mine].slice(0, DELIVERED_MAX) : items;
+    out.push(`## 本阶段及之前已交付的接口\n已合入的 task 提供的接口，以及本 task 要实现的接口；不要依赖不在这里的接口。\n${list(shown)}${shown.length < items.length ? `\n（共 ${items.length} 项，只列出 ${shown.length} 项；其余见 docs/contracts/）` : ''}`);
+  }
+  return out;
 }
 
 export interface AssembledPrompt { system: string; user: string }
@@ -150,6 +198,7 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     const acs = (t.ac ?? []).filter((a) => /^REQ-\d+\.AC\d+$/.test(a));
     parts.push(`## 验收测试（由你编写）\n本任务没有单独的测试作者：按 AC 编号为本任务写验收测试，放在 \`tests/acceptance/${impl}/\`（辅助代码也放在这个目录下），用例标题带 \`[REQ-xxx.ACn]\`，每条 AC 至少一个用例。预检会运行 \`acceptance -- ${impl}\`，合并前这些测试必须通过。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
   }
+  if (i.flowTasks && INTERFACE_ROLES.includes(i.agent.name)) parts.push(...interfaceSections(t, i.flowTasks));
   if (i.priorTask) {
     parts.push(`## 接着你之前的对话\n上面的对话是你完成 ${i.priorTask.id}「${i.priorTask.title}」时的过程（run ${i.priorTask.run}），你熟悉这些代码，不必从头重读。那个任务已经合入；现在是一个新任务、新的 worktree（集成分支最新代码，可能包含别人之后的改动），文件路径与可写范围以本次说明为准。`);
   }

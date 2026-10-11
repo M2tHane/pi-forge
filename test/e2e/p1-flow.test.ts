@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { setupProject, type Project } from '../helpers/project.ts';
+import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { commitToBranch } from '../helpers/engine.ts';
 import type { MergeHooks } from '../../src/core/merge-queue.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
@@ -232,4 +232,37 @@ test('P1 闸门：集成分支上的契约不合格时回到 active，派 archit
     assert.match(p.store.readHandoff(p.flowId, 'T-002'), /P1 闸门未通过[\s\S]*BAD 必须以模块前缀 TEAM_ 开头/);
     assert.equal(p.store.readFlow(p.flowId).stage, 'P1');
   } finally { p.cleanup(); }
+});
+
+/** 批准一份 mode: lean 的计划，返回落地后的 task 列表（偏离 98：test_author 未配置时 lean 不派生 .at） */
+async function approveLean(yaml?: string) {
+  const p = await setupProject({ stages: ['P0', 'P1'], ...(yaml ? { yaml } : {}) });
+  const e = engineEnv(p, async (role, _nth, a) => {
+    if (role === 'worker') { await a.call('forge_claim'); await a.call('forge_block', { reason: '测试到此为止' }); return; }
+    assert.equal(role, 'architect');
+    await a.call('forge_claim');
+    await writeDesign(a);
+    await writeAll(a, { 'docs/plan/plan.yaml': PLAN_YAML.replace('mode: standard', 'mode: lean') });
+    assert.ok((await a.call('forge_propose_plan', {})).ok);
+    await a.call('forge_note', { text: 'ok' });
+    assert.ok((await a.call('forge_submit', { summary: '契约与计划' })).ok);
+  });
+  try {
+    await toP1(p, e.cmd);
+    await e.engine.idle();
+    await runFlowCommand('approve', e.cmd);
+    assert.equal(p.store.readFlow(p.flowId).plan_mode, 'lean');
+    return p.store.listTasks(p.flowId);
+  } finally { p.cleanup(); }
+}
+
+test('lean 且 test_author 未配置：批准 P1 不派生 .at，impl 的 writes 带自己的验收目录', async () => {
+  const tasks = await approveLean();
+  assert.ok(!tasks.some((t) => t.kind === 'acctest'), '没有 .at');
+  assert.ok(tasks.find((t) => t.id === 'T-003')!.writes.includes('tests/acceptance/T-003/**'));
+});
+
+test('lean 但 test_author 显式写 true：照旧派生 .at', async () => {
+  const tasks = await approveLean(PROJECT_YAML.replace(/^  qa: false$/m, '  qa: false\n  test_author: true'));
+  assert.ok(tasks.some((t) => t.id === 'T-003.at'));
 });

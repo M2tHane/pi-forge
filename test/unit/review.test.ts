@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  REVIEW_DIFF_MAX, buildReviewBrief, classifyIssues, contractFilesFor, effectiveVerdict, fitSnippets, isValidMustBasis, mustHandoff, mustOf,
+  REVIEW_DIFF_MAX, buildReviewBrief, classifyIssues, contractFilesFor, effectiveVerdict, fitSnippets, isValidMustBasis, mustHandoff, mustOf, ruleBasisProblem,
   nextReviewId, reviewMode, reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, touchesContracts, truncateDiff, validateConfirm,
   type ReviewPolicy,
 } from '../../src/core/review.ts';
@@ -184,4 +184,33 @@ test('mustHandoff 与 suggestionLine：返工说明带编号；用尽时说明�
   const line = suggestionLine('T-001.rv', 'T-001', { ...must, id: 'R-3', level: 'suggest', basis: '过长函数' });
   assert.match(line, /^- \[T-001\.rv R-3\] T-001：/);
   assert.ok(line.includes('src/a.ts') && line.includes('返回 400'));
+});
+
+// —— 偏离 100：rule: 出处必须指向真实存在的规则文件与条目 ——
+const RULES: Record<string, string> = {
+  'rules/global.md': '# 全局\n1. 完成的定义\n2. 范围\n',
+  'rules/backend.md': '# 后端\n- R1 错误码来自 errors/*.yaml\n- 服务层抛出 AppError\n\n## 审查清单\n- [ ] R3 权限检查在服务层\n4. 日志不含密钥\n',
+};
+const readRule = (rel: string) => RULES[rel] ?? null;
+
+test('ruleBasisProblem：文件存在且条目出现才算数；技能、不存在的文件、不存在的编号都不行', () => {
+  for (const ok of ['rule:rules/global.md#2', 'rule:rules/backend.md#R1', 'rule:rules/backend.md#R3', 'rule:rules/backend.md#4', 'rule: rules/backend.md#服务层抛出 AppError', 'rule:rules/global.md', 'ac:REQ-001.AC1']) {
+    assert.equal(ruleBasisProblem(ok, readRule), null, ok);
+  }
+  assert.match(ruleBasisProblem('rule:skills/tdd#三种坏测试', readRule)!, /不是项目的规则文件/);
+  assert.match(ruleBasisProblem('rule:AGENTS.md#1', readRule)!, /不是项目的规则文件/);
+  assert.match(ruleBasisProblem('rule:rules/../x.md#1', readRule)!, /不是项目的规则文件/);
+  assert.match(ruleBasisProblem('rule:rules/ui.md#3', readRule)!, /rules\/ui\.md 不存在/);
+  assert.match(ruleBasisProblem('rule:rules/backend.md#R9', readRule)!, /找不到条目 R9/);
+  assert.match(ruleBasisProblem('rule:rules/global.md#R12', readRule)!, /找不到条目 R12/, '12 不能被 1 或 2 误匹配');
+  assert.match(ruleBasisProblem('rule:rules/backend.md#不存在的话', readRule)!, /找不到条目/);
+});
+
+test('classifyIssues 带 readRule：rule: 出处不真实的 must 降为 suggest 并写明原因；不带 readRule 保持只看前缀', () => {
+  const mk = (basis: string) => ({ level: 'must' as const, basis, files: ['a.ts'], location: 'f', problem: 'p', expected: 'e' });
+  const r = classifyIssues([mk('rule:rules/backend.md#R3'), mk('rule:skills/tdd#三种坏测试'), mk('rule:rules/backend.md#R9'), mk('defect:空名称 500')], 1, readRule);
+  assert.deepEqual(r.issues.map((i) => i.level), ['must', 'suggest', 'suggest', 'must']);
+  assert.deepEqual(r.downgraded.map((d) => d.id), ['R-2', 'R-3']);
+  assert.match(r.downgraded[0]!.reason!, /不是项目的规则文件/);
+  assert.equal(classifyIssues([mk('rule:skills/tdd#x')]).issues[0]!.level, 'must');
 });

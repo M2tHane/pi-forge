@@ -184,6 +184,10 @@
 95. 阶段审查 / stage-qa 的 fix 用 `source_round: { task, round }` 关联轮次，`fixTasksOfRound` 不再靠标题里的中文标签（标题只展示）；不兼容旧状态里只有标题的 fix。
 96. 角色提示词与技能按 M9 A0 的返工教训改写（顾问意见部分采纳）：worker 加 `simplicity`、`receiving-feedback`（reviewer 加 `simplicity`，过度工程默认只作 suggest）；test-author、reviewer、architect 相关提示收紧。未采纳「黑盒试跑」（程序无此能力）；commands 在程序里全部可选，故只改提示为按项目实际配置。 simplicity 另吸收 ponytail（MIT）的"方案偷懒、改动完整"几条；`test_author: false` 时 worker 另带 `acceptance-tests`。
 97. 所有 pi 子进程（`pi-adapter/launcher.ts`）与 M9 两侧脚本加 `--no-mcp`：Pi 1.1.0 内置 MCP，`--tools` 白名单不过滤 MCP 工具，用户在 `~/.pi/agent/mcp.json` 配的服务器会绕过 guard 进入子进程，也会让 N 与 A 两组工具不一致。
+98. 偏离规格第 9 节：`implementation_gate.test_author` 未配置时按 plan_mode 决定（lean 关、standard 开），显式 true/false 照办；`config.testAuthor` 改为 `testAuthorFor(flow)`，模板里该项改成注释。M9 A0 证据：验收测试零次抓到实现缺陷，争议循环与 test-author 合计 60+ 分钟；外部评审建议；用户决定。P1 落地时 plan_mode 已知（取计划的 mode）。
+99. 任务说明（用户消息）新增 `## 允许的测试入口`（impl 或 for_task 的 test_interface）与 `## 本阶段及之前已交付的接口`（已 done 的 impl 的 api:/page: 产出 + 本 task 自己的 produces，最多 40 项）；给 worker、test-author、reviewer。此前提示词要求只在 test_interface 上验证，程序却从不渲染它。
+100. reviewer 的 `rule:` 出处必须指向项目里存在的 `rules/*.md`，`#` 后的条目（编号 R3/3 或文字）要在文件里出现，否则 must 降为 suggest 并写明原因（此前 `rule:skills/tdd#…` 被接受）。无读取器时仍只看前缀。
+101. 上游 handoff 只带上游最后一次 run（actor 为 `run:<id>`）写的段，跳过 dispatcher / engine / merge-queue 等程序段（过时的「依赖准备失败」把下游首条消息撑到 10–17KB）；没有 run 段时只丢程序段，无段落头的文本原样保留。
 
 ## M1 删除、由 Mx 重建
 

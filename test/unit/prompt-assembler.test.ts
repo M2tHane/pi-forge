@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadAgent, parseAgentFile } from '../../src/core/agents.ts';
-import { assemblePrompt, ruleFilesFor } from '../../src/core/prompt-assembler.ts';
+import { assemblePrompt, ruleFilesFor, upstreamSection } from '../../src/core/prompt-assembler.ts';
 import { parseConfig } from '../../src/core/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 import { mkTask } from '../helpers/tasks.ts';
@@ -117,4 +117,62 @@ test('任务说明：writes 含自己的验收目录（test_author: false）时�
   assert.ok(!/- \[口头说明\]/.test(b.user), '只列 AC 编号');
   const review = assemblePrompt({ agent, rules: [], task: own, flowId: 'B-001', handoff: '', mode: 'review', commands: config.commands });
   assert.ok(!review.user.includes('由你编写'));
+});
+
+// —— 偏离 99：允许的测试入口与已交付的接口 ——
+const ifaceAgent = (name: string) => ({ name, tier: 'strong', thinking: null, description: '', prompt: 'R' });
+const ifaceTasks = () => [
+  mkTask('T-002', { status: 'done', produces: ['table:teams', 'api:GET /api/teams', 'page:/teams'], test_interface: ['HTTP /api/teams'] }),
+  mkTask('T-002.at', { kind: 'acctest', status: 'done', for_task: 'T-002', role: 'test-author', produces: ['api:GET /api/fake'] }),
+  mkTask('T-003', { status: 'in_progress', produces: ['api:POST /api/datasources', 'fn:ds#create'], test_interface: ['HTTP /api/datasources*', 'page /datasources'] }),
+  mkTask('T-003.at', { kind: 'acctest', for_task: 'T-003', role: 'test-author', test_interface: ['HTTP /api/datasources*', 'page /datasources'] }),
+  mkTask('T-004', { status: 'pending', produces: ['api:GET /api/later'] }),
+];
+const ifaceUser = (role: string, taskId: string, tasks = ifaceTasks()) => assemblePrompt({ agent: ifaceAgent(role), rules: [], task: tasks.find((x) => x.id === taskId)!, flowId: 'B-001', handoff: '', mode: 'impl', commands: config.commands, flowTasks: tasks }).user;
+
+test('任务说明带「允许的测试入口」与「本阶段及之前已交付的接口」：已 done 的 impl 的 api/page，加本 task 自己的 produces', () => {
+  const u = ifaceUser('worker', 'T-003');
+  assert.match(u, /## 允许的测试入口\n[^\n]*\n- HTTP \/api\/datasources\*\n- page \/datasources/);
+  const sec = /## 本阶段及之前已交付的接口\n([\s\S]*?)(?=\n## |\n开始：)/.exec(u)![1]!;
+  assert.match(sec, /- api:GET \/api\/teams（T-002）\n- page:\/teams（T-002）\n- api:POST \/api\/datasources（T-003 正在实现）\n- fn:ds#create（T-003 正在实现）/);
+  assert.doesNotMatch(sec, /table:teams|api\/fake|api\/later/, '只列 api/page、只列 impl、不列未完成的');
+});
+
+test('.at 与 reviewer 用 for_task 的 impl 的 test_interface 和 produces；stage-qa、architect 不输出', () => {
+  const at = ifaceUser('test-author', 'T-003.at');
+  assert.match(at, /## 允许的测试入口[\s\S]*page \/datasources/);
+  assert.match(at, /api:POST \/api\/datasources（T-003 正在实现）/);
+  assert.match(ifaceUser('reviewer', 'T-003.at'), /## 本阶段及之前已交付的接口/);
+  for (const role of ['stage-qa', 'architect']) assert.doesNotMatch(ifaceUser(role, 'T-003'), /## 允许的测试入口|## 本阶段及之前已交付的接口/, role);
+  // test_interface 为空时不输出这一节
+  assert.doesNotMatch(ifaceUser('worker', 'T-004'), /## 允许的测试入口/);
+});
+
+test('已交付的接口过长时截断并注明总数，本 task 自己的 produces 保留', () => {
+  const many = mkTask('T-002', { status: 'done', produces: Array.from({ length: 60 }, (_, i) => `api:GET /api/r${i}`) });
+  const cur = mkTask('T-003', { produces: ['api:GET /api/mine'] });
+  const u = ifaceUser('worker', 'T-003', [many, cur]);
+  assert.match(u, /共 61 项，只列出 40 项/);
+  assert.match(u, /api:GET \/api\/mine（T-003 正在实现）/);
+  assert.doesNotMatch(u, /api\/r59/);
+});
+
+test('上游 handoff 只带最后一次 run 写的段，跳过 dispatcher / engine 等程序段', () => {
+  const handoff = [
+    '', '## 2026-01-01T00:00:00Z dispatcher', '', '依赖准备失败：codegen 失败 Cannot find module', '',
+    '## 2026-01-01T00:10:00Z run:r-1', '', '第一次运行的旧结论', '',
+    '## 2026-01-01T00:20:00Z engine', '', '审查要求修改 R-1', '',
+    '## 2026-01-01T00:30:00Z run:r-2', '', '最新结论：接口在 src/a.ts', '',
+    '## 2026-01-01T00:31:00Z run:r-2', '', '提交说明：完成', '',
+    '## 2026-01-01T00:32:00Z forge-submit', '', '提交前清理了文件', '',
+  ].join('\n');
+  const out = upstreamSection([{ id: 'T-002', title: 'x', type: 'hard', status: '已完成', handoff }]);
+  assert.match(out, /最新结论：接口在 src\/a\.ts[\s\S]*提交说明：完成/);
+  assert.doesNotMatch(out, /Cannot find module|旧结论|审查要求修改|提交前清理/);
+  // 没有 run 写的段：只丢程序段；纯文本原样保留
+  const human = '\n## 2026-01-01T00:00:00Z dispatcher\n\n过时\n\n## 2026-01-01T00:01:00Z human\n\n用户回答：用 PG\n';
+  const h = upstreamSection([{ id: 'T-002', title: 'x', type: 'soft', status: '已完成', handoff: human }]);
+  assert.doesNotMatch(h, /过时/);
+  assert.match(h, /用户回答：用 PG/);
+  assert.match(upstreamSection([{ id: 'T-002', title: 'x', type: 'soft', status: '已完成', handoff: '纯文本笔记' }]), /纯文本笔记/);
 });

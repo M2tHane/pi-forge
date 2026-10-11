@@ -55,6 +55,8 @@ export interface EffectiveSpec {
   issues: LintIssue[]; // 解析、叠加及引用错误。
   warnings: LintIssue[];
 }
+/** 单条 REQ 的 AC 数超过这个值时给警告：提示把通用规则写进「通用约定」（不阻断） */
+export const MAX_AC_PER_REQ_HINT = 6;
 export const UNTESTABLE_WORDS = ['快速', '友好', '合理'] as const;
 export const REQUIRED_SCREEN_STATES = ['加载', '空', '错误', '无权限'] as const;
 const SPEC_DIR = 'docs/spec/';
@@ -310,6 +312,7 @@ export function effectiveSpec(base: SpecFiles, features: readonly SpecFeature[])
         const words = UNTESTABLE_WORDS.filter((word) => ac.text.includes(word));
         if (words.length) warnings.push(issue(req.file, ac.line, 'ac-untestable', `${req.id}.${ac.id} 包含无法测试的词（${words.join('、')}），请改成具体数字或可观察行为。`));
       }
+      if (req.kind !== 'deleted' && req.acs.length > MAX_AC_PER_REQ_HINT) warnings.push(issue(req.file, req.line, 'ac-too-many', `${req.id} 有 ${req.acs.length} 条 AC（超过 ${MAX_AC_PER_REQ_HINT}）：检查是否把通用规则（输入校验、规范化、错误结构等）写成了 AC；这类细则请写进 requirements.md 的「通用约定」一节。`));
     }
   };
   const applyPermissions = (rows: SpecPermission[]): void => {

@@ -224,6 +224,14 @@ for (const word of UNTESTABLE_WORDS) {
   });
 }
 
+test('单条 REQ 的 AC 超过 6 条只给警告 ac-too-many，6 条及以下没有', () => {
+  const acs = (n: number) => Array.from({ length: n }, (_, i) => `- AC${i + 1}：Given 已登录 When 创建看板 Then 返回编号${i + 1}`).join('\n');
+  const seven = lintSpec({ ...baseline, requirements: requirement('REQ-001', acs(7)) });
+  assert.deepEqual(seven.errors, []);
+  assert.ok(seven.warnings.some((item) => item.rule === 'ac-too-many' && item.message.includes('通用约定')));
+  assert.ok(!lintSpec({ ...baseline, requirements: requirement('REQ-001', acs(6)) }).warnings.some((item) => item.rule === 'ac-too-many'));
+});
+
 test('feature 必须包含需求、页面、权限三节，重复章节报错', () => {
   const amendment = feature(requirement('REQ-002'));
   assert.deepEqual(lintSpec(baseline, [amendment]).errors, []);

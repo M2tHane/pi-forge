@@ -199,6 +199,8 @@
 110. 偏离规格：plan_mode 为 lean 且 test_author 关闭时，所有 impl / fix 的验收测试写进共享目录 `tests/acceptance/suite/**`（`state/paths.ts` 的 `SHARED_ACCEPTANCE_GLOB`，名字避开 T-xxx），辅助函数只有 `suite/_helpers.js` 一份；`deriveTasks`、变更请求的 `taskPatch`、覆盖缺口的 `.fx-n` 都按 task 现有 writes 取这个目录。预检运行 `acceptance -- suite`（目录名取 `acceptanceDirOf`，不新增命令约定，仍是"`-- <目录名>`只跑 tests/acceptance/<目录名>/"，会连同此前所有 task 的场景一起跑）。`scanAcCoverage` 支持一个括号内多个 AC 编号（`[A][B]`、`[A, B]`、顿号等）。lean 但显式开启 test_author、standard 均不变；偏离 81、107 的按 task 目录分支保留。依据：m9b 实测（545 行原生 vs 5,418 行，验收测试 2,030 行、每个目录一份 helpers）与用户决定。
 111. 偏离规格：lean 计划里 impl 的 writes 不得含测试路径（`plan/plan.ts` 的 `isTestWrite`：tests/test/__tests__/specs/e2e 目录段，或 *.test.* / *_test.* / test-utils 之类文件名），除非该 task 写了 plan.yaml 的可选字段 `unit_tests: "<理由>"`（算法、并发、权限矩阵、复杂状态机等）；违反时 forge_propose_plan（以及变更请求的修订检查）报中文错误。standard 不受限制。依据：m9b 实测 GLM-5.3-Flash 不遵守提示词里的"只测关键节点"，用户决定改为程序约束。
 112. 偏离规格：lean 的契约只写接口清单（路径、方法、一句 summary、成功状态码、错误码），不要求 components schema 与请求/响应体 schema。核对结果：`parseContracts`、追加检查、符号目录、plan 校验对 schema 没有硬性要求（只要求每个 operation 有非空 responses），所以程序未改，只由提示词（design-contract、architect）约定，并加单元测试固定"无 schema 的契约通过"；data-model.yaml、errors/*.yaml 照旧。依据：m9b 实测约 2,500 行 OpenAPI YAML 对 545 行的项目过重；用户决定。
+113. AC 只写用户（或 API 调用方）能感知的业务行为；统一校验、规范化、错误结构等横切细则写进 requirements.md 的「通用约定」，由少数场景覆盖。只改提示词（spec-from-prd、grilling、orchestrator），spec-lint 加警告级 `ac-too-many`（单条 REQ 的 AC > 6，不阻断、无关键词拦截）。依据：m9b 实测（32 行 PRD 整理成 12 REQ、45 AC）与用户决定。
+114. 一个集成场景带多个 AC 编号对所有模式一致：standard / test-author 的 `checkAcctestSubmit` 与 lean、覆盖矩阵共用同一个 `scanAcCoverage`，核对后程序未改，补单元测试固定；提示词（test-author、acceptance-tests）改为优先写多 AC 场景。依据：m9b 实测与用户决定。
 
 ## M1 删除、由 Mx 重建
 
@@ -285,6 +287,7 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 - 10-11（M9 提示词调整）：新增 `skills/simplicity/`、`skills/receiving-feedback/`；改 `agents/worker.md`、`agents/test-author.md`、`agents/reviewer.md`、`agents/architect.md`，以及 `skills/tdd`、`acceptance-tests`、`code-review`、`plan-dag`、`design-contract`；`src/core/dispatcher.ts` 的技能映射给 worker 加两个技能、reviewer 加 simplicity。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
 - 10-11（评审三处修订，偏离 102–103）：改 `agents/worker.md`、`test-author.md`、`reviewer.md`、`architect.md`，`rules/global.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`receiving-feedback`、`code-review`、`plan-dag`、`design-contract`、`write-rules`。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
 - 10-11（lean 变轻，偏离 110–112）：改 `agents/worker.md`、`agents/architect.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`plan-dag`、`design-contract`：写明 lean 的共享验收目录与多编号测试、不写单元测试（`unit_tests` 理由例外）、契约只写接口清单。所有子进程的提示缓存失效一次。
+- 10-11（AC 只写用户可感知行为，偏离 113–114）：改 `skills/spec-from-prd`（AC 规则、正反例、「通用约定」节）、`skills/grilling`、`agents/orchestrator.md`（P0 第 2 步后）、`agents/test-author.md`、`skills/acceptance-tests`（多 AC 集成场景）。orchestrator、test-author 的提示缓存失效一次。
 
 ## src/core 路径对照（10-11 重组）
 

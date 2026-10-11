@@ -66,6 +66,12 @@ test('scanAcCoverage 与 checkAcctestSubmit：只认 [REQ-xxx.ACn]；越界、�
   assert.deepEqual(r.unknown, ['REQ-009.AC1']);
 });
 
+test('checkAcctestSubmit（standard / test-author 路径）：一个测试名带多个 AC 编号，各条 AC 都算有测试，不报缺失或未知', () => {
+  const cov = scanAcCoverage([{ path: 'tests/acceptance/T-003/flow.test.ts', content: "test('[REQ-001.AC1][REQ-001.AC2] 创建后列表可见', ...)\ntest('[REQ-001.AC3, REQ-001.AC4] 权限', ...)" }]);
+  const r = checkAcctestSubmit(['tests/acceptance/T-003/flow.test.ts'], 'T-003', ['REQ-001.AC1', 'REQ-001.AC2', 'REQ-001.AC3', 'REQ-001.AC4'], cov);
+  assert.deepEqual(r, { outside: [], missing: [], unknown: [] });
+});
+
 test('导出基准：首个 .at 只有允许的路径（无实现代码、无敏感文件、include 生效）；.at-n 叠加 acc 分支测试与任务分支追加的契约；impl 已 done 只用集成分支', () => {
   const p = repo();
   try {

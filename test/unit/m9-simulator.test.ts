@@ -178,8 +178,14 @@ test('失败次数用完（attempts / precheck_exhausted / merge_exhausted）→
   }
 });
 
-test('表外的阻塞原因（review_exhausted、integration_broken、dispatcher）→ 卡住', () => {
-  for (const by of ['review_exhausted', 'integration_broken', 'dispatcher', null]) {
+test('程序停下的 task（dispatcher）→ /forge unblock，计为 blocked_reset（方案修订 2）', () => {
+  const a = act(decide(snap({ flow: flow({ stage: 'P1' }), tasks: [task('T-004', { status: 'blocked', blockedBy: 'dispatcher' })] }), initialState()));
+  assert.equal(a.kind === 'prompt' && a.message, '/forge unblock T-004');
+  assert.equal(a.category, 'extra:blocked_reset');
+});
+
+test('表外的阻塞原因（review_exhausted、integration_broken）→ 卡住', () => {
+  for (const by of ['review_exhausted', 'integration_broken', null]) {
     const a = stuckOf(decide(snap({ flow: flow({ stage: 'S1' }), tasks: [task('T-004', { status: 'blocked', blockedBy: by })] }), initialState()));
     assert.equal(a.failure, 'out_of_table');
   }

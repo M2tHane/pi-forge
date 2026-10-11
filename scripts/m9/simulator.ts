@@ -228,6 +228,9 @@ function decideBlocked(s: Snapshot, state: SimState, flow: FlowSnap): Action | n
         return { kind: 'prompt', message: `/forge unblock ${t.id} "${BLOCKED_ANSWER}"`, key, category: 'extra:blocked_question', counts: true, note: why, release: rk };
       case 'attempts': case 'precheck_exhausted': case 'merge_exhausted':
         return { kind: 'prompt', message: `/forge unblock ${t.id} --reset`, key, category: 'extra:blocked_reset', counts: true, note: why, release: rk };
+      // 方案修订 2：程序停下的 task（违规上限、同样的失败连续出现、谱系预算、工作区准备失败），用户的正常做法是直接放行
+      case 'dispatcher':
+        return { kind: 'prompt', message: `/forge unblock ${t.id}`, key, category: 'extra:blocked_reset', counts: true, note: why, release: rk };
       case 'dispute': {
         const test = t.disputeTest ?? '';
         const dk = `${flow.id}:${t.id}:${test}`;

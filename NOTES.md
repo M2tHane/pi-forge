@@ -182,6 +182,7 @@
 93. merge-fix 的 T- 编号（合并冲突与阶段同步两处）统一走 `nextPlanTaskId(usedTaskIds(...))`；手写 `Number(id.slice(2))` 遇到 `.at`/`.fx-n`/`S1.rv` 得到 `T-NaN`。删掉无人使用的 `stages.nextTaskId`。
 94. 阶段修复 `.fx` 的 writes 追加原 impl 的非验收测试 glob（`tests/` 下、非 `tests/acceptance`），审查要求补回归测试时才写得进去；`test_author: false`（偏离 81）时 impl 自己的验收目录也随之保留。
 95. 阶段审查 / stage-qa 的 fix 用 `source_round: { task, round }` 关联轮次，`fixTasksOfRound` 不再靠标题里的中文标签（标题只展示）；不兼容旧状态里只有标题的 fix。
+96. 角色提示词与技能按 M9 A0 的返工教训改写（顾问意见部分采纳）：worker 加 `simplicity`、`receiving-feedback`（reviewer 加 `simplicity`，过度工程默认只作 suggest）；test-author、reviewer、architect 相关提示收紧。未采纳「黑盒试跑」（程序无此能力）；commands 在程序里全部可选，故只改提示为按项目实际配置。
 
 ## M1 删除、由 Mx 重建
 
@@ -265,3 +266,4 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 - 10-09（M1）：`agents/main.md` 改名为 `agents/orchestrator.md` 并同步 frontmatter；`skills/domain-modeling/SKILL.md`、`skills/change-request/SKILL.md` 将主会话用词改为 orchestrator。运行时开始使用包内角色与技能，稳定前缀改变，提示缓存会失效一次。
 - 10-10（M8）：`agents/architect.md` 增加 feature 模式、变更请求（完整计划与 `modifies`）、纳管（--adopt）三节；`skills/change-request/SKILL.md` 改为写完整计划、已开始的 task 用 `modifies`，删掉 N-001 编号；`agents/orchestrator.md` 增加 feature 模式的增量规格写法。architect 与 orchestrator 的提示缓存各失效一次。
 - 10-10（M8 后）：`agents/orchestrator.md` 的 P0 改为"有 docs/ 文档先读、只问疑点；没有文档详细访谈"；`skills/spec-from-prd/SKILL.md` 第一步加一句"没有文档时当作访谈提纲"。orchestrator 的提示缓存失效一次。
+- 10-11（M9 提示词调整）：新增 `skills/simplicity/`、`skills/receiving-feedback/`；改 `agents/worker.md`、`agents/test-author.md`、`agents/reviewer.md`、`agents/architect.md`，以及 `skills/tdd`、`acceptance-tests`、`code-review`、`plan-dag`、`design-contract`；`src/core/dispatcher.ts` 的技能映射给 worker 加两个技能、reviewer 加 simplicity。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。

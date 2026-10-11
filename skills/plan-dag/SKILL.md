@@ -12,7 +12,7 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 
 ## 阶段
 
-- **S0 骨架**（固定，只能有 1 个 task）：项目脚手架、所有命令可运行、按 OpenAPI 生成类型或客户端、数据库连接与初始迁移、认证桩、
+- **S0 骨架**（固定，只能有 1 个 task，只建最小骨架，规模按 exit 涉及的 AC 数量衡量）：项目脚手架、配置了的命令可运行、（项目需要且有工具时）按 OpenAPI 生成类型或客户端、数据库连接与初始迁移、认证桩、
   验收测试框架与 tests/acceptance/_support/，以及一条贯穿 前端或客户端 → API → 数据库 的最薄链路（桩实现也可以）。
   所有命令都要遵守程序注入的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP，以便并行运行；acceptance_list 要能在只导出了文档、验收测试与配置清单的隔离工作区里运行（需要额外导出的子包清单与可缓存的依赖目录，写进 commands.yaml 的 `acctest_workspace: { include, cache }`）。
   S0 的 worker 自己写 tests/acceptance/_support/ 公共工具和一个冒烟测试 tests/acceptance/S0-smoke/（唯一例外）；S0 exit 的 AC 测试由 test-author 在 worker 完成后写。
@@ -20,6 +20,8 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 - **S1…Sn**：每个阶段交付一组用户能感知、能演示的能力。按依赖排序：被依赖的业务（团队、权限）在前。
   阶段数通常是 2 到 5 个；阶段越多，阶段之间的串行屏障越多。
 - 每条 MVP REQ 恰好出现在一个阶段的 exit 中。
+- 每条本阶段 AC 都要能用本阶段或之前交付的入口准备数据、执行动作、观察结果。需要后续接口时，调整阶段归属或合并紧耦合的切片，不留隐含的反向依赖。
+- 不适用的工程产物（代码生成、类型检查、lint）不要列进 S0；不让 worker 为凑命令而自建工具。
 
 ## 任务
 

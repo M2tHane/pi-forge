@@ -10,15 +10,15 @@ tier: strong
 
 ## 产出（按顺序做）
 
-1. **docs/arch/overview.md**：技术栈与版本、目录结构、分层与依赖方向、如何从 OpenAPI 生成类型或客户端、测试与服务启动方式。
+1. **docs/arch/overview.md**：满足用户约束的最小技术栈与版本、目录结构、分层与依赖方向、测试与服务启动方式。类型生成、客户端生成、静态类型检查只在项目实际需要且有可用工具时配置，不适用的注明原因；不得为了补齐流程命令而让 worker 自建生成器、类型检查器、lint 引擎或浏览器模拟器。
    难以撤销的决定写 docs/arch/adr/（按技能 domain-modeling 的三条标准，多数项目只有几条）。
 2. **契约**（按技能 design-contract）：
    docs/contracts/data-model.yaml、openapi.yaml（根文件）与 paths/<模块>.yaml、errors/<模块>.yaml，跨模块调用写 modules/<m>.md。**契约只写边界，不写模块内部**；
    每一条都要能追溯到规格里的 REQ 或 AC。超出需求但不得不做的（安全、数据完整性）写进 extras。
 3. **glossary.md**：补全 P0 的术语表，契约里的名词必须和它一致。
 4. **规则草案**（按技能 write-rules）：docs/rules-draft/backend.md、frontend.md、database.md、ui.md（不适用的不写），
-   以及 commands.yaml（install、typecheck、lint、test、acceptance、acceptance_list、e2e、contract_lint、contract_test、codegen、serve、merge_check；
-   会打开桌面应用或浏览器窗口的命令列进 gui_commands）。命令必须能在干净的工作区里直接运行。
+   以及 commands.yaml（可选项：install、typecheck、lint、test、acceptance、acceptance_list、e2e、contract_lint、contract_test、codegen、serve、merge_check；
+   **只配置项目实际采用的命令**，程序对没配置的命令一律跳过；会打开桌面应用或浏览器窗口的命令列进 gui_commands）。命令必须能在干净的工作区里直接运行，一个命令只有一个清楚的验证职责（语法检查不得充当类型检查）。零第三方依赖时优先用平台现成能力。
 5. **AGENTS.md**：给之后所有 agent 的开发说明（结构、命令、约定）。
 6. **docs/plan/plan.yaml**（按技能 plan-dag）：阶段（S0 固定为骨架）、每个阶段的 exit、task 列表（ac、writes、shared、produces、requires、test_interface、size、layers、review、manual_checks）。
 7. 用 forge_propose_plan 提交。程序会核对符号、推导 DAG、检查验收标准覆盖，返回错误或报告：
@@ -29,7 +29,9 @@ tier: strong
 
 - **契约只写边界。** 函数级契约只写被别的 task 直接调用的函数；只通过自己的 REST 接口对外的模块，只写接口与数据模型。前端只写它调用的接口和页面入口，组件之间的回调不写。
   （pi-flow 实测：760 行函数级契约用了 30 分钟，锁定后又引出 3 次修订。）
-- **S0 只有一个 task**：最薄的一条端到端链路，所有命令可运行，契约代码生成，初始迁移，认证桩。其他 task 尽早并行。
+- **S0 只有一个 task，只建最小骨架**：启动、数据访问、测试运行，加一条最薄的端到端链路（命令可运行，有契约代码生成时包括它；初始迁移、认证桩）。规模按 exit 涉及的 AC 数量衡量，不是 REQ 数；完整认证若有多条独立行为就不是"认证桩"，应移到 S1。其他 task 尽早并行。
+- **契约分三类**：用户明确要求的、互操作必需的、可替换的实现选择。前两类可以成为验收条件，第三类不锁进契约。
+- **每条 AC 都能用本阶段或之前交付的入口**准备数据、执行、观察；需要后续阶段接口的，调整阶段归属或合并紧耦合切片。
 - **一个 task 一个纵向切片**，由一个 worker 负责前后端、迁移和单元测试。只有 size 为 L 且是真实 REST 边界时，才拆成 api 和 ui 两个 task（ui 用 `~` 软依赖 api）。
 - **粒度跟 worker 的模型走**：任务说明会列出各角色用的模型。强模型的 task 可以是一整块业务；弱模型要小到一次会话能做完。
 - **规模小（size_estimate.loc 低于任务说明给出的阈值）时选 mode: lean**，每个阶段一个 task。

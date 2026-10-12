@@ -9,7 +9,7 @@
 <style>
 :root {
   --bg: #0d1117; --panel: #151b24; --panel2: #1b2330; --line: #2a3442; --text: #dfe6ee; --dim: #8b98a8; --faint: #5b6778;
-  --orchestrator: #b18cff; --architect: #ffb547; --worker: #3ed6c6; --reviewer: #ff7ab6; --test-author: #8be36b; --stage-qa: #6aa8ff; --program: #9aa7b8;
+  --orchestrator: #b18cff; --architect: #ffb547; --worker: #3ed6c6; --reviewer: #ff7ab6; --stage-qa: #6aa8ff; --program: #9aa7b8;
   --ok: #4ade80; --bad: #f87171; --warn: #fbbf24;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -383,9 +383,10 @@ footer { color: var(--faint); font-size: 12px; padding: 40px 0 60px; border-top:
 <script>
 'use strict';
 const D = window.DEMO;
+D.events.sort((a, b) => a.ts.localeCompare(b.ts));
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-const ROLE = { orchestrator: '主会话', architect: '架构师', worker: 'worker', reviewer: '审查员', 'test-author': '测试作者', 'stage-qa': '阶段验收', program: '程序' };
+const ROLE = { orchestrator: '主会话', architect: '架构师', worker: 'worker', reviewer: '审查员', 'stage-qa': '阶段验收', program: '程序' };
 const OUTCOME = { submitted: '已提交', blocked: '阻塞', failed: '失败', noted: '完成' };
 const model = (m) => (m ?? '').split('/').pop();
 const T0 = Date.parse(D.summary.started_at), T1 = Date.parse(D.summary.ended_at), SPAN = T1 - T0;
@@ -471,8 +472,8 @@ function peakConcurrency() {
       d: `## P0 规格\n主会话（orchestrator）读需求原文，把模糊的地方**一次问一个问题**地问用户，然后写出：\n- \`requirements.md\`：带编号的需求和 Given/When/Then 验收标准（AC）\n- \`permissions.md\`、\`screens.md\`、术语表\n\n程序会检查：AC 编号齐全、每条 REQ 的 AC 不超过 6 条、只写用户能感知的行为。用户确认后，规格锁定，之后只能走"规格修订"改动。` },
     { no: 'P1', t: '契约与计划', c: 'var(--architect)', who: ['架构师'], p: '定接口、数据模型、错误码；把 AC 分给任务，排成阶段和依赖图。',
       d: `## P1 契约与计划\n架构师（architect）产出：\n- **契约**：OpenAPI 接口、数据模型、错误码。之后只能追加，不能改。\n- **计划**：阶段（S0 固定为骨架）、每个任务负责的 AC、计划的改动范围、产出与依赖的符号。\n\n程序检查：每条 AC 恰好归一个任务；依赖图无环；每个任务依赖的符号都有人产出。` },
-    { no: 'S0', t: '骨架', c: 'var(--worker)', who: ['worker', '审查员'], p: '先把所有人都要用的底座做稳：目录、数据库、认证、路由入口。', stage: true,
-      d: `## S0 骨架\n只做所有任务都依赖的东西，单独一个阶段先做完、先审查，后面的并行才不会互相等。\n\n本示例的 S0：租户上下文、员工登录、数据库访问层、路由注册入口、后台外壳。` },
+    { no: 'S0', t: '骨架', c: 'var(--worker)', who: ['worker', '审查员'], p: '先做所有人都要用的底座，并建好共享开发环境：依赖、数据库服务器、工具链。', stage: true,
+      d: `## S0 骨架\n只做所有任务都依赖的东西，单独一个阶段先做完、先审查，后面的并行才不会互相等。\n\n本示例的 S0：租户上下文、员工登录、数据库访问层、路由注册入口、后台外壳。\n\n## 共享开发环境\nS0 结束时程序一次性建好共享环境：装好依赖、启动数据库服务器、准备工具链和环境脚本。之后：\n- **所有 worktree 直接链接**共享的依赖，不再各自安装。\n- worker 缺依赖：**直接装进共享环境**（程序加锁，同一时间只有一个安装）。\n- 要升级或删除已有依赖的任务：单独装一份自己的副本，不影响别人。\n- 审查员在共享环境里跑测试：每次审查分到**独立端口和独立数据库**（在共享数据库服务器上一条语句建库，几秒），并行审查互不覆盖数据。` },
     { no: 'S1…Sn', t: '实施', c: 'var(--worker)', who: ['worker ×N', '程序', '审查员', '阶段验收'], p: '每个阶段内多个 worker 并行；阶段之间有门禁。', stage: true,
       d: `## S1…Sn 实施\n每个阶段内部是同一个循环（见下方放大图）：按依赖图派发，最多同时 3 个 worker；审查员看代码并跑本任务的测试，通过后逐个合并；全量测试与阶段验收在门禁跑一次。\n\n阶段门禁通过才进下一阶段。` },
     { no: '✓', t: '交付', c: 'var(--ok)', who: ['程序', '用户'], p: '集成分支合入 main；之后每个新功能走一次 feature 流程。',
@@ -483,10 +484,10 @@ function peakConcurrency() {
   const loop = [
     { k: '程序', t: '按依赖图派发', c: 'var(--program)', p: '依赖已满足的任务进入就绪；改动范围重叠的不同时派发。',
       d: `## 派发\n调度器每次挑出依赖已满足的任务。计划里每个任务写了"计划的改动范围"（writes），**只用于调度**：范围重叠的两个任务不会同时派发，减少冲突。\n\n硬依赖要等对方合入；软依赖可以先对着契约写。` },
-    { k: 'LLM · worker', t: '多个 worker 并行写', c: 'var(--worker)', workers: true, p: '每人一个独立 git worktree；可以改任何代码文件，验收测试和规格除外。',
-      d: `## worker\n每个 worker 是一个独立子进程，在自己的 git worktree 里工作，互不干扰。\n\n- 可以改任何代码文件（例如在路由入口里注册自己的模块），改了计划范围外的文件在交接笔记里写明。\n- 不能改：验收测试（另一个角色写的）、规格、\`.forge/\` 状态。\n- 写完自测，用 \`forge_note\` 写交接笔记，再 \`forge_submit\`。` },
-    { k: 'LLM · 审查员', t: '审查 + 局部测试', c: 'var(--reviewer)', p: '读改动，跑这个任务自己的单元测试和验收测试；有问题退回 worker。',
-      d: `## 审查 + 局部测试\nworker 提交后直接进入审查，没有单独的程序预检。审查员（reviewer）做两件事：\n1. **跑本任务的测试**：只跑这个任务改到的单元测试和它自己的验收测试（例如 \`pnpm test:acceptance -- T-011\`）。它只被允许运行这几条测试命令，不能改代码。\n2. **看代码**：对照契约和项目规则读改动。每条问题必须引用依据（规则条目、AC，或失败的测试），不能凭喜好加要求。\n\n测试失败或有问题 → 退回同一个 worker 修；复审只核对上一轮的问题。两轮仍未解决才交给用户。\n\n**为什么不用程序预检**：每个任务都跑一遍命令要花时间；审查本来就要看这个任务，顺手跑它自己的测试就够了。全量测试留到阶段门禁。` },
+    { k: 'LLM · worker', t: '多个 worker 并行写', c: 'var(--worker)', workers: true, p: '每人一个独立 git worktree，共用 S0 建好的环境；写实现，也写本任务的验收测试。',
+      d: `## worker\n每个 worker 是一个独立子进程，在自己的 git worktree 里工作，互不干扰。\n\n- 可以改任何代码文件（例如在路由入口里注册自己的模块），改了计划范围外的文件在交接笔记里写明。\n- 写实现，也写本任务的验收测试（每条 AC 至少一个场景，一个场景可以覆盖几条 AC）。\n- 不能改：别的任务的验收测试、规格、\`.forge/\` 状态。\n- 依赖直接链接共享环境；缺依赖就装进共享环境。\n- 写完自测，用 \`forge_note\` 写交接笔记，再 \`forge_submit\`。` },
+    { k: 'LLM · 审查员', t: '审查 + 局部测试', c: 'var(--reviewer)', p: '核对验收测试是否覆盖每条 AC，在共享环境里跑本任务的测试，再看代码；不通过退回 worker。',
+      d: `## 审查 + 局部测试\nworker 提交后，程序只做一项几秒钟的检查：**契约只能追加**（worker 可以给接口加东西，不能改动或删掉别人依赖的已有接口），然后直接进入审查。审查员（reviewer）做三件事：\n1. **核对验收测试**：每条 AC 都有测试，测试真的按 AC 的 Given/When/Then 从接口去验证，没有放宽断言、没有依赖实现细节。缺了或写弱了都是必须修的问题。\n2. **跑本任务的测试**：在共享环境里，用独立端口和独立数据库，只跑这个任务改到的单元测试和它自己的验收测试。它只被允许运行这几条测试命令，不能改代码。\n3. **看代码**：对照契约和项目规则读改动。每条问题必须引用依据（规则条目、AC，或失败的测试），不能凭喜好加要求。\n\n测试失败或有问题 → 退回同一个 worker 修；复审只核对上一轮的问题。两轮仍未解决才交给用户。\n\n**审查通过就直接合并**；不通过退回那个 worker 改，改完复审通过再合并。\n\n**为什么没有单独的测试作者和预检**：测试作者看不到实现，写错测试会引起来回争议；预检每个任务都跑一遍命令，花时间。现在由 worker 写测试、审查员把关并跑一遍，全量测试留到阶段门禁。` },
     { k: '程序', t: '合并队列', c: 'var(--program)', p: '逐个 rebase 到集成分支，确认没有残留冲突标记就合入。不跑测试。',
       d: `## 合并队列\n审查通过的任务排队，**一次合一个**：rebase 到集成分支最新状态，确认没有残留冲突标记就合入（项目定义了 \`merge_check\` 的话一起跑）。这里不跑测试，测试在审查和阶段门禁里。\n\n冲突怎么办：程序把冲突标记留在这个任务自己的工作区，**退回给正在合并的那个 worker** 解决（它最清楚自己的改动），解决后重新走预检、合并。只有验收测试、规格这类它不能改的文件冲突，才交给用户。` },
     { k: '程序 + 阶段验收', t: '阶段门禁', c: 'var(--stage-qa)', p: '全量单元测试与验收测试只在这里跑一次；阶段验收在集成分支上按 AC 走一遍。',

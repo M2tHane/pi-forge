@@ -68,7 +68,7 @@ export function costReport(store: StateStore, opts: { flow?: string } = {}): Cos
   const rework = new Map<string, Rework>();
   for (const e of store.readEvents()) {
     if (e.type !== 'transition' || !e.task || !e.flow || (opts.flow && e.flow !== opts.flow)) continue;
-    const field = e.trigger === 'merge_verify_fail' ? 'merge_fail' : e.trigger === 'run_failed' ? 'run_failed' : null;
+    const field = e.trigger === 'merge_verify_fail' || e.trigger === 'merge_conflict' ? 'merge_fail' : e.trigger === 'run_failed' ? 'run_failed' : null;
     if (!field) continue;
     const k = `${e.flow}/${e.task}`;
     if (!rework.has(k)) rework.set(k, { flow: e.flow, task: e.task, title: titleOf.get(k) ?? '', merge_fail: 0, run_failed: 0, total: 0 });

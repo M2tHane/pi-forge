@@ -45,6 +45,7 @@ const cases: Case[] = [
   { from: 'queued_merge', to: 'merging', trigger: 'merge_start', reject: { soft_deps_done: false } },
   { from: 'merging', to: 'done', trigger: 'merge_done', facts: { rebase_ok: true, post_verify_ok: true, fast_forwarded: true }, reject: { fast_forwarded: false } },
   { from: 'merging', to: 'in_progress', trigger: 'merge_verify_fail', facts: { post_verify_ok: false }, reject: { post_verify_ok: true }, rejectTask: { kind: 'acctest' } },
+  { from: 'merging', to: 'in_progress', trigger: 'merge_conflict', facts: { conflict_files: ['src/a.ts'] }, reject: { conflict_files: [] }, rejectTask: { kind: 'doc' } },
   { from: 'merging', to: 'blocked', trigger: 'merge_blocked', reject: { reason: '' } },
   { from: 'merging', to: 'queued_merge', trigger: 'merge_requeue', reject: {}, rejectTask: { status: 'checking' } },
   { from: 'in_progress', to: 'disputed', trigger: 'dispute', facts: { dispute_test: 'test-a', dispute_evidence: 'docs/spec/requirements.md:AC1', dispute_evidence_valid: true }, reject: { dispute_evidence_valid: false }, rejectTask: { kind: 'doc' } },
@@ -305,4 +306,13 @@ test('submit：test_author 为 false 时 impl 与它的 fix 只放开自己的�
   bad(planTransition(widened, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-004/a.test.js'] }));
   // doc 任务不放开
   bad(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
+});
+
+test('merge_conflict（偏离 116）：impl / fix 的合并冲突交回 worker，与 merge_verify_fail 共用 merge_failures，达到上限转 blocked', () => {
+  for (const kind of ['impl', 'fix'] as const) {
+    const r = ok(planTransition(task('merging', { kind }), 'in_progress', 'merge_conflict', facts({ conflict_files: ['src/a.ts'] })));
+    assert.equal(r.task.merge_failures, 1); assert.equal(r.task.lease, null); assert.equal(r.task.conflict_files, undefined);
+    const capped = ok(planTransition(task('merging', { kind, merge_failures: 1 }), 'in_progress', 'merge_conflict', facts({ conflict_files: ['src/a.ts'] })));
+    assert.equal(capped.to, 'blocked'); assert.equal(capped.task.blocked_by, 'merge_exhausted');
+  }
 });

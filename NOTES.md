@@ -202,6 +202,7 @@
 113. AC 只写用户（或 API 调用方）能感知的业务行为；统一校验、规范化、错误结构等横切细则写进 requirements.md 的「通用约定」，由少数场景覆盖。只改提示词（spec-from-prd、grilling、orchestrator），spec-lint 加警告级 `ac-too-many`（单条 REQ 的 AC > 6，不阻断、无关键词拦截）。依据：m9b 实测（32 行 PRD 整理成 12 REQ、45 AC）与用户决定。
 114. 一个集成场景带多个 AC 编号对所有模式一致：standard / test-author 的 `checkAcctestSubmit` 与 lean、覆盖矩阵共用同一个 `scanAcCoverage`，核对后程序未改，补单元测试固定；提示词（test-author、acceptance-tests）改为优先写多 AC 场景。依据：m9b 实测与用户决定。
 115. 偏离规格第 14 节：impl / fix 不受计划 writes 限制，writes 只用于调度互斥与冲突分类（`state/paths.ts` 的 `opensWrites`、`openWriteAllowed`；guard、提交检查、未跟踪文件清理、合并冲突分类都按它）。仍不能改：验收测试（自己的验收目录除外）、规格、受保护路径；writes 没列测试路径时也不能新建测试代码（保留偏离 111）。`forge_request_scope` 对它们直接回答"不需要申请"，范围申请提示不再追加；merge-fix、test-author 等其他种类照旧。代价：测试运行留下的数据文件不再被清理，会随提交合入（靠 .gitignore 与审查）。依据：m9b STD 实测 T-007 只差在 `src/server/index.js` 注册路由两行，该文件在运行中的 T-004、T-006 的 writes 里，范围申请被硬拒，阻塞 3 次后流程失败；用户决定不再限制 worker 的可写范围。
+116. 用户决定：impl / fix 的合并文本冲突由正在合并的 worker 自己解决，不再另起 merge-fix 会话（`merge_conflict` 转移 `merging → in_progress`，与 `merge_verify_fail` 共用 `merge_failures`，达到上限转人工）；原因：merge-fix 是新会话，不了解原任务上下文。集成分支合入任务 worktree 并提交带标记的状态，`base_sha` 设为集成分支 HEAD，别的任务带入的文件不算该 worker 的改动；不设 `conflict_files`，写权限保持开放。仍交给用户：受保护文件、该任务不能写的文件（如别的任务的验收测试）、无冲突文件的 rebase 失败；doc 等其他 kind 与主分支同步冲突仍走 merge-fix。`awaiting_inputs` 的 `sync_conflict` 路径未改。
 
 ## M1 删除、由 Mx 重建
 
@@ -290,6 +291,7 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 - 10-11（lean 变轻，偏离 110–112）：改 `agents/worker.md`、`agents/architect.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`plan-dag`、`design-contract`：写明 lean 的共享验收目录与多编号测试、不写单元测试（`unit_tests` 理由例外）、契约只写接口清单。所有子进程的提示缓存失效一次。
 - 10-11（AC 只写用户可感知行为，偏离 113–114）：改 `skills/spec-from-prd`（AC 规则、正反例、「通用约定」节）、`skills/grilling`、`agents/orchestrator.md`（P0 第 2 步后）、`agents/test-author.md`、`skills/acceptance-tests`（多 AC 集成场景）。orchestrator、test-author 的提示缓存失效一次。
 - 10-11（不限制 worker 可写范围，偏离 115）：改 `agents/worker.md`（开始、范围、禁止三处）、`rules/global.md` 第 2 条、`skills/plan-dag`（writes 一行）。worker、reviewer 等加载 global 规则的子进程，以及 architect 的提示缓存失效一次。
+- 10-11（合并冲突交回 worker，偏离 116）：改 `agents/worker.md`（合并冲突一行）。worker 的提示缓存失效一次。
 
 ## src/core 路径对照（10-11 重组）
 

@@ -34,7 +34,7 @@ export function phasesOf(config: FlowConfig, flow: FlowFile): Phase[] {
   if (!phases.includes('implementation') && flow.stages.some((s) => s === 'P0' || s === 'P1')) phases.push('implementation');
   return phases;
 }
-const FAILURE_KIND: Record<string, string> = { merge_verify_fail: '合并时全量测试失败', precheck_fail: '预检失败', run_failed: '运行中断', run_timeout: '运行超时', lease_expired: '租约过期' };
+const FAILURE_KIND: Record<string, string> = { merge_verify_fail: '合并时全量测试失败', merge_conflict: '合并冲突', precheck_fail: '预检失败', run_failed: '运行中断', run_timeout: '运行超时', lease_expired: '租约过期' };
 export function lastFailureKind(store: StateStore, flowId: string, taskId: string): string | null {
   const ev = [...store.readEvents()].reverse().find((e) => e.flow === flowId && e.task === taskId && e.type === 'transition' && e.trigger && e.trigger in FAILURE_KIND);
   return ev ? FAILURE_KIND[ev.trigger!]! : null;

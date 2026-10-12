@@ -117,12 +117,12 @@ test('语义冲突：writes 不重叠、各自预检通过，后合并者在合�
   } finally { p.cleanup(); }
 });
 
-test('文本冲突在 writes 内：生成 merge-fix，原任务挂起让出名额；merge-fix 合入后原任务一并完成', async () => {
+test('非 impl / fix（doc）的文本冲突在 writes 内：仍生成 merge-fix，原任务挂起让出名额；merge-fix 合入后原任务一并完成', async () => {
   const p = await setupProject({
     yaml: withTest("! grep -rq '<<<<<<<' src"),
     files: { 'src/server/t-001/a.ts': 'line1\nbase\nline3\n' },
     // 混合编号（审查 .rv、修复 .fx-n）不能让 merge-fix 编号变成 T-NaN
-    tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('S1.rv', { kind: 'review', writes: [], verify: [] }), mkTask('T-009.fx-1', { kind: 'fix', writes: [], verify: [] })],
+    tasks: [mkTask('T-001', { kind: 'doc', verify: ['test'] }), mkTask('S1.rv', { kind: 'review', writes: [], verify: [] }), mkTask('T-009.fx-1', { kind: 'fix', writes: [], verify: [] })],
   });
   try {
     for (const id of ['S1.rv', 'T-009.fx-1']) await p.store.transitionTask(p.flowId, id, { to: 'cancelled', trigger: 'cancel', actor: 'human', facts: { reason: '只占编号' } });
@@ -166,10 +166,10 @@ test('文本冲突在 writes 内：生成 merge-fix，原任务挂起让出名�
   } finally { p.cleanup(); }
 });
 
-test('merge-fix 残留冲突标记：合并后检查拦下，回到 in_progress；最终失败时原任务也转 blocked', async () => {
+test('doc 的 merge-fix 残留冲突标记：合并后检查拦下，回到 in_progress；最终失败时原任务也转 blocked', async () => {
   const p = await setupProject({
     files: { 'src/server/t-001/a.ts': 'base\n' },
-    tasks: [mkTask('T-001', { verify: ['typecheck'] })],
+    tasks: [mkTask('T-001', { kind: 'doc', verify: ['typecheck'] })],
   });
   try {
     const { engine, merges } = makeEngine(p, async (_role, _n, a) => {
@@ -192,6 +192,84 @@ test('merge-fix 残留冲突标记：合并后检查拦下，回到 in_progress�
     const orig = p.store.readTask(p.flowId, 'T-001');
     assert.equal(orig.status, 'blocked');
     assert.match(orig.blocked_reason ?? '', new RegExp(`merge-fix ${fix.id} 失败`));
+    assert.doesNotMatch(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), /<<<<<<</);
+  } finally { p.cleanup(); }
+});
+
+test('偏离 116：两个 impl 并行改同一文件，后合并者的冲突交回自己的任务解决（不生成 merge-fix），两处改动都进集成分支', async () => {
+  const p = await setupProject({
+    yaml: withTest("! grep -rq '<<<<<<<' src"),
+    files: { 'src/server/index.js': '// routes\n' },
+    tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('T-002', { verify: ['test'] })],
+  });
+  try {
+    const seen: Record<string, string[]> = {};
+    const { engine, merges, errors } = makeEngine(p, async (_role, _nth, a) => {
+      const id = a.env.task;
+      (seen[id] ??= []).push(a.spec.prompt);
+      if (seen[id]!.length === 1) {
+        // 两个任务都在各自 worktree 里追加一行路由；先把两个都做完，再让它们依次合并
+        await implement(a, { 'src/server/index.js': `// routes\nroute ${id}\n`, [`src/server/${id.toLowerCase()}/a.js`]: id });
+        return;
+      }
+      // 冲突交回：工作区里是带冲突标记的文件；删掉标记，两边的行都保留
+      await a.call('forge_claim');
+      const cur = await a.call('read', { path: 'src/server/index.js' });
+      assert.match(cur.text, /<<<<<<< /);
+      const merged = cur.text.split('\n').filter((l: string) => !/^(<{7}|={7}|>{7})/.test(l)).join('\n').replace(/\n*$/, '\n');
+      assert.ok((await a.call('write', { path: 'src/server/index.js', content: merged })).ok);
+      await a.call('forge_note', { text: '已解决合并冲突' });
+      const r = await a.call('forge_submit', { summary: '解决合并冲突' });
+      assert.ok(r.ok, r.text);
+    });
+    await engine.next(p.flowId);
+    await engine.idle();
+    assert.deepEqual(errors, []);
+    const returned = merges.filter((m) => m.kind === 'conflict_returned');
+    assert.equal(returned.length, 1, JSON.stringify(merges));
+    assert.ok(!merges.some((m) => m.kind === 'merge_fix'), JSON.stringify(merges));
+    assert.deepEqual(p.store.listTasks(p.flowId).filter((t) => t.kind === 'merge-fix'), []);
+    for (const id of ['T-001', 'T-002']) assert.equal(p.store.readTask(p.flowId, id).status, 'done', `${id} ${p.store.readTask(p.flowId, id).last_failure ?? ''}`);
+    const loser = returned[0]!.task;
+    const t = p.store.readTask(p.flowId, loser);
+    assert.equal(t.merge_failures, 1);
+    assert.equal(t.conflict_files, undefined);
+    assert.equal(seen[loser]!.length, 2, '冲突交回同一任务再跑一次');
+    assert.match(seen[loser]![1]!, /合并冲突/);
+    assert.match(p.store.readHandoff(p.flowId, loser), /合并冲突（程序生成）/);
+    const index = p.git('show', `flow/${p.flowId}/integration:src/server/index.js`);
+    assert.match(index, /route T-001/); assert.match(index, /route T-002/); assert.doesNotMatch(index, /<<<<<<<|>>>>>>>/);
+    assert.ok(p.store.readEvents().some((e) => e.type === 'merge_conflict' && e.task === loser));
+    assert.deepEqual(p.store.readMergeQueue().suspended ?? [], []);
+    assertSingleMerging(p.store.readEvents());
+    assert.deepEqual((await p.store.verifyIntegrity()).errors, []);
+  } finally { p.cleanup(); }
+});
+
+test('偏离 116：impl 交回冲突后仍留着冲突标记再提交 → 合并验证失败，次数达到上限转 blocked（merge_exhausted）', async () => {
+  const p = await setupProject({
+    files: { 'src/server/t-001/a.ts': 'base\n' },
+    tasks: [mkTask('T-001', { verify: ['typecheck'] })],
+  });
+  try {
+    const { engine, merges } = makeEngine(p, async (_role, _n, a) => {
+      if (a.env.task === 'T-001' && !merges.some((m) => m.kind === 'conflict_returned')) {
+        await implement(a, { 'src/server/t-001/a.ts': 'task\n' });
+        await engine.precheck(p.flowId);
+        commitToBranch(p.dir, `flow/${p.flowId}/integration`, { 'src/server/t-001/a.ts': 'human\n' }, '他人修改');
+        return;
+      }
+      const cur = await a.call('read', { path: 'src/server/t-001/a.ts' });
+      return implement(a, { 'src/server/t-001/a.ts': `${cur.text}// todo\n` });
+    });
+    await engine.next(p.flowId);
+    await engine.idle();
+    assert.ok(merges.some((m) => m.kind === 'conflict_returned'));
+    assert.ok(merges.some((m) => m.kind === 'verify_failed' && /残留冲突标记/.test(m.reason)), JSON.stringify(merges));
+    const t = p.store.readTask(p.flowId, 'T-001');
+    assert.equal(t.status, 'blocked');
+    assert.equal(t.blocked_by, 'merge_exhausted');
+    assert.equal(p.store.listTasks(p.flowId).filter((x) => x.kind === 'merge-fix').length, 0);
     assert.doesNotMatch(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), /<<<<<<</);
   } finally { p.cleanup(); }
 });

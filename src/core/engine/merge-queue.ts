@@ -67,6 +67,8 @@ export type MergeResult =
   | { kind: 'merged'; task: string; sha: string; finished: string[] }
   | { kind: 'verify_failed'; task: string; reason: string }
   | { kind: 'merge_fix'; task: string; mergeFix: string; conflicts: string[] }
+  /** 偏离 116：impl / fix 的合并冲突交回原任务的 worker 解决 */
+  | { kind: 'conflict_returned'; task: string; conflicts: string[] }
   | { kind: 'blocked'; task: string; reason: string };
 
 const CONFLICT_MARKER = /^(<{7}|>{7}) /m;
@@ -473,6 +475,9 @@ export class MergeQueue {
       return this.blocked(flowId, t, `${why}。需要用户处理（例如人工合并后 /forge unblock ${t.id}）`);
     }
 
+    // 偏离 116：impl / fix 的冲突交回原任务的 worker，在自己的 worktree 里解决，不另起 merge-fix 会话
+    if (opensWrites(t)) return this.returnConflict(flowId, t, integHead);
+
     // 准备 merge-fix 的 worktree：集成分支 HEAD + 原任务的改动（冲突文件保留冲突标记），作为它的基线提交
     const fixId = nextPlanTaskId(usedTaskIds(this.root, this.store, flowId, this.config));
     const fixWt = worktreePath(this.root, flowId, fixId);
@@ -506,6 +511,47 @@ export class MergeQueue {
     await this.store.appendHandoff(flowId, fixId, `合并冲突（程序生成）：${t.id} rebase 到集成分支时冲突。\n冲突文件当前内容：\n\n${excerpt}`, 'merge-queue');
     if (!prep.ok) await this.store.appendHandoff(flowId, fixId, `依赖准备失败（程序在创建工作区后运行 install 的结果）：${prep.reason ?? ''}\n需要依赖的命令在修好之前都会失败；请检查包清单与 install 命令。`, 'merge-queue');
     return { kind: 'merge_fix', task: t.id, mergeFix: fixId, conflicts };
+  }
+
+  /**
+   * 偏离 116：把集成分支 HEAD 合入任务自己的 worktree（冲突标记留在文件里并提交，工作区保持干净），
+   * base_sha 设为集成分支 HEAD，使别的任务带进来的文件不算 worker 的改动；任务以 merge_conflict 回到 in_progress，
+   * 由同一个 worker（尽量接着原会话）解决后走正常的提交流程。重复冲突计入 merge_failures，达到上限转人工。
+   * 调用时 worktree 停在 squash 提交上（rebase 已中止），工作区干净。
+   */
+  private async returnConflict(flowId: string, t: TaskFile, integHead: string): Promise<MergeResult> {
+    const wt = t.worktree!;
+    let conflicts: string[] = [];
+    let merged = false;
+    try {
+      git(wt, ['merge', '--no-edit', '--no-ff', '--no-verify', '-m', `[${flowId}/${t.id}] 合入集成分支（冲突标记待解决）`, integHead], { engineIdentity: true, allowFail: true });
+      merged = true;
+    } catch {
+      conflicts = git(wt, ['diff', '--name-only', '--diff-filter=U']).split('\n').filter(Boolean).sort();
+    }
+    if (merged) {
+      // rebase 冲突而 merge 不冲突（极少见）：已合入，放回队列重来
+      await this.store.updateTask(flowId, t.id, { base_sha: integHead }, { actor: 'merge-queue', type: 'note', reason: 'rebase 冲突但 merge 无冲突，已合入集成分支，重新排队' });
+      await this.store.transitionTask(flowId, t.id, { to: 'queued_merge', trigger: 'merge_requeue', actor: 'merge-queue' });
+      return this.verifyFailed(flowId, t, '合入集成分支后无冲突，已放回队列', [], true);
+    }
+    if (!conflicts.length) {
+      gitOk(wt, ['merge', '--abort']);
+      return this.blocked(flowId, t, `合入集成分支失败但没有冲突文件。需要用户处理（例如人工合并后 /forge unblock ${t.id}）`);
+    }
+    git(wt, ['add', '-A']);
+    git(wt, ['commit', '-q', '--no-verify', '--no-edit'], { engineIdentity: true });
+    const excerpt = conflicts.map((f) => {
+      const text = existsSync(path.join(wt, f)) ? readFileSync(path.join(wt, f), 'utf8') : '（已删除）';
+      return `${f}：\n${text.slice(0, 1500)}`;
+    }).join('\n\n');
+    const reason = `合并冲突：你的改动合入集成分支时与已合入的任务冲突。集成分支最新代码已合入你的工作区，冲突文件含冲突标记（已提交）：${conflicts.join('、')}\n`
+      + '请删除全部冲突标记，保留双方的意图（不要丢掉别的任务已合入的内容），必要时可改其他文件来协调，跑测试后 forge_note + forge_submit。';
+    await this.store.appendHandoff(flowId, t.id, `合并冲突（程序生成）：\n${excerpt}\n\n${reason}`, 'merge-queue');
+    await this.store.updateTask(flowId, t.id, { base_sha: integHead }, { actor: 'merge-queue', type: 'note', reason: '合并冲突交回 worker，base_sha 设为集成分支 HEAD', data: { base: integHead } });
+    await this.store.recordEvent({ flow: flowId, task: t.id, actor: 'merge-queue', type: 'merge_conflict', reason: `文本冲突交回原任务解决：${conflicts.join('、')}`, data: { conflicts } });
+    await this.store.transitionTask(flowId, t.id, { to: 'in_progress', trigger: 'merge_conflict', actor: 'merge-queue', facts: { conflict_files: conflicts, reason } });
+    return { kind: 'conflict_returned', task: t.id, conflicts };
   }
 
   /**

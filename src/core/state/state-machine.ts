@@ -9,7 +9,7 @@ export type Trigger =
   | 'schedule' | 'dispatch' | 'submit' | 'inputs_ready' | 'sync_conflict'
   | 'precheck_fail' | 'precheck_pass' | 'precheck_pass_skip' | 'precheck_fail_handoff'
   | 'review_changes' | 'review_pass' | 'review_exhausted'
-  | 'merge_start' | 'merge_done' | 'merge_verify_fail' | 'merge_blocked' | 'merge_requeue'
+  | 'merge_start' | 'merge_done' | 'merge_verify_fail' | 'merge_conflict' | 'merge_blocked' | 'merge_requeue'
   | 'dispute' | 'dispute_fixed' | 'dispute_upheld' | 'dispute_escalated' | 'decide_keep' | 'decide_fix'
   | 'accept' | 'foreign_tests_broken' | 'block' | 'unblock' | 'lease_expired'
   | 'run_failed' | 'run_interrupted' | 'run_paused' | 'run_timeout' | 'report' | 'cancel';
@@ -298,6 +298,11 @@ export const TRANSITIONS: readonly Rule[] = [
   {
     from: ['merging'], to: 'in_progress', trigger: 'merge_verify_fail', counter: 'merge_failures',
     check: (t, f) => [...pipelineOnly(t), ...need(f.post_verify_ok === false, '合并后验证并未失败'), ...need(!f.foreign_acceptance_failed, '其他任务验收测试失败应等待输入'), ...reasonRequired(f)],
+  },
+  {
+    // 偏离 116：合并时的文本冲突交回原任务的 worker；与 merge_verify_fail 共用 merge_failures（同属"合并把任务退回"，共用上限防止反复来回）
+    from: ['merging'], to: 'in_progress', trigger: 'merge_conflict', counter: 'merge_failures',
+    check: (t, f) => [...pipelineOnly(t), ...need(opensWrites(t), '只有 impl / fix 的合并冲突交回 worker'), ...need(!!f.conflict_files?.length, '没有冲突文件'), ...reasonRequired(f)],
   },
   {
     from: ['merging'], to: 'blocked', trigger: 'merge_blocked',

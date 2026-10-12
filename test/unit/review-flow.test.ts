@@ -177,7 +177,7 @@ test('没有 must（只有 suggest 或出处不合格的 must）按 pass 处理�
   } finally { p.cleanup(); }
 });
 
-test('推导：S 且没有追加契约不审查；risk=high 是 strong，审查者用升级模型；其余用普通模型', async () => {
+test('推导：impl 一律审查（S 也要，偏离 117）；risk=high 是 strong，审查者用升级模型；其余用普通模型', async () => {
   const p = await setupProject({
     yaml: YAML, files: FILES,
     tasks: [derived('T-001', { size: 'S' }), derived('T-002', { size: 'M', risk: 'high' }), derived('T-003', { size: 'M' })],
@@ -191,14 +191,13 @@ test('推导：S 且没有追加契约不审查；risk=high 是 strong，审查�
     assert.deepEqual(e.errors, []);
     for (const id of ['T-001', 'T-002', 'T-003']) assert.equal(p.store.readTask(p.flowId, id).status, 'done', id);
     const reviewers = e.launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'reviewer');
-    assert.deepEqual(reviewers.map((s) => [s.env['PI_FORGE_TASK'], s.model]).sort(), [['T-002.rv', 'fake/strong'], ['T-003.rv', 'fake/model']]);
+    assert.deepEqual(reviewers.map((s) => [s.env['PI_FORGE_TASK'], s.model]).sort(), [['T-001.rv', 'fake/model'], ['T-002.rv', 'fake/strong'], ['T-003.rv', 'fake/model']]);
     assert.equal(p.store.readTask(p.flowId, 'T-002.rv').review, 'strong');
-    assert.equal(p.store.listTasks(p.flowId).some((t) => t.id === 'T-001.rv'), false);
     assert.ok(e.launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'worker').every((s) => s.model === 'fake/model'));
   } finally { p.cleanup(); }
 });
 
-test('精简模式不做逐任务审查（strong 的也不做），由阶段审查负责（偏离 84）', async () => {
+test('精简模式也逐任务审查（偏离 117 取代偏离 84 对 impl / fix 的约定）', async () => {
   const p = await setupProject({ yaml: YAML, files: FILES, stages: ['S1'], tasks: [derived('T-002', { stage: 'S1', size: 'M', risk: 'high' })] });
   await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }], 'lean');
   const e = makeEngine(p, async (role, _nth, a) => {
@@ -209,7 +208,7 @@ test('精简模式不做逐任务审查（strong 的也不做），由阶段审�
     await drive(p, e);
     assert.deepEqual(e.errors, []);
     assert.equal(p.store.readTask(p.flowId, 'T-002').status, 'done');
-    assert.equal(p.store.listTasks(p.flowId).some((t) => t.id === 'T-002.rv'), false);
+    assert.equal(p.store.readTask(p.flowId, 'T-002.rv').review, 'strong');
   } finally { p.cleanup(); }
 });
 
@@ -217,6 +216,7 @@ test('审查者调用 forge_block：原 task 一并阻塞，等用户处理', as
   const p = await setupProject({ yaml: YAML, files: FILES, tasks: [mkTask('T-001', { review: 'auto' })] });
   const e = makeEngine(p, async (role, _nth, a) => {
     if (role === 'worker') return implement(a, 't-001', 'export const a = 1;\n');
+    assert.equal(role, 'reviewer');
     await a.call('forge_block', { reason: 'REQ-001.AC1 无法用合理的代码满足' });
   }, SETTINGS);
   try {

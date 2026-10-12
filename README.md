@@ -10,7 +10,7 @@ pi-forge 是一个 [Pi](https://github.com/earendil-works/pi-coding-agent) 插�
 
 - **状态只由程序写。** 流程状态在项目的 `.forge/` 里（事件日志带哈希链，提交到 `refs/pi-forge/state`）。agent 读不到它，也改不了它，只能通过 `forge_*` 工具提交申请，由程序校验后写入。
 - **约束靠移除能力和程序校验，不靠提示词。** 每个角色只拥有自己那份工具和可写范围；越界的调用会被 guard 拦截。能用程序判断的事（规格检查、契约检查、DAG 推导、AC 覆盖率、预检、合并验证）都用程序判断。
-- **测试由独立的 test-author 编写。** 它在程序导出的独立仓库里工作，里面只有规格、契约和已有的验收测试，没有实现代码。worker 改不了验收测试；认为测试写错时，只能通过 `forge_dispute` 提出争议。
+- **验收测试由 worker 写，reviewer 审查（偏离 118）。** 默认没有 test-author：worker 按 AC 编号写验收测试，reviewer 对照程序算出的 AC 覆盖，核对每条 AC 有测试、测试走了 Given/When/Then 且只经允许的入口、断言没有被弱化。`implementation_gate.test_author: true` 可以显式启用旧的独立 test-author 路径（需要自己定义该角色）。
 - **契约只能追加。** P1 批准后，`docs/contracts/**` 锁定。实施中新增接口、可选字段、错误码等允许，由程序做结构比较；修改或删除已有内容必须走变更请求，由你批准。
 - **人工闸门不能被 agent 自批准。** 规格、契约与计划、每个实施阶段的签收，都要你执行 `/forge-approve`。
 - **"必须改"要有出处。** reviewer 和 stage-qa 提的必须改，要引用规则、AC、契约或具体缺陷，没有出处的程序降为建议；第二轮只能确认，不能提新问题。
@@ -86,7 +86,7 @@ feature 模式同样扫描 `docs/`，但跳过之前流程已经入库过的文�
 /forge-fix --from bug.md
 ```
 
-一个 worker 定位并修复（加回归测试），合并时跑全量测试，直接合入主分支；再由只读的 stage-qa 复现确认。流程运行中不能同时修复；流程正在等你审批时会先让你确认（`--yes` 跳过）。
+一个 worker 定位并修复（加回归测试），合并时跑全量测试（fix 流程没有阶段门禁），直接合入主分支；再由只读的 stage-qa 复现确认。流程运行中不能同时修复；流程正在等你审批时会先让你确认（`--yes` 跳过）。
 
 ## 阶段
 
@@ -96,7 +96,7 @@ feature 模式同样扫描 `docs/`，但跳过之前流程已经入库过的文�
 |---|---|---|
 | **P0 规格** | 主会话（orchestrator）和你 | 回答它的问题，确认需求。规格通过 spec-lint 后进入等待批准，你 `/forge-approve` 或 `/forge-reject "<意见>"` |
 | **P1 契约与计划** | architect（程序驱动，不经主会话） | 读批准页：阶段划分、task 数与并行度、DAG 提醒、assumptions（architect 的默认假设）和 extras（超出需求的设计）；`/forge-approve` 后程序应用规则与命令草案、锁定契约、生成 S 阶段和 task |
-| **实施 S0、S1…Sn** | worker、test-author、reviewer、stage-qa，由程序调度 | 处理"需要你处理"里的事项（争议裁决、阻塞、需人工放行），并在阶段末签收 |
+| **实施 S0、S1…Sn** | worker、reviewer、stage-qa，由程序调度 | 处理"需要你处理"里的事项（争议裁决、阻塞、需人工放行），并在阶段末签收 |
 | **交付** | 程序 | 不是独立阶段：批准最后一个 S 阶段的签收时，程序把集成分支 `--no-ff` 合入主分支 |
 
 - S0 是骨架阶段，只有一个 task：搭好安装、类型检查、lint、测试、验收测试的命令，建好 `tests/acceptance/_support/`，写一个贯穿前端、API、数据库的冒烟测试。
@@ -112,8 +112,8 @@ feature 模式同样扫描 `docs/`，但跳过之前流程已经入库过的文�
 | orchestrator（主会话） | 接收 PRD 与原型，和你沟通，整理规格，汇报进度，转达你的决定 | 无。规格经 `forge_spec`、`forge_spec_amend` 由程序写入 | 无 |
 | architect | P1 写契约、架构、计划、规则与命令草案；变更请求里改计划；`--adopt` 里反向整理契约 | `docs/contracts/**`、`docs/arch/**`、`docs/plan/**`、`docs/rules-draft/**`、`AGENTS.md`；术语表只能追加 | readonly |
 | worker | 实现一个 task（纵向切片，前后端、迁移、单元测试，按 TDD）；也做 fix 和合并冲突修复 | task 的 `writes` 与 `shared`、对已有单元测试的适配（只改不增删）；本模块的契约文件只能追加 | full |
-| test-author | 只依据规格与契约，在契约边界写验收测试；与 worker 并行 | 隔离工作区里的 `tests/acceptance/<task>/**`、`tests/acceptance/_support/<task>/**` | allowlist（只读命令加 `acceptance_list`、`acceptance`） |
-| reviewer | 只看 diff、AC、契约和规则做逐任务审查（精简模式是阶段审查） | 无 | readonly |
+| test-author（可选） | 默认不启用。显式开启 `test_author: true` 并在 workflow.yaml 里定义该角色后：只依据规格与契约，在契约边界写验收测试；与 worker 并行 | 隔离工作区里的 `tests/acceptance/<task>/**`、`tests/acceptance/_support/<task>/**` | allowlist（只读命令加 `acceptance_list`、`acceptance`） |
+| reviewer | 逐任务审查（impl / fix 一律审查）：读 diff、AC、契约和规则，运行本 task 自己的测试，审查 worker 写的验收测试 | 无 | allowlist（只读命令加 `test`、`acceptance`） |
 | stage-qa | 阶段末在集成分支上核对需求覆盖、跨模块一致性、抽查权限；fix 模式里复现确认 | 无（在集成分支 HEAD 的临时 worktree 里运行） | full |
 | researcher | 按需联网调研，结论在前并附来源 | `docs/research/**` | 无 |
 
@@ -123,11 +123,11 @@ feature 模式同样扫描 `docs/`，但跳过之前流程已经入库过的文�
 
 一个 impl task 的流程：
 
-1. **并行开工**：worker 实现，test-author 在独立仓库里写 `T-003.at`（验收测试）。S0 例外：`.at` 在 impl 合并之后才开始，单独合并。
+1. **开工**：worker 实现并写本 task 的验收测试（`tests/acceptance/<T>/`，lean 是共享的 `suite/`）。显式开启 test-author 时，另有 `T-003.at` 并行写验收测试，S0 例外：`.at` 在 impl 合并之后才开始，单独合并。
 2. **提交与等待**：worker `forge_submit` 后 task 进入 `awaiting_inputs`，等最新的 `.at` 完成、软依赖的生产方 done；程序把集成分支合进任务分支（有冲突就交回 worker 解决）。
-3. **预检**（程序，`checking`）：带着分配的端口和数据库，运行 `typecheck`、`lint`、`test` 和本 task 的验收测试；检查 diff 没有越出 `writes`、契约只做了追加、验收测试没被改。失败交回 worker，达到次数上限转 blocked。
-4. **审查**（`in_review`）：按风险推导是否需要（`skip`、`auto`、`strong`）。reviewer 只看 diff 等输入，必须改要有出处；有 must 就回到 worker，第二轮（`.rv-2`）只确认。
-5. **合并队列**：程序串行合并，选队列里第一个合格的 task；rebase 后跑全量验证，通过后快进到集成分支。契约文件的文本冲突先尝试结构化三方合并。
+3. **预检**（程序，`checking`）：不再运行命令（偏离 117），只合入最新的验收测试、检查契约只做了追加；diff 越界与验收测试被改在提交时检查。失败交回 worker，达到次数上限转 blocked。随后 impl / fix 一律交给 reviewer：读 diff，并运行本 task 改动的单元测试和本 task 自己的验收测试，测试失败是阻塞问题。
+4. **审查**（`in_review`）：impl / fix 一律审查，按风险推导强度（`auto`、`strong`）。reviewer 的 bash 只放行 `test` 与 `acceptance` 两条命令，运行范围由任务说明给定（本 task 改动的单元测试；验收测试 `-- <task>`，lean 共享目录是 `-- suite/<文件>`）；必须改要有出处，测试失败的出处写 `defect:`；有 must 就回到 worker，第二轮（`.rv-2`）只确认。
+5. **合并队列**：程序串行合并，选队列里第一个合格的 task；rebase 后只检查冲突标记并运行 merge_check（typecheck、lint、全量 test 与 acceptance 留到阶段门禁），通过后快进到集成分支。契约文件的文本冲突先尝试结构化三方合并。
 
 派生 task 的命名：
 
@@ -138,7 +138,7 @@ feature 模式同样扫描 `docs/`，但跳过之前流程已经入库过的文�
 | `T-003.fx-1`… | 修复：阶段门禁、stage-qa 的 must、验收测试在已有实现上失败时产生，接着该 task 最后一次 worker 的会话 |
 | `S1.rv`、`S1.qa`… | 阶段级的审查与 stage-qa |
 
-**争议**：worker 认为测试写错时，调用 `forge_dispute`，必须引用规格或契约的具体位置。程序创建 `.at-n` 让 test-author 判断：修改测试，或引用出处维持原测试；规格本身矛盾，或同一测试争议超过 `testing.max_disputes`，转给你。你用 `/forge-decide <task> keep-test`（维持测试，worker 改实现）或 `/forge-decide <task> fix-test "<说明>"`（按说明改测试）。
+**争议**（仅显式开启 test-author 时）：worker 认为测试写错时，调用 `forge_dispute`，必须引用规格或契约的具体位置。程序创建 `.at-n` 让 test-author 判断：修改测试，或引用出处维持原测试；规格本身矛盾，或同一测试争议超过 `testing.max_disputes`，转给你。你用 `/forge-decide <task> keep-test`（维持测试，worker 改实现）或 `/forge-decide <task> fix-test "<说明>"`（按说明改测试）。
 
 别的 task 的验收测试被正当的契约追加破坏时，程序不计入当前 task 的失败，而是给那个测试创建 `.at-n`，当前 task 等它修好。
 

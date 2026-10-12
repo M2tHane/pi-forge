@@ -1,17 +1,7 @@
 // 第 8.2 节：预检要跑的命令。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { precheckCommands } from '../../src/core/engine/precheck.ts';
 import { readFileSync } from 'node:fs';
-
-test('precheckCommands：只跑已定义且非空的 typecheck、lint、test；有验收测试目录时加 acceptance -- <task>', () => {
-  const cmds = { typecheck: 'pnpm tsc', lint: '', test: 'pnpm vitest run {files}', acceptance: 'pnpm acc', e2e: 'pnpm e2e' };
-  assert.deepEqual(precheckCommands(cmds, 'T-003', true), [
-    { name: 'typecheck', shell: 'pnpm tsc' }, { name: 'test', shell: 'pnpm vitest run' }, { name: 'acceptance', shell: 'pnpm acc -- T-003' },
-  ]);
-  assert.deepEqual(precheckCommands(cmds, 'T-003', false).map((c) => c.name), ['typecheck', 'test']);
-  assert.deepEqual(precheckCommands({ acceptance: 'x' }, 'T-001', true), [{ name: 'acceptance', shell: 'x -- T-001' }]);
-});
 
 test('contractBaseOf：同步过集成分支后，基线是合并基点（含已批准变更对契约的修改）；没有集成分支时用 base_sha', async () => {
   const { tmpRepo } = await import('../helpers/repo.ts');

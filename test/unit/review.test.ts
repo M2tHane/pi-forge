@@ -16,38 +16,36 @@ const derived = (id: string, over: Parameters<typeof mkTask>[1] = {}) => {
   return t;
 };
 
-test('reviewMode：task.review 有值就用它（包括 skip）', () => {
+test('reviewMode：task.review 有值就用它；impl 写 skip 无效（偏离 117）', () => {
   const tasks = [mkTask('T-001')];
   assert.equal(reviewMode(mkTask('T-001', { review: 'strong', size: 'S' }), tasks, policy, false), 'strong');
-  assert.equal(reviewMode(mkTask('T-001', { review: 'skip', risk: 'high' }), tasks, policy, false), 'skip');
   assert.equal(reviewMode(mkTask('T-001', { review: 'auto', size: 'S' }), tasks, policy, false), 'auto');
+  assert.equal(reviewMode(mkTask('T-001', { review: 'skip', risk: 'high' }), tasks, policy, false), 'strong', 'impl 不能跳过审查，按风险推导');
 });
 
 test('reviewMode：被 critical_fanout 个 task 硬依赖、layers 含 auth、risk=high 都是 strong（优先于 size）', () => {
   const base = derived('T-001', { size: 'S' });
   const dependents = ['T-002', 'T-003', 'T-004'].map((id) => mkTask(id, { deps: [hard('T-001')] }));
   assert.equal(reviewMode(base, [mkTask('T-001'), ...dependents], policy, false), 'strong');
-  assert.equal(reviewMode(base, [mkTask('T-001'), ...dependents.slice(0, 2)], policy, false), 'skip', '只有 2 个依赖者，不到 3');
-  assert.equal(reviewMode(base, [mkTask('T-001'), ...dependents], { ...policy, criticalFanout: 0 }, false), 'skip', 'critical_fanout 为 0 关闭');
+  assert.equal(reviewMode(base, [mkTask('T-001'), ...dependents.slice(0, 2)], policy, false), 'auto', '只有 2 个依赖者，不到 3');
+  assert.equal(reviewMode(base, [mkTask('T-001'), ...dependents], { ...policy, criticalFanout: 0 }, false), 'auto', 'critical_fanout 为 0 关闭');
   const soft = ['T-002', 'T-003', 'T-004'].map((id) => mkTask(id, { depends_on: [{ task: 'T-001', type: 'soft' }] }));
-  assert.equal(reviewMode(base, [mkTask('T-001'), ...soft], policy, false), 'skip', '软依赖不计');
+  assert.equal(reviewMode(base, [mkTask('T-001'), ...soft], policy, false), 'auto', '软依赖不计');
   const cancelled = dependents.map((t) => ({ ...t, status: 'cancelled' as const }));
-  assert.equal(reviewMode(base, [mkTask('T-001'), ...cancelled], policy, false), 'skip', '已取消的不计');
+  assert.equal(reviewMode(base, [mkTask('T-001'), ...cancelled], policy, false), 'auto', '已取消的不计');
   assert.equal(reviewMode(derived('T-001', { layers: ['backend', 'auth'], size: 'S' }), [], policy, false), 'strong');
   assert.equal(reviewMode(derived('T-001', { risk: 'high', size: 'S' }), [], policy, false), 'strong');
   assert.equal(reviewMode(derived('T-001', { risk: 'normal' }), [], policy, false), 'auto');
 });
 
-test('reviewMode：size 在 skip_sizes 且没有追加契约 → skip；追加了契约或 size 不在列表 → auto', () => {
-  assert.equal(reviewMode(derived('T-001', { size: 'S' }), [], policy, false), 'skip');
-  assert.equal(reviewMode(derived('T-001', { size: 'S' }), [], policy, true), 'auto', '追加了契约要审');
-  assert.equal(reviewMode(derived('T-001', { size: 'M' }), [], policy, false), 'auto');
-  assert.equal(reviewMode(derived('T-001', { size: 'M' }), [], { ...policy, skipSizes: ['S', 'M'] }, false), 'skip');
-  assert.equal(reviewMode(derived('T-001'), [], policy, false), 'auto', '没写 size 按 auto');
+test('reviewMode：impl 不受 skip_sizes 与 per_task=false 影响，一律审查（偏离 117）', () => {
+  assert.equal(reviewMode(derived('T-001', { size: 'S' }), [], policy, false), 'auto');
+  assert.equal(reviewMode(derived('T-001', { size: 'M' }), [], { ...policy, skipSizes: ['S', 'M'] }, false), 'auto');
+  assert.equal(reviewMode(derived('T-001'), [], { ...policy, perTask: false }, false), 'auto', 'lean 也逐任务审查');
+  assert.equal(reviewMode(mkTask('T-001', { review: 'strong', risk: 'high' }), [], { ...policy, perTask: false }, false), 'strong');
 });
 
-test('reviewMode：per_task=false 与 fix / merge-fix / doc / acctest 不做逐任务审查（即使写了 review）', () => {
-  assert.equal(reviewMode(mkTask('T-001', { review: 'strong', risk: 'high' }), [], { ...policy, perTask: false }, false), 'skip');
+test('reviewMode：fix / merge-fix / doc / acctest 不做逐任务审查（即使写了 review）', () => {
   for (const kind of ['fix', 'merge-fix', 'doc', 'acctest'] as const) {
     assert.equal(reviewMode(mkTask('T-001', { kind, review: 'strong', risk: 'high' }), [], policy, true), 'skip', kind);
   }
@@ -213,4 +211,24 @@ test('classifyIssues 带 readRule：rule: 出处不真实的 must 降为 suggest
   assert.deepEqual(r.downgraded.map((d) => d.id), ['R-2', 'R-3']);
   assert.match(r.downgraded[0]!.reason!, /不是项目的规则文件/);
   assert.equal(classifyIssues([mk('rule:skills/tdd#x')]).issues[0]!.level, 'must');
+});
+
+test('buildReviewBrief（偏离 117、118）：给了 tests 与 acceptance 时，先列出要运行的命令，再列 AC 覆盖；缺失的 AC 点名为 must', () => {
+  const base = { taskId: 'T-001', title: 't', reviewId: 'T-001.rv', acIds: ['REQ-001.AC1'], acTexts: {}, contracts: { shown: [], omitted: [] }, glossary: '', deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: false }, priorMust: [] };
+  const brief = buildReviewBrief({
+    ...base, withAcceptance: true,
+    tests: { run: [{ name: 'acceptance', shell: 'pnpm acc -- T-001' }], skipped: ['单元测试：本 task 没有改动单元测试文件，全量单元测试在阶段门禁运行'] },
+    acceptance: { rows: [{ ac: 'REQ-001.AC1', files: ['tests/acceptance/T-001/a.test.js'] }, { ac: 'REQ-001.AC2', files: [] }], missing: ['REQ-001.AC2'] },
+  });
+  assert.match(brief, /先运行本 task 自己的测试[\s\S]*pnpm acc -- T-001[\s\S]*未运行[\s\S]*没有改动单元测试文件/);
+  assert.match(brief, /defect:<命令> 失败/);
+  assert.match(brief, /REQ-001\.AC1：tests\/acceptance\/T-001\/a\.test\.js/);
+  assert.match(brief, /REQ-001\.AC2：\*\*没有带该编号的测试\*\*/);
+  assert.match(brief, /以下 AC 没有测试：REQ-001\.AC2/);
+  assert.match(brief, /含 tests\/acceptance\/\*\*/);
+  const plain = buildReviewBrief({ ...base });
+  assert.doesNotMatch(plain, /先运行本 task 自己的测试|审查本 task 的验收测试/);
+  assert.match(plain, /不含 tests\/acceptance/);
+  const confirm = buildReviewBrief({ ...base, tests: { run: [{ name: 'test', shell: 'pnpm test x' }], skipped: [] }, priorMust: [{ id: 'R-1', level: 'must', basis: 'defect:x', files: ['a.ts'], location: '', problem: 'p', expected: 'e' }] });
+  assert.match(confirm, /确认轮也先运行这些命令/);
 });

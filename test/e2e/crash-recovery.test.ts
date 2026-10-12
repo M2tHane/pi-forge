@@ -50,12 +50,12 @@ function recoveryEngine(p: Project, store: StateStore, settings: object) {
   });
 }
 
-const GOOD = { version: 1, roles: { 'worker': { model: 'fakellm/impl-happy' } } };
+const GOOD = { version: 1, roles: { 'worker': { model: 'fakellm/impl-happy' }, 'reviewer': { model: 'fakellm/review-pass' } } };
 // 驱动器与恢复引擎均使用仓库正式角色提示。
 test('任务进行中强杀引擎：残留 pi 子进程被清理，任务在原 worktree 上重新派发并完成', { skip: !piAvailable && 'pi 不可用', timeout: 300_000 }, async () => {
   const p = await setupProject({ tasks: [mkTask('T-001', { verify: ['test'] })] });
   try {
-    const driver = startDriver(p, { version: 1, roles: { 'worker': { model: 'fakellm/impl-slow' } } });
+    const driver = startDriver(p, { version: 1, roles: { 'worker': { model: 'fakellm/impl-slow' }, 'reviewer': { model: 'fakellm/review-pass' } } });
     drivers.push(driver);
     let pid = 0;
     await until(() => {
@@ -124,7 +124,7 @@ test('引擎所在的 pi 收到 SIGTERM：结束它拉起的 subagent，不留�
   const p = await setupProject({ tasks: [mkTask('T-001', { verify: ['test'] })] });
   const agentDir = mkdtempSync(path.join(tmpdir(), 'pi-forge-agentdir-'));
   try {
-    writeFileSync(path.join(agentDir, 'pi-forge.json'), JSON.stringify({ version: 1, roles: { 'worker': { model: 'fakellm/impl-slow' } } }));
+    writeFileSync(path.join(agentDir, 'pi-forge.json'), JSON.stringify({ version: 1, roles: { 'worker': { model: 'fakellm/impl-slow' }, 'reviewer': { model: 'fakellm/review-pass' } } }));
     const provider = path.join(ROOT, 'test/fixtures/fake-llm/provider.ts');
     const main = spawn('pi', ['-p', '--no-session', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',
       '-e', provider, '-e', path.join(ROOT, 'src/pi-adapter/extension.ts'), '/forge next'], {

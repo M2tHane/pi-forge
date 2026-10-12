@@ -210,6 +210,8 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
     if (p.task_id) return now.get(p.task_id) !== before.get(p.task_id);
     for (const [id, s] of now) {
       if (s === before.get(id)) continue;
+      // 偏离 117：impl 一律有审查任务，.rv 的新建与完成由程序驱动，不单独唤醒（结论体现在被审查任务的状态上；审查者 blocked 时被审查任务也会 blocked）
+      if (/\.rv(-\d+)?$/.test(id)) continue;
       if (!before.has(id) || s === 'done' || s === 'blocked' || s === 'cancelled') return true;
       if (s === 'ready' && !engine.autoDispatch) return true;
     }

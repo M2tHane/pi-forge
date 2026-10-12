@@ -19,7 +19,17 @@ export const ALL_FAKE: RoleSettingsFile = { version: 1, roles: Object.fromEntrie
 export type RoleScript = (role: string, nth: number, a: FakeAgent) => Promise<void>;
 
 export function makeEngine(p: Project, scripts: RoleScript, settings = ALL_FAKE, mergeHooks?: MergeHooks, extra: Partial<EngineDeps> = {}) {
-  const launcher = new FakeLauncher(p.store, p.config, (spec, nth) => (a) => scripts(spec.env['PI_FORGE_ROLE']!, nth, a));
+  // 偏离 117：impl / fix 一律审查。脚本里没有出现 reviewer 的（按任务编号分支的老脚本）不会处理审查者，默认审查者直接通过；
+  // 脚本处理了 reviewer 但没有提交结论的（forge_review_*、forge_block）同样补一次通过
+  const handlesReviewer = /forge_review_|'reviewer'|"reviewer"/.test(scripts.toString());
+  const launcher = new FakeLauncher(p.store, p.config, (spec, nth) => async (a) => {
+    const role = spec.env['PI_FORGE_ROLE']!;
+    if (role === 'reviewer' && !handlesReviewer) { await a.call('forge_review_report', { verdict: 'pass', issues: [] }); return; }
+    let concluded = false;
+    const watched: FakeAgent = { ...a, call: async (tool, input) => { if (/^forge_review_|^forge_block$/.test(tool)) concluded = true; return a.call(tool, input); } };
+    await scripts(role, nth, watched);
+    if (role === 'reviewer' && !concluded) await a.call('forge_review_report', { verdict: 'pass', issues: [] });
+  });
   const errors: unknown[] = [];
   const merges: MergeResult[] = [];
   const engine = new Engine({

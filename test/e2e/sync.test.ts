@@ -136,6 +136,6 @@ test('同步冲突涉及受保护文件（rules/）：暂停派发新任务，�
     p.git('worktree', 'remove', '--force', wt);
     assert.match(await runFlowCommand('sync', e), /已包含 main 的全部提交/);
     assert.equal(p.store.readFlow(flowId).sync?.status, 'ok');
-    assert.equal(p.store.listTasks(flowId).filter((t) => t.status === 'done').length, 2, '恢复派发');
+    assert.equal(p.store.listTasks(flowId).filter((t) => t.status === 'done' && t.kind === 'impl').length, 2, '恢复派发');
   } finally { p.cleanup(); }
 });

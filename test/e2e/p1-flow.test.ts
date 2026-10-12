@@ -256,8 +256,9 @@ async function approveLean(yaml?: string) {
   } finally { p.cleanup(); }
 }
 
-test('lean 且 test_author 未配置：批准 P1 不派生 .at，impl 的 writes 带共享验收目录 suite（偏离 110），不带按 task 的目录', async () => {
-  const tasks = await approveLean();
+test('lean 且 test_author 未配置（任何模式默认关闭，偏离 118）：批准 P1 不派生 .at，impl 的 writes 带共享验收目录 suite（偏离 110），不带按 task 的目录', async () => {
+  // 运行时夹具显式写了 test_author: true；这里去掉，验证模板默认（偏离 118：任何模式默认都没有 test-author）
+  const tasks = await approveLean(PROJECT_YAML.replace(/^  test_author: true.*\n/m, ''));
   assert.ok(!tasks.some((t) => t.kind === 'acctest'), '没有 .at');
   const w = tasks.find((t) => t.id === 'T-003')!.writes;
   assert.ok(w.includes('tests/acceptance/suite/**'));
@@ -265,6 +266,6 @@ test('lean 且 test_author 未配置：批准 P1 不派生 .at，impl 的 writes
 });
 
 test('lean 但 test_author 显式写 true：照旧派生 .at', async () => {
-  const tasks = await approveLean(PROJECT_YAML.replace(/^  qa: false$/m, '  qa: false\n  test_author: true'));
+  const tasks = await approveLean(PROJECT_YAML);
   assert.ok(tasks.some((t) => t.id === 'T-003.at'));
 });

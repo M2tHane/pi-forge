@@ -12,8 +12,9 @@ import { acceptCandidate, retireEntries, promoteToDraft, markPromoted, selectKno
 import { applyDrafts, listDrafts } from '../../src/core/plan/rules-draft.ts';
 import { renderStatus } from '../../src/core/ops/status-view.ts';
 
-// 有 FAIL 的代码只有和集成分支上的 src/server/later.ts 放在一起才失败：预检能过，合并后验证才拦下
-const YAML = `${PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "! { grep -rqs FAIL src/server && test -e src/server/later.ts; }"')}
+// 有 FAIL 的代码只有和集成分支上的 src/server/later.ts 放在一起才失败：审查能过，合并后验证才拦下
+// 偏离 117：合并只跑 merge_check，用它拦下
+const YAML = `${PROJECT_YAML.replace(/(  acceptance_list: .*\n)/, '$1  merge_check: "! { grep -rqs FAIL src/server && test -e src/server/later.ts; }"\n')}
 knowledge:
   auto_candidates: true
 `;
@@ -34,7 +35,7 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
     mkTask('T-003', { role: 'researcher', scopes: ['research'], writes: ['docs/research/t-003/**'], verify: [] }),
   ] });
   try {
-    const settings = { version: 1 as const, roles: { worker: { model: 'f/m' }, researcher: { model: 'f/m' } } };
+    const settings = { version: 1 as const, roles: { worker: { model: 'f/m' }, reviewer: { model: 'f/m' }, researcher: { model: 'f/m' } } };
     const { engine, launcher, errors } = makeEngine(p, async (_role, nth, a) => {
       if (a.env.task === 'T-001') {
         if (nth === 1) {
@@ -46,7 +47,7 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
           const w = await a.call('write', { path: path.join(p.dir, '.forge/knowledge.json'), content: '{}' });
           assert.ok(!w.ok, w.text);
         }
-        // 第一次的代码让合并时的全量测试失败
+        // 第一次的代码让合并时的 merge_check 失败
         return implement(a, 'src/server/t-001/a.ts', `订单模型已建好（第 ${nth} 次）`, nth === 1 ? 'FAIL\n' : 'x\n');
       }
       if (a.env.task === 'T-002') return implement(a, 'src/server/t-002/a.ts', '完成');
@@ -77,7 +78,7 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
     const k = p.store.readKnowledge();
     const cand = k.entries.find((e) => e.status === 'candidate')!;
     assert.equal(cand.source.kind, 'merge');
-    assert.match(cand.content, /T-001「任务 T-001」合并后验证失败：合并后验证失败（[^）]*test 退出码 1）/);
+    assert.match(cand.content, /T-001「任务 T-001」合并后验证失败：合并后验证失败（[^）]*merge_check 退出码 1）/);
     assert.ok(!sys('T-002').includes('合并后验证失败'));
     assert.match(renderStatus(p.store, p.config), /1 条知识候选待确认/);
     const t2 = p.store.readTask(p.flowId, 'T-002');

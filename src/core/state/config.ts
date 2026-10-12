@@ -81,12 +81,11 @@ export class FlowConfig {
   }
 
   /**
-   * 该流程的实施阶段是否有 test-author 写验收测试（偏离 81、98）：implementation_gate.test_author 显式写了 true/false 就照办；
-   * 没写时按流程的 plan_mode 决定：lean 不要，standard（以及 P1 还没确定模式时）要。
+   * 该流程的实施阶段是否有 test-author 写验收测试（偏离 81、98、118）：默认不要，任何模式都由 worker 自己写验收测试，reviewer 审查；
+   * 只有 implementation_gate.test_author 显式写了 true 才启用（旧路径保留，模板里已不再定义 test-author 角色，需要自己加）。
    */
-  testAuthorFor(flow: { plan_mode?: 'lean' | 'standard' | undefined }): boolean {
-    const v = this.raw.implementation_gate?.test_author;
-    return typeof v === 'boolean' ? v : flow.plan_mode !== 'lean';
+  testAuthorFor(_flow: { plan_mode?: 'lean' | 'standard' | undefined }): boolean {
+    return this.raw.implementation_gate?.test_author === true;
   }
   get limits() { return this.raw.limits; }
   get commands() { return this.raw.commands; }

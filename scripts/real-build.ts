@@ -99,7 +99,7 @@ export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' |
   doc.setIn(['models', 'medium'], o.plannerModel);
   doc.setIn(['models', 'cheap'], o.coderModel);
   for (const r of PLANNER_ROLES) { doc.setIn(['roles', r, 'model'], 'planner'); doc.setIn(['roles', r, 'thinking'], o.plannerThinking); }
-  for (const r of CODER_ROLES) { doc.setIn(['roles', r, 'model'], 'coder'); doc.setIn(['roles', r, 'thinking'], o.coderThinking); }
+  for (const r of CODER_ROLES) { if (!doc.hasIn(['roles', r])) continue; /* 模板不再定义 test-author（偏离 118） */ doc.setIn(['roles', r, 'model'], 'coder'); doc.setIn(['roles', r, 'thinking'], o.coderThinking); }
   doc.setIn(['escalation', 'enabled'], false);
   if (o.arm === 'A1') doc.setIn(['implementation_gate', 'test_author'], false);
   if (o.planMode === 'standard') doc.setIn(['limits', 'lean_below_loc'], 1);

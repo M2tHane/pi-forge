@@ -6,8 +6,8 @@ commands:                         # 由 architect 在 P1 按技术栈改写（do
   typecheck:       "pnpm typecheck"
   lint:            "pnpm lint"
   test:            "pnpm test"                         # worker 的单元与组件测试
-  acceptance:      "pnpm test:acceptance"              # 加 "-- <task>" 时只跑 tests/acceptance/<task>/；自己启停服务
-  acceptance_list: "pnpm test:acceptance --list"       # 只收集、不执行；test-author 提交时检查
+  acceptance:      "pnpm test:acceptance"              # 加 "-- <task>" 时只跑 tests/acceptance/<task>/，加 "-- suite/<文件>" 时只跑该文件（相对 tests/acceptance/，可多个）；自己启停服务
+  acceptance_list: "pnpm test:acceptance --list"       # 只收集、不执行
   # e2e:           "pnpm test:e2e"                     # 无界面浏览器端到端，阶段门禁时运行
   contract_lint:   "pnpm exec redocly lint docs/contracts/openapi.yaml"   # 根文件引用 paths/<模块>.yaml
   # contract_test: "pnpm contract:test"                # 例如 schemathesis 对着启动的服务跑，阶段门禁时运行
@@ -17,7 +17,7 @@ commands:                         # 由 architect 在 P1 按技术栈改写（do
   # db_create:     "createdb $FORGE_DB_NAME"          # 可选：服务器类数据库按 FORGE_DB_NAME 建库
   # db_drop:       "dropdb --if-exists $FORGE_DB_NAME"
 generated_paths: ["web/src/api/generated/**"]          # 由契约生成的代码
-acctest_workspace:                # test-author 的隔离工作区（独立仓库）额外导出的路径；默认已导出 docs/spec、docs/contracts、docs/arch/overview.md、AGENTS.md、tests/acceptance、根目录的包清单与锁文件
+acctest_workspace:                # 仅 test_author: true 时有用（默认没有 test-author，偏离 118）：test-author 的隔离工作区（独立仓库）额外导出的路径；默认已导出 docs/spec、docs/contracts、docs/arch/overview.md、AGENTS.md、tests/acceptance、根目录的包清单与锁文件
   include: ["packages/*/package.json", "vitest.config.*", "playwright.config.*"]
   cache: [node_modules]           # 按锁文件哈希缓存，命中时硬链接复制，跳过 install
 limits:
@@ -99,8 +99,7 @@ tool_groups:
 roles:                            # notes、history、forge_block、forge_learn 所有子进程角色隐式拥有；forge_service 只给 worker 与 stage-qa，forge_request_scope 只给 worker
   orchestrator:        { model: strong, tools: [read, grep, find, ls, forge_read, "@ask", forge_spec, forge_spec_amend, forge_status, forge_wait, forge_change_request, forge_resolve_timeout, forge_resolve_scope], read_paths: ["**"], writes: [] }   # notes、history 隐式拥有
   architect:   { model: strong, scopes: [plan], read_paths: ["**", "!.forge/**"], bash: readonly, tools: [codemode, read, write, edit, "@serena_read", "@codegraph", forge_propose_plan, forge_note, forge_submit] }
-  worker:      { model: strong, scopes: [code], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, write, edit, forge_service, "@serena_read", "@serena_edit", "@codegraph", forge_sync, forge_dispute, forge_change_request, forge_request_scope, forge_note, forge_submit] }
-  test-author: { model: medium, scopes: [acctest], bash: allowlist, bash_allow: [acceptance_list, acceptance], tools: [read, write, edit, forge_note, forge_submit] }   # 隔离工作区里没有实现代码
-  reviewer:    { model: medium, scopes: [review], read_paths: ["**", "!.forge/**"], bash: readonly, tools: [read, "@serena_read", "@codegraph", forge_review_report, forge_review_confirm] }
+  worker:      { model: strong, scopes: [code], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, write, edit, forge_service, "@serena_read", "@serena_edit", "@codegraph", forge_sync, forge_change_request, forge_request_scope, forge_note, forge_submit] }
+  reviewer:    { model: medium, scopes: [review], read_paths: ["**", "!.forge/**"], bash: allowlist, bash_allow: [test, acceptance], tools: [read, "@serena_read", "@codegraph", forge_review_report, forge_review_confirm] }
   stage-qa:    { model: strong, scopes: [qa], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, forge_service, "@serena_read", "@codegraph", forge_qa_report, forge_qa_confirm] }
   researcher:  { model: medium, scopes: [research], read_paths: ["**", "!.forge/**"], tools: [read, write, "@web", forge_note, forge_submit] }

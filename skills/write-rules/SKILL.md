@@ -25,11 +25,11 @@ description: 写分层的项目规则草案（docs/rules-draft/<layer>.md）与�
 ## 命令要求
 
 - 都能在干净的 worktree 里直接运行，不需要交互。
-- `acceptance -- <task>` 只运行 tests/acceptance/<task>/；不带参数时运行全部。需要的服务由命令自己启动和停止，端口用空闲端口。
+- `acceptance -- <task>` 只运行 tests/acceptance/<task>/；`acceptance -- suite/<文件>` 只运行共享目录 tests/acceptance/suite/ 下的这些文件（可带多个，lean 预检用）；不带参数时运行全部（阶段门禁用）。参数是相对 tests/acceptance/ 的路径，命令要同时支持目录和文件。需要的服务由命令自己启动和停止，端口用空闲端口。
 - `acceptance_list -- <task>`：只收集、不执行（例如 `vitest list`、`pytest --collect-only -q`）。
 - `merge_check`：合并时额外跑的检查，例如"生成的客户端与 openapi.yaml 一致"、"迁移只能有一个 head"。
 - 所有会启动服务或连数据库的命令，都从环境变量 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP 取端口、数据库和临时目录，不写死。
-- `acctest_workspace`：test-author 的隔离工作区只导出文档、验收测试和根目录配置。`include` 列出 monorepo 中运行 install 与 acceptance_list 还需要的文件（子包的 package.json、测试配置）；`cache` 列出可以按锁文件哈希复用的依赖目录（如 node_modules、.venv）。
+- `acctest_workspace`：仅 `test_author: true` 时有用（默认没有 test-author）。test-author 的隔离工作区只导出文档、验收测试和根目录配置。`include` 列出 monorepo 中运行 install 与 acceptance_list 还需要的文件（子包的 package.json、测试配置）；`cache` 列出可以按锁文件哈希复用的依赖目录（如 node_modules、.venv）。
 - `db_create`、`db_drop`（可选）：项目使用服务器类数据库时，按 `FORGE_DB_NAME` 建库、删库的命令。
 
 ## 写法

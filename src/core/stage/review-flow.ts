@@ -9,6 +9,8 @@ import { evidenceRel, type StateStore, type TaskInput } from '../state/state-sto
 import { git, gitOk } from '../state/git.ts';
 import { commitFilesToBranch } from '../spec/intake.ts';
 import { headSha } from '../workspace/worktree.ts';
+import { acceptanceAudit, reviewTestPlan } from './review-tests.ts';
+import { writesOwnAcceptance } from '../state/paths.ts';
 import { readSpec } from '../spec/spec-flow.ts';
 import { acTexts, effectiveSpec } from '../spec/spec.ts';
 import {
@@ -53,7 +55,8 @@ function appendedContracts(t: TaskFile): boolean {
 }
 
 /**
- * 预检通过后是否需要审查，以及强度。已有审查记录时：上一轮通过了（例如合并验证失败后返工）不再审查；上一轮有未解决的 must 则继续确认轮（沿用强度）。
+ * 预检通过后是否需要审查，以及强度（偏离 117：impl 一律审查，审查者运行本 task 自己的测试）。
+ * 已有审查记录时：上一轮有未解决的 must 则继续确认轮（沿用强度）；上一轮通过后又返工（例如合并冲突由 worker 解决）要重新审查，因为合并时不再跑测试。
  * 没有记录时按第 10.1 节推导。
  */
 export function decideReview(store: StateStore, config: FlowConfig, flowId: string, t: TaskFile): ReviewMode {
@@ -62,11 +65,9 @@ export function decideReview(store: StateStore, config: FlowConfig, flowId: stri
   if (prior) {
     if (prior.status !== 'done') return prior.review ?? 'auto';
     const left = unresolvedAfter(store, flowId, prior.id);
-    return left && left.length === 0 ? 'skip' : prior.review ?? 'auto';
+    return left && left.length === 0 && t.kind !== 'impl' ? 'skip' : prior.review ?? 'auto';
   }
-  // 精简模式不做逐任务审查，改为阶段审查（第 7.6 节；workflow.yaml 的 review.per_task 注释"精简模式自动为 false"，偏离 84）
-  const policy = store.readFlow(flowId).plan_mode === 'lean' ? { ...reviewPolicy(config), perTask: false } : reviewPolicy(config);
-  return reviewMode(t, tasks, policy, appendedContracts(t));
+  return reviewMode(t, tasks, reviewPolicy(config), appendedContracts(t));
 }
 
 function showAt(wt: string, rel: string): string {
@@ -89,8 +90,10 @@ export async function createReviewTask(root: string, store: StateStore, config: 
   const names = (a: string) => git(wt, ['diff', '--name-only', '-z', a, head]).split('\0').filter(Boolean);
   const own = confirm ? new Set(names(orig.base_sha)) : null;
   const files = own ? names(from).filter((f) => own.has(f)) : null;
-  const raw = files && !files.length ? '' : git(wt, ['diff', '--no-color', '--no-ext-diff', from, head, '--', ...(files ?? ['.']), ':(exclude)tests/acceptance']);
-  const diff = truncateDiff(stripAcceptanceDiff(raw));
+  // 偏离 118：验收测试由 worker 自己写时，审查者要读这些测试，diff 里不再排除 tests/acceptance
+  const ownTests = writesOwnAcceptance(orig);
+  const raw = files && !files.length ? '' : git(wt, ['diff', '--no-color', '--no-ext-diff', from, head, '--', ...(files ?? ['.']), ...(ownTests ? [] : [':(exclude)tests/acceptance'])]);
+  const diff = truncateDiff(ownTests ? raw : stripAcceptanceDiff(raw));
 
   let acText: Record<string, string> = {};
   let glossary = '';
@@ -108,6 +111,8 @@ export async function createReviewTask(root: string, store: StateStore, config: 
   const brief = buildReviewBrief({
     taskId: orig.id, title: orig.title, reviewId: id, acIds: orig.ac ?? [], acTexts: acText, contracts, glossary, deviations: orig.deviations ?? [],
     range: { from, to: head }, diff, priorMust,
+    tests: reviewTestPlan(config, orig, store.readFlow(flowId).integration_branch),
+    ...(ownTests ? { acceptance: acceptanceAudit(orig) ?? undefined, withAcceptance: true } : {}),
   });
   const input: TaskInput = {
     id, stage: orig.stage, kind: 'review', role: 'reviewer', title: `审查：${orig.title}`, scopes: [...config.role('reviewer').scopes],

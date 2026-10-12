@@ -16,9 +16,11 @@ import { drive, engineEnv, submitWork } from '../helpers/commands.ts';
 const LEAN_PLAN = PLAN_YAML.replace('mode: standard', 'mode: lean');
 const OUT = mkdtempSync(path.join(tmpdir(), 'pi-forge-lean-light-'));
 const LOG = path.join(OUT, 'acc.log');
-// 预检的 acceptance 命令是 `sh tests/acc.sh -- <目录名>`：记下参数
-const YAML = PROJECT_YAML.replace(/^  test: .*$/m, '  test: "true"').replace('acceptance: "true"', 'acceptance: "sh tests/acc.sh"');
-const FILES = { 'tests/acc.sh': `echo "$@" >> ${LOG}\n` };
+// 审查者运行的 acceptance 命令是 `node tests/acc.js -- suite/<文件>`：记下参数
+// 运行时夹具显式写了 test_author: true；去掉它，沿用模板默认（偏离 118：关闭）
+// （审查者的 bash 是 allowlist，sh 属于脚本解释器会被拒，所以用 node 脚本）
+const YAML = PROJECT_YAML.replace(/^  test_author: true.*\n/m, '').replace(/^  test: .*$/m, '  test: "true"').replace('acceptance: "true"', 'acceptance: "node tests/acc.js"');
+const FILES = { 'tests/acc.js': `require('node:fs').appendFileSync(${JSON.stringify(LOG)}, process.argv.slice(2).join(' ') + '\\n');\n` };
 
 async function writeAll(a: FakeAgent, files: Record<string, string>) {
   for (const [rel, content] of Object.entries(files)) {
@@ -43,7 +45,7 @@ const HELPERS = "export const api = (path) => path;\n";
 const S0_TEST = "import { api } from './_helpers.js';\ntest('[REQ-002.AC1] 成员看到自己所在的团队', () => api('/api/teams'));\n";
 const S1_TEST = "import { api } from './_helpers.js';\ntest('[REQ-001.AC1][REQ-001.AC2] 负责人创建数据源，同名再建被拒', () => api('/api/datasources'));\n";
 
-test('lean + test_author 关闭：计划批准后两个阶段的 impl 都写共享目录 suite，预检跑 acceptance -- suite，覆盖率通过，没有 .at', async () => {
+test('lean + test_author 关闭：计划批准后两个阶段的 impl 都写共享目录 suite，审查者只跑本 task 的场景文件 acceptance -- suite/<文件>，覆盖率通过，没有 .at', async () => {
   const p = await setupProject({ yaml: YAML, files: FILES, stages: ['P0', 'P1'] });
   const seen: string[] = [];
   const e = engineEnv(p, async (role, _n, a) => {
@@ -59,6 +61,15 @@ test('lean + test_author 关闭：计划批准后两个阶段的 impl 都写共�
     await a.call('forge_claim');
     const id = a.env.task;
     if (role === 'reviewer') {
+      // 偏离 117：预检不跑命令，审查者按任务说明运行本 task 的验收测试（lean 共享目录只含本 task 新增或修改的场景文件）
+      if (/^T-\d+\.rv$/.test(id)) {
+        const m = /`(node tests\/acc\.js -- [^`]+)`/.exec(a.spec.prompt);
+        assert.ok(m, a.spec.prompt);
+        const ran = await a.call('bash', { command: m![1]! });
+        assert.ok(ran.ok, ran.text);
+        // 只放行 test 与 acceptance 两条命令：别的命令仍被拒
+        assert.equal((await a.call('bash', { command: 'touch x.txt' })).ok, false);
+      }
       const r = await a.call('forge_review_report', { verdict: 'pass', issues: [] });
       assert.ok(r.ok, r.text);
       return;
@@ -100,10 +111,12 @@ test('lean + test_author 关闭：计划批准后两个阶段的 impl 都写共�
     assert.deepEqual(seen.filter((x) => x.startsWith('T-')), ['T-002', 'T-003']);
     assert.equal(p.store.readTask(p.flowId, 'T-003').status, 'done', p.store.readTask(p.flowId, 'T-003').blocked_reason ?? undefined);
     assert.ok(!p.store.listTasks(p.flowId).some((t) => t.kind === 'acctest'), '全程没有 .at / .at-n');
-    // 预检对共享目录运行 acceptance
-    assert.ok(existsSync(LOG), '预检运行了 acceptance');
-    assert.match(readFileSync(LOG, 'utf8'), /-- suite/);
-    assert.doesNotMatch(readFileSync(LOG, 'utf8'), /-- T-/);
+    // 审查者对本 task 的场景文件运行 acceptance（不是整个 suite，也不是 T-xxx 目录）
+    assert.ok(existsSync(LOG), '审查者运行了 acceptance');
+    const acc = readFileSync(LOG, 'utf8');
+    assert.match(acc, /-- suite\/team\.test\.js\n/);
+    assert.match(acc, /-- suite\/datasource\.test\.js\n/);
+    assert.doesNotMatch(acc, /-- T-|-- suite\n/);
     // 覆盖率：一个测试名带两个 AC 编号，都算覆盖
     const flow = p.store.readFlow(p.flowId);
     assert.equal(flow.stage, 'S1');

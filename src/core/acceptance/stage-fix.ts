@@ -68,7 +68,7 @@ export function groupIssuesByOwner<T extends Pick<TaskFile, 'id' | 'kind' | 'sta
 
 /**
  * 为阶段验收发现的问题创建 fix task（T-003.fx-n）：kind fix、角色同原 task（worker）、writes 是问题涉及的文件加原 task 的非验收测试目录、
- * fork 原 task 最后一次 worker 会话。worktree 在派发时从集成分支新建。没有新的 .at，不做逐任务审查，合并时跑全量（第 11.1 节）。
+ * fork 原 task 最后一次 worker 会话。worktree 在派发时从集成分支新建。没有新的 .at，不做逐任务审查，合并只跑 merge_check（偏离 117，第 11.1 节）。
  */
 export async function createStageFixTasks(store: StateStore, flowId: string, source: StageFixSource, issues: readonly StageIssue[], round: string, actor = 'engine', sourceRound?: { task: string; round: number }): Promise<{ tasks: string[]; unowned: string[] }> {
   const flow = store.readFlow(flowId);

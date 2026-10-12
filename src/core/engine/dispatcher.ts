@@ -405,8 +405,8 @@ export class Engine {
       const stat = git(task.worktree, ['diff', '--stat', task.base_sha]).trim();
       if (status || stat) existingWork = [stat, status && `未提交：\n${status}`].filter(Boolean).join('\n\n');
     }
-    // test_author 为 false（偏离 81）时 worker 自己写验收测试，带上 acceptance-tests
-    const skillNames = [...new Set([...(role === 'architect' ? ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules', ...(task.stage !== P1_STAGE ? ['change-request'] : [])] : role === 'test-author' ? ['acceptance-tests'] : role === 'reviewer' ? ['code-review', 'tdd', 'simplicity'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd', 'simplicity', 'receiving-feedback', ...(config.testAuthorFor(flow) ? [] : ['acceptance-tests'])]), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
+    // 偏离 118：worker 自己写验收测试（带上 acceptance-tests），reviewer 审查这些测试（同一份技能当检查依据）
+    const skillNames = [...new Set([...(role === 'architect' ? ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules', ...(task.stage !== P1_STAGE ? ['change-request'] : [])] : role === 'test-author' ? ['acceptance-tests'] : role === 'reviewer' ? ['code-review', 'tdd', 'simplicity', 'acceptance-tests'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd', 'simplicity', 'receiving-feedback', 'acceptance-tests']), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
     const skills = skillNames.map((n) => {
       const f = this.d.packageSkillsDir ? path.join(this.d.packageSkillsDir, n, 'SKILL.md') : '';
       return f && existsSync(f) ? { path: `skills/${n}`, content: readFileSync(f, 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim() } : null;
@@ -637,7 +637,7 @@ export class Engine {
     let failure: string | null;
     if (t.kind === 'doc') failure = changeOfTask(store, flowId, t.id) ? changeDocPrecheck(root, store, config, flowId, t) : docPrecheck(root, store, config, flowId, t);
     else {
-      const r = await runPrecheck(root, store, config, flowId, t, this.d.mergeHooks?.verifyTimeoutMs);
+      const r = await runPrecheck(root, store, config, flowId, t);
       failure = r.ok ? null : r.reason;
     }
     if (store.readTask(flowId, taskId).status !== 'checking') return;

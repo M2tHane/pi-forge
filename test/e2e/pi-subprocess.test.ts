@@ -53,7 +53,7 @@ test('真实 pi 子进程：实施 → 合并（全量测试）；越权被拦�
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
       roleSettings: () => ({ version: 1, roles: {
-        'worker': { model: 'fakellm/impl-happy' } } }),
+        'worker': { model: 'fakellm/impl-happy' }, 'reviewer': { model: 'fakellm/review-pass' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -97,7 +97,7 @@ test('真实 pi 子进程：模型返回额度用完（429 insufficient_quota）
     const errors: unknown[] = [];
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/quota' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/quota' }, 'reviewer': { model: 'fakellm/review-pass' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -120,15 +120,16 @@ test('真实 pi 子进程：模型返回额度用完（429 insufficient_quota）
   } finally { p.cleanup(); }
 });
 
-test('真实 pi 子进程：预检时测试失败退回，接着上一次的对话修好后合入', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
-  const p = await setupProject({ yaml: DIRECT_YAML, tasks: [mkTask('T-001', { verify: ['typecheck', 'test'] })] });
+test('真实 pi 子进程：合并后验证（merge_check）失败退回，接着上一次的对话修好后合入（偏离 117：预检不再跑命令）', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
+  const yaml = DIRECT_YAML.replace(/(  acceptance_list: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n');
+  const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: ['typecheck', 'test'] })] });
   try {
     const logFile = '/tmp/pi-forge-e2e-llm.log';
     const before = existsSync(logFile) ? readFileSync(logFile, 'utf8').length : 0;
     const errors: unknown[] = [];
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-fork' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-fork' }, 'reviewer': { model: 'fakellm/review-pass' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -139,20 +140,20 @@ test('真实 pi 子进程：预检时测试失败退回，接着上一次的对�
     assert.deepEqual(errors, []);
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done', `${t.status} ${t.last_failure ?? ''}`);
-    assert.equal(t.precheck_failures, 1, '第一次提交在预检中失败');
-    assert.equal(t.merge_failures ?? 0, 0);
+    assert.equal(t.merge_failures, 1, '第一次提交在合并后验证（merge_check）中失败');
+    assert.equal(t.precheck_failures ?? 0, 0);
     assert.equal(t.attempts, 0);
-    const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at));
+    const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at)).filter((r) => r.role === 'worker');
     assert.deepEqual(runs.map((r) => r.role), ['worker', 'worker']);
     assert.equal(runs[1]!.forked_from, runs[0]!.run_id);
     const triggers = p.store.readEvents().filter((e) => e.task === 'T-001' && e.type === 'transition').map((e) => e.trigger);
     // 完整序列（核对 6146bc8 时恢复：改写后只断言了包含 precheck_fail 与最后 merge_done）
     assert.deepEqual(triggers.filter((x) => x !== 'dispatch' && x !== 'schedule'),
-      ['submit', 'inputs_ready', 'precheck_fail', 'submit', 'inputs_ready', 'precheck_pass_skip', 'merge_start', 'merge_done'], triggers.join(','));
+      ['submit', 'inputs_ready', 'precheck_pass', 'review_pass', 'merge_start', 'merge_verify_fail', 'submit', 'inputs_ready', 'precheck_pass', 'review_pass', 'merge_start', 'merge_done'], triggers.join(','));
     const reqs = readFileSync(logFile, 'utf8').slice(before).trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'impl-fork');
     const second = reqs.find((r) => r.turn === 5)!;
     assert.ok(second, '第二次运行的第一个请求带着上一次的 5 条回复');
-    assert.match(JSON.stringify(second.last), /继续任务[\s\S]*预检未通过[\s\S]*forge_claim/);
+    assert.match(JSON.stringify(second.last), /继续任务[\s\S]*合并后验证失败[\s\S]*forge_claim/);
     assert.ok(runs[1]!.session_file && runs[1]!.session_file !== runs[0]!.session_file, '新会话单独留档');
   } finally { p.cleanup(); }
 });
@@ -165,7 +166,7 @@ test('真实 pi 子进程：bash 命令没给超时或超过上限时改成 limi
     const before = existsSync(logFile) ? readFileSync(logFile, 'utf8').length : 0;
     const engine = new Engine({
       root: p.dir, store: p.store, config: parseConfig(yaml), launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-sleep' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-sleep' }, 'reviewer': { model: 'fakellm/review-pass' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -193,7 +194,7 @@ test('真实 pi 子进程：notes 与 history 工具可用；任务笔记由程�
     const errors: unknown[] = [];
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-notes' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-notes' }, 'reviewer': { model: 'fakellm/review-pass' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],

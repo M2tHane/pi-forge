@@ -3,6 +3,7 @@
 import type { FlowConfig } from '../state/config.ts';
 import type { ReviewFinding, TaskFile } from '../state/schemas.ts';
 import { escalationPolicy, hardFanout } from '../insight/cost-control.ts';
+import type { AcceptanceAudit, ReviewTestPlan } from './review-tests.ts';
 
 export type ReviewMode = 'skip' | 'auto' | 'strong';
 
@@ -33,8 +34,11 @@ export function reviewPolicy(config: FlowConfig): ReviewPolicy {
   };
 }
 
-/** 这些类型的 task 不做逐任务审查：fix 由 stage-qa 的确认轮核对，doc/acctest 不是实施代码，review/qa 本身是审查 */
+/** 这些类型的 task 不做逐任务审查：fix（.fx-n，审查任务编号 T-001.fx-1.rv 不符合编号规则，回归由阶段门禁和 stage-qa 的确认轮核对）、doc/acctest 不是实施代码，review/qa 本身是审查 */
 const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'acctest', 'review', 'qa'];
+
+/** 偏离 117：预检不再运行命令，impl 必须审查——审查者读 diff 并运行本 task 自己的测试，不能被 per_task、skip_sizes、task.review 关掉 */
+const ALWAYS_REVIEW_KINDS: readonly string[] = ['impl'];
 
 /**
  * 推导一个 task 的审查强度（第 10.1 节）。task.review 有值以它为准（per_task=false 与不审查的类型除外）；
@@ -42,11 +46,12 @@ const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'acctest'
  * appendedContract：这个 task 的 diff 里有没有 docs/contracts/** 的改动，由调用方根据 diff 判断。
  */
 export function reviewMode(task: Pick<TaskFile, 'id' | 'kind' | 'review' | 'risk' | 'size' | 'layers' | 'depends_on'>, tasks: readonly TaskFile[], policy: ReviewPolicy, appendedContract: boolean): ReviewMode {
-  if (!policy.perTask || NO_REVIEW_KINDS.includes(task.kind)) return 'skip';
-  if (task.review) return task.review;
+  const always = ALWAYS_REVIEW_KINDS.includes(task.kind);
+  if (NO_REVIEW_KINDS.includes(task.kind) || (!always && !policy.perTask)) return 'skip';
+  if (task.review && (task.review !== 'skip' || !always)) return task.review;
   const fanout = hardFanout(task as TaskFile, tasks);
   if ((policy.criticalFanout > 0 && fanout >= policy.criticalFanout) || (task.layers ?? []).includes('auth') || task.risk === 'high') return 'strong';
-  if (task.size && policy.skipSizes.includes(task.size) && !appendedContract) return 'skip';
+  if (!always && task.size && policy.skipSizes.includes(task.size) && !appendedContract) return 'skip';
   return 'auto';
 }
 
@@ -218,6 +223,12 @@ export interface ReviewBriefInput {
   diff: { text: string; truncated: boolean };
   /** 上一轮没有解决的 must；非空表示这是确认轮 */
   priorMust: readonly ReviewFinding[];
+  /** 审查者要运行的本 task 自己的测试（偏离 117）；不给表示不要求运行（阶段审查等） */
+  tests?: ReviewTestPlan;
+  /** worker 自己写的验收测试的 AC 覆盖扫描（偏离 118）；不给表示验收测试不是 worker 写的 */
+  acceptance?: AcceptanceAudit;
+  /** diff 里是否含 tests/acceptance/**（worker 自己写验收测试时含，审查者要读） */
+  withAcceptance?: boolean;
 }
 
 const FENCE = '`'.repeat(3);
@@ -227,11 +238,34 @@ export function formatMust(m: ReviewFinding): string {
   return `- ${m.id}　出处：${m.basis}\n  位置：${m.files.join('、')}${m.location ? `（${m.location}）` : ''}\n  问题：${m.problem}\n  期望：${m.expected}`;
 }
 
+/** 任务说明里“先运行这些测试”一节（偏离 117）：失败即 must，出处写 defect: */
+function testsSection(tests: ReviewTestPlan, confirm: boolean): string {
+  const cmds = tests.run.length
+    ? tests.run.map((c) => `- ${c.name}：\`${c.shell}\``).join('\n')
+    : '（本 task 没有需要运行的测试）';
+  const skipped = tests.skipped.length ? `\n\n未运行：\n${tests.skipped.map((s) => `- ${s}`).join('\n')}` : '';
+  const how = confirm
+    ? '确认轮也先运行这些命令。测试仍失败，或者新失败：把与失败相关的条目（找不到相关条目就用第一条）标 resolved=false，note 里写命令与失败摘要。'
+    : '先运行这些命令再读 diff。测试失败是阻塞问题：提交 must，basis 写 `defect:<命令> 失败：<失败的用例与原因>`，file 写出错的源文件，expected 写“该命令通过”。区分环境问题（依赖缺失、端口被占用等）与代码问题，环境问题用 forge_block 说明，不要当成代码缺陷。';
+  return `## 先运行本 task 自己的测试（预检不再运行命令；全量测试与全部验收测试在阶段门禁）\n${cmds}${skipped}\n\n${how}只运行上面列出的命令，不要运行别的测试命令。`;
+}
+
+/** 验收测试审查一节（偏离 118）：程序算出的 AC 覆盖 + 要核对的三件事 */
+function acceptanceSection(a: AcceptanceAudit): string {
+  const rows = a.rows.map((r) => `- ${r.ac}：${r.files.length ? r.files.join('、') : '**没有带该编号的测试**'}`).join('\n');
+  return [
+    '## 审查本 task 的验收测试（worker 自己写的，没有 test-author；diff 里含 tests/acceptance/**）',
+    `程序扫描的 AC 覆盖（测试名里带 [REQ-xxx.ACn] 的文件）：\n${rows}`,
+    a.missing.length ? `**以下 AC 没有测试：${a.missing.join('、')}。每条都是 must，basis 写 \`ac:<编号>\`，expected 写“补上带该编号的测试”。**` : '每条 AC 都有测试。',
+    '再逐条核对（技能 acceptance-tests）：(1) 测试是否真的走了 AC 的 Given/When/Then，并且只通过任务说明里『允许的测试入口』验证，不直接调内部函数或查数据库；(2) 断言有没有被弱化（只查状态码、断言过宽、什么都没断言、被跳过或删除的用例）；(3) 有没有依赖实现细节、断言了规格没规定的东西。缺失或形同虚设的测试是 must，basis 写对应的 `ac:<编号>`；写法上的小问题是 suggest。',
+  ].join('\n\n');
+}
+
 /** reviewer 的任务说明（写进 .rv 的 handoff）；第一轮给完整输入，确认轮只给上一轮的 must 清单与增量 diff */
 export function buildReviewBrief(i: ReviewBriefInput): string {
   const confirm = i.priorMust.length > 0;
   const diffSection = [
-    `## ${confirm ? '这一轮的增量 diff' : 'diff'}（${i.range.from.slice(0, 8)}..${i.range.to.slice(0, 8)}，不含 tests/acceptance/**）`,
+    `## ${confirm ? '这一轮的增量 diff' : 'diff'}（${i.range.from.slice(0, 8)}..${i.range.to.slice(0, 8)}，${i.withAcceptance ? '含' : '不含'} tests/acceptance/**）`,
     i.diff.text.trim() ? fence(i.diff.text, 'diff') : '（没有改动）',
     ...(i.diff.truncated ? [`diff 已按 ${REVIEW_DIFF_MAX} 字截断；被截掉的文件请直接读（工作目录就是被审查任务的工作区，改动已在其中；guard 不允许带版本参数的 git 命令）。`] : ['需要更多上下文时可以直接读相关代码，不要通读整个仓库。']),
   ].join('\n\n');
@@ -241,6 +275,7 @@ export function buildReviewBrief(i: ReviewBriefInput): string {
       '这是确认轮。worker 已按上一轮的 must 清单修改。**只能核对下面这些编号是否已经解决，用 forge_review_confirm 逐条回答 `{id, resolved, note}`，必须覆盖全部编号。**',
       '不能提出新问题（forge_review_confirm 没有新增问题的字段），也不要重新审查上一轮已审过且没有改动的代码。清单之外的发现写进某条的 note，交给阶段验收。',
       `## 上一轮的问题清单\n${i.priorMust.map(formatMust).join('\n')}`,
+      ...(i.tests ? [testsSection(i.tests, true)] : []),
       diffSection,
     ].join('\n\n');
   }
@@ -250,12 +285,14 @@ export function buildReviewBrief(i: ReviewBriefInput): string {
     : '（没有相关的契约文件）';
   return [
     `# 审查：${i.taskId}「${i.title}」（${i.reviewId}）`,
-    '这是第一轮审查。预检已经通过（编译、单元测试、本 task 的验收测试）；按角色提示的顺序检查测试看不出来的问题，最后调用 forge_review_report 一次提交全部问题。must 必须写出处（rule:/ac:/contract:/defect:），写不出出处的是 suggest。',
+    '这是第一轮审查。程序没有预先运行测试：先运行下面列出的、本 task 自己的测试，再按角色提示的顺序检查；最后调用 forge_review_report 一次提交全部问题。must 必须写出处（rule:/ac:/contract:/defect:），写不出出处的是 suggest。',
     `## 本 task 的验收标准（AC 原文）\n${ac}`,
     `## 相关契约\n${contracts}`,
     `## 术语表\n${i.glossary.trim() ? i.glossary.trim() : '（无）'}`,
     `## worker 声明的偏离（已声明并且合理的不算问题）\n${i.deviations.length ? i.deviations.map((d) => `- ${d}`).join('\n') : '（无）'}`,
     `本 task 涉及的 rules/<layer>.md（每个文件末尾有审查清单）已在系统提示的规则部分。`,
+    ...(i.tests ? [testsSection(i.tests, false)] : []),
+    ...(i.acceptance ? [acceptanceSection(i.acceptance)] : []),
     diffSection,
   ].join('\n\n');
 }

@@ -15,8 +15,8 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 - **S0 骨架**（固定，只能有 1 个 task）：启动脚本、数据库连接与初始迁移、测试运行命令、tests/acceptance/_support/ 的登录与请求助手、一条最薄的端到端链路（桩实现也可以）。
   **不建**类型生成、客户端生成、契约检查、DOM 模拟；exit 涉及的 AC 最多 4 条，选一两条最核心的 REQ。
   所有命令都要遵守程序注入的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP，以便并行运行。
-  项目有 test-author 且 acceptance_list 要在隔离工作区里运行时，需要额外导出的子包清单与可缓存的依赖目录，写进 commands.yaml 的 `acctest_workspace: { include, cache }`。
-  S0 的 worker 自己写 tests/acceptance/_support/ 公共工具和一个冒烟测试 tests/acceptance/S0-smoke/（唯一例外）；S0 exit 的 AC 测试由 test-author 在 worker 完成后写（`test_author` 关闭时由 worker 自己写）。
+  只有显式开启 `test_author: true`（默认关闭）且 acceptance_list 要在隔离工作区里运行时，需要额外导出的子包清单与可缓存的依赖目录，写进 commands.yaml 的 `acctest_workspace: { include, cache }`。
+  S0 的 worker 自己写 tests/acceptance/_support/ 公共工具和一个冒烟测试 tests/acceptance/S0-smoke/（唯一例外）；S0 exit 的 AC 测试由 worker 自己写，reviewer 审查。
 - **S1…Sn**：每个阶段交付一组用户能感知、能演示的能力。按依赖排序：被依赖的业务（团队、权限）在前。
   标准模式阶段数通常是 2 到 5 个；阶段越多，阶段之间的串行屏障越多。
   **lean 模式只分 S0 + S1 两个阶段**，S1 的 AC 超过 40 条才拆成 S1、S2：每多一个阶段，就多一次阶段审查、修复、复审与签收（实测 S0 的这一段 19 分钟，S1 13 分钟）。
@@ -29,7 +29,7 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 - **一个 task 一个纵向切片**：贯穿数据、接口、界面与单元测试，做完能单独验收。不按层拆给不同的 worker。
 - **例外**：size 为 L 且是真实的 REST 边界时，可以拆成 `api` 和 `ui` 两个 task，ui 对 api 的接口用 `~` 软依赖，前端对着生成的 mock 开发。
 - **粒度跟 worker 的模型走**（任务说明里列出了模型）：强模型一个 task 可以是一整块业务（10 到 30 个文件）；弱模型一次会话能做完（1 到 8 个文件）。
-  每个 task 都有固定开销（重新读上下文、预检、审查、全量测试），拆得越细越慢。
+  每个 task 都有固定开销（重新读上下文、预检、审查、合并），拆得越细越慢。
 - **规模小**（size_estimate.loc 低于任务说明给出的阈值）：选 `mode: lean`，每个阶段一个 task。
 - **铺垫性重构、大范围机械改动**（改名、改共享类型）：单独成 task，排在依赖它的 task 前面。
 

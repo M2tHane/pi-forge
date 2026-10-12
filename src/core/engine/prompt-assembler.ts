@@ -190,15 +190,15 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     `## 验收标准\n${list(t.ac ?? [])}`,
     `## 输入文件\n${list(t.inputs)}`,
     `## 可写范围（writes）\n${list(writes, '（只读）')}`,
-    ...(verify.length ? [`## 全量测试命令\n${list(verify)}\n合并时程序会在集成分支最新代码上跑全量 typecheck、lint、test。`] : []),
+    ...(verify.length ? [`## 测试命令\n${list(verify)}\n提交前自己跑通 typecheck、lint 与本任务的测试。合并时程序不再跑这些，reviewer 会运行本任务自己的测试，全量测试在阶段门禁运行。`] : []),
   ];
   // test_author 为 false（偏离 81）：没有 test-author，worker 自己按 AC 编号写本任务的验收测试（写在用户消息里，不动系统提示）
   if (i.mode === 'impl' && (t.kind === 'impl' || t.kind === 'fix') && writesOwnAcceptance(t)) {
     const impl = acceptanceDirOf(t);
     const acs = (t.ac ?? []).filter((a) => /^REQ-\d+\.AC\d+$/.test(a));
     if (impl === SHARED_ACCEPTANCE_DIR) {
-      parts.push(`## 验收测试（由你编写）\n精简模式（lean）：本项目只有一份共享的集成测试，放在 \`tests/acceptance/${impl}/\`，所有任务共用这一个目录；辅助函数只有一份 \`tests/acceptance/${impl}/_helpers.js\`（已存在就复用，缺什么往里补；不要新建辅助文件或按任务建子目录）。写集成场景，不为每条 AC 单独写一个用例：一个场景走完一条关键业务流程，测试名可以带多个编号，如 \`[REQ-001.AC1][REQ-001.AC2] 创建看板后列表可见\`，本任务的每条 AC 至少出现在一个场景的名字里。不要写单元测试（writes 里没有的路径写不进去）。预检会运行 \`acceptance -- ${impl}\`（含此前所有任务的场景），合并前这些测试必须通过。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
-    } else parts.push(`## 验收测试（由你编写）\n本任务没有单独的测试作者：按 AC 编号为本任务写验收测试，放在 \`tests/acceptance/${impl}/\`（辅助代码也放在这个目录下），用例标题带 \`[REQ-xxx.ACn]\`，每条 AC 至少一个用例。预检会运行 \`acceptance -- ${impl}\`，合并前这些测试必须通过。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
+      parts.push(`## 验收测试（由你编写）\n精简模式（lean）：本项目只有一份共享的集成测试，放在 \`tests/acceptance/${impl}/\`，所有任务共用这一个目录；辅助函数只有一份 \`tests/acceptance/${impl}/_helpers.js\`（已存在就复用，缺什么往里补；不要新建辅助文件或按任务建子目录）。写集成场景，不为每条 AC 单独写一个用例：一个场景走完一条关键业务流程，测试名可以带多个编号，如 \`[REQ-001.AC1][REQ-001.AC2] 创建看板后列表可见\`，本任务的每条 AC 至少出现在一个场景的名字里。不要写单元测试（writes 里没有的路径写不进去）。reviewer 会运行你本任务新增或修改的场景文件（\`acceptance -- ${impl}/<文件>\`），这些场景必须通过；全部场景在阶段门禁一起运行，别的任务的场景被你破坏时，门禁会派修复任务。提交前自己先跑通。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
+    } else parts.push(`## 验收测试（由你编写）\n本任务没有单独的测试作者：按 AC 编号为本任务写验收测试，放在 \`tests/acceptance/${impl}/\`（辅助代码也放在这个目录下），用例标题带 \`[REQ-xxx.ACn]\`，每条 AC 至少一个用例。reviewer 会运行 \`acceptance -- ${impl}\`，这些测试必须通过；全部验收测试在阶段门禁运行。提交前自己先跑通。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
   }
   if (i.flowTasks && INTERFACE_ROLES.includes(i.agent.name)) parts.push(...interfaceSections(t, i.flowTasks));
   if (i.priorTask) {

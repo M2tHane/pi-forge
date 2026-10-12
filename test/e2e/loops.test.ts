@@ -42,8 +42,8 @@ test('同样的原因连续失败两次：第三次直接用升级模型（不�
 });
 
 test('模块谱系预算：失败原因各不相同、失败次数也没用完，但模块累计运行次数超过 limits.module_runs 时交给用户；解除阻塞后重新计算', async () => {
-  // 提交的 FAIL 在预检被拦下：预检失败上限也放宽，只让谱系预算起作用
-  const yaml = PROJECT_YAML.replace(/max_merge_failures: \d+/, 'max_merge_failures: 10').replace(/max_precheck_failures: \d+/, 'max_precheck_failures: 10').replace(/max_attempts: \d+/, 'max_attempts: 10').replace(/(max_attempts: 10)/, '$1\n  module_runs: 3');
+  // 提交的 FAIL 在合并时被 merge_check 拦下（偏离 117）：合并失败上限也放宽，只让谱系预算起作用
+  const yaml = PROJECT_YAML.replace(/(  acceptance_list: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n').replace(/max_merge_failures: \d+/, 'max_merge_failures: 10').replace(/max_precheck_failures: \d+/, 'max_precheck_failures: 10').replace(/max_attempts: \d+/, 'max_attempts: 10').replace(/(max_attempts: 10)/, '$1\n  module_runs: 3');
   const p = await setupProject({ yaml, tasks: [task1()] });
   try {
     assert.equal(p.config.limits.module_runs, 3);
@@ -57,9 +57,9 @@ test('模块谱系预算：失败原因各不相同、失败次数也没用完�
     assert.equal(launcher.launched.length, 3);
     assert.equal(t.status, 'blocked');
     assert.ok(t.attempts < 10);
-    // 前提：各个计数都没用完（预检失败确实发生，但没到放宽后的上限），阻塞来自谱系预算
-    assert.ok((t.precheck_failures ?? 0) > 0 && (t.precheck_failures ?? 0) < 10, String(t.precheck_failures));
-    assert.match(t.blocked_reason ?? '', /模块 T-001「任务 T-001」连同派生任务（T-001）已运行 3 次[\s\S]*超过上限（3 次[\s\S]*最近的失败/);
+    // 前提：各个计数都没用完（合并失败确实发生，但没到放宽后的上限），阻塞来自谱系预算
+    assert.ok((t.merge_failures ?? 0) > 0 && (t.merge_failures ?? 0) < 10, String(t.merge_failures));
+    assert.match(t.blocked_reason ?? '', /模块 T-001「任务 T-001」连同派生任务（T-001、T-001\.rv）已运行 3 次[\s\S]*超过上限（3 次[\s\S]*最近的失败/);
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'unblock', actor: 'human' });
     await engine.pump(p.flowId);
     await engine.next(p.flowId);

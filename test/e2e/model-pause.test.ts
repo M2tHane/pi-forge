@@ -16,7 +16,7 @@ import { commandEnv } from '../helpers/commands.ts';
 
 const YAML = PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "true"');
 const SETTINGS: RoleSettingsFile = { version: 1, roles: {
-  'worker': { model: 'f/glm' }, architect: { model: 'f/arch' } } };
+  'worker': { model: 'f/glm' }, 'reviewer': { model: 'f/glm' }, architect: { model: 'f/arch' } } };
 const QUOTA = 'Codex error: You have hit your ChatGPT usage limit (plus plan). Try again in ~120 min.';
 
 const env = (p: Parameters<typeof commandEnv>[0], engine: Parameters<typeof commandEnv>[1]) => commandEnv(p, engine, { roleSettings: () => SETTINGS });

@@ -41,7 +41,7 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), 'export const a = 1;');
 
     // 子进程规格：模型、思考级别、工具白名单、guard 扩展最后、token 只在环境变量中
-    assert.equal(launcher.launched.length, 1, '提交后直接合并，不派审查');
+    assert.equal(launcher.launched.length, 2, 'impl 一律审查（偏离 117）：worker 之后派一个 reviewer');
     const [impl] = launcher.launched;
     assert.equal(impl!.thinking, 'low');
     assert.ok(impl!.tools.includes('forge_submit') && impl!.tools.includes('notes') && !impl!.tools.includes('forge_accept'));
@@ -50,18 +50,13 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
     assert.match(impl!.cwd, /\.worktrees\/B-001-T-001$/);
 
     const runs = p.store.listRuns();
-    assert.deepEqual(runs.map((r) => [r.role, r.outcome]), [['worker', 'submitted']]);
+    assert.deepEqual(runs.map((r) => [r.role, r.outcome]), [['worker', 'submitted'], ['reviewer', 'submitted']]);
     for (const r of runs) {
       assert.ok(r.ended_at && r.tokens.input! > 0 && r.tokens.output! > 0 && r.model === 'fake/model');
       assert.equal(r.token_hash.length, 64);
     }
-    const ev = readdirSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence/T-001'));
-    // 预检在任务 worktree 跑 typecheck、lint、test（没有验收测试目录，不跑 acceptance）；
-    // 合并时集成分支没动，代码树与预检相同：typecheck、lint、test 沿用预检的结果并留沿用记录，只跑全量 acceptance（偏离 76）
-    assert.deepEqual(ev.sort(), ['merge-a0-acceptance.log', 'merge-a0-reused.txt',
-      'precheck-a0-diff.txt', 'precheck-a0-lint.log', 'precheck-a0-test.log', 'precheck-a0-typecheck.log']);
-    const reused = readFileSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence/T-001/merge-a0-reused.txt'), 'utf8');
-    for (const c of ['typecheck', 'lint', 'test']) assert.match(reused, new RegExp(`- ${c}：沿用 \\S*/T-001/precheck-a0-${c}\\.log`));
+    // 偏离 117：预检不跑命令，合并只跑 merge_check（本用例没有配置），所以 T-001 没有任何命令的 evidence
+    assert.ok(!existsSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence/T-001')), '没有预检与合并的命令 evidence');
     assert.match(p.store.readHandoff(p.flowId, 'T-001'), /提交说明：实现 a/);
     // 主工作区没有被实施角色改动
     assert.ok(!existsSync(path.join(p.dir, 'src/server/t-001/a.ts')));

@@ -26,7 +26,7 @@ test('调度模式：orchestrator 不能自己写代码，程序派发后 wait/s
   const agentDir = mkdtempSync(path.join(tmpdir(), 'pi-forge-agentdir-'));
   try {
     writeFileSync(path.join(agentDir, 'pi-forge.json'), JSON.stringify({ version: 1, roles: {
-      orchestrator: { model: 'fakellm/orch-runtime' }, 'worker': { model: 'fakellm/impl-happy' } } }));
+      orchestrator: { model: 'fakellm/orch-runtime' }, 'worker': { model: 'fakellm/impl-happy' }, 'reviewer': { model: 'fakellm/review-pass' } } }));
     const provider = path.join(ROOT, 'test/fixtures/fake-llm/provider.ts');
     const r = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve) => {
       const c = spawn('pi', ['-p', '--no-session', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files',

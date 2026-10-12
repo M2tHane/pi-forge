@@ -28,7 +28,8 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
     for (const mode of ['build', 'feature'] as const) {
       assert.deepEqual(c.raw.modes[mode]?.stages.map((s) => s.id), ['P0', 'P1']);
     }
-    assert.deepEqual(Object.keys(c.roles).sort(), ['orchestrator', 'architect', 'worker', 'test-author', 'reviewer', 'stage-qa', 'researcher'].sort());
+    // 模板不再定义 test-author（偏离 118）；运行时夹具为沿用 acctest 用例仍保留
+    assert.deepEqual(Object.keys(c.roles).sort(), ['orchestrator', 'architect', 'worker', ...(source === REAL_TEMPLATE_YAML ? [] : ['test-author']), 'reviewer', 'stage-qa', 'researcher'].sort());
     const template = parseConfig(REAL_TEMPLATE_YAML);
     assert.deepEqual(c.raw.scopes, template.raw.scopes);
     assert.deepEqual(c.raw.tool_groups, template.raw.tool_groups);
@@ -40,7 +41,9 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
       assert.equal(role.modelTier, expected.modelTier, name);
       assert.equal(role.bash, expected.bash, name);
       assert.deepEqual(role.bashAllow, expected.bashAllow, name);
-      assert.deepEqual([...role.tools].sort(), [...expected.tools].sort(), name);
+      // 模板的 worker 不再有 forge_dispute（偏离 118）；运行时夹具为沿用争议用例保留
+      const noDispute = (ts: Iterable<string>) => [...ts].filter((x) => x !== 'forge_dispute').sort();
+      assert.deepEqual(noDispute(role.tools), noDispute(expected.tools), name);
     }
   }
   const c = parseConfig(TEST_YAML);
@@ -206,16 +209,17 @@ for (const tool of ['bash', 'bash_readonly']) {
 
 test('allowlist 必须有命令名数组，命令必须存在；解析为 allowlist 并保留 bashAllow', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
-  assert.equal(c.role('test-author').bash, 'allowlist');
-  assert.deepEqual(c.role('test-author').bashAllow, ['acceptance_list', 'acceptance']);
-  assert.ok(c.role('test-author').tools.has('bash'));
+  // 偏离 117：模板里 reviewer 是 allowlist（只放行 test 与 acceptance，用来运行本 task 自己的测试）
+  assert.equal(c.role('reviewer').bash, 'allowlist');
+  assert.deepEqual(c.role('reviewer').bashAllow, ['test', 'acceptance']);
+  assert.ok(c.role('reviewer').tools.has('bash'));
   assert.deepEqual(c.role('worker').bashAllow, []);
-  assert.match(errorsOf(changed((wf) => { delete wf.roles['test-author']!.bash_allow; })).join(), /bash: allowlist 必须配置 bash_allow/);
-  assert.ok(errorsOf(changed((wf) => { wf.roles['test-author']!.bash_allow = []; })).length);
-  assert.match(errorsOf(changed((wf) => { wf.roles['test-author']!.bash_allow = ['not_configured']; })).join(), /not_configured 未在 commands 中定义/);
+  assert.match(errorsOf(changed((wf) => { delete wf.roles['reviewer']!.bash_allow; })).join(), /bash: allowlist 必须配置 bash_allow/);
+  assert.ok(errorsOf(changed((wf) => { wf.roles['reviewer']!.bash_allow = []; })).length);
+  assert.match(errorsOf(changed((wf) => { wf.roles['reviewer']!.bash_allow = ['not_configured']; })).join(), /not_configured 未在 commands 中定义/);
   assert.match(errorsOf(changed((wf) => { wf.roles.worker!.bash_allow = ['test']; })).join(), /bash_allow 只能用于 bash: allowlist/);
   // Object 原型上的名字不算已配置命令。
-  assert.match(errorsOf(changed((wf) => { wf.roles['test-author']!.bash_allow = ['toString']; })).join(), /toString 未在 commands/);
+  assert.match(errorsOf(changed((wf) => { wf.roles['reviewer']!.bash_allow = ['toString']; })).join(), /toString 未在 commands/);
 });
 
 test('implementation_gate 保留可选 auto 命令；固定阶段 gate 引用缺失命令时报错', () => {
@@ -224,11 +228,13 @@ test('implementation_gate 保留可选 auto 命令；固定阶段 gate 引用缺
   assert.ok(!Object.hasOwn(c.commands, 'e2e'));
   assert.equal(c.raw.implementation_gate?.coverage, true);
   assert.equal(c.raw.implementation_gate?.qa, true);
-  // 模板不写 test_author：按 plan_mode 决定（偏离 98）
+  // 模板不写 test_author：任何模式都没有 test-author（偏离 118，取代偏离 98 的按模式默认）
   assert.equal(c.raw.implementation_gate?.test_author, undefined);
-  assert.equal(c.testAuthorFor({ plan_mode: 'standard' }), true);
-  assert.equal(c.testAuthorFor({}), true);
+  assert.equal(c.testAuthorFor({ plan_mode: 'standard' }), false);
+  assert.equal(c.testAuthorFor({}), false);
   assert.equal(c.testAuthorFor({ plan_mode: 'lean' }), false);
+  // 门禁运行全量 typecheck、lint、test、acceptance（偏离 117：每个 task 不跑，回归在这里发现）
+  for (const n of ['typecheck', 'lint', 'test', 'acceptance']) assert.ok(c.raw.implementation_gate?.auto?.includes(n), n);
   const off = parseConfig(changed((wf) => { wf.implementation_gate!.test_author = false; }));
   assert.equal(off.testAuthorFor({ plan_mode: 'standard' }), false);
   const on = parseConfig(changed((wf) => { wf.implementation_gate!.test_author = true; }));

@@ -19,13 +19,14 @@ test('forge_wait / forge_status：运行中摘要、超时、完成后唤醒', a
     const gate = new Promise<void>((r) => { release = r; });
     const launcher = new FakeLauncher(p.store, p.config, () => async (a) => {
       await gate; // 让实施 run 挂起，验证 dispatch 非阻塞
+      if (a.env.role === 'reviewer') { await a.call('forge_review_report', { verdict: 'pass', issues: [] }); return; }
       await a.call('forge_claim');
       await a.call('write', { path: 'src/server/t-001/a.ts', content: 'ok' });
       await a.call('forge_note', { text: 'n' });
       await a.call('forge_submit', { summary: 's' });
     });
     const engine = new Engine({ root: p.dir, store: p.store, config: p.config, launcher,
-      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fake/m' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fake/m' }, 'reviewer': { model: 'fake/m' } } }),
       packageAgentsDir: AGENTS, subagentExtension: 'sub.ts' });
 
     await engine.promote(p.flowId);
@@ -57,16 +58,17 @@ test('自动派发：ready 任务由引擎派发，依赖完成后接着派发�
     assert.equal(config.limits.auto_dispatch, true);
     let dispatchCalls = 0;
     const launcher = new FakeLauncher(p.store, config, () => async (a) => {
+      if (a.env.role === 'reviewer') { await a.call('forge_review_report', { verdict: 'pass', issues: [] }); return; }
       await a.call('forge_claim');
       await a.call('write', { path: `src/server/${a.env.task.toLowerCase()}/a.ts`, content: 'ok' });
       await a.call('forge_note', { text: 'n' });
       await a.call('forge_submit', { summary: 's' });
     });
     const engine = new Engine({ root: p.dir, store: p.store, config, launcher,
-      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fake/m' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fake/m' }, 'reviewer': { model: 'fake/m' } } }),
       packageAgentsDir: AGENTS, subagentExtension: 'sub.ts' });
     const origDispatch = engine.dispatch.bind(engine);
-    engine.dispatch = (f, t) => { dispatchCalls++; return origDispatch(f, t); };
+    engine.dispatch = (f, t) => { if (!t.includes('.rv')) dispatchCalls++; return origDispatch(f, t); };
 
     // 自动派发时，有任务在跑就让 orchestrator 等待，不再要求它 forge_dispatch
     assert.equal(nextStep(p.store, 2, 1, config).tool, 'forge_wait');
@@ -80,7 +82,7 @@ test('自动派发：ready 任务由引擎派发，依赖完成后接着派发�
     assert.match(first.text, /T-001：ready → done|T-001：.*→ done/, '中间的合并不唤醒，只报告完成');
     await engine.idle();
     assert.equal(p.store.readTask(p.flowId, 'T-002').status, 'done');
-    assert.equal(dispatchCalls, 2, '两个任务都由引擎派发');
+    assert.equal(dispatchCalls, 2, '两个任务都由引擎派发（审查任务不计）');
     // 程序空闲时立即返回，不会一直等
     const t0 = Date.now();
     await flowWait(p.store, engine, { timeout_s: 60 }, config);

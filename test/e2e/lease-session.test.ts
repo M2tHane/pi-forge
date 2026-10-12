@@ -70,7 +70,7 @@ test('会话留档：run 记录会话目录；/forge run 显示工具调用摘�
     await engine.next(p.flowId);
     await engine.idle();
     const runs = p.store.listRuns();
-    assert.equal(runs.length, 1);
+    assert.equal(runs.length, 2, 'worker 与 reviewer（impl 一律审查，偏离 117）');
     for (const r of runs) assert.equal(r.session_dir, sessionDirOf(p.dir, r.run_id));
 
     // 假子进程不写会话文件：这里按 Pi 的会话格式写一份，模拟真实 pi 的留档
@@ -102,10 +102,10 @@ test('会话留档：run 记录会话目录；/forge run 显示工具调用摘�
     const later = (days: number) => () => new Date(Date.parse(impl.ended_at!) + days * 86_400_000);
     assert.ok(!(await doctor(p.dir, p.store, { now: later(13) })).warnings.some((w) => w.includes('会话留档')));
     const warn = await doctor(p.dir, p.store, { now: later(15) });
-    assert.ok(warn.warnings.some((w) => w.includes('1 个会话留档超过 14 天')), warn.warnings.join('\n'));
+    assert.ok(warn.warnings.some((w) => w.includes('2 个会话留档超过 14 天')), warn.warnings.join('\n'));
     assert.ok(existsSync(file));
     const fixed = await doctor(p.dir, p.store, { now: later(15), fix: true, sessionRetentionDays: 14 });
-    assert.ok(fixed.fixed.some((f) => f.includes('清理 1 个超过 14 天的会话留档')));
+    assert.ok(fixed.fixed.some((f) => f.includes('清理 2 个超过 14 天的会话留档')));
     assert.ok(!existsSync(impl.session_dir!));
   } finally { p.cleanup(); }
 });

@@ -29,6 +29,13 @@ async function disputeFlow(outcome: Outcome) {
   const seen: string[] = [];
   const e = engineEnv(p, async (role, _nth, a) => {
     const id = a.env.task;
+    // 偏离 117：预检不再运行 acceptance，worker 回来的触发改为 reviewer 运行本 task 的验收测试后发现失败（第一轮 changes，确认轮 resolved）
+    if (role === 'reviewer') {
+      if (id === 'T-001.rv') {
+        await a.call('forge_review_report', { verdict: 'changes', issues: [{ level: 'must', basis: 'defect:acceptance -- T-001 失败：FAIL tests/acceptance/T-001/a.test.ts', files: ['src/server/t-001/a.ts'], location: '', problem: '验收测试失败', expected: '该命令通过' }] });
+      } else await a.call('forge_review_confirm', { items: [{ id: 'R-1', resolved: true }] });
+      return;
+    }
     const n = (runs[id] = (runs[id] ?? 0) + 1);
     const claim = await a.call('forge_claim');
     if (role === 'worker' && id === 'T-001') {
@@ -63,7 +70,7 @@ test('争议 → test-author 改测试：dispute_fixed 直接重跑预检，不�
   try {
     await drive(e, p.flowId);
     assert.deepEqual(e.errors, []);
-    assert.match(seen[0]!, /预检未通过：验收测试/);
+    assert.match(seen[0]!, /审查第 1 轮（T-001\.rv）仍有 1 条 must 未解决：R-1 验收测试失败/);
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done');
     assert.deepEqual(t.disputes, { 'tests/acceptance/T-001/a.test.ts': 1 });
@@ -120,67 +127,8 @@ test('争议的依据必须引用规格或契约的具体位置；不是本 task
   } finally { p.cleanup(); }
 });
 
-test('第 9.4 节：合并时别的 task 的验收测试失败 → 为它建 .at-n，当前 task 回 awaiting_inputs 等待、不计失败；修好后合并', async () => {
-  // 默认的 test 命令要求 T-001 的文件，先合并的 T-002 过不了预检
-  const p = await setupProject({ yaml: YAML.replace(/  test:      ".*"/, '  test:      "true"'), files: FILES, tasks: [
-    mkTask('T-002', { ac: ['REQ-001.AC1'] }), at('T-002'),
-    mkTask('T-001', { ac: ['REQ-001.AC1'], deps: [hard('T-002')] }), at('T-001', [hard('T-002')]),
-  ] });
-  const e = engineEnv(p, async (role, _nth, a) => {
-    const id = a.env.task;
-    await a.call('forge_claim');
-    if (role === 'worker') {
-      await writeFiles(a, { [`src/server/${id.toLowerCase()}/a.ts`]: 'ok\n' });
-      await submitWork(a, `${id} 完成`);
-      return;
-    }
-    if (id === 'T-002.at') { await writeFiles(a, { 'tests/acceptance/T-002/b.test.ts': "test('[REQ-001.AC1] BRITTLE 精确相等', () => {});\n" }); await submitWork(a, 'AC1'); return; }
-    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': "test('[REQ-001.AC1] ok', () => {});\n" }); await submitWork(a, 'AC1'); return; }
-    assert.equal(id, 'T-002.at-2');
-    assert.match(p.store.readHandoff(p.flowId, id), /被 T-001 的改动破坏[\s\S]*FAIL tests\/acceptance\/T-002\/b\.test\.ts/);
-    await writeFiles(a, { 'tests/acceptance/T-002/b.test.ts': "test('[REQ-001.AC1] 只断言规格规定的字段', () => {});\n" });
-    await submitWork(a, '放宽到规格规定的部分');
-  });
-  try {
-    await drive(e, p.flowId, 20);
-    assert.deepEqual(e.errors, []);
-    const t1 = p.store.readTask(p.flowId, 'T-001');
-    assert.equal(t1.status, 'done');
-    assert.equal(t1.merge_failures ?? 0, 0, '不计入当前 task 的失败');
-    assert.ok(p.store.readEvents().some((ev) => ev.task === 'T-001' && ev.trigger === 'foreign_tests_broken'));
-    const fix = p.store.readTask(p.flowId, 'T-002.at-2');
-    assert.deepEqual([fix.status, fix.acctest_round?.kind, fix.acctest_round?.from_task], ['done', 'foreign', 'T-001']);
-  } finally { p.cleanup(); }
-});
-
-test('偏离 90：合并时此前流程留下的验收测试失败（目录不属于本流程）→ 给本 task 建一轮 legacy .at-n 按新需求改旧测试，改完再合并、不计失败', async () => {
-  const p = await setupProject({ yaml: YAML.replace(/  test:      ".*"/, '  test:      "true"'), files: {
-    ...FILES,
-    // 此前流程（例如 B-001 的 T-009）留在主分支上的验收测试：T-001 的实现落地后它就失败
-    'tests/acceptance/T-009/old.test.ts': "test('[REQ-001.AC1] BRITTLE 旧行为', () => {});\n",
-  }, tasks: [mkTask('T-001', { ac: ['REQ-001.AC1'] }), at('T-001')] });
-  const e = engineEnv(p, async (role, _nth, a) => {
-    const id = a.env.task;
-    await a.call('forge_claim');
-    if (role === 'worker') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n' }); return submitWork(a, `${id} 完成`); }
-    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': "test('[REQ-001.AC1] ok', () => {});\n" }); return submitWork(a, 'AC1'); }
-    const t = p.store.readTask(p.flowId, id);
-    assert.equal(t.acctest_round?.kind, 'legacy');
-    assert.ok(t.writes.includes('tests/acceptance/T-009/**'), t.writes.join());
-    assert.match(p.store.readHandoff(p.flowId, id), /旧的验收测试与本次需求冲突[\s\S]*FAIL tests\/acceptance\/T-009\/old\.test\.ts/);
-    await writeFiles(a, { 'tests/acceptance/T-009/old.test.ts': "test('[REQ-001.AC1] 按新需求调整', () => {});\n" });
-    await submitWork(a, '旧测试按新需求调整');
-  });
-  try {
-    await drive(e, p.flowId, 20);
-    assert.deepEqual(e.errors, []);
-    const t1 = p.store.readTask(p.flowId, 'T-001');
-    assert.equal(t1.status, 'done');
-    assert.equal(t1.merge_failures ?? 0, 0, '不计入当前 task 的失败');
-    assert.ok(p.store.readEvents().some((ev) => ev.task === 'T-001' && ev.trigger === 'foreign_tests_broken'));
-    assert.doesNotMatch(p.git('show', `${p.store.readFlow(p.flowId).integration_branch}:tests/acceptance/T-009/old.test.ts`), /BRITTLE/);
-  } finally { p.cleanup(); }
-});
+// 偏离 117：合并不再运行 acceptance，原“合并时别的 task 的验收测试被破坏（第 9.4 节、偏离 90 legacy）”两个用例随之删除；
+// 这类回归现在由阶段门禁发现并按责任 task 建 .fx-n（test/e2e/stage-acceptance.test.ts、gates.test.ts）。
 
 test('偏离 87：.fx-1（继承 tests/acceptance/_support/**）提出争议后，同一谱系的 .at-2 照常派发，不因 writes 重叠互等', async () => {
   const p = await setupProject({ yaml: YAML.replace(/  test:      ".*"/, '  test:      "true"'), files: FILES, tasks: [

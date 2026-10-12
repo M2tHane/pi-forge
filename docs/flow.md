@@ -65,14 +65,14 @@ stateDiagram-v2
     awaiting_inputs --> checking: inputs_ready（最新 .at done，软依赖 done，同步成功）
     awaiting_inputs --> in_progress: sync_conflict（同步有冲突，交回 worker）
     checking --> in_progress: precheck_fail（precheck_failures + 1）
-    checking --> in_review: precheck_pass（需要审查）
-    checking --> queued_merge: precheck_pass_skip（不需要审查）
+    checking --> in_review: precheck_pass（impl 一律审查；预检只合入验收测试并检查契约追加，不跑命令，偏离 117）
+    checking --> queued_merge: precheck_pass_skip（fix、doc 等不审查的类型）
     checking --> awaiting_inputs: foreign_tests_broken（别的 task 的验收测试失败）
     in_review --> in_progress: review_changes（有 must，review_rounds + 1）
     in_review --> queued_merge: review_pass
     in_review --> blocked: review_exhausted
     queued_merge --> merging: merge_start（第一个合格的 task）
-    merging --> done: merge_done（rebase、全量验证、快进）
+    merging --> done: merge_done（rebase、冲突标记与 merge_check、快进）
     merging --> in_progress: merge_verify_fail（merge_failures + 1）
     merging --> awaiting_inputs: foreign_tests_broken
     merging --> queued_merge: merge_requeue
@@ -115,7 +115,7 @@ stateDiagram-v2
 要点：
 
 - `review`、`qa` 只走 `ready → in_progress → done`（结论由 `forge_review_report`、`forge_qa_report` 或对应的 confirm 工具提交，要求没有改动）。
-- `acctest` 在 impl 尚未 done 时提交即 done，测试随 impl 的预检合入；impl 已 done 时（S0 的 `.at`、覆盖率缺口、被契约追加破坏、变更请求）走上图的单独合并。
+- `acctest` 在 impl 尚未 done 时提交即 done，测试随 impl 的预检合入（仅显式开启 test-author 时存在 .at，偏离 118）；impl 已 done 时（S0 的 `.at`、覆盖率缺口、被契约追加破坏、变更请求）走上图的单独合并。
 - `.at-n` 的来由有四种：争议、覆盖率缺口、别的 task 的契约追加破坏了测试（第 9.4 节）、变更请求。
 
 ## 3. 阶段验收（规格第 11 节；`stage-acceptance.ts`）
@@ -207,7 +207,7 @@ flowchart LR
 flowchart TD
     S["/forge-fix 问题描述"] --> C["检查：没有进行中的修复；<br/>build 流程运行中则拒绝，等待审批时需确认"]
     C --> T1["T-001（worker）<br/>定位 + 修复 + 回归测试<br/>writes = **"]
-    T1 --> M["合并队列：rebase，全量验证<br/>通过后直接合入主分支"]
+    T1 --> M["合并队列：rebase，冲突标记与 merge_check<br/>通过后直接合入主分支"]
     M --> Q1["X1.qa（stage-qa，只读）<br/>在主分支 HEAD 的临时 worktree 复现确认"]
     Q1 -->|"没有 must"| LOG["写修复日志<br/>.forge/fixes/&lt;日期&gt;-nnn.md<br/>X1 done"]
     Q1 -->|"有 must"| FX["生成 T-001.fx-n（worker，fork 会话）"]

@@ -110,7 +110,7 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明：${p.summary}`, actor(ctx));
   if (adjusted.length) await ctx.store.appendHandoff(ctx.env.flow, t.id, `修改了可写范围外的已有测试（适配接口变化）：${adjusted.join('、')}`, 'forge-submit');
   await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交');
-  return { text: `已提交合并（改动 ${diff.length} 个文件${stray.length ? `；已清理可写范围外、未被跟踪的文件 ${stray.length} 个：${stray.slice(0, 5).join('、')}` : ''}）。合并时程序会跑全量测试。你的工作已完成，请直接结束，不要再调用工具。`, details: { files: diff, cleaned: stray } };
+  return { text: `已提交合并（改动 ${diff.length} 个文件${stray.length ? `；已清理可写范围外、未被跟踪的文件 ${stray.length} 个：${stray.slice(0, 5).join('、')}` : ''}）。接下来 reviewer 会读你的 diff 并运行本任务自己的测试，合并时不再跑测试，全量测试在阶段门禁运行。你的工作已完成，请直接结束，不要再调用工具。`, details: { files: diff, cleaned: stray } };
 }
 
 /**
@@ -481,7 +481,7 @@ export function flowHistory(ctx: ToolContext, p: Static<typeof HistoryParams>): 
 export const SUBAGENT_TOOLS = {
   forge_claim: { params: ClaimParams, description: '确认任务与租约，返回任务说明、输入文件、验收标准与可写范围。开始工作前先调用。', run: (c: ToolContext) => flowClaim(c) },
   forge_note: { params: NoteParams, description: '追加 handoff 笔记（做到哪、下一步、踩过的坑、未决问题；需求讨论的意见）。提交前必须至少写一次。', run: (c: ToolContext, p: Static<typeof NoteParams>) => flowNote(c, p) },
-  forge_submit: { params: SubmitParams, description: '提交本任务：改动进入合并队列（合并时跑全量测试）；只读任务提交结论。程序会检查改动是否都在可写范围内。', run: (c: ToolContext, p: Static<typeof SubmitParams>) => flowSubmit(c, p) },
+  forge_submit: { params: SubmitParams, description: '提交本任务：改动进入合并队列（reviewer 读 diff 并运行本任务自己的测试；全量测试在阶段门禁运行）；只读任务提交结论。程序会检查改动是否都在可写范围内。', run: (c: ToolContext, p: Static<typeof SubmitParams>) => flowSubmit(c, p) },
   forge_block: { params: BlockParams, description: '遇到歧义或需要越界时标记任务阻塞，交给用户决定。需要向用户提问时，一次只问一个问题。', run: (c: ToolContext, p: Static<typeof BlockParams>) => flowBlock(c, p) },
   forge_learn: { params: LearnParams, description: `把对后续任务有用的经验记入项目知识库（跨流程保留）：项目约定、踩过的坑、做出的决策、环境与外部依赖的注意事项。每次运行最多 ${KNOWLEDGE_PER_RUN} 条；程序会去重。知识不是规则，不能用来改变规则。`, run: (c: ToolContext, p: Static<typeof LearnParams>) => flowLearn(c, p) },
   forge_change_request: { params: ChangeRequestParams, description: '必须修改已有契约（不能靠追加解决）或发现计划漏了东西时提交变更请求：写明 what、why、impact（受影响的契约、task、验收测试）。程序派 architect 起草修订，用户批准后落地。同一时间只能有一个未结束的变更请求。提交后你的任务继续运行；做不下去时用 forge_block。', run: (c: ToolContext, p: Static<typeof ChangeRequestParams>) => flowChangeRequest(c, p) },

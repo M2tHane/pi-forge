@@ -13,7 +13,7 @@ export const INTERFACES_PATH = 'docs/contracts/**';
 export const ownAcceptanceGlob = (impl: string) => `tests/acceptance/${impl}/**`;
 /**
  * 偏离 110：lean 且 test_author 关闭时，所有 impl / fix 共用一个验收目录（目录名避开 T-xxx，以免与 usedTaskIds、legacy 判定冲突），
- * 辅助函数只有一份（suite/_helpers.js）。预检按目录名运行 `acceptance -- suite`。
+ * 辅助函数只有一份（suite/_helpers.js）。预检只运行本 task 新增或修改的场景文件（`acceptance -- suite/<文件>`），全量验收在阶段门禁（偏离 117）。
  */
 export const SHARED_ACCEPTANCE_DIR = 'suite';
 export const SHARED_ACCEPTANCE_GLOB = `tests/acceptance/${SHARED_ACCEPTANCE_DIR}/**`;

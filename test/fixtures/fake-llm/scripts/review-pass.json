@@ -1,0 +1,4 @@
+{ "steps": [
+  { "tool_calls": [ { "name": "forge_review_report", "arguments": { "verdict": "pass", "issues": [] } } ] },
+  { "text": "审查通过" }
+] }

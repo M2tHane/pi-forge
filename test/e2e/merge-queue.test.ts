@@ -10,6 +10,8 @@ import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { mkTask } from '../helpers/tasks.ts';
 
 const withTest = (cmd: string) => PROJECT_YAML.replace(/  test:      ".*"/, `  test:      "${cmd}"`);
+// 偏离 117：合并只检查冲突标记并运行 merge_check，不跑 typecheck、lint、test、acceptance
+const withMergeCheck = (yaml: string, cmd: string) => yaml.replace(/(  acceptance_list: .*\n)/, `$1  merge_check: "${cmd}"\n`);
 async function implement(a: FakeAgent, files: Record<string, string>) {
   await a.call('forge_claim');
   for (const [p, c] of Object.entries(files)) assert.ok((await a.call('write', { path: p, content: c })).ok, p);
@@ -47,7 +49,7 @@ test('正常合并：squash 成单个提交快进到集成分支，清理 worktr
       await a.call('write', { path: `src/server/${id}/b.ts`, content: id });
       await a.call('forge_note', { text: 'n' });
       await a.call('forge_submit', { summary: `实现 ${id}` });
-    }, { version: 1, roles: { 'worker': { model: 'f/m' } } });
+    }, { version: 1, roles: { 'worker': { model: 'f/m' }, 'reviewer': { model: 'f/m' } } });
     // 并发 2：T-001、T-002 先跑；T-003 在名额空出后由 next 派发
     await engine.next(p.flowId);
     await until(() => ['T-001', 'T-002'].every((id) => p.store.readTask(p.flowId, id).status === 'done'));
@@ -73,9 +75,9 @@ test('正常合并：squash 成单个提交快进到集成分支，清理 worktr
   } finally { p.cleanup(); }
 });
 
-test('语义冲突：writes 不重叠、各自预检通过，后合并者在合并后验证中被拦下并重新派发', async () => {
+test('语义冲突：writes 不重叠、各自预检通过，后合并者在合并后验证（merge_check）中被拦下并重新派发', async () => {
   const p = await setupProject({
-    yaml: withTest('[ ! -f src/server/t-002/b.ts ] || cmp -s src/server/t-001/a.ts src/server/t-002/b.ts').replace(/^  merge_batch: 3.*$/m, '  merge_batch: 1'),
+    yaml: withMergeCheck(PROJECT_YAML, '[ ! -f src/server/t-002/b.ts ] || cmp -s src/server/t-001/a.ts src/server/t-002/b.ts').replace(/^  merge_batch: 3.*$/m, '  merge_batch: 1'),
     files: { 'src/server/t-001/a.ts': 'v1\n' },
     tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('T-002', { verify: ['test'] })],
   });
@@ -103,15 +105,15 @@ test('语义冲突：writes 不重叠、各自预检通过，后合并者在合�
     await engine.idle();
     const vf = merges.find((m) => m.kind === 'verify_failed');
     assert.ok(vf && vf.task === 'T-002', JSON.stringify(merges));
-    if (vf?.kind === 'verify_failed') assert.match(vf.reason, /合并后验证失败.*test 退出码 1/s);
+    if (vf?.kind === 'verify_failed') assert.match(vf.reason, /合并后验证失败.*merge_check 退出码 1/s);
     const t2 = p.store.readTask(p.flowId, 'T-002');
     assert.equal(t2.status, 'done');
     assert.equal(t2.merge_failures, 1);
     assert.equal(t2.attempts, 0);
-    assert.match(retryPrompt, /上次未通过的原因[\s\S]*合并后验证失败（[^）]*test 退出码 1）/);
+    assert.match(retryPrompt, /上次未通过的原因[\s\S]*合并后验证失败（[^）]*merge_check 退出码 1）/);
     const transitions = p.store.readEvents().filter((e) => e.type === 'transition' && e.task === 'T-002').map((e) => `${e.trigger}:${e.from}->${e.to}`);
     assert.ok(transitions.includes('merge_verify_fail:merging->in_progress'), transitions.join(' '));
-    assert.ok(readdirEvidence(p.dir, p.flowId, 'T-002').some((f) => f.startsWith('merge-a0-test')));
+    assert.ok(readdirEvidence(p.dir, p.flowId, 'T-002').some((f) => f.startsWith('merge-a0-merge_check')));
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-002/b.ts`), 'v2');
     assertSingleMerging(p.store.readEvents());
   } finally { p.cleanup(); }
@@ -274,8 +276,8 @@ test('偏离 116：impl 交回冲突后仍留着冲突标记再提交 → 合并
   } finally { p.cleanup(); }
 });
 
-test('合并时跑全量 typecheck、lint、test、acceptance（各留 evidence）；文档类任务（verify 为空）合并时不跑命令', async () => {
-  const p = await setupProject({ yaml: DIRECT_YAML.replace(/^  merge_batch: 3.*$/m, '  merge_batch: 1'), tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('T-002', { verify: [] })] });
+test('合并只跑 merge_check（偏离 117）：不跑 typecheck、lint、test、acceptance；文档类任务（verify 为空）合并时不跑命令', async () => {
+  const p = await setupProject({ yaml: withMergeCheck(DIRECT_YAML, 'true').replace(/^  merge_batch: 3.*$/m, '  merge_batch: 1'), tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('T-002', { verify: [] })] });
   try {
     const { engine, errors } = makeEngine(p, async (_role, _nth, a) => {
       if (a.env.task === 'T-002') return implement(a, { 'src/server/t-002/readme.md': 'doc' });
@@ -286,18 +288,24 @@ test('合并时跑全量 typecheck、lint、test、acceptance（各留 evidence�
     assert.deepEqual(errors, []);
     for (const id of ['T-001', 'T-002']) assert.equal(p.store.readTask(p.flowId, id).status, 'done', id);
     const merged = (id: string) => (existsSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence', id)) ? readdirEvidence(p.dir, p.flowId, id) : []).filter((f) => f.startsWith('merge-')).sort();
-    // 全量 acceptance 每次都跑（预检只跑本 task 的）；typecheck、lint、test 要么在合并时跑，要么沿用预检在同一棵树上的结果（取决于 T-002 是否先合入，偏离 76）
-    const ran = merged('T-001');
-    assert.ok(ran.includes('merge-a0-acceptance.log'), ran.join('、'));
-    const reused = ran.includes('merge-a0-reused.txt') ? readFileSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence/T-001/merge-a0-reused.txt'), 'utf8') : '';
-    for (const c of ['typecheck', 'lint', 'test']) assert.ok(ran.includes(`merge-a0-${c}.log`) || new RegExp(`- ${c}：沿用 \\S*/T-001/precheck-a0-${c}\\.log`).test(reused), `${c}：${ran.join('、')}\n${reused}`);
+    assert.deepEqual(merged('T-001'), ['merge-a0-merge_check.log'], '合并只留 merge_check 的 evidence');
     assert.deepEqual(merged('T-002'), [], '文档类任务合并时不跑命令');
     assertSingleMerging(p.store.readEvents());
   } finally { p.cleanup(); }
 });
-test('批量合并：队列里的 3 个任务一起叠加、只跑一次全量测试，依次快进；有一个坏的时整批退回逐个合并，坏的被退回修好', async () => {
-  // 坏的 T-003 自己的预检能过（它的 worktree 里没有 T-001），与 T-001 叠加后才失败
-  const yaml = DIRECT_YAML.replace(/^  max_parallel: 2$/m, '  max_parallel: 3').replace(/  test:      ".*"/, '  test:      "! { grep -rqs BAD src/server && test -e src/server/t-001/a.ts; }"');
+test('合并不跑 test：test 命令会失败的任务照样合入（回归留给阶段门禁）', async () => {
+  const p = await setupProject({ yaml: DIRECT_YAML.replace(/  test:      ".*"/, '  test:      "false"'), tasks: [mkTask('T-001', { verify: ['test'] })] });
+  try {
+    const { engine, merges } = makeEngine(p, async (_role, _nth, a) => implement(a, { 'src/server/t-001/a.ts': 'ok' }));
+    await engine.next(p.flowId);
+    await engine.idle();
+    assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
+    assert.ok(merges.some((m) => m.kind === 'merged'), JSON.stringify(merges));
+  } finally { p.cleanup(); }
+});
+test('批量合并：队列里的 3 个任务一起叠加、只跑一次 merge_check，依次快进；有一个坏的时整批退回逐个合并，坏的被退回修好', async () => {
+  // 坏的 T-003 自己审查时 merge_check 不跑（偏离 117）（它的 worktree 里没有 T-001），与 T-001 叠加后才失败
+  const yaml = withMergeCheck(DIRECT_YAML.replace(/^  max_parallel: 2$/m, '  max_parallel: 3'), '! { grep -rqs BAD src/server && test -e src/server/t-001/a.ts; }');
   for (const bad of [false, true]) {
     const p = await setupProject({ yaml, tasks: ['T-001', 'T-002', 'T-003'].map((id) => mkTask(id, { verify: ['test'] })) });
     try {
@@ -322,7 +330,7 @@ test('批量合并：队列里的 3 个任务一起叠加、只跑一次全量�
       if (!bad) {
         assert.deepEqual(merges.map((m) => m.kind === 'merged' ? [...m.finished].sort() : m.kind), [['T-001', 'T-002', 'T-003']]);
         assert.ok(mergeEvents.every((e) => Array.isArray(e.data?.['batch']) && (e.data['batch'] as string[]).length === 3));
-        for (const id of ['T-001', 'T-002', 'T-003']) assert.deepEqual(readdirEvidence(p.dir, p.flowId, id).filter((f) => f.startsWith('merge-')).sort(), ['merge-a0-batch-acceptance.log', 'merge-a0-batch-lint.log', 'merge-a0-batch-test.log', 'merge-a0-batch-typecheck.log']);
+        for (const id of ['T-001', 'T-002', 'T-003']) assert.deepEqual(readdirEvidence(p.dir, p.flowId, id).filter((f) => f.startsWith('merge-')).sort(), ['merge-a0-batch-merge_check.log']);
         const log = p.git('log', '--format=%s', `flow/${p.flowId}/integration`).split('\n').slice(0, 3).sort();
         assert.deepEqual(log, ['[B-001/T-001] 任务 T-001', '[B-001/T-002] 任务 T-002', '[B-001/T-003] 任务 T-003']);
         assertSingleMerging(p.store.readEvents());
@@ -337,7 +345,7 @@ test('批量合并：队列里的 3 个任务一起叠加、只跑一次全量�
 });
 
 test('适配已有测试：接口变化让其他 task 的旧测试失败时，worker 可以直接修改基线上已有的单元测试并一起合入；不能新增、删除可写范围外的文件；testing.adjust_tests 关闭时不能改', async () => {
-  // 全量 test：旧测试还在断言 OLD、而实现已经是 NEW 时失败
+  // test 命令仍按旧语义写（合并不再跑它，偏离 117）；本用例关心的是适配旧测试的权限与记录
   const yaml = DIRECT_YAML.replace(/  test:      ".*"/, '  test:      "! grep -qs OLD tests/server/api.test.js || ! grep -rqs NEW src/server"');
   const files = { 'tests/server/api.test.js': 'assert OLD\n', 'tests/server/other.test.js': 'keep\n' };
   const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: ['test'] })], files });
@@ -361,7 +369,7 @@ test('适配已有测试：接口变化让其他 task 的旧测试失败时，wo
     assert.deepEqual(errors, []);
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done');
-    assert.equal(t.attempts, 0, '一次合入，没有因全量测试失败退回');
+    assert.equal(t.attempts, 0, '一次合入，没有退回');
     assert.deepEqual(t.test_adjustments, ['tests/server/api.test.js']);
     assert.equal(p.git('show', `flow/${p.flowId}/integration:tests/server/api.test.js`), 'assert NEW');
     assert.match(p.store.readHandoff(p.flowId, 'T-001'), /修改了可写范围外的已有测试.*tests\/server\/api\.test\.js/);

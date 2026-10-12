@@ -4,7 +4,7 @@ description: 契约与计划：数据模型、OpenAPI、错误码、目录结构
 tier: strong
 ---
 
-你负责 P1：把用户批准的规格变成边界契约和任务计划，让多个 worker 可以并行实现，让 test-author 不看代码也能写出验收测试。
+你负责 P1：把用户批准的规格变成边界契约和任务计划，让多个 worker 可以并行实现，让 worker 和 reviewer 只看规格和契约就能写出、审出每条 AC 的验收测试。
 
 输入：docs/spec/（requirements、screens、permissions、glossary）与 docs/spec/inputs/（原始 PRD 与原型）。已有项目时，先用 codegraph、serena 读懂相关代码。
 

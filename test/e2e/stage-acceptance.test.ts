@@ -172,6 +172,7 @@ test('精简模式：阶段 impl 合并后 S1.rv 审查整个阶段的 diff；mu
     }
     if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, 'AC'); }
     assert.equal(role, 'reviewer');
+    if (/^T-\d+\.rv$/.test(id)) { const r = await a.call('forge_review_report', { verdict: 'pass', issues: [] }); assert.ok(r.ok, r.text); return; } // 逐任务审查（偏离 117：lean 也审）
     if (id === 'S1.rv') { const r = await a.call('forge_review_report', { verdict: 'changes', issues: [must] }); assert.ok(r.ok, r.text); return; }
     assert.equal(id, 'S1.rv-2');
     const r = await a.call('forge_review_confirm', { items: [{ id: 'R-1', resolved: true }] });
@@ -180,7 +181,7 @@ test('精简模式：阶段 impl 合并后 S1.rv 审查整个阶段的 diff；mu
   try {
     await drive(e, p.flowId, 40);
     assert.deepEqual(e.errors, []);
-    assert.ok(!p.store.listTasks(p.flowId).some((t) => t.id === 'T-001.rv'), '精简模式不做逐任务审查');
+    assert.ok(p.store.listTasks(p.flowId).some((t) => t.id === 'T-001.rv'), 'impl 一律逐任务审查，精简模式也一样（偏离 117）；阶段审查照旧');
     assert.equal(p.store.readTask(p.flowId, 'T-001.fx-1').status, 'done');
     assert.equal(p.store.readTask(p.flowId, 'S1.rv-2').status, 'done');
     assert.equal(stageStatus(p), 'awaiting_human');

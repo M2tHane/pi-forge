@@ -120,8 +120,8 @@ test('(b) stage-qa：临时 worktree 里有依赖（readonly，走缓存）', as
 });
 
 test('(c) 批量合并：临时 worktree 里有依赖 → 整批一次合并成功（有 batch evidence），不退回逐个合并', async () => {
-  // test 命令依赖标记文件：批量合并的临时 worktree 没装依赖时会失败并退回逐个合并
-  const yaml = withDeps(DIRECT_YAML.replace(/^  max_parallel: 2$/m, '  max_parallel: 3'), 'test -f .deps-installed');
+  // merge_check（偏离 117：合并只跑它）依赖标记文件：批量合并的临时 worktree 没装依赖时会失败并退回逐个合并
+  const yaml = withDeps(DIRECT_YAML.replace(/^  max_parallel: 2$/m, '  max_parallel: 3'), 'test -f .deps-installed').replace(/(  acceptance_list: .*\n)/, '$1  merge_check: "test -f .deps-installed"\n');
   const p = await setupProject({ yaml, files: DEPS, tasks: ['T-001', 'T-002', 'T-003'].map((id) => mkTask(id, { verify: ['test'] })) });
   try {
     let waited = false;

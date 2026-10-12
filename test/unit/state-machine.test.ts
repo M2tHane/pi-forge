@@ -141,7 +141,10 @@ test('submit：鉴权、范围、公共文件、已有测试调整、契约追�
   }
   bad(planTransition({ ...t, stage: 'S0' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.ts'] }));
   const narrow = task('in_progress', { shared: ['src/routes.ts'] });
-  bad(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['outside.ts'] }));
+  // 偏离 115：impl / fix 不受 writes 限制；规格、未列测试路径时新建的测试代码仍越界；其他种类照旧
+  ok(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['outside.ts', 'src/server/index.js'] }));
+  for (const path of ['docs/spec/requirements.md', 'tests/unit/new.test.js']) bad(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
+  bad(planTransition({ ...narrow, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['outside.ts'] }));
   ok(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['src/routes.ts', 'unit/a.test.ts', 'docs/contracts/modules/a.md'], test_adjustments: ['unit/a.test.ts'], contract_additions: ['docs/contracts/modules/a.md'] }));
   bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, interface_rewrites: ['docs/contracts/modules/a.md'] }));
   for (const diff_files of [undefined, []]) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files }));

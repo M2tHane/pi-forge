@@ -2,7 +2,7 @@
 // 语义冲突时，后合并的 task 在预检或合并验证里失败，失败的文件常常不在它的可写范围里；
 // worker 不知道可以用 forge_request_scope 申请，只会把预检次数用完。纯函数 + 一个读 git 的小辅助。
 import { git } from '../state/git.ts';
-import { matchesAny } from '../state/paths.ts';
+import { matchesAny, opensWrites } from '../state/paths.ts';
 import type { TaskFile } from '../state/schemas.ts';
 
 // 来自 stage/gates.ts（偏离 106）：workspace 在 stage 之下，不能反过来 import 它。
@@ -43,7 +43,8 @@ export function trackedFilesOf(dir: string): Set<string> {
 }
 
 /** 给失败 reason 追加范围申请提示（没有越界文件时原样返回） */
-export function withScopeHint(reason: string, output: string, t: Pick<TaskFile, 'writes' | 'shared' | 'test_adjustments'>, dir: string): string {
+export function withScopeHint(reason: string, output: string, t: Pick<TaskFile, 'kind' | 'writes' | 'shared' | 'test_adjustments'>, dir: string): string {
+  if (opensWrites(t)) return reason; // 偏离 115：不受 writes 限制，无须申请
   const hint = scopeHint(output, t, trackedFilesOf(dir));
   return hint ? `${reason}\n${hint}` : reason;
 }

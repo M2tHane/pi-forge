@@ -6,7 +6,7 @@ import type { EffectiveSpec } from '../spec/spec.ts';
 import { validate, type PlanFile, type TaskFile } from '../state/schemas.ts';
 import type { TaskInput } from '../state/state-store.ts';
 import { conflictsWith, dagReport, findCycle, mutexPairs, type DagReport } from '../state/dag.ts';
-import { globsOverlap, SHARED_ACCEPTANCE_GLOB, selfTestGlob } from '../state/paths.ts';
+import { globsOverlap, isTestWrite, SHARED_ACCEPTANCE_GLOB, selfTestGlob } from '../state/paths.ts';
 
 export const PLAN_PATH = 'docs/plan/plan.yaml';
 /** S0 的 worker 额外可写的验收目录（规格第 7.5、8.2 节） */
@@ -14,16 +14,7 @@ export const S0_EXTRA_WRITES = ['tests/acceptance/_support/**', 'tests/acceptanc
 /** impl 的 writes 不能覆盖这些路径：验收测试只归 test-author，规格只经 forge_spec，契约只能由程序核实的追加修改 */
 export const FORBIDDEN_WRITES = ['tests/acceptance/**', 'docs/spec/**', 'docs/contracts/**', '.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
 
-/**
- * lean 的计划里 writes 属于单元测试 / 测试代码的路径（偏离 110，纯函数）：任一路径段是 test、tests、__tests__、spec、specs、e2e，
- * 或文件名带 test / spec 标记（a.test.js、foo_test.go、test-utils.js）。不用 globsOverlap：`src/**\/*.js` 与 `*.test.*` 会被误判为重叠。
- */
-export function isTestWrite(w: string): boolean {
-  const segs = w.split('/').filter(Boolean);
-  if (segs.slice(0, -1).some((x) => /^(?:tests?|__tests__|specs?|e2e)$/.test(x))) return true;
-  const last = segs.at(-1) ?? '';
-  return /^(?:tests?|__tests__|specs?|e2e)$/.test(last) || /(?:^|[._-])(?:test|spec)s?(?:[._-]|$)/.test(last);
-}
+export { isTestWrite } from '../state/paths.ts';
 
 export type SymbolKind = 'api' | 'table' | 'error' | 'fn' | 'page' | 'lib';
 export interface PlanSymbol { kind: SymbolKind; /** 规范写法，例如 `api:POST /api/x` */ key: string; soft: boolean }

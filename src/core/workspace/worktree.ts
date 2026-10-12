@@ -53,9 +53,10 @@ export function snapshot(wt: string, message: string): string | null {
  * 提交前清理工作区中未被 git 跟踪、又不在任务 writes 内的文件（测试或程序运行留下的数据文件、日志等）。
  * 它们不是任务的产出，留着会让提交因越界被拒，而实施者又无权删除。返回被删除的文件（相对 worktree）。
  */
-export function cleanStrayUntracked(wt: string, writes: readonly string[]): string[] {
+export function cleanStrayUntracked(wt: string, writes: readonly string[] | ((f: string) => boolean)): string[] {
   const untracked = git(wt, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean);
-  const stray = untracked.filter((f) => !matchesAny(f, writes));
+  const keep = typeof writes === 'function' ? writes : (f: string) => matchesAny(f, writes);
+  const stray = untracked.filter((f) => !keep(f));
   for (const f of stray) rmSync(path.join(wt, f), { force: true });
   return stray.sort();
 }

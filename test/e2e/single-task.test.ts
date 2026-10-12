@@ -93,43 +93,39 @@ test('无 token 或错 token 的提交被拒；实施角色没有验收工具', 
   } finally { p.cleanup(); }
 });
 
-test('diff 越界被拒（改了已跟踪的文件）；还原后再提交通过', async () => {
+test('偏离 115：writes 之外的文件可以直接改并合入；规格、验收测试、未列测试路径时的测试代码被拦下', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
-    let rejected = '';
     const { engine } = makeEngine(p, async (role, _n, a) => {
       await a.call('forge_claim');
       await a.call('write', { path: 'src/server/t-001/a.ts', content: 'x' });
-      // write 工具越界会被 guard 拦下；绕过工具层的改动（例如程序运行改写了已跟踪的文件）靠提交时的 diff 检查兜底。
-      // 未被跟踪的新文件会在提交前被清理（见下一个测试），已跟踪文件的改动不会被清理
-      assert.equal((await a.call('write', { path: 'README.md', content: 'x' })).ok, false);
-      writeFileSync(path.join(a.spec.cwd, 'README.md'), 'changed by a test run');
+      assert.ok((await a.call('write', { path: 'README.md', content: 'changed outside writes' })).ok);
+      for (const f of ['docs/spec/requirements.md', 'tests/acceptance/T-009/a.test.ts', 'tests/unit/a.test.ts']) {
+        const r = await a.call('write', { path: f, content: 'x' });
+        assert.equal(r.ok, false, f);
+      }
       await a.call('forge_note', { text: 'n' });
       const r = await a.call('forge_submit', { summary: 'x' });
-      assert.equal(r.ok, false);
-      rejected = r.text;
-      assert.ok((await a.call('bash', { command: 'git checkout HEAD~1 -- README.md' })).ok);
-      const r2 = await a.call('forge_submit', { summary: 'x' });
-      assert.ok(r2.ok, r2.text);
+      assert.ok(r.ok, r.text);
     });
     await engine.next(p.flowId);
     await engine.idle();
-    assert.match(rejected, /越出任务 writes：README\.md/);
-    assert.match(rejected, /git checkout/);
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
+    assert.equal(p.git('show', `flow/${p.flowId}/integration:README.md`).trim(), 'changed outside writes');
   } finally { p.cleanup(); }
 });
 
-test('提交前清理可写范围外、未被跟踪的文件（测试运行留下的数据）；writes 内的文件照常提交', async () => {
+test('提交前清理落在不能改的位置、未被跟踪的文件；writes 外的普通新文件照常提交（偏离 115）', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
     let submitText = '';
     const { engine } = makeEngine(p, async (role, _n, a) => {
       assert.ok((await a.call('forge_claim')).ok);
       assert.ok((await a.call('write', { path: 'src/server/t-001/a.ts', content: 'export const a = 1;' })).ok);
-      // 模拟测试或程序运行时在工作区写下的数据文件（不经过工具，guard 看不到）
-      mkdirSync(path.join(a.spec.cwd, 'data'), { recursive: true });
-      writeFileSync(path.join(a.spec.cwd, 'data/ledger.json'), '{}');
+      // 不经过工具（guard 看不到）写下的文件：测试代码（writes 没列测试路径）被清理；writes 外的普通文件保留
+      for (const d of ['tests/unit', 'src/shared']) mkdirSync(path.join(a.spec.cwd, d), { recursive: true });
+      writeFileSync(path.join(a.spec.cwd, 'tests/unit/leftover.test.ts'), '');
+      writeFileSync(path.join(a.spec.cwd, 'src/shared/util.ts'), 'export const u = 1;');
       await a.call('forge_note', { text: '完成' });
       const r = await a.call('forge_submit', { summary: '实现 a' });
       assert.ok(r.ok, r.text);
@@ -138,9 +134,9 @@ test('提交前清理可写范围外、未被跟踪的文件（测试运行留�
     await engine.next(p.flowId);
     await engine.idle();
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
-    assert.match(submitText, /已清理可写范围外、未被跟踪的文件 1 个：data\/ledger\.json/);
-    assert.match(p.store.readHandoff(p.flowId, 'T-001'), /程序清理了[\s\S]*data\/ledger\.json/);
-    assert.throws(() => p.git('show', `flow/${p.flowId}/integration:data/ledger.json`));
+    assert.match(submitText, /已清理可写范围外、未被跟踪的文件 1 个：tests\/unit\/leftover\.test\.ts/);
+    assert.throws(() => p.git('show', `flow/${p.flowId}/integration:tests/unit/leftover.test.ts`));
+    assert.match(p.git('show', `flow/${p.flowId}/integration:src/shared/util.ts`), /u = 1/);
   } finally { p.cleanup(); }
 });
 

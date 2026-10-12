@@ -43,6 +43,29 @@ export function matchesAny(rel: string, globs: readonly string[]): boolean {
   return globs.some((g) => minimatch(rel, g, MM));
 }
 
+/**
+ * lean 的计划里 writes 属于单元测试 / 测试代码的路径（偏离 110，纯函数；偏离 115 起也用于判断单个文件）：任一路径段是 test、tests、__tests__、spec、specs、e2e，
+ * 或文件名带 test / spec 标记（a.test.js、foo_test.go、test-utils.js）。不用 globsOverlap：`src/**\/*.js` 与 `*.test.*` 会被误判为重叠。
+ */
+export function isTestWrite(w: string): boolean {
+  const segs = w.split('/').filter(Boolean);
+  if (segs.slice(0, -1).some((x) => /^(?:tests?|__tests__|specs?|e2e)$/.test(x))) return true;
+  const last = segs.at(-1) ?? '';
+  return /^(?:tests?|__tests__|specs?|e2e)$/.test(last) || /(?:^|[._-])(?:test|spec)s?(?:[._-]|$)/.test(last);
+}
+
+/**
+ * 偏离 115：impl / fix 不受计划 writes 限制，writes 只用于调度互斥与冲突分类。仍不能改的：验收测试（writes 里自己的验收目录除外）、规格；
+ * writes 里没有测试路径时也不能新建测试代码（保留偏离 111 的 lean 约束；已有测试的适配另走 adjustableTests）。受保护路径另行检查。
+ */
+export const OPEN_WRITES_EXCEPT = ['tests/acceptance/**', 'docs/spec/**'] as const;
+export const opensWrites = (t: { kind: string }) => t.kind === 'impl' || t.kind === 'fix';
+export function openWriteAllowed(rel: string, writes: readonly string[]): boolean {
+  if (matchesAny(rel, writes)) return true;
+  if (matchesAny(rel, OPEN_WRITES_EXCEPT)) return false;
+  return !isTestWrite(rel) || writes.some((w) => isTestWrite(w) && !w.startsWith('tests/acceptance/'));
+}
+
 /** read_paths 按顺序覆盖：普通模式允许，! 模式排除；没有匹配默认拒绝。 */
 export function matchesReadPaths(rel: string, globs: readonly string[]): boolean {
   let allowed = false;

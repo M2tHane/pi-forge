@@ -299,6 +299,6 @@ test('适配已有测试：接口变化让其他 task 的旧测试失败时，wo
     });
     await engine.next(off.flowId);
     await engine.idle();
-    assert.match(blocked, /不在本任务可写范围内/);
+    assert.match(blocked, /tests\/server\/api\.test\.js 不能改/); // writes 没列测试路径（偏离 115）
   } finally { off.cleanup(); }
 });

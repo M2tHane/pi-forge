@@ -2,7 +2,7 @@
 // 纯函数：只根据程序推导的 facts 判断，不做 IO，也不修改入参。
 import { createHash } from 'node:crypto';
 import type { Lease, StageStatus, TaskFile, TaskStatus } from './schemas.ts';
-import { isProtected, matchesAny, SHARED_ACCEPTANCE_GLOB } from './paths.ts';
+import { isProtected, matchesAny, openWriteAllowed, opensWrites, SHARED_ACCEPTANCE_GLOB } from './paths.ts';
 import { failureSignature } from './failure-signature.ts';
 
 export type Trigger =
@@ -152,7 +152,9 @@ function submitErrors(t: TaskFile, f: Facts): string[] {
     const allowed = [...t.writes, ...(t.shared ?? [])];
     const adjusted = new Set(f.test_adjustments ?? []);
     const additions = new Set(canAppendInterfaces(t) ? f.contract_additions ?? [] : []);
-    const outside = diff.filter((p) => !matchesAny(p, allowed) && !adjusted.has(p) &&
+    // 偏离 115：impl / fix 不受 writes 限制（验收测试已在上面单独检查）
+    const inAllowed = (p: string) => opensWrites(t) ? matchesAny(p, ['tests/acceptance/**']) || openWriteAllowed(p, allowed) : matchesAny(p, allowed);
+    const outside = diff.filter((p) => !inAllowed(p) && !adjusted.has(p) &&
       !(additions.has(p) && matchesAny(p, ['docs/contracts/**'])));
     if (outside.length) errors.push(`diff 越出任务 writes：${outside.join('、')}`);
     if (f.interface_rewrites?.length) errors.push(`契约只能追加，不能修改或删除已有内容：${f.interface_rewrites.join('、')}`);

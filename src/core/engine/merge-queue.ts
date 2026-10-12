@@ -10,7 +10,7 @@ import type { StateStore } from '../state/state-store.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
 import { headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from '../workspace/worktree.ts';
-import { matchesAny, isProtected, INTERFACES_PATH } from '../state/paths.ts';
+import { matchesAny, isProtected, INTERFACES_PATH, openWriteAllowed, opensWrites } from '../state/paths.ts';
 import { mergeContractThreeWay } from '../plan/contract-merge.ts';
 import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, noteToolMissing, runShell } from '../workspace/verify-runner.ts';
@@ -463,7 +463,9 @@ export class MergeQueue {
     // 契约文件：本 task 的 module 自己的契约文件与根 openapi.yaml / data-model.yaml 的冲突也交给 merge-fix（第 12.2 节）
     const mod = t.module ?? (t.merge_fix_for ? this.store.readTask(flowId, t.merge_fix_for).module : undefined);
     const ownContracts = ['openapi.yaml', 'data-model.yaml', ...(mod ? [`paths/${mod}.yaml`, `components/${mod}.yaml`, `errors/${mod}.yaml`, `modules/${mod}.md`] : [])].map((f) => `docs/contracts/${f}`);
-    const outside = conflicts.filter((f) => !matchesAny(f, [...t.writes, ...(t.shared ?? [])]) && !(t.test_adjustments ?? []).includes(f) && !ownContracts.includes(f));
+    // 偏离 115：impl / fix 不受 writes 限制，冲突文件只要是它能改的就交给 merge-fix
+    const inScope = (f: string) => opensWrites(t) ? openWriteAllowed(f, [...t.writes, ...(t.shared ?? [])]) : matchesAny(f, [...t.writes, ...(t.shared ?? [])]);
+    const outside = conflicts.filter((f) => !inScope(f) && !(t.test_adjustments ?? []).includes(f) && !ownContracts.includes(f));
     if (!conflicts.length || contracts.length || outside.length) {
       const why = contracts.length ? `冲突涉及受保护文件：${contracts.join('、')}`
         : outside.length ? `冲突文件不在任务 writes 内：${outside.join('、')}` : 'rebase 失败但没有冲突文件';

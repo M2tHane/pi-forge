@@ -7,8 +7,6 @@ import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { alive } from '../../src/core/workspace/services.ts';
-import { flowResolveScope } from '../../src/tools/orchestrator-tools.ts';
-import { nextStep } from '../../src/core/engine/context-injector.ts';
 
 const freePort = () => new Promise<number>((resolve) => {
   const s = createServer();
@@ -48,42 +46,25 @@ test('forge_service：只能启动 serve 命令；ready 等端口就绪；本次
   } finally { p.cleanup(); }
 });
 
-test('forge_request_scope：task writes 外无重叠的直接批准；与其他 task 的 writes 或 shared 重叠交给主会话，拒绝写入 handoff、批准后可写', async () => {
+test('偏离 115：实现任务直接改 writes 外、与其他 task 重叠的文件（m9b STD 的路由注册入口），forge_request_scope 回答不需要申请，改动随任务合入', async () => {
   const p = await setupProject({ tasks: [mkTask('T-001', { verify: [] }), mkTask('T-002', { verify: [], shared: ['src/shared/date.ts'], deps: [{ task: 'T-001', type: 'hard', reason: 'x' }] })] });
   try {
-    const settled = async () => { while (p.store.readTask(p.flowId, 'T-001').scope_request) await new Promise((r) => setTimeout(r, 20)); };
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
       await a.call('forge_claim');
-      const denied = await a.call('write', { path: 'src/server/common/date.ts', content: 'x\n' });
-      assert.match(denied.text, /forge_request_scope/, '越界写被拦下时提示申请范围');
-      assert.match((await a.call('forge_request_scope', { paths: ['.forge/**'], reason: '想改状态' })).text, /受保护路径/);
-      assert.match((await a.call('forge_request_scope', { paths: ['src/server/common/date.ts'], reason: '日期格式化要共用' })).text, /已批准/);
-      assert.ok((await a.call('write', { path: 'src/server/common/date.ts', content: 'x\n' })).ok);
-      assert.match((await a.call('forge_request_scope', { paths: ['src/server/t-002/util.ts'], reason: '顺手加个工具函数' })).text, /已交给主会话决定：src\/server\/t-002\/util.ts（与 T-002 的范围重叠）/);
-      await settled();
-      assert.match((await a.call('forge_request_scope', { paths: ['src/shared/date.ts'], reason: '前后端共用' })).text, /已交给主会话决定：src\/shared\/date.ts（与 T-002 的范围重叠）/);
-      await settled();
-      assert.ok((await a.call('write', { path: 'src/shared/date.ts', content: 'x\n' })).ok, '主会话批准后可写');
-      await a.call('write', { path: 'src/server/t-001/a.ts', content: 'ok\n' });
+      assert.match((await a.call('forge_request_scope', { paths: ['src/shared/date.ts'], reason: '前后端共用' })).text, /不需要申请/);
+      for (const f of ['src/server/common/date.ts', 'src/shared/date.ts', 'src/server/t-002/util.ts', 'src/server/t-001/a.ts']) {
+        const r = await a.call('write', { path: f, content: 'x\n' });
+        assert.ok(r.ok, `${f}：${r.text}`);
+      }
       await a.call('forge_note', { text: '完成' });
       await a.call('forge_submit', { summary: '完成' });
     });
-    const pending = async () => { for (let i = 0; i < 300 && !p.store.readTask(p.flowId, 'T-001').scope_request; i++) await new Promise((r) => setTimeout(r, 20)); };
     await engine.next(p.flowId);
-    await pending();
-    const t = p.store.readTask(p.flowId, 'T-001');
-    assert.ok(t.writes.includes('src/server/common/date.ts'));
-    assert.equal(t.scope_grants?.[0]?.by, 'program');
-    assert.equal(nextStep(p.store, 2).tool, 'forge_resolve_scope');
-    await assert.rejects(flowResolveScope(p.store, { task_id: 'T-001', decision: 'reject' }), /reject 需要 note/);
-    await flowResolveScope(p.store, { task_id: 'T-001', decision: 'reject', note: '属于 T-002，写进 handoff 让它做' });
-    assert.match(p.store.readHandoff(p.flowId, 'T-001'), /拒绝了范围申请[\s\S]*属于 T-002/);
-    await pending();
-    await flowResolveScope(p.store, { task_id: 'T-001', decision: 'approve' });
     await engine.idle();
     assert.deepEqual(errors, []);
     const done = p.store.readTask(p.flowId, 'T-001');
-    assert.equal(done.status, 'done', '追加的文件随任务一起合入');
-    assert.deepEqual(done.scope_grants?.map((g) => g.by), ['program', 'orchestrator']);
+    assert.equal(done.status, 'done');
+    assert.equal(done.scope_grants, undefined);
+    assert.equal(p.git('show', `flow/${p.flowId}/integration:src/shared/date.ts`).trim(), 'x');
   } finally { p.cleanup(); }
 });

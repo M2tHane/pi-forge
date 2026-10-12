@@ -32,7 +32,7 @@ import { SyncParams, flowSync } from './module-tools.ts';
 import { proposePlan } from '../core/plan/plan-flow.ts';
 import { ChangeError, changeOfTask, proposeChange, requestChange } from '../core/plan/change-flow.ts';
 import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/stage/review.ts';
-import { writesOwnAcceptance } from '../core/state/paths.ts';
+import { openWriteAllowed, opensWrites, writesOwnAcceptance } from '../core/state/paths.ts';
 import { REVIEW_FILES, SUGGESTIONS_PATH, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/stage/review-flow.ts';
 import { QA_FILES } from '../core/stage/stage-qa.ts';
 
@@ -62,7 +62,9 @@ export function flowClaim(ctx: ToolContext): ToolResult {
     `状态：${t.status}　工作目录：${t.worktree ?? '（无）'}　基线：${t.base_sha ?? '（无）'}`,
     `验收标准：\n${(t.ac ?? []).map((a) => `- ${a}`).join('\n') || '（无）'}`,
     `输入文件：\n${t.inputs.map((a) => `- ${a}`).join('\n') || '（无）'}`,
-    `可写范围：\n${(t.conflict_files ?? t.writes).map((a) => `- ${a}`).join('\n')}`,
+    opensWrites(t)
+      ? `计划的改动范围（用于调度；验收测试、规格之外的文件都可以改）：\n${t.writes.map((a) => `- ${a}`).join('\n')}`
+      : `可写范围：\n${(t.conflict_files ?? t.writes).map((a) => `- ${a}`).join('\n')}`,
     `verify 命令：\n${cmds.map((a) => `- ${a}`).join('\n') || '（无）'}`,
     ...(t.last_failure ? [`上次未通过的原因：\n${t.last_failure}`] : []),
   ].join('\n\n');
@@ -81,7 +83,10 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   if (t.status !== 'in_progress') throw new FlowToolError(`任务当前是 ${t.status}，不能提交。`);
   if (!t.worktree || !t.base_sha) throw new FlowToolError('任务没有 worktree 或 base_sha，无法提交，请调用 forge_block 报告。');
   if (t.kind === 'acctest') return submitAcctest(ctx, t, p.summary);
-  const stray = cleanStrayUntracked(t.worktree, t.conflict_files ?? [...t.writes, ...(t.shared ?? []), ...(canAppendInterfaces(t) ? ['docs/contracts/**'] : [])]);
+  // 偏离 115：impl / fix 可以在任何位置新建文件，只清理落在不能改的位置（验收测试、规格等）的未跟踪文件
+  const stray = opensWrites(t)
+    ? cleanStrayUntracked(t.worktree, (f) => openWriteAllowed(f, [...t.writes, ...(t.shared ?? [])]))
+    : cleanStrayUntracked(t.worktree, t.conflict_files ?? [...t.writes, ...(t.shared ?? []), ...(canAppendInterfaces(t) ? ['docs/contracts/**'] : [])]);
   if (stray.length) {
     await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交前程序清理了可写范围外、未被 git 跟踪的文件：${stray.slice(0, 20).join('、')}${stray.length > 20 ? ` 等 ${stray.length} 个` : ''}（多为测试或运行产生的数据；测试应把数据写到临时目录）`, 'forge-submit');
   }
@@ -290,6 +295,7 @@ export const RequestScopeParams = Type.Object({
 export async function flowRequestScope(ctx: ToolContext, p: Static<typeof RequestScopeParams>): Promise<ToolResult> {
   const t = checkRun(ctx);
   if (!SCOPE_KINDS.has(t.kind)) throw new FlowToolError('只有实现与修复任务可以申请追加可写范围；需要越界时用 forge_block 说明。');
+  if (opensWrites(t)) return { text: '不需要申请：实现与修复任务可以直接改验收测试、规格之外的文件。' };
   if (t.scope_request) throw new FlowToolError(`已有一份申请（${t.scope_request.paths.join('、')}）等主会话决定，先做范围内的部分，稍后用 forge_claim 查看可写范围。`);
   const paths = [...new Set(p.paths.map((x) => x.trim()))].filter((x) => !t.writes.includes(x));
   if (!paths.length) return { text: '这些路径已经在可写范围内。' };

@@ -8,7 +8,7 @@ import type { TaskFile } from '../state/schemas.ts';
 import { canAppendInterfaces, hashToken } from '../state/state-machine.ts';
 import { scratchDir } from '../workspace/worktree.ts';
 import { TEST_GLOBS, adjustableTests, testAdjustEnabled } from '../verify/test-adjust.ts';
-import { matchesAny, INTERFACES_PATH } from '../state/paths.ts';
+import { matchesAny, INTERFACES_PATH, opensWrites } from '../state/paths.ts';
 import { enforceToolCall, type GuardContext, type ToolCall } from '../security/guard.ts';
 import { failureSummary } from '../workspace/verify-runner.ts';
 import { failureSignature } from '../state/failure-signature.ts';
@@ -95,6 +95,7 @@ export class SubagentRuntime {
       // test-author 在隔离工作区里：路径不能越出工作区（第 9.2 节第 5 条）；
       // stage-qa 有 full 档 bash，在集成分支的临时 worktree 里同样不能越出（规格第 14 节：除临时目录外不能写；偏离 79）
       ...(t.kind === 'acctest' || t.kind === 'qa' ? { isolatedWorkspace: true } : {}),
+      ...(opensWrites(t) && role.writes.length ? { openWrites: true } : {}),
       ...(t.scope_grants?.length && !t.conflict_files ? { granted: t.scope_grants.flatMap((g) => g.paths) } : {}),
       // 模块登记的公共文件（第五轮）也可以写；没有可写范围但能运行命令的角色（验收者）也有临时目录
       ...(role.writes.length ? { writes: [...(t.conflict_files ?? t.writes), ...(t.conflict_files ? [] : t.shared ?? [])], scratchDir: scratchDir(this.env.root, this.env.run) } : {}),

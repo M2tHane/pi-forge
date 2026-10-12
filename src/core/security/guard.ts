@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { minimatch } from 'minimatch';
 import { BUILTIN_READ_TOOLS, BUILTIN_WRITE_TOOLS, type FlowConfig, type ResolvedRole } from '../state/config.ts';
-import { INTERFACES_PATH, globsOverlap, isProtected, matchesAny, matchesReadPaths, protectedGlobs } from '../state/paths.ts';
+import { INTERFACES_PATH, globsOverlap, isProtected, matchesAny, matchesReadPaths, openWriteAllowed, protectedGlobs } from '../state/paths.ts';
 import { parseShell, type SimpleCommand, type Word } from './shell.ts';
 
 export type GuardRule = 'tool_whitelist' | 'read_paths' | 'write_paths' | 'protected' | 'bash' | 'sensitive';
@@ -27,6 +27,8 @@ export interface GuardContext {
   mainRoot: string;
   /** 任务 writes（merge-fix 为冲突文件列表）；与角色 writes 同时生效 */
   writes?: string[];
+  /** impl / fix（偏离 115）：writes 只是计划的改动范围，验收测试、规格之外的文件都可以改（state/paths.ts 的 openWriteAllowed） */
+  openWrites?: boolean;
   /** 运行中追加批准的可写范围（第六轮 D3，任务的 scope_grants）：经程序或主会话批准，不受角色 writes 限制 */
   granted?: readonly string[];
   /** 实现类任务（第五轮）：可以在契约文档（docs/contracts/）里追加（只能新增，提交时由程序检查），不受任务可写范围限制 */
@@ -223,6 +225,7 @@ class Evaluator {
         : '你是调度者，不能直接修改代码。任务由程序派发给对应 subagent，用 forge_wait 等待结果。';
     }
     if (this.isReadonlyRole) return `你是只读角色（${this.role.name}），不能修改任何文件；结论请写进 forge_note 并 forge_submit。`;
+    if (this.ctx.openWrites) return '验收测试（tests/acceptance/，自己的验收目录除外）与规格（docs/spec/）不能改；计划没给本任务列测试路径时也不新建测试代码。确需改动时用 forge_block 说明原因。';
     // 第六轮 D1：拒绝时给出可行的做法
     return this.role.tools.has('forge_request_scope')
       ? `你是 ${this.role.name}，只能修改本任务 writes 内的文件；确实必须改的，用 forge_request_scope(paths, reason) 申请追加范围（不与其他任务冲突的立即批准），不要换一种方式再试。`
@@ -253,17 +256,24 @@ class Evaluator {
     return this.ctx.writes ?? this.role.writes;
   }
 
+  /** 在本任务可写范围内（不含 granted 等例外） */
+  inWrites(rel: string): boolean {
+    const writes = this.effectiveWrites();
+    return (this.ctx.openWrites ? openWriteAllowed(rel, writes) : matchesAny(rel, writes)) && matchesAny(rel, this.role.writes);
+  }
+
   checkWrite(rawPath: string, tool: string, cwd?: string): GuardDecision {
     const a = this.classify(this.resolveToolPath(rawPath, cwd));
     if (a.area === 'scratch') return this.isReadonlyRole || this.isOrchestrator ? deny('write_paths', `只读角色不能写文件。${this.hint()}`) : ok;
     if (a.area === 'main') return deny('write_paths', `不能写主工作区（${a.rel}），只能修改当前 worktree 内的文件。${this.hint()}`);
     if (a.area === 'outside') return deny('write_paths', `只能写当前 worktree 内的文件，${a.abs} 在其外。${this.hint()}`);
     const writes = this.effectiveWrites();
-    const inTask = (matchesAny(a.rel, writes) && matchesAny(a.rel, this.role.writes))
+    const inTask = this.inWrites(a.rel)
       || matchesAny(a.rel, this.ctx.granted ?? [])
       || (!!this.ctx.interfaceAdditions && matchesAny(a.rel.toLowerCase(), [INTERFACES_PATH]))
       || (this.ctx.adjustableTests?.includes(a.rel) ?? false);
     if (!inTask) {
+      if (this.ctx.openWrites) return deny('write_paths', `${a.rel} 不能改，${tool} 被阻断。${this.hint()}`);
       return deny('write_paths', `${a.rel} 不在本任务可写范围内（${writes.join(', ') || '无'}）。${tool} 被阻断。${this.hint()}`);
     }
     if (isProtectedNocase(a.rel)) {
@@ -518,7 +528,8 @@ class BashChecker {
       const writes = this.ev.effectiveWrites();
       // 未被 git 跟踪的文件（之前运行留下的临时文件）可以删除：删除它们不会改动仓库内容
       if ((name === 'rm' || name === 'rmdir') && a.rel !== '.' && untracked(this.ev.ws, a.rel)) continue;
-      if ((!matchesAny(a.rel, writes) || !matchesAny(a.rel, this.ev.role.writes)) && !matchesAny(a.rel, this.ev.ctx.granted ?? [])) {
+      if (!this.ev.inWrites(a.rel) && !matchesAny(a.rel, this.ev.ctx.granted ?? [])) {
+        if (this.ev.ctx.openWrites) return deny('bash', `${name} 不能作用于 ${a.rel}。${this.ev.hint()}`);
         return deny('bash', `${name} 只能作用于本任务 writes 内的文件（${writes.join(', ') || '无'}），${a.rel} 不在其中。${scratchHint}`);
       }
       if (isProtectedNocase(a.rel)) return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读。`);

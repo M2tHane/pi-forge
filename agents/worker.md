@@ -8,7 +8,7 @@ tier: strong
 
 ## 开始
 
-1. forge_claim 确认任务。读任务说明（负责的 AC 原文、输入文件、可写范围；有则还有『允许的测试入口』『本阶段及之前已交付的接口』）、AGENTS.md、docs/arch/overview.md、glossary、
+1. forge_claim 确认任务。读任务说明（负责的 AC 原文、输入文件、计划的改动范围；有则还有『允许的测试入口』『本阶段及之前已交付的接口』）、AGENTS.md、docs/arch/overview.md、glossary、
    输入文件里列出的契约与页面、screens.md 中本 task 的页面。
 2. 看笔记（每次请求都附在消息末尾）：目标与 AC 已经填好，todo 是逐条的 AC。
 
@@ -27,7 +27,7 @@ tier: strong
 - 依赖的 task 刚合入、或想提前发现冲突时，调用 forge_sync 把集成分支的最新代码合进来。
 - `requires` 里带 `~` 的符号表示生产方可能还没写完：对着契约或生成的 mock 开发。你提交后，程序会等生产方合入，再把它同步进来跑预检；同步有冲突时会回到你的会话。
 - 契约缺了你需要的部分：可以**追加**到本 task 所属模块的契约文件（docs/contracts/paths/<模块>.yaml、components/<模块>.yaml、errors/<模块>.yaml，错误码用模块前缀）。新增接口时，还要在根文件 openapi.yaml 的 paths 下追加一条引用，值只能是 `$ref: './paths/<本模块>.yaml#/...'`；根文件的 components 不能动。只能新增，例如新增接口、新增可选字段、新增错误码。改 required、改 enum、新增必填字段、改已有字段都算修改，要调用 forge_change_request，说明要改什么、为什么。要追加到别的模块的契约，也走 forge_change_request。
-- 需要改 writes 之外的文件时，用 forge_request_scope 申请，说明文件和原因。
+- 需要改计划范围（writes）之外的文件（例如在入口文件里注册路由）时直接改，在 handoff 里写明改了哪些、为什么；别的模块的文件只做必要的最小改动，减少合并冲突。
 - 上下文被压缩后笔记会保留；之前的细节用 history 检索，不必重新执行。
 
 ## 提交
@@ -46,7 +46,7 @@ tier: strong
 
 ## 禁止
 
-- 不改 writes、shared 之外的文件。例外：已有测试因接口变化而失败时，可以修改那些测试来适配，但只能修改，不能新增或删除，不能放宽断言。
+- writes 里没有测试路径时不新建测试代码。已有测试因接口变化而失败时，可以修改那些测试来适配，但不能删除，不能放宽断言。
 - 不改 tests/acceptance/**（唯一例外：S0 的 task 要建 tests/acceptance/_support/ 公共工具和 tests/acceptance/S0-smoke/ 冒烟测试，任务说明会写明）、docs/spec/**，以及受保护路径（.forge/、.git/、workflow.yaml、rules/、.pi/）。
 - 不把命令放到后台运行（&），不启动桌面应用，不打开浏览器窗口（无界面的测试照常运行）。
-- 遇到需求矛盾、需要越界、或做不到的事，用 forge_block 说明，不要绕过。
+- 遇到需求矛盾、要改验收测试或规格、或做不到的事，用 forge_block 说明，不要绕过。

@@ -67,7 +67,8 @@ test('真实 pi 子进程：实施 → 合并（全量测试）；越权被拦�
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), 'export const a = 1;');
 
     const violations = p.store.readEvents().filter((e) => e.type === 'violation');
-    assert.deepEqual(violations.map((v) => [v.data?.['role'], v.data?.['rule']]), [['worker', 'write_paths']]);
+    // 偏离 115：worker 不再受 writes 限制，写 .forge/ 由受保护路径规则拦下
+    assert.deepEqual(violations.map((v) => [v.data?.['role'], v.data?.['rule']]), [['worker', 'protected']]);
 
     const runs = p.store.listRuns();
     assert.equal(runs.length, 1, '提交后直接合并，不派审查');

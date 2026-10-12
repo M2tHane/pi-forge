@@ -35,6 +35,8 @@ import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../co
 import { openWriteAllowed, opensWrites, writesOwnAcceptance } from '../core/state/paths.ts';
 import { REVIEW_FILES, SUGGESTIONS_PATH, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/stage/review-flow.ts';
 import { QA_FILES } from '../core/stage/stage-qa.ts';
+import { addDependencyForWorktree, linkedDeps } from '../core/workspace/shared-env.ts';
+import { prepareWorkspaceRecorded } from '../core/workspace/workspace.ts';
 
 export const NOTE_LIMIT = 8000;
 
@@ -311,6 +313,33 @@ export async function flowRequestScope(ctx: ToolContext, p: Static<typeof Reques
   return { text: `与其他未完成任务的范围重叠或超出角色范围，已交给主会话决定：${conflicts.join('、')}。先做范围内的部分；稍后用 forge_claim 查看可写范围是否已追加。做不下去就写 handoff 后 forge_block。`, details: { pending: paths } };
 }
 
+export const AddDependencyParams = Type.Object({
+  name: Type.String({ minLength: 1, maxLength: 214, description: '依赖名，例如 left-pad 或 @scope/pkg' }),
+  version: Type.Optional(Type.String({ minLength: 1, maxLength: 64, description: '版本或范围，例如 1.2.3、^1.2.0；不填取最新' })),
+  dev: Type.Optional(Type.Boolean({ description: '是否开发依赖（devDependencies），默认否' })),
+});
+export const PrivateDepsParams = Type.Object({});
+
+/** forge_add_dependency（偏离 119）：缺依赖时装进共享构建环境（程序持锁、串行），并把依赖清单与锁文件的改动同步回本任务的 worktree */
+export async function flowAddDependency(ctx: ToolContext, p: Static<typeof AddDependencyParams>): Promise<ToolResult> {
+  const t = checkRun(ctx);
+  if (!t.worktree) throw new FlowToolError('任务没有 worktree，不能追加依赖，请调用 forge_block 报告。');
+  try {
+    const text = await addDependencyForWorktree(ctx.env.root, ctx.config, t.worktree, { name: p.name, ...(p.version ? { version: p.version } : {}), ...(p.dev ? { dev: true } : {}) }, `${t.id}`);
+    return { text, details: { name: p.name, version: p.version ?? null } };
+  } catch (e) { throw new FlowToolError((e as Error).message); }
+}
+
+/** forge_private_deps（偏离 119）：要升级、删除或改动已有依赖的版本时，把共享依赖目录换成本任务的私有副本（程序在 worktree 里运行 install），不影响别的任务 */
+export async function flowPrivateDeps(ctx: ToolContext): Promise<ToolResult> {
+  const t = checkRun(ctx);
+  if (!t.worktree) throw new FlowToolError('任务没有 worktree，请调用 forge_block 报告。');
+  if (!linkedDeps(ctx.env.root, ctx.config, t.worktree).length) return { text: '依赖目录已经是本任务私有的（或没有共享环境），直接用包管理器安装即可。' };
+  const r = await prepareWorkspaceRecorded(ctx.store, ctx.env.root, ctx.config, t.worktree, 'writable', { flow: ctx.env.flow, task: t.id, actor: actor(ctx) }, undefined, true);
+  if (!r.ok) throw new FlowToolError(`私有依赖副本安装失败：${r.reason ?? ''}\n先检查依赖清单是否写对，再调用一次；仍然失败用 forge_block 说明。`);
+  return { text: '已换成本任务的私有依赖副本（按你当前的依赖清单安装完毕）。之后可以直接用包管理器增删改依赖，不会影响别的任务。' };
+}
+
 /** 结构化笔记（第五轮）：本任务所有运行共用一份 */
 export async function flowNotes(ctx: ToolContext, p: Static<typeof NotesParams>): Promise<ToolResult> {
   checkRun(ctx);
@@ -491,6 +520,8 @@ export const SUBAGENT_TOOLS = {
   forge_review_confirm: { params: ReviewConfirmParams, description: '第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowReviewConfirm(c, p) },
   forge_qa_report: { params: ReviewReportParams, description: '提交 stage-qa 第一轮结论：verdict 与问题列表（程序编号 R-1…）。规则同 forge_review_report：must 必须有出处（rule:、ac:、contract:、defect:），否则降为 suggest；降级后没有 must 按 pass 处理。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowQaReport(c, p) },
   forge_qa_confirm: { params: ReviewConfirmParams, description: 'stage-qa 第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowQaConfirm(c, p) },
+  forge_add_dependency: { params: AddDependencyParams, description: '缺依赖时追加：程序把它装进共享构建环境（加锁串行，所有任务共用），并把 package.json 与锁文件的改动同步到你的工作区，随任务提交。依赖目录是共享链接，不要自己在工作区里运行 install/add。要升级、删除或改动已有依赖的版本时改用 forge_private_deps。', run: (c: ToolContext, p: Static<typeof AddDependencyParams>) => flowAddDependency(c, p) },
+  forge_private_deps: { params: PrivateDepsParams, description: '要升级、删除或改动已有依赖的版本时：把共享依赖目录换成本任务的私有副本（先改好依赖清单，程序按它安装），之后可以直接用包管理器，不影响别的任务。只追加新依赖不需要，用 forge_add_dependency。', run: (c: ToolContext) => flowPrivateDeps(c) },
   forge_sync: { params: SyncParams, description: '把集成分支的最新代码（其他模块已合入的改动）合进你的工作区：没有冲突直接完成；有冲突时冲突标记留在文件里，解决后再调用一次完成同步。依赖的模块刚合入、或想提前发现冲突时使用。', run: (c: ToolContext) => flowSync(c) },
   forge_request_scope: { params: RequestScopeParams, description: '必须修改可写范围外的文件时申请追加范围（写明原因）：不与其他未完成任务重叠的立即批准；重叠的交给主会话决定。受保护路径、敏感文件不能申请。', run: (c: ToolContext, p: Static<typeof RequestScopeParams>) => flowRequestScope(c, p) },
   forge_service: { params: ServiceParams, description: '启动、结束、查看本次运行的长时间服务（开发服务器、数据库等）：只能启动 commands 里 serve 或 serve_* 命名的命令，start 可以用 ready 等端口或地址就绪；不要用 & 把命令放到后台。本次运行结束时程序会一并结束。', run: (c: ToolContext, p: Static<typeof ServiceParams>) => flowService(c, p) },

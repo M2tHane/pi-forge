@@ -4,6 +4,8 @@
 //   writable：直接运行 install，不用缓存、不复制缓存目录（包管理器自带缓存），worker 改依赖不会污染共享缓存。
 // 工作区里没有任何包清单与锁文件（例如 S0 刚开始）、或没有 install 命令时跳过，不报错。失败不抛异常，返回 ok:false 与原因。
 import { createHash } from 'node:crypto';
+import { depNameOfKey, depSnapshot, hasManifest, listWorkspaceFiles as listFiles, lockHash } from './dep-files.ts';
+import { decideSharedDeps, installIntoShared, linkSharedDeps, manifestFilesOf, readSharedEnv, sharedEnvEnabled, unlinkSharedDeps } from './shared-env.ts';
 import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
@@ -12,32 +14,15 @@ import { git } from '../state/git.ts';
 import { worktreesRoot } from './worktree.ts';
 import { failureSummary, runShell } from './verify-runner.ts';
 
-/** 计算缓存键的锁文件名（任意目录层级） */
-export const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'Cargo.lock', 'poetry.lock', 'uv.lock', 'go.sum', 'Gemfile.lock', 'composer.lock'];
-/** 包清单文件名（任意目录层级）：有清单或锁文件才需要 install */
-export const MANIFESTS = ['package.json', 'pnpm-workspace.yaml', 'Cargo.toml', 'go.mod', 'pyproject.toml', 'requirements.txt', 'Pipfile', 'setup.py', 'Gemfile', 'composer.json', 'pom.xml', 'build.gradle', 'build.gradle.kts'];
+export { LOCKFILES, MANIFESTS, lockHash, hasManifest } from './dep-files.ts';
+
 const SETUP_TIMEOUT_MS = 15 * 60_000;
 
 export const acctestCacheRoot = (root: string) => path.join(worktreesRoot(root), '.acctest-cache');
 
-/** 锁文件哈希（纯函数）：按路径排序后把路径与内容一起哈希；没有锁文件时为 null，不缓存 */
-export function lockHash(files: readonly { path: string; content: Buffer | string }[]): string | null {
-  const locks = files.filter((f) => LOCKFILES.includes(path.posix.basename(f.path)) && !f.path.split('/').includes('node_modules'))
-    .sort((a, b) => a.path.localeCompare(b.path));
-  if (!locks.length) return null;
-  const h = createHash('sha256');
-  for (const f of locks) h.update(f.path).update('\0').update(f.content).update('\0');
-  return h.digest('hex').slice(0, 32);
-}
-
 /** 缓存键 = 锁文件哈希 + install 命令内容（纯函数）；没有锁文件时为 null */
 export function cacheKey(lock: string | null, install: string): string | null {
   return lock ? createHash('sha256').update(lock).update('\0').update(install).digest('hex').slice(0, 32) : null;
-}
-
-/** 文件列表里是否有包清单或锁文件（纯函数；node_modules 下的不算） */
-export function hasManifest(files: readonly string[]): boolean {
-  return files.some((f) => !f.split('/').includes('node_modules') && [...MANIFESTS, ...LOCKFILES].includes(path.posix.basename(f)));
 }
 
 /** 硬链接复制目录树（cp -al 的等价做法）：文件硬链接，符号链接照抄，目录新建 */
@@ -64,20 +49,17 @@ export interface WorkspaceResult {
   reason?: string;
   /** readonly 模式下依赖目录来自缓存 */
   cached?: boolean;
+  /** 共享构建环境（偏离 119）：linked 依赖目录链接自共享环境；added 先把追加的依赖装进共享环境再链接；private 依赖有改动，使用私有副本 */
+  shared?: 'linked' | 'added' | 'private';
   ms: number;
   log: SetupLog[];
-}
-
-/** 工作区里的文件（已跟踪 + 未跟踪未忽略），用来找清单与锁文件；不是 git 仓库时为空 */
-function listFiles(dir: string): string[] {
-  try { return git(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0').filter(Boolean); } catch { return []; }
 }
 
 /**
  * 准备工作区：install（readonly 命中缓存时跳过）→ codegen。失败不抛异常。
  * 没有清单与锁文件、或没有 install 命令时跳过 install 与 codegen（codegen 通常依赖已安装的依赖）。
  */
-export async function prepareWorkspace(root: string, config: FlowConfig, dir: string, opts: { mode: WorkspaceMode; timeoutMs?: number }): Promise<WorkspaceResult> {
+export async function prepareWorkspace(root: string, config: FlowConfig, dir: string, opts: { mode: WorkspaceMode; timeoutMs?: number; /** 强制私有依赖副本（worker 改了已有依赖，forge_private_deps） */ forcePrivate?: boolean }): Promise<WorkspaceResult> {
   const t0 = Date.now();
   const log: SetupLog[] = [];
   const done = (r: Omit<WorkspaceResult, 'ms' | 'log'>): WorkspaceResult => ({ ...r, ms: Date.now() - t0, log });
@@ -87,6 +69,40 @@ export async function prepareWorkspace(root: string, config: FlowConfig, dir: st
   if (!install) return done({ ok: true, skipped: true, reason: '没有定义 install 命令' });
   const files = listFiles(dir);
   if (!hasManifest(files)) return done({ ok: true, skipped: true, reason: '工作区里还没有包清单与锁文件' });
+
+  const runCodegen = async (extra: Omit<WorkspaceResult, 'ok' | 'ms' | 'log' | 'reason'>): Promise<WorkspaceResult> => {
+    if (codegen) {
+      const r = await runShell(codegen, dir, timeout);
+      if (r.exit_code !== 0) {
+        log.push({ step: 'codegen', ok: false });
+        return done({ ok: false, ...extra, reason: `codegen 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1500)}` });
+      }
+      log.push({ step: 'codegen', ok: true });
+    }
+    return done({ ok: true, ...extra });
+  };
+
+  // 共享构建环境：存在时，依赖清单相同的 worktree 直接链接共享依赖目录；纯追加的先装进共享环境；有改动的退回私有副本
+  let shared: WorkspaceResult['shared'];
+  const env = sharedEnvEnabled(config) && !opts.forcePrivate ? readSharedEnv(root) : null;
+  if (env) {
+    let dec = decideSharedDeps(env.snapshot, depSnapshot(manifestFilesOf(dir, files)));
+    if (dec.action === 'install-shared') {
+      const snap = depSnapshot(manifestFilesOf(dir, files));
+      const r = await installIntoShared(root, config, dec.added.map((k) => ({ name: depNameOfKey(k), spec: snap[k]! })), `worktree ${path.basename(dir)}`, timeout);
+      if (r.ok) { dec = { action: 'link' }; shared = 'added'; log.push({ step: 'install', ok: true, detail: `追加的依赖已装进共享环境：${r.installed.join('、')}` }); }
+      else dec = { action: 'private', reason: `装进共享环境失败，退回私有副本：${(r.reason ?? '').split('\n')[0]}` };
+    }
+    if (dec.action === 'link') {
+      const linked = linkSharedDeps(root, config, dir);
+      if (linked.length) {
+        log.push({ step: 'install', ok: true, detail: `链接共享环境（${linked.join('、')}）` });
+        return runCodegen({ cached: true, shared: shared ?? 'linked' });
+      }
+    } else if (dec.action === 'private') log.push({ step: 'install', ok: true, detail: `私有依赖副本：${dec.reason}` });
+    shared = 'private';
+  }
+  if (env || opts.forcePrivate) unlinkSharedDeps(root, config, dir);
 
   const dirs = cacheDirsOf(config);
   const key = opts.mode === 'readonly' && dirs.length
@@ -123,28 +139,20 @@ export async function prepareWorkspace(root: string, config: FlowConfig, dir: st
       } catch { /* 缓存失败不影响本次 */ } finally { rmSync(tmp, { recursive: true, force: true }); }
     }
   }
-  if (codegen) {
-    const r = await runShell(codegen, dir, timeout);
-    if (r.exit_code !== 0) {
-      log.push({ step: 'codegen', ok: false });
-      return done({ ok: false, ...(hit ? { cached: true } : {}), reason: `codegen 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1500)}` });
-    }
-    log.push({ step: 'codegen', ok: true });
-  }
-  return done({ ok: true, ...(hit ? { cached: true } : {}) });
+  return runCodegen({ ...(hit ? { cached: true } : {}), ...(shared ? { shared } : {}) });
 }
 
 /** 准备工作区并记一条事件（type note，data.kind = workspace_prepare），供 /forge-status --metrics 汇总 */
 export async function prepareWorkspaceRecorded(
   store: StateStore, root: string, config: FlowConfig, dir: string, mode: WorkspaceMode, who: { flow: string; task?: string; actor: string },
-  timeoutMs?: number,
+  timeoutMs?: number, forcePrivate?: boolean,
 ): Promise<WorkspaceResult> {
-  const r = await prepareWorkspace(root, config, dir, { mode, ...(timeoutMs ? { timeoutMs } : {}) });
-  const what = !r.ok ? `失败（${(r.reason ?? '').split('\n')[0]}）` : r.skipped ? `跳过（${r.reason}）` : r.cached ? '命中缓存' : '已安装';
+  const r = await prepareWorkspace(root, config, dir, { mode, ...(timeoutMs ? { timeoutMs } : {}), ...(forcePrivate ? { forcePrivate } : {}) });
+  const what = !r.ok ? `失败（${(r.reason ?? '').split('\n')[0]}）` : r.skipped ? `跳过（${r.reason}）` : r.shared === 'linked' ? '链接共享环境' : r.shared === 'added' ? '追加依赖后链接共享环境' : r.shared === 'private' ? '私有依赖副本' : r.cached ? '命中缓存' : '已安装';
   try {
     await store.recordEvent({
       flow: who.flow, ...(who.task ? { task: who.task } : {}), actor: who.actor, type: 'note', reason: `工作区准备（${mode}）：${what}，${r.ms}ms`,
-      data: { kind: 'workspace_prepare', mode, cached: !!r.cached, skipped: !!r.skipped, ok: r.ok, ms: r.ms },
+      data: { kind: 'workspace_prepare', mode, cached: !!r.cached, ...(r.shared ? { shared: r.shared } : {}), skipped: !!r.skipped, ok: r.ok, ms: r.ms },
     });
   } catch { /* 记账失败不影响流程 */ }
   return r;

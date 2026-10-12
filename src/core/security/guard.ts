@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { minimatch } from 'minimatch';
 import { BUILTIN_READ_TOOLS, BUILTIN_WRITE_TOOLS, type FlowConfig, type ResolvedRole } from '../state/config.ts';
 import { INTERFACES_PATH, globsOverlap, isProtected, matchesAny, matchesReadPaths, openWriteAllowed, protectedGlobs } from '../state/paths.ts';
+import { linkedDeps } from '../workspace/shared-env.ts';
 import { parseShell, type SimpleCommand, type Word } from './shell.ts';
 
 export type GuardRule = 'tool_whitelist' | 'read_paths' | 'write_paths' | 'protected' | 'bash' | 'sensitive';
@@ -94,6 +95,15 @@ const GUI_SCRIPT = /(^|[\s"'&|;(])(electron(?![-\w])|electron-vite\s+(dev|previe
 /** 脚本调用的 node 文件里拉起界面的写法 */
 const GUI_FILE = /(spawn\w*|exec\w*)\(\s*['"`]electron['"`]|require\(\s*['"]electron['"]\s*\)|from\s+['"]electron['"]|new\s+BrowserWindow\b|headless:\s*false/;
 const RUNNERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+const PM_CHANGES = new Set(['install', 'i', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'ci', 'dedupe', 'prune', 'link', 'unlink', 'sync']);
+/** 会改依赖目录的包管理器命令（npm install、pnpm add、yarn remove、pip install、uv add 等）；只认简单写法 */
+export function changesDeps(words: readonly string[]): boolean {
+  const bin = path.basename(words[0] ?? '');
+  const sub = words.slice(1).find((w) => !w.startsWith('-'));
+  if (RUNNERS.has(bin)) return !!sub && PM_CHANGES.has(sub);
+  if (bin === 'pip' || bin === 'pip3' || bin === 'uv' || bin === 'poetry') return !!sub && PM_CHANGES.has(sub);
+  return false;
+}
 const RUNNER_BUILTINS = new Set(['install', 'i', 'add', 'remove', 'exec', 'dlx', 'x', 'ci', 'why', 'list', 'ls', 'outdated', 'update', 'link', 'publish', 'pack']);
 
 /**
@@ -477,6 +487,9 @@ class BashChecker {
     if (name === 'curl') {
       const why = localCurlDenied(args.map((w) => w.text));
       return { decision: why ? deny('bash', `${why}。`) : ok };
+    }
+    if (changesDeps(texts) && linkedDeps(this.ev.ctx.mainRoot, this.ev.ctx.config, this.ev.ws).length) {
+      return { decision: deny('bash', '依赖目录是共享构建环境的链接，在这里安装、升级或删除依赖会影响别的任务。缺依赖用 forge_add_dependency(name, version?)；要升级、删除或改动已有依赖的版本，先改好依赖清单再调用 forge_private_deps，之后就可以直接用包管理器了。') };
     }
     if (name in IMPL_FORBIDDEN) return { decision: deny('bash', `禁止使用 ${name}：${IMPL_FORBIDDEN[name]}。`) };
     if ((name === 'sed' || name === 'gsed') && args.some((w) => /^-[^-]*i/.test(w.text) || w.text.startsWith('--in-place'))) {

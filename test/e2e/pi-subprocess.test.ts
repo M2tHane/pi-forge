@@ -46,7 +46,7 @@ test('buildPiArgs：RPC 模式、关闭扩展发现、guard 扩展最后、工�
   assert.ok(args.includes('--tools') && args[args.indexOf('--tools') + 1] === 'read,forge_claim');
 });
 
-test('真实 pi 子进程：实施 → 合并（全量测试）；越权被拦且计入违规；token 用量写入 run', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
+test('真实 pi 子进程：实施 → 审查 → 合并；越权被拦且计入违规；token 用量写入 run', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
   const p = await setupProject({ tasks: [mkTask('T-001', { verify: ['typecheck', 'test'] })] });
   try {
     const errors: unknown[] = [];
@@ -70,8 +70,9 @@ test('真实 pi 子进程：实施 → 合并（全量测试）；越权被拦�
     // 偏离 115：worker 不再受 writes 限制，写 .forge/ 由受保护路径规则拦下
     assert.deepEqual(violations.map((v) => [v.data?.['role'], v.data?.['rule']]), [['worker', 'protected']]);
 
-    const runs = p.store.listRuns();
-    assert.equal(runs.length, 1, '提交后直接合并，不派审查');
+    // 偏离 117：impl 一律审查，先 worker 后 reviewer
+    const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at));
+    assert.deepEqual(runs.map((r) => r.role), ['worker', 'reviewer'], '提交后先审查再合并');
     const impl = runs[0]!;
     assert.equal(impl.outcome, 'submitted');
     assert.equal(impl.model, 'fakellm/impl-happy');

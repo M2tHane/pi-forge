@@ -16,6 +16,7 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
   **不建**类型生成、客户端生成、契约检查、DOM 模拟；exit 涉及的 AC 最多 4 条，选一两条最核心的 REQ。
   所有命令都要遵守程序注入的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP，以便并行运行。
   只有显式开启 `test_author: true`（默认关闭）且 acceptance_list 要在隔离工作区里运行时，需要额外导出的子包清单与可缓存的依赖目录，写进 commands.yaml 的 `acctest_workspace: { include, cache }`。
+  S0 交付共享构建环境的输入：依赖清单与锁文件（之后基本不再改）、能一条命令建库删库的脚本；commands.yaml 里写好 install，需要数据库服务器时写 env_up、db_create、db_drop。
   S0 的 worker 自己写 tests/acceptance/_support/ 公共工具和一个冒烟测试 tests/acceptance/S0-smoke/（唯一例外）；S0 exit 的 AC 测试由 worker 自己写，reviewer 审查。
 - **S1…Sn**：每个阶段交付一组用户能感知、能演示的能力。按依赖排序：被依赖的业务（团队、权限）在前。
   标准模式阶段数通常是 2 到 5 个；阶段越多，阶段之间的串行屏障越多。

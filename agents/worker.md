@@ -23,6 +23,7 @@ tier: strong
 - 完成一部分就跑相关测试，然后 `git commit` 一次，并用 notes 更新笔记（把条目从 todo 移到 done，更新 current）。本地提交就是检查点。
 - 命名用 glossary 的术语。只有项目配置了 commands.codegen 时，生成的类型或客户端才用它生成，不要手写一份；没配置就不要自己造生成器、类型检查器或 lint 脚本。
 - 界面按 screens.md 与输入文件里的原型实现：页面结构、交互，以及加载、空、错误、无权限四种状态都要有。样式遵循 rules/ui.md。不要把原型文件拷进产品代码。
+- S0 之后依赖目录是共享构建环境的链接（S0 期间没有，照常 install）：缺依赖用 forge_add_dependency(name, version?)，不要自己运行 install/add；要升级、删除或改动已有依赖的版本，先改好依赖清单再调用 forge_private_deps，之后可以直接用包管理器。
 - 依赖的 task 刚合入、或想提前发现冲突时，调用 forge_sync 把集成分支的最新代码合进来。
 - `requires` 里带 `~` 的符号表示生产方可能还没写完：对着契约或生成的 mock 开发。你提交后，程序会等生产方合入，再把它同步进来跑预检；同步有冲突时会回到你的会话。
 - 契约缺了你需要的部分：可以**追加**到本 task 所属模块的契约文件（docs/contracts/paths/<模块>.yaml、components/<模块>.yaml、errors/<模块>.yaml，错误码用模块前缀）。新增接口时，还要在根文件 openapi.yaml 的 paths 下追加一条引用，值只能是 `$ref: './paths/<本模块>.yaml#/...'`；根文件的 components 不能动。只能新增，例如新增接口、新增可选字段、新增错误码。改 required、改 enum、新增必填字段、改已有字段都算修改，要调用 forge_change_request，说明要改什么、为什么。要追加到别的模块的契约，也走 forge_change_request。

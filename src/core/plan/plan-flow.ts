@@ -244,6 +244,7 @@ export async function materializePlan(root: string, store: StateStore, config: F
   const applied = applyDrafts(root, drafts, flowId);
   if (applied.commands) Object.assign(config.raw.commands, applied.commands);
   if (applied.acctestWorkspace) config.raw.acctest_workspace = applied.acctestWorkspace;
+  if (applied.sharedEnv) config.raw.shared_env = applied.sharedEnv;
   const contractsBase = git(root, ['rev-parse', `refs/heads/${flow.integration_branch}`]).trim();
   await store.materializePlan(flowId, { stages: r.plan.stages, mode: r.plan.mode, tasks, notes: initialNotes(tasks, r.spec), contractsBase });
   return [

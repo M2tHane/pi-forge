@@ -133,7 +133,7 @@ test('orchestrator 不能拥有 bash、写工具、扩展读工具或可写范�
 });
 
 const exclusiveTools: [string, string[]][] = [
-  ['forge_request_scope', ['worker']], ['forge_dispute', ['worker']],
+  ['forge_request_scope', ['worker']], ['forge_dispute', ['worker']], ['forge_add_dependency', ['worker']], ['forge_private_deps', ['worker']],
   ['forge_service', ['worker', 'stage-qa']], ['forge_propose_plan', ['architect']],
   ['forge_review_report', ['reviewer']], ['forge_review_confirm', ['reviewer']],
   ['forge_qa_report', ['stage-qa']], ['forge_qa_confirm', ['stage-qa']],

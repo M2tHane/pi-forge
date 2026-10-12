@@ -20,6 +20,7 @@ tier: strong
    以及 commands.yaml。**commands.yaml 只配置 test 与 serve**；acceptance 与 acceptance_list 用同一个测试器指定目录即可。
    typecheck、lint、codegen、e2e、contract_test、merge_check 只在项目已经装有现成工具时配置；**零第三方依赖的项目一律不配**，前端交互写进 manual_checks。
    其余可选项（install、contract_lint、acctest_workspace、gui_commands 等）同样只在项目实际需要时才写，程序对没配置的命令一律跳过。
+   **S0 要让程序能建共享构建环境**：S0 结束时程序在集成分支上一次性 install（依赖清单与锁文件只由 S0 提交）并运行 `env_up`（服务器类数据库才需要，例如启动本地数据库）。commands.yaml 里写 `install`，需要数据库服务器时再写 `env_up`、`db_create`、`db_drop`（按 $FORGE_DB_NAME 建库删库，一条语句），依赖目录不是 node_modules 时写 `shared_env: { deps: [目录] }`。
    会打开桌面应用或浏览器窗口的命令列进 gui_commands。命令必须能在干净的工作区里直接运行，一个命令只有一个清楚的验证职责（语法检查不得充当类型检查）。零第三方依赖时优先用平台现成能力。
 5. **AGENTS.md**：给之后所有 agent 的开发说明（结构、命令、约定）。
 6. **docs/plan/plan.yaml**（按技能 plan-dag）：阶段（S0 固定为骨架）、每个阶段的 exit、task 列表（ac、writes、shared、produces、requires、test_interface、size、layers、review、manual_checks）。

@@ -362,6 +362,22 @@
       },
       "additionalProperties": false
     },
+    "shared_env": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "deps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "scopes": {
       "type": "object",
       "patternProperties": {

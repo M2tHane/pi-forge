@@ -3,7 +3,7 @@
 记录已核实的事实（版本、Pi API）、偏离规格（`docs/BUILD_PROMPT.md`）的决定、真实模型实验的结论。实现细节以代码与测试为准，这里只写"为什么这样做"。
 偏离记录的编号不变；新增条目往后追加，一条 1–3 行，被后来的条目修订时注明。代码注释里的"第 N 条"在 M0 迁入的文件中指 pi-flow `NOTES.md` 的编号，改编时逐步换成本文的编号。
 
-目录：[已验证版本](#已验证版本) · [Pi API（已核实）](#pi-api已核实) · [待确认与已知局限](#待确认与已知局限) · [偏离记录](#偏离记录)（第 1–91 条，按里程碑 M0–M8.5 分组） · [M1 删除、由 Mx 重建](#m1-删除由-mx-重建) · [M2 删除按层角色](#m2-删除按层角色) · [真实模型实验](#真实模型实验) · [缓存提醒](#缓存提醒)。用户文档见 `README.md`，流程图见 `docs/flow.md`。
+目录：[已验证版本](#已验证版本) · [Pi API（已核实）](#pi-api已核实) · [待确认与已知局限](#待确认与已知局限) · [偏离记录](#偏离记录)（第 1–119 条，按里程碑 M0–M8.5 分组） · [M1 删除、由 Mx 重建](#m1-删除由-mx-重建) · [M2 删除按层角色](#m2-删除按层角色) · [真实模型实验](#真实模型实验) · [缓存提醒](#缓存提醒)。用户文档见 `README.md`，流程图见 `docs/flow.md`。
 
 ## 已验证版本
 
@@ -205,6 +205,7 @@
 116. 用户决定：impl / fix 的合并文本冲突由正在合并的 worker 自己解决，不再另起 merge-fix 会话（`merge_conflict` 转移 `merging → in_progress`，与 `merge_verify_fail` 共用 `merge_failures`，达到上限转人工）；原因：merge-fix 是新会话，不了解原任务上下文。集成分支合入任务 worktree 并提交带标记的状态，`base_sha` 设为集成分支 HEAD，别的任务带入的文件不算该 worker 的改动；不设 `conflict_files`，写权限保持开放。仍交给用户：受保护文件、该任务不能写的文件（如别的任务的验收测试）、无冲突文件的 rebase 失败；doc 等其他 kind 与主分支同步冲突仍走 merge-fix。`awaiting_inputs` 的 `sync_conflict` 路径未改。
 117. 用户决定：每个 task 不再跑预检命令，也不在合并时跑 typecheck、lint、test、acceptance；原因：时间成本。预检只剩合入验收测试与契约追加检查；impl 一律审查（`per_task`、`skip_sizes`、`task.review: skip` 对它无效，lean 也逐任务审查；上一轮通过后返工要重新审查）；`.fx-n`（kind fix）不审查：审查任务编号 `T-001.fx-1.rv` 不符合任务编号规则，回归由阶段门禁与 stage-qa 确认轮核对，reviewer 的 bash 为 `allowlist: [test, acceptance]`，按任务说明运行本 task 改动的单元测试（有 `{files}` 就替换，没有就把文件追加在命令末尾）和本 task 自己的验收（`-- <task>`；lean 共享目录只跑本 task 新增或修改的场景 `-- suite/<文件>`，只改辅助文件时跑整个 `suite`），失败写成 `defect:` 出处的 must。合并只查冲突标记与 `merge_check`；全量 test / acceptance 在阶段门禁，回归按责任 task 建 `.fx-n`。代价：回归到阶段末才发现，审查者变成必经且要跑测试。fix 流程没有阶段门禁，合并时仍跑 typecheck、lint、test。acceptance 命令需支持 `-- suite/<文件>`。
 118. 用户决定：默认不再有 test-author，职责交给 reviewer；原因：m9 A0 里 test-author 在看不到实现时写错测试，造成争议返工。`testAuthorFor` 任何模式都为 false（只有 `implementation_gate.test_author: true` 才启用旧路径）；模板去掉 `test-author` 角色与 worker 的 `forge_dispute`；worker 一律自己写验收测试（standard 在 `tests/acceptance/<T>/`，lean 在共享 `suite`），`acceptance-tests` 技能始终带给 worker 和 reviewer。reviewer 的任务说明新增“审查本 task 的验收测试”一节：程序扫描每条 AC 有没有带编号的测试（缺失即 must，出处 `ac:<编号>`），diff 含 `tests/acceptance/**`，并核对 Given/When/Then、测试入口、断言是否被弱化。代价：测试不再对实现盲写。留着没删：acctest/争议的状态机与工具代码、`agents/test-author.md`（模板不再引用，显式配置 test-author 角色后仍可用）。
+119. 用户决定：S0 结束（S1 开始派发前）建立共享构建环境 `<项目>.worktrees/.env-shared/`：一次性 install、运行可选的 `env_up`；之后 worktree 把依赖目录符号链接过去，不再各自 install（`workspace/shared-env.ts`、`dep-files.ts`；`shared_env.{enabled,deps}`，commands 增 `env_up`、`env_down`、`add_dep`）。依赖清单相对共享环境：相同 → 链接；纯追加根目录 package.json 的依赖 → 在独占锁内装进共享环境再链接（worker 用 `forge_add_dependency`）；版本变化、overrides、其他生态 → 私有副本（`forge_private_deps`）。每次运行/评审的端口段与数据库沿用 `allocateResources`（`db_create`/`db_drop`），`withSharedEnv` 封装；子进程（含审查者）启动时另带 `FORGE_SHARED_ENV`。代价：共享依赖会被追加安装影响，且任务删除依赖不会从共享环境卸载；符号链接要写进本地 exclude，guard 在链接状态下禁止 worker 自己 install。每个 S 阶段开始时按集成分支刷新一次。
 
 ## M1 删除、由 Mx 重建
 
@@ -296,6 +297,7 @@ crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动�
 - 10-11（合并冲突交回 worker，偏离 116）：改 `agents/worker.md`（合并冲突一行）。worker 的提示缓存失效一次。
 - 10-11（task 不跑预检命令，偏离 117）：改 `agents/worker.md`（提交后流程）、`agents/reviewer.md`（先运行本 task 的测试）、`skills/code-review/SKILL.md`、`skills/plan-dag/SKILL.md`、`skills/write-rules/SKILL.md`（acceptance 参数约定）。所有角色的提示缓存失效一次；reviewer 的工具权限也变了（bash 白名单）。
 - 10-11（去掉 test-author，偏离 118）：改 `agents/worker.md`（验收测试由自己写、去掉争议）、`agents/reviewer.md`（审查验收测试）、`agents/architect.md`、`skills/acceptance-tests`、`skills/receiving-feedback`、`skills/tdd`、`skills/design-contract`、`skills/spec-from-prd`、`skills/plan-dag`、`skills/write-rules`、`rules/global.md`（第 7 条）。reviewer 现在带 acceptance-tests 技能，worker 的技能集不再随模式变化。所有角色的提示缓存失效一次。
+- 10-11（共享构建环境，偏离 119）：改 `agents/worker.md`（依赖一行）、`agents/architect.md`（commands.yaml 的 install/env_up/db_create/db_drop 与 shared_env）、`skills/plan-dag`（S0 一行）。worker、architect 的提示缓存失效一次。
 
 ## src/core 路径对照（10-11 重组）
 

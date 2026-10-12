@@ -73,7 +73,8 @@ test('(a0) 还没有依赖清单（S0 之前）：不 install，任务说明提�
 
 test('(a2) 门禁的工作区准备失败 → 不生成 fix，直接 needs_human 并带着原因', async () => {
   // 任务 worktree 的 install 能过，门禁的 install 失败（标记文件存在于主分支提交里则跳过失败：用"第二次起失败"模拟）
-  const yaml = withDeps(PROJECT_YAML, 'true').replace('install:   "touch .deps-installed"', 'install:   "test ! -f ../install-ran-once && touch ../install-ran-once && touch .deps-installed"');
+  const yaml = withDeps(PROJECT_YAML, 'true').replace('install:   "touch .deps-installed"', 'install:   "test ! -f ../install-ran-once && touch ../install-ran-once && touch .deps-installed"')
+    .replace('\nlimits:', '\nshared_env:\n  enabled: false   # 共享构建环境会让门禁直接链接依赖，这里要验证的是门禁自己 install 失败的分支\nlimits:');
   const p = await setupProject({ yaml, files: { ...SPEC, ...DEPS }, stages: ['S1'], tasks: [mkTask('T-001', { stage: 'S1', ac: ['REQ-001.AC1'] })] });
   await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }], 'standard');
   const e = engineEnv(p, async (_role, _n, a) => {

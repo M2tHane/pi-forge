@@ -13,6 +13,7 @@ export const FLOW_TOOLS = [
   'forge_resolve_timeout', 'forge_resolve_scope', 'forge_request_scope', 'forge_dispute',
   'forge_service', 'forge_propose_plan', 'forge_review_report', 'forge_review_confirm',
   'forge_qa_report', 'forge_qa_confirm',
+  'forge_add_dependency', 'forge_private_deps',
 ] as const;
 /** 所有角色（包括 orchestrator）都隐式拥有的工具 */
 export const MEMORY_TOOLS = ['notes', 'history'] as const;
@@ -24,7 +25,7 @@ export const DEFAULT_COMPACT_AT = 0.7;
 export const ORCHESTRATING_TOOLS = ['codemode'] as const;
 /** 只能显式分配给特定角色；按层运行时夹具的 *-engineer 视为 worker */
 const ROLE_EXCLUSIVE: Record<string, readonly string[]> = {
-  forge_request_scope: ['worker'], forge_dispute: ['worker'],
+  forge_request_scope: ['worker'], forge_dispute: ['worker'], forge_add_dependency: ['worker'], forge_private_deps: ['worker'],
   forge_service: ['worker', 'stage-qa'], forge_propose_plan: ['architect'],
   forge_review_report: ['reviewer'], forge_review_confirm: ['reviewer'],
   forge_qa_report: ['stage-qa'], forge_qa_confirm: ['stage-qa'],

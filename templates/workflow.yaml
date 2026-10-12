@@ -16,10 +16,16 @@ commands:                         # 由 architect 在 P1 按技术栈改写（do
   # merge_check:   "pnpm codegen && git diff --exit-code"   # 合并时一起跑：生成的代码与契约一致
   # db_create:     "createdb $FORGE_DB_NAME"          # 可选：服务器类数据库按 FORGE_DB_NAME 建库
   # db_drop:       "dropdb --if-exists $FORGE_DB_NAME"
+  # env_up:        "docker compose up -d db"          # 可选：共享构建环境建立时运行一次（起数据库服务器等）；在环境目录里运行，$FORGE_SHARED_ENV 是它的路径
+  # env_down:      "docker compose down"              # 可选：拆除共享环境时运行
+  # add_dep:       "pnpm add \"$FORGE_DEP\""          # 可选：forge_add_dependency 追加依赖的命令，默认按锁文件推断（pnpm/npm/yarn/bun）
 generated_paths: ["web/src/api/generated/**"]          # 由契约生成的代码
 acctest_workspace:                # 仅 test_author: true 时有用（默认没有 test-author，偏离 118）：test-author 的隔离工作区（独立仓库）额外导出的路径；默认已导出 docs/spec、docs/contracts、docs/arch/overview.md、AGENTS.md、tests/acceptance、根目录的包清单与锁文件
   include: ["packages/*/package.json", "vitest.config.*", "playwright.config.*"]
   cache: [node_modules]           # 按锁文件哈希缓存，命中时硬链接复制，跳过 install
+shared_env:                       # 共享构建环境：S0 结束后一次性装好依赖，之后所有 worktree 链接同一份依赖目录，不再各自 install
+  # enabled: true                 # 默认开启；false 时每个 worktree 自己准备依赖
+  deps: [node_modules]            # 链接进 worktree 的依赖目录；不写则取 acctest_workspace.cache，再默认 node_modules
 limits:
   max_parallel: 3                 # 同时运行的 impl task 数（acctest、review、qa 另计）
   max_parallel_aux: 4             # 同时运行的 acctest、review、qa 数
@@ -96,10 +102,10 @@ tool_groups:
   ask:         [ask_user]
 # read_paths 按 gitignore 规则从上到下匹配，后面的覆盖前面的，! 表示排除
 # bash: full | readonly | allowlist 是唯一依据，写了才有 bash 工具（tools 里不写 bash）
-roles:                            # notes、history、forge_block、forge_learn 所有子进程角色隐式拥有；forge_service 只给 worker 与 stage-qa，forge_request_scope 只给 worker
+roles:                            # notes、history、forge_block、forge_learn 所有子进程角色隐式拥有；forge_service 只给 worker 与 stage-qa，forge_request_scope、forge_add_dependency、forge_private_deps 只给 worker
   orchestrator:        { model: strong, tools: [read, grep, find, ls, forge_read, "@ask", forge_spec, forge_spec_amend, forge_status, forge_wait, forge_change_request, forge_resolve_timeout, forge_resolve_scope], read_paths: ["**"], writes: [] }   # notes、history 隐式拥有
   architect:   { model: strong, scopes: [plan], read_paths: ["**", "!.forge/**"], bash: readonly, tools: [codemode, read, write, edit, "@serena_read", "@codegraph", forge_propose_plan, forge_note, forge_submit] }
-  worker:      { model: strong, scopes: [code], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, write, edit, forge_service, "@serena_read", "@serena_edit", "@codegraph", forge_sync, forge_change_request, forge_request_scope, forge_note, forge_submit] }
+  worker:      { model: strong, scopes: [code], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, write, edit, forge_service, "@serena_read", "@serena_edit", "@codegraph", forge_sync, forge_change_request, forge_request_scope, forge_add_dependency, forge_private_deps, forge_note, forge_submit] }
   reviewer:    { model: medium, scopes: [review], read_paths: ["**", "!.forge/**"], bash: allowlist, bash_allow: [test, acceptance], tools: [read, "@serena_read", "@codegraph", forge_review_report, forge_review_confirm] }
   stage-qa:    { model: strong, scopes: [qa], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, forge_service, "@serena_read", "@codegraph", forge_qa_report, forge_qa_confirm] }
   researcher:  { model: medium, scopes: [research], read_paths: ["**", "!.forge/**"], tools: [read, write, "@web", forge_note, forge_submit] }

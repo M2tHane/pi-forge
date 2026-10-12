@@ -40,6 +40,7 @@ import { pausedByChange } from '../plan/change-request.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions } from '../workspace/resources.ts';
 import { prepareAcctestWorkspace } from '../acceptance/acctest.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
+import { readSharedEnv, sharedEnvDir, syncSharedEnv } from '../workspace/shared-env.ts';
 import { runPrecheck } from './precheck.ts';
 import { handOffToFix, precheckAcctest, resolveDisputes } from '../acceptance/acceptance-flow.ts';
 import { waitsOn } from '../state/waits.ts';
@@ -154,6 +155,31 @@ export class Engine {
     return [...this.runs].map(([run_id, r]) => ({ run_id, flow: r.flow, task: r.task, role: r.role, pid: r.handle.pid }));
   }
 
+  /**
+   * 共享构建环境（偏离 119）：S0 结束、S1 开始派发之前建立（此时 S0 的骨架已合入集成分支，上一阶段的任务都结束了，没有 worktree 在用依赖目录）；
+   * 之后每个 S 阶段开始时对齐一次（合入的任务追加或改了依赖时刷新）。同一阶段只检查一次；有运行中的任务时不刷新；失败只记事件，worktree 回到各自 install。
+   */
+  private readonly sharedEnvChecked = new Set<string>();
+  private async ensureSharedEnv(flowId: string): Promise<void> {
+    const { store, root, config } = this.d;
+    const flow = store.readFlow(flowId);
+    if (flow.mode === 'fix' || !/^S[1-9]\d*$/.test(flow.stage) || flow.stage_status !== 'active') return;
+    const tag = `${flowId}:${flow.stage}`;
+    if (this.sharedEnvChecked.has(tag)) return;
+    const cur = readSharedEnv(root);
+    if (cur?.synced === tag || cur && [...this.runs.values()].some((r) => r.flow === flowId)) { this.sharedEnvChecked.add(tag); return; }
+    this.sharedEnvChecked.add(tag);
+    try {
+      const r = await syncSharedEnv(root, config, flow.integration_branch, tag, this.d.verifyTimeoutMs ? { timeoutMs: this.d.verifyTimeoutMs } : {});
+      if (r.status === 'skipped' || r.status === 'unchanged') return;
+      await store.recordEvent({
+        flow: flowId, actor: 'dispatcher', type: 'note', reason: `共享构建环境：${r.status === 'failed' ? `失败，worktree 各自安装依赖（${(r.reason ?? '').split('\n')[0]}）` : r.status === 'built' ? '已建立' : '已刷新'}，${r.ms}ms`,
+        data: { kind: 'shared_env', status: r.status, ms: r.ms, ...(r.status === 'failed' ? { needs_human: true } : {}) },
+      });
+      this.notify();
+    } catch (e) { this.d.onError?.(e); }
+  }
+
   /** pending → ready（硬依赖已完成且属于当前活动阶段） */
   async promote(flowId: string): Promise<string[]> {
     const flow = this.d.store.readFlow(flowId);
@@ -168,6 +194,7 @@ export class Engine {
   /** /forge next：由程序选择 ready 任务并派发，不经 LLM 决策 */
   async next(flowId: string): Promise<Dispatched[]> {
     await this.promote(flowId);
+    await this.ensureSharedEnv(flowId);
     const flow = this.d.store.readFlow(flowId);
     if (flow.sync?.status === 'conflict') return [];
     if (budgetState(this.d.store, this.d.config, flow, this.now())?.exceeded) return [];
@@ -279,10 +306,12 @@ export class Engine {
 
     let handle: SubagentHandle;
     try {
-      // 第 4.1 节：本次运行专用的端口段、数据库名与临时目录，经环境变量传给子进程（bash 与 forge_service 都继承）
+      // 第 4.1 节：本次运行专用的端口段、数据库名与临时目录，经环境变量传给子进程（bash 与 forge_service 都继承）；
+      // 有共享构建环境时再带 FORGE_SHARED_ENV（偏离 119：审查者在链接了共享依赖的 worktree 里用自己的端口与库跑本 task 的测试）
       const res = await allocateResources(root, runId, resourceOptions(this.d.config));
       const spec = this.buildSpec(flowId, task, role, runId, token, model, thinking, fork, timeout ? { ...timeout, budget: minutes } : null);
-      handle = this.d.launcher.launch({ ...spec, env: { ...spec.env, ...resourceEnv(res) }, sessionDir, ...(fork ? { forkFrom: fork.session_file } : {}) });
+      const shared: Record<string, string> = readSharedEnv(root) ? { FORGE_SHARED_ENV: sharedEnvDir(root) } : {};
+      handle = this.d.launcher.launch({ ...spec, env: { ...spec.env, ...resourceEnv(res), ...shared }, sessionDir, ...(fork ? { forkFrom: fork.session_file } : {}) });
     } catch (e) {
       await releaseResources(root, runId, this.d.config.commands).catch(() => null);
       await this.failRun(flowId, taskId, runId, `子进程启动失败：${(e as Error).message}`);

@@ -422,6 +422,13 @@ export const WorkflowFile = Type.Object({
     include: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
     cache: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   }, { additionalProperties: false })),
+  /** 共享构建环境（偏离 119）：S0 结束后一次性装好依赖、起好数据库服务器，之后的 worktree 链接共享依赖目录而不是各自 install */
+  shared_env: Type.Optional(Type.Object({
+    /** 默认 true；false 时每个 worktree 照旧自己准备依赖 */
+    enabled: Type.Optional(Type.Boolean()),
+    /** 链接进 worktree 的依赖目录（相对工作区根），默认取 acctest_workspace.cache，再默认 [node_modules] */
+    deps: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  }, { additionalProperties: false })),
   scopes: Type.Record(Type.String(), Type.Object({
     rules: Type.Optional(Type.Array(Type.String())),
     writes: Type.Array(Type.String()),

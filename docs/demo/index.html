@@ -109,7 +109,7 @@ h3 { font-size: 17px; margin: 32px 0 12px; }
 .req h4 .mono { color: var(--faint); font-size: 12px; margin-right: 6px; }
 .acs { display: flex; flex-wrap: wrap; gap: 4px; }
 .ac { font: 11px var(--mono); padding: 1px 6px; border-radius: 6px; background: #223042; color: #b8c6d6; }
-.ac.manual { background: transparent; border: 1px dashed var(--faint); color: var(--dim); }
+.ac.manual { color: var(--dim); }
 .spec-tools { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 
 /* 第二幕 */
@@ -138,20 +138,23 @@ svg.edges path.on { stroke: var(--architect); stroke-width: 2.2; }
 .mrow .rq b { color: var(--text); font: 600 12px var(--mono); margin-right: 6px; }
 .cells { display: flex; gap: 4px; flex-wrap: wrap; }
 .cell { width: 58px; height: 24px; border-radius: 6px; display: grid; place-items: center; font: 11px var(--mono); color: #0d1117; background: var(--c); cursor: help; }
-.cell.man { background: transparent; color: var(--c); border: 1px dashed var(--c); }
+.cell.man { position: relative; }
+.cell.man::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: #0d1117; opacity: .55; }
 
 /* 一个 worker 的任务与产出 */
 .spot { display: grid; grid-template-columns: 1fr 64px 1fr; align-items: stretch; }
-.ticket { background: #f4efe3; color: #2a2620; border-radius: 6px; padding: 20px 22px; position: relative; box-shadow: 0 14px 30px rgba(0,0,0,.35); font-size: 13px; }
-.ticket::before { content: "任务单"; position: absolute; top: 14px; right: 18px; font: 700 12px var(--mono); color: #a0907a; letter-spacing: .2em; }
+.ticket { background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 14px; padding: 18px; position: relative; font-size: 13px; }
+.ticket::before { content: "任务单"; position: absolute; top: 16px; right: 18px; font: 700 12px var(--mono); color: var(--faint); letter-spacing: .2em; }
 .ticket h4 { margin: 0 0 2px; font-size: 18px; }
-.ticket .tid { font: 700 12px var(--mono); color: #8a6d3b; }
-.ticket dl { display: grid; grid-template-columns: 74px 1fr; gap: 6px 10px; margin: 14px 0 0; }
-.ticket dt { color: #8a7f70; font-size: 12px; padding-top: 1px; }
+.ticket .tid { font: 700 12px var(--mono); color: var(--c); }
+.ticket dl { display: grid; grid-template-columns: 74px 1fr; gap: 8px 10px; margin: 14px 0 0; }
+.ticket dt { color: var(--faint); font-size: 12px; padding-top: 1px; }
 .ticket dd { margin: 0; }
 .ticket ul { margin: 0; padding-left: 16px; }
 .ticket li { margin: 1px 0; }
-.ticket code { background: rgba(0,0,0,.06); padding: 0 4px; border-radius: 3px; font-size: 12px; }
+.ticket code { background: #223042; padding: 0 5px; border-radius: 4px; font-size: 12px; }
+.ticket small { color: var(--faint); }
+.deliver { border-top: 3px solid var(--ok) !important; }
 .spot .arrow { display: grid; place-items: center; color: var(--worker); font-size: 28px; }
 .spot .arrow span { writing-mode: vertical-rl; font-size: 12px; color: var(--dim); letter-spacing: .2em; margin-top: 6px; }
 .deliver { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
@@ -233,7 +236,8 @@ input[type=range] { flex: 1; min-width: 200px; accent-color: var(--worker); }
 .bars .v { height: 14px; border-radius: 4px; background: var(--c); width: 0; transition: width 1.2s cubic-bezier(.2,.8,.2,1); display: block; }
 .bars .n { font-family: var(--mono); text-align: right; }
 .backlog { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.backlog span { padding: 6px 12px; border-radius: 10px; border: 1px dashed #3b4a5e; color: var(--dim); font-size: 13px; }
+.backlog button { padding: 6px 12px; border-radius: 10px; color: var(--dim); font-size: 13px; }
+.backlog button:hover { color: var(--text); border-color: var(--worker); }
 
 /* 弹窗与抽屉 */
 .modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(5,8,12,.6); backdrop-filter: blur(3px); opacity: 0; pointer-events: none; transition: opacity .2s; }
@@ -291,7 +295,7 @@ footer { color: var(--faint); font-size: 12px; padding: 40px 0 60px; border-top:
 <main class="wrap">
   <section class="act" id="flow">
     <div class="act-head"><span class="act-no">OVERVIEW</span><h2>流程总览</h2></div>
-    <p class="act-intro">一个需求从进来到交付，经过五段。每个实施阶段内部是同一个循环：多个 worker 并行写，程序预检、审查员审查，再逐个合并；阶段末整体验收。点任意方块看它具体做什么。</p>
+    <p class="act-intro">一个需求从进来到交付，经过五段。每个实施阶段内部是同一个循环：多个 worker 并行写，程序只检查和该任务有关的部分、审查员审查，再逐个合并；全量测试留到阶段末的门禁一次跑完。点任意方块看它具体做什么。</p>
     <div class="pipeline" id="pipeline"></div>
     <div class="zoom">
       <span class="zoom-title">每个实施阶段内部（S0 … Sn）</span>
@@ -320,7 +324,7 @@ footer { color: var(--faint); font-size: 12px; padding: 40px 0 60px; border-top:
       <div class="legend"><span class="ln">硬依赖：等对方合入再开工</span><span class="ln soft">软依赖：先对着契约写，合并前程序同步</span><span>悬停看依赖 · 点卡片看详情</span></div>
     </div>
     <h3>每条 AC 归谁</h3>
-    <p class="sub">每格一条 AC，颜色是负责它的任务。每条 AC 必须恰好归一个任务，程序会检查。虚线格是界面类的人工确认项。点左侧需求名看详情。</p>
+    <p class="sub">每格一条 AC，颜色是负责它的任务。每条 AC 必须恰好归一个任务，程序会检查。右上角带小圆点的是界面类、需要人工确认的 AC。点左侧需求名看详情。</p>
     <div class="panel"><div class="matrix" id="matrix"></div></div>
     <h3>一个 worker 领到什么、交出什么</h3>
     <p class="sub" id="spot-sub"></p>
@@ -366,7 +370,7 @@ footer { color: var(--faint); font-size: 12px; padding: 40px 0 60px; border-top:
     <p class="act-intro">最后一个阶段验收通过，集成分支合入 main。交付后用 agent 看不到的隐藏测试打分。第一次 build 只做核心模块，之后每个新功能单独走一次 feature 流程。</p>
     <div class="score-grid">
       <div class="panel" id="hidden"></div>
-      <div class="panel"><div id="loc"></div><h4 style="margin:22px 0 8px">之后的功能（每项一次 feature 流程）</h4><div class="backlog" id="backlog"></div></div>
+      <div class="panel"><div id="loc"></div><h4 style="margin:22px 0 4px">之后的功能（每项一次 feature 流程）</h4><p class="muted" style="margin:0 0 6px;font-size:13px">点一个功能，看它的 feature 流程怎么走。</p><div class="backlog" id="backlog"></div></div>
     </div>
   </section>
 </main>
@@ -481,14 +485,14 @@ function peakConcurrency() {
       d: `## 派发\n调度器每次挑出依赖已满足的任务。计划里每个任务写了"计划的改动范围"（writes），**只用于调度**：范围重叠的两个任务不会同时派发，减少冲突。\n\n硬依赖要等对方合入；软依赖可以先对着契约写。` },
     { k: 'LLM · worker', t: '多个 worker 并行写', c: 'var(--worker)', workers: true, p: '每人一个独立 git worktree；可以改任何代码文件，验收测试和规格除外。',
       d: `## worker\n每个 worker 是一个独立子进程，在自己的 git worktree 里工作，互不干扰。\n\n- 可以改任何代码文件（例如在路由入口里注册自己的模块），改了计划范围外的文件在交接笔记里写明。\n- 不能改：验收测试（另一个角色写的）、规格、\`.forge/\` 状态。\n- 写完自测，用 \`forge_note\` 写交接笔记，再 \`forge_submit\`。` },
-    { k: '程序', t: '预检', c: 'var(--program)', p: '类型检查、lint、单元测试、验收测试。不过就退回 worker。',
-      d: `## 预检\n程序在任务的工作区里跑：类型检查、lint、单元测试、本任务的验收测试，以及此前所有任务的验收测试（防回归）。\n\n不通过：失败输出交回同一个 worker，接着它原来的会话改。\n工具没安装（例如没装 lint）：记为"跳过"，不算失败。` },
+    { k: '程序', t: '预检', c: 'var(--program)', p: '只跑和本任务有关的：类型检查、lint、它改的单元测试、它的验收测试。不过就退回 worker。',
+      d: `## 预检\n预检不是 LLM，是程序在任务自己的 git worktree 里依次执行项目命令。命令由架构师在 P1 按技术栈写进 \`workflow.yaml\` 的 \`commands\`，例如：\n\n| 命令 | 例子 | 预检时跑什么 |\n|---|---|---|\n| typecheck | \`pnpm typecheck\` | 整个项目（静态检查，很快） |\n| lint | \`pnpm lint\` | 整个项目 |\n| test | \`pnpm test {files}\` | 只跑本任务改到的单元测试 |\n| acceptance | \`pnpm test:acceptance -- T-011\` | 只跑本任务的验收测试 |\n\n- 运行前给每个任务分配独立的端口和数据库，几个任务同时预检互不干扰。\n- 某条命令的工具没安装：记为"跳过"，不算失败。\n- 失败：把输出压缩成要点，交回同一个 worker，接着它原来的会话改。\n- 通过：记下这棵代码树的哈希，合并时代码没变就不再重跑。\n\n**全量测试不在这里跑**：所有单元测试和所有验收测试留到阶段门禁一次跑完，回归按负责的任务分派修复。` },
     { k: 'LLM · 审查员', t: '审查', c: 'var(--reviewer)', p: '合并前看代码与规则，只提有依据的问题；最多两轮。',
       d: `## 审查\n审查员（reviewer）读改动、契约和项目规则。每条问题必须引用依据（规则条目或 AC），不能凭喜好加要求。\n\n预检通过后、合并之前审查。有问题 → 交回 worker 修；复审只核对上一轮的问题。两轮仍未解决才交给用户。` },
-    { k: '程序', t: '合并队列', c: 'var(--program)', p: '逐个 rebase 到集成分支、再跑全量测试后合入。',
-      d: `## 合并队列\n通过预检和审查的任务排队，**一次合一个**：rebase 到集成分支最新状态，再跑一遍全量测试，通过才合入。\n\n冲突怎么办：程序把冲突标记留在这个任务自己的工作区，**退回给正在合并的那个 worker** 解决（它最清楚自己的改动），解决后重新走预检、合并。只有验收测试、规格这类它不能改的文件冲突，才交给用户。` },
-    { k: 'LLM · 阶段验收', t: '阶段验收与门禁', c: 'var(--stage-qa)', p: '在集成分支上整体跑一遍；通过才进下一阶段。',
-      d: `## 阶段验收\n阶段内所有任务合入后，阶段验收（stage-qa）在集成分支上启动服务、按 AC 走一遍；程序再跑一次全量门禁。\n\n通过 → 进入下一阶段；不通过 → 生成修复任务。` },
+    { k: '程序', t: '合并队列', c: 'var(--program)', p: '逐个 rebase 到集成分支，检查冲突标记、类型与 lint 后合入。',
+      d: `## 合并队列\n通过预检和审查的任务排队，**一次合一个**：rebase 到集成分支最新状态，检查没有残留冲突标记、类型检查与 lint 通过，就合入。不在这里跑全量测试。\n\n冲突怎么办：程序把冲突标记留在这个任务自己的工作区，**退回给正在合并的那个 worker** 解决（它最清楚自己的改动），解决后重新走预检、合并。只有验收测试、规格这类它不能改的文件冲突，才交给用户。` },
+    { k: '程序 + 阶段验收', t: '阶段门禁', c: 'var(--stage-qa)', p: '全量单元测试与验收测试只在这里跑一次；阶段验收在集成分支上按 AC 走一遍。',
+      d: `## 阶段门禁\n阶段内所有任务合入后：\n1. 程序在集成分支上跑**全量**单元测试和全部验收测试（整个阶段只跑这一次）。\n2. 阶段验收（stage-qa）启动服务，按 AC 走一遍。\n\n有失败：程序从失败输出定位是哪个任务的代码，给那个任务建修复任务（.fx），修完再跑门禁。全部通过才进下一阶段。` },
   ];
   $('#loop').innerHTML = loop.map((x, i) => `<div class="node" data-i="${i}" style="--c:${x.c}"><div class="k">${x.k}</div><h5>${x.t}</h5>${x.workers ? '<div class="workers"><i>W</i><i>W</i><i>W</i></div>' : ''}<p>${x.p}</p></div>`).join('');
   $('#loop').onclick = (e) => { const n = e.target.closest('.node'); if (n) openModal(loop[n.dataset.i].t, md(loop[n.dataset.i].d)); };
@@ -572,12 +576,12 @@ function filesHtml(o, limit = Infinity) {
   const add = o.files.reduce((s, f) => s + f.add, 0), testAdd = o.files.filter((f) => isTest(f.file)).reduce((s, f) => s + f.add, 0);
   const glob = (g) => new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\0').replace(/\*/g, '[^/]*').replace(/\0/g, '.*') + '$');
   const outside = o.files.map((f) => f.file).filter((f) => !isTest(f) && !t.writes.some((g) => glob(g).test(f)));
-  $('#spot').innerHTML = `<div class="ticket"><div class="tid">${id} · ${t.stage} · ${esc(t.module)}</div><h4>${esc(t.title)}</h4><dl>
+  $('#spot').innerHTML = `<div class="ticket" style="--c:${colorOf(id)}"><div class="tid">${id} · ${t.stage} · ${esc(t.module)}</div><h4>${esc(t.title)}</h4><dl>
       <dt>负责的 AC</dt><dd><ul>${t.ac.map((a) => `<li><b>${a.split('.')[1]}</b> ${esc(acText[a].replace(/^Given /, ''))}</li>`).join('')}</ul></dd>
-      <dt>依赖</dt><dd>${t.requires.map((x) => `<code>${esc(x)}</code>`).join(' ')}<br><small style="color:#8a7f70">~ 是软依赖：先对着契约写，合并前程序会同步</small></dd>
+      <dt>依赖</dt><dd>${t.requires.map((x) => `<code>${esc(x)}</code>`).join(' ')}<br><small>~ 是软依赖：先对着契约写，合并前程序会同步</small></dd>
       <dt>要产出</dt><dd>${t.produces.map((x) => `<code>${esc(x)}</code>`).join(' ')}</dd>
-      <dt>计划范围</dt><dd>${t.writes.map((x) => `<code>${esc(x)}</code>`).join(' ')}<br><small style="color:#8a7f70">只用于调度；需要时也可以改别的代码文件</small></dd>
-      <dt>完成标准</dt><dd>类型检查、lint、单元测试、验收测试全部通过</dd></dl></div>
+      <dt>计划范围</dt><dd>${t.writes.map((x) => `<code>${esc(x)}</code>`).join(' ')}<br><small>只用于调度；需要时也可以改别的代码文件</small></dd>
+      <dt>完成标准</dt><dd>类型检查、lint、本任务的单元测试与验收测试通过</dd></dl></div>
     <div class="arrow">➜<span>${Math.round(mins)} 分钟</span></div>
     <div class="deliver"><h4>交回来的</h4>
       <div class="kv"><div><b>${o.files.length}</b><span>个文件</span></div><div><b>+${add}</b><span>行，其中测试 +${testAdd}</span></div><div><b>${runs.length}</b><span>次运行（含解冲突）</span></div></div>
@@ -725,6 +729,25 @@ function showOutput(id) {
   io.observe($('#steps'));
 })();
 
+// feature 流程说明：已有工程上加一个功能，流程和 build 一样走四段，但只针对这一个功能
+function featureDoc(name) {
+  return `**feature 流程**是在已经交付的工程上加一个功能。它和第一次 build 走同样的四段，区别是**只处理这一个功能**，并且建立在已有的规格、契约和代码之上。
+
+| 阶段 | 第一次 build | feature「${name}」 |
+|---|---|---|
+| P0 规格 | 整个产品的需求（14 条 REQ） | 只写这个功能的增量规格，放进 \`docs/spec/features/\`；可以引用已有的 REQ |
+| P1 契约与计划 | 从零设计全部接口和数据模型 | 已有契约锁定，只能**追加**新接口、新字段；计划只拆这个功能的任务（通常 2–6 个） |
+| 实施 | S0 骨架 + 多个阶段 | 骨架已经有了，直接按依赖图并行做这几个任务 |
+| 交付 | 集成分支合入 main | 同样合入 main；已有功能的验收测试一起跑，防止改坏 |
+
+**为什么不一次做完**
+- 一次 build 的 AC 控制在 30–80 条：规格看得过来，计划不会失控，出问题容易定位。
+- 每个 feature 有自己的规格、计划和验收，彼此独立；做完一个再开下一个（同一时间只有一个进行中的流程）。
+- 已有契约锁定、只能追加，保证新功能不会悄悄改掉老接口。
+
+**怎么启动**：把这个功能的需求文档放进 \`docs/\`，执行 \`/forge-build --feature "${name}" --prd <文档路径>\`。`;
+}
+
 // ---------- 终幕 ----------
 (function score() {
   const groups = {};
@@ -741,7 +764,8 @@ function showOutput(id) {
   const sm = Math.max(...stageMins.map((s) => s[1]));
   $('#loc').innerHTML = `<h4 style="margin:0 0 10px">代码量 · 共 ${D.project.loc.toLocaleString()} 行</h4><div class="bars">${parts.map(([n, v], i) => `<div class="b"><span>${n}</span><span><span class="v" data-w="${(v / max) * 100}" style="--c:${pc[i]}"></span></span><span class="n">${v.toLocaleString()}</span></div>`).join('')}</div>
     <h4 style="margin:22px 0 10px">各阶段用时</h4><div class="bars">${stageMins.map(([s, m]) => `<div class="b"><span>${s}</span><span><span class="v" data-w="${(m / sm) * 100}" style="--c:var(--worker)"></span></span><span class="n">${Math.round(m)} 分钟</span></div>`).join('')}</div>`;
-  $('#backlog').innerHTML = (D.backlog ?? []).map((b) => `<span>${esc(b)}</span>`).join('');
+  $('#backlog').innerHTML = (D.backlog ?? []).map((b) => `<button>${esc(b)}</button>`).join('');
+  $('#backlog').onclick = (e) => { const b = e.target.closest('button'); if (b) openModal(`feature 流程：${b.textContent}`, md(featureDoc(b.textContent))); };
   new IntersectionObserver((es, o) => { if (es[0].isIntersecting) { o.disconnect(); document.querySelectorAll('#loc .v').forEach((v) => { v.style.width = v.dataset.w + '%'; }); } }, { threshold: .3 }).observe($('#loc'));
   $('#foot').innerHTML = `「${esc(D.project.name)}」是为演示编写的虚构工程，需求、计划、运行记录和产出都不是真实运行结果；结构与 pi-forge 的 .forge/ 状态一致。页面无外部依赖，数据在 <span class="mono">docs/demo/example.js</span>。`;
 })();

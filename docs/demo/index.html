@@ -74,7 +74,7 @@ h3 { font-size: 17px; margin: 32px 0 12px; }
 .phase.stage { border-color: var(--worker); box-shadow: 0 0 0 1px rgba(62,214,198,.25), 0 10px 30px rgba(62,214,198,.08); }
 .zoom { position: relative; margin: 26px 14px 0; padding: 22px 20px 20px; border: 1px dashed #2f5a56; border-radius: 16px; background: linear-gradient(180deg, rgba(62,214,198,.05), transparent); }
 .zoom-title { position: absolute; top: -12px; left: 20px; background: var(--bg); padding: 0 10px; font: 600 12px var(--mono); color: var(--worker); }
-.loop { display: grid; grid-template-columns: 1fr 1.25fr 1fr 1.15fr 1fr 1fr; gap: 26px; align-items: stretch; position: relative; }
+.loop { display: grid; grid-template-columns: 1fr 1.25fr 1.25fr 1.1fr 1.1fr; gap: 26px; align-items: stretch; position: relative; }
 .node { position: relative; padding: 12px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line); cursor: pointer; transition: transform .15s, border-color .15s; }
 .node:hover { transform: translateY(-3px); border-color: var(--c); }
 .node::after { content: "→"; position: absolute; right: -21px; top: 50%; transform: translateY(-50%); color: #4a5a70; font-weight: 700; }
@@ -86,8 +86,8 @@ h3 { font-size: 17px; margin: 32px 0 12px; }
 .workers i { width: 22px; height: 22px; border-radius: 50%; background: var(--worker); color: #0d1117; display: grid; place-items: center; font: 700 11px var(--mono); font-style: normal; animation: bob 1.6s ease-in-out infinite; }
 .workers i:nth-child(2) { animation-delay: .25s; } .workers i:nth-child(3) { animation-delay: .5s; }
 @keyframes bob { 50% { transform: translateY(-3px); } }
-.backflow { margin-top: 14px; display: grid; grid-template-columns: 1fr 1.25fr 1fr 1.15fr 1fr 1fr; gap: 26px; }
-.backflow .arc { grid-column: 2 / 6; position: relative; height: 34px; border: 2px dashed var(--bad); border-top: none; border-radius: 0 0 16px 16px; }
+.backflow { margin-top: 14px; display: grid; grid-template-columns: 1fr 1.25fr 1.25fr 1.1fr 1.1fr; gap: 26px; }
+.backflow .arc { grid-column: 2 / 5; position: relative; height: 34px; border: 2px dashed var(--bad); border-top: none; border-radius: 0 0 16px 16px; }
 .backflow .arc span { position: absolute; left: 50%; bottom: -12px; transform: translateX(-50%); background: var(--bg); color: var(--bad); font-size: 12px; padding: 0 10px; white-space: nowrap; }
 .backflow .arc::before { content: "▲"; position: absolute; left: -7px; top: -10px; color: var(--bad); font-size: 11px; }
 .flow-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 26px; font-size: 12px; color: var(--dim); }
@@ -295,7 +295,7 @@ footer { color: var(--faint); font-size: 12px; padding: 40px 0 60px; border-top:
 <main class="wrap">
   <section class="act" id="flow">
     <div class="act-head"><span class="act-no">OVERVIEW</span><h2>流程总览</h2></div>
-    <p class="act-intro">一个需求从进来到交付，经过五段。每个实施阶段内部是同一个循环：多个 worker 并行写，程序只检查和该任务有关的部分、审查员审查，再逐个合并；全量测试留到阶段末的门禁一次跑完。点任意方块看它具体做什么。</p>
+    <p class="act-intro">一个需求从进来到交付，经过五段。每个实施阶段内部是同一个循环：多个 worker 并行写，审查员看代码并跑该任务自己的测试，再逐个合并；全量测试留到阶段末的门禁一次跑完。点任意方块看它具体做什么。</p>
     <div class="pipeline" id="pipeline"></div>
     <div class="zoom">
       <span class="zoom-title">每个实施阶段内部（S0 … Sn）</span>
@@ -474,7 +474,7 @@ function peakConcurrency() {
     { no: 'S0', t: '骨架', c: 'var(--worker)', who: ['worker', '审查员'], p: '先把所有人都要用的底座做稳：目录、数据库、认证、路由入口。', stage: true,
       d: `## S0 骨架\n只做所有任务都依赖的东西，单独一个阶段先做完、先审查，后面的并行才不会互相等。\n\n本示例的 S0：租户上下文、员工登录、数据库访问层、路由注册入口、后台外壳。` },
     { no: 'S1…Sn', t: '实施', c: 'var(--worker)', who: ['worker ×N', '程序', '审查员', '阶段验收'], p: '每个阶段内多个 worker 并行；阶段之间有门禁。', stage: true,
-      d: `## S1…Sn 实施\n每个阶段内部是同一个循环（见下方放大图）：按依赖图派发，最多同时 3 个 worker；程序预检、逐个合并；审查员看代码，阶段验收在集成分支上跑一遍。\n\n阶段门禁通过才进下一阶段。` },
+      d: `## S1…Sn 实施\n每个阶段内部是同一个循环（见下方放大图）：按依赖图派发，最多同时 3 个 worker；审查员看代码并跑本任务的测试，通过后逐个合并；全量测试与阶段验收在门禁跑一次。\n\n阶段门禁通过才进下一阶段。` },
     { no: '✓', t: '交付', c: 'var(--ok)', who: ['程序', '用户'], p: '集成分支合入 main；之后每个新功能走一次 feature 流程。',
       d: `## 交付\n最后一个阶段验收通过后，程序把集成分支合入 main。\n\n第一次 build 只做核心模块（大约 30–80 条 AC）。之后每个新功能单独走一次 **feature** 流程：同样的规格 → 计划 → 实施，但只针对这一个功能。` },
   ];
@@ -485,14 +485,12 @@ function peakConcurrency() {
       d: `## 派发\n调度器每次挑出依赖已满足的任务。计划里每个任务写了"计划的改动范围"（writes），**只用于调度**：范围重叠的两个任务不会同时派发，减少冲突。\n\n硬依赖要等对方合入；软依赖可以先对着契约写。` },
     { k: 'LLM · worker', t: '多个 worker 并行写', c: 'var(--worker)', workers: true, p: '每人一个独立 git worktree；可以改任何代码文件，验收测试和规格除外。',
       d: `## worker\n每个 worker 是一个独立子进程，在自己的 git worktree 里工作，互不干扰。\n\n- 可以改任何代码文件（例如在路由入口里注册自己的模块），改了计划范围外的文件在交接笔记里写明。\n- 不能改：验收测试（另一个角色写的）、规格、\`.forge/\` 状态。\n- 写完自测，用 \`forge_note\` 写交接笔记，再 \`forge_submit\`。` },
-    { k: '程序', t: '预检', c: 'var(--program)', p: '只跑和本任务有关的：类型检查、lint、它改的单元测试、它的验收测试。不过就退回 worker。',
-      d: `## 预检\n预检不是 LLM，是程序在任务自己的 git worktree 里依次执行项目命令。命令由架构师在 P1 按技术栈写进 \`workflow.yaml\` 的 \`commands\`，例如：\n\n| 命令 | 例子 | 预检时跑什么 |\n|---|---|---|\n| typecheck | \`pnpm typecheck\` | 整个项目（静态检查，很快） |\n| lint | \`pnpm lint\` | 整个项目 |\n| test | \`pnpm test {files}\` | 只跑本任务改到的单元测试 |\n| acceptance | \`pnpm test:acceptance -- T-011\` | 只跑本任务的验收测试 |\n\n- 运行前给每个任务分配独立的端口和数据库，几个任务同时预检互不干扰。\n- 某条命令的工具没安装：记为"跳过"，不算失败。\n- 失败：把输出压缩成要点，交回同一个 worker，接着它原来的会话改。\n- 通过：记下这棵代码树的哈希，合并时代码没变就不再重跑。\n\n**全量测试不在这里跑**：所有单元测试和所有验收测试留到阶段门禁一次跑完，回归按负责的任务分派修复。` },
-    { k: 'LLM · 审查员', t: '审查', c: 'var(--reviewer)', p: '合并前看代码与规则，只提有依据的问题；最多两轮。',
-      d: `## 审查\n审查员（reviewer）读改动、契约和项目规则。每条问题必须引用依据（规则条目或 AC），不能凭喜好加要求。\n\n预检通过后、合并之前审查。有问题 → 交回 worker 修；复审只核对上一轮的问题。两轮仍未解决才交给用户。` },
-    { k: '程序', t: '合并队列', c: 'var(--program)', p: '逐个 rebase 到集成分支，检查冲突标记、类型与 lint 后合入。',
-      d: `## 合并队列\n通过预检和审查的任务排队，**一次合一个**：rebase 到集成分支最新状态，检查没有残留冲突标记、类型检查与 lint 通过，就合入。不在这里跑全量测试。\n\n冲突怎么办：程序把冲突标记留在这个任务自己的工作区，**退回给正在合并的那个 worker** 解决（它最清楚自己的改动），解决后重新走预检、合并。只有验收测试、规格这类它不能改的文件冲突，才交给用户。` },
+    { k: 'LLM · 审查员', t: '审查 + 局部测试', c: 'var(--reviewer)', p: '读改动，跑这个任务自己的单元测试和验收测试；有问题退回 worker。',
+      d: `## 审查 + 局部测试\nworker 提交后直接进入审查，没有单独的程序预检。审查员（reviewer）做两件事：\n1. **跑本任务的测试**：只跑这个任务改到的单元测试和它自己的验收测试（例如 \`pnpm test:acceptance -- T-011\`）。它只被允许运行这几条测试命令，不能改代码。\n2. **看代码**：对照契约和项目规则读改动。每条问题必须引用依据（规则条目、AC，或失败的测试），不能凭喜好加要求。\n\n测试失败或有问题 → 退回同一个 worker 修；复审只核对上一轮的问题。两轮仍未解决才交给用户。\n\n**为什么不用程序预检**：每个任务都跑一遍命令要花时间；审查本来就要看这个任务，顺手跑它自己的测试就够了。全量测试留到阶段门禁。` },
+    { k: '程序', t: '合并队列', c: 'var(--program)', p: '逐个 rebase 到集成分支，确认没有残留冲突标记就合入。不跑测试。',
+      d: `## 合并队列\n审查通过的任务排队，**一次合一个**：rebase 到集成分支最新状态，确认没有残留冲突标记就合入（项目定义了 \`merge_check\` 的话一起跑）。这里不跑测试，测试在审查和阶段门禁里。\n\n冲突怎么办：程序把冲突标记留在这个任务自己的工作区，**退回给正在合并的那个 worker** 解决（它最清楚自己的改动），解决后重新走预检、合并。只有验收测试、规格这类它不能改的文件冲突，才交给用户。` },
     { k: '程序 + 阶段验收', t: '阶段门禁', c: 'var(--stage-qa)', p: '全量单元测试与验收测试只在这里跑一次；阶段验收在集成分支上按 AC 走一遍。',
-      d: `## 阶段门禁\n阶段内所有任务合入后：\n1. 程序在集成分支上跑**全量**单元测试和全部验收测试（整个阶段只跑这一次）。\n2. 阶段验收（stage-qa）启动服务，按 AC 走一遍。\n\n有失败：程序从失败输出定位是哪个任务的代码，给那个任务建修复任务（.fx），修完再跑门禁。全部通过才进下一阶段。` },
+      d: `## 阶段门禁\n阶段内所有任务合入后：\n1. 程序在集成分支上跑**全量**类型检查、lint、单元测试和全部验收测试（整个阶段只跑这一次）。\n2. 阶段验收（stage-qa）启动服务，按 AC 走一遍。\n\n有失败：程序从失败输出定位是哪个任务的代码，给那个任务建修复任务（.fx），修完再跑门禁。全部通过才进下一阶段。` },
   ];
   $('#loop').innerHTML = loop.map((x, i) => `<div class="node" data-i="${i}" style="--c:${x.c}"><div class="k">${x.k}</div><h5>${x.t}</h5>${x.workers ? '<div class="workers"><i>W</i><i>W</i><i>W</i></div>' : ''}<p>${x.p}</p></div>`).join('');
   $('#loop').onclick = (e) => { const n = e.target.closest('.node'); if (n) openModal(loop[n.dataset.i].t, md(loop[n.dataset.i].d)); };
@@ -581,7 +579,7 @@ function filesHtml(o, limit = Infinity) {
       <dt>依赖</dt><dd>${t.requires.map((x) => `<code>${esc(x)}</code>`).join(' ')}<br><small>~ 是软依赖：先对着契约写，合并前程序会同步</small></dd>
       <dt>要产出</dt><dd>${t.produces.map((x) => `<code>${esc(x)}</code>`).join(' ')}</dd>
       <dt>计划范围</dt><dd>${t.writes.map((x) => `<code>${esc(x)}</code>`).join(' ')}<br><small>只用于调度；需要时也可以改别的代码文件</small></dd>
-      <dt>完成标准</dt><dd>类型检查、lint、本任务的单元测试与验收测试通过</dd></dl></div>
+      <dt>完成标准</dt><dd>本任务的单元测试与验收测试通过（审查员会再跑一遍）</dd></dl></div>
     <div class="arrow">➜<span>${Math.round(mins)} 分钟</span></div>
     <div class="deliver"><h4>交回来的</h4>
       <div class="kv"><div><b>${o.files.length}</b><span>个文件</span></div><div><b>+${add}</b><span>行，其中测试 +${testAdd}</span></div><div><b>${runs.length}</b><span>次运行（含解冲突）</span></div></div>

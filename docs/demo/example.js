@@ -216,30 +216,30 @@
     tokens: { input: Math.round(d * 41000), output: Math.round(d * 2600), cache_read: Math.round(d * 160000) },
   }));
 
-  // 事件：阶段推进、提交、预检、合并、审查结论、冲突退回
+  // 事件：阶段推进、提交、审查（含本任务测试）、合并、冲突退回
   const ev = (m, type, task, text, extra = {}) => ({ ts: T(m), type, task, text, ...extra });
   const events = [
     ev(1, 'flow', null, '收到需求文档，进入 P0 规格'),
     ev(24, 'gate', null, 'P0 规格通过检查：14 条需求、75 条 AC，用户确认'),
     ev(68, 'merge', 'T-001', '契约与计划合入集成分支（41 个文件）'),
     ev(69, 'gate', null, '计划获批：4 个阶段、15 个实现任务'),
-    ev(112, 'submit', 'T-002', 'T-002 提交，预检通过（单元 38/38、验收 4/4）'),
-    ev(119, 'review', 'T-002.rv', 'S0 审查：2 条问题（令牌未带门店范围；迁移缺租户索引）'),
+    ev(112, 'submit', 'T-002', 'T-002 提交'),
+    ev(119, 'review', 'T-002.rv', 'T-002 审查：本任务测试 42/42 通过；2 条问题（令牌未带门店范围；迁移缺租户索引）'),
     ev(131, 'submit', 'T-002', 'T-002 修复 2 条后重新提交'),
     ev(134, 'review', 'T-002.rv-2', 'S0 复审：全部解决'),
     ev(135, 'merge', 'T-002', 'T-002 合入集成分支（64 个文件）'),
     ev(136, 'gate', null, 'S0 门禁：全量测试通过，进入 S1：派发 3 个 worker'),
-    ev(166, 'submit', 'T-003', 'T-003 提交，预检通过'), ev(172, 'merge', 'T-003', 'T-003 合入'),
-    ev(181, 'submit', 'T-004', 'T-004 提交，预检通过'), ev(188, 'merge', 'T-004', 'T-004 合入'),
+    ev(166, 'submit', 'T-003', 'T-003 提交，审查通过（本任务测试通过）'), ev(172, 'merge', 'T-003', 'T-003 合入'),
+    ev(181, 'submit', 'T-004', 'T-004 提交，审查通过（本任务测试通过）'), ev(188, 'merge', 'T-004', 'T-004 合入'),
     ev(186, 'submit', 'T-006', 'T-006 提交，等 T-005 合入后同步'),
-    ev(188, 'submit', 'T-005', 'T-005 提交，预检通过'), ev(195, 'merge', 'T-005', 'T-005 合入'), ev(196, 'merge', 'T-006', 'T-006 同步 T-005 后预检通过，合入'),
-    ev(231, 'submit', 'T-007', 'T-007 提交，预检通过（本任务的并发抢购测试 200 次）'), ev(239, 'merge', 'T-007', 'T-007 合入'),
+    ev(188, 'submit', 'T-005', 'T-005 提交，审查通过（本任务测试通过）'), ev(195, 'merge', 'T-005', 'T-005 合入'), ev(196, 'merge', 'T-006', 'T-006 同步 T-005 后复审通过，合入'),
+    ev(231, 'submit', 'T-007', 'T-007 提交，审查通过（本任务的并发抢购测试 200 次通过）'), ev(239, 'merge', 'T-007', 'T-007 合入'),
     ev(254, 'gate', null, 'S1 门禁：全量单元 168/168、验收 64/64 通过，进入 S2'),
     ev(285, 'submit', 'T-008', 'T-008 提交'), ev(291, 'merge', 'T-008', 'T-008 合入'),
     ev(303, 'submit', 'T-011', 'T-011 提交，等 T-009（软依赖）合入'),
-    ev(312, 'submit', 'T-009', 'T-009 提交，预检通过'), ev(318, 'merge', 'T-009', 'T-009 合入（改了 checkout.ts、routes.ts）'),
+    ev(312, 'submit', 'T-009', 'T-009 提交，审查通过（本任务测试通过）'), ev(318, 'merge', 'T-009', 'T-009 合入（改了 checkout.ts、routes.ts）'),
     ev(319, 'conflict', 'T-011', 'T-011 合并时冲突：src/server/orders/checkout.ts、src/server/app/routes.ts → 退回 T-011 的 worker'),
-    ev(329, 'submit', 'T-011', 'T-011 解决冲突后重新提交，预检通过'), ev(330, 'merge', 'T-011', 'T-011 合入'),
+    ev(329, 'submit', 'T-011', 'T-011 解决冲突后重新提交，审查通过（本任务测试通过）'), ev(330, 'merge', 'T-011', 'T-011 合入'),
     ev(330, 'submit', 'T-010', 'T-010 提交'), ev(336, 'merge', 'T-010', 'T-010 合入'),
     ev(345, 'submit', 'T-012', 'T-012 提交'), ev(350, 'merge', 'T-012', 'T-012 合入'),
     ev(360, 'submit', 'T-013', 'T-013 提交'), ev(365, 'merge', 'T-013', 'T-013 合入'),
@@ -482,8 +482,7 @@ window.addEventListener('online', async () => {
 // src/server/orders/checkout.ts
 - const total = applyCouponInline(lines, couponId);
 + hooks.beforePricing = (l) => applyDiscounts(l, ctx);` },
-      { title: '重新预检、合入', caption: '解决冲突用了 8 分钟。本任务的单元测试和验收测试通过后合入，S2 继续。', code: `预检  类型 ✓  lint ✓
-      单元 24/24  验收 6/6（本任务）
+      { title: '复审、合入', caption: '解决冲突用了 8 分钟。审查员复查改动、跑本任务的测试，通过后合入，S2 继续。', code: `复审  本任务单元 24/24  验收 6/6 ✓
 合并  T-011 → 集成分支 ✓
 用时  冲突 → 合入 11 分钟` },
     ],

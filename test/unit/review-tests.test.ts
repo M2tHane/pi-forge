@@ -1,7 +1,7 @@
-// 偏离 117：审查者要运行的、本 task 范围内的测试命令（纯函数）。
+// 审查者要运行的、本 task 范围内的测试命令（纯函数）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { reviewTestCommands, sharedSuiteSelection } from '../../src/core/stage/review-tests.ts';
+import { reviewTestCommands } from '../../src/core/stage/review-tests.ts';
 
 test('reviewTestCommands：没有改动单元测试就跳过 test；不跑 typecheck、lint；acceptance 只跑 -- <task>', () => {
   const cmds = { typecheck: 'pnpm tsc', lint: 'pnpm lint', test: 'pnpm vitest run', acceptance: 'pnpm acc' };
@@ -29,13 +29,7 @@ test('reviewTestCommands：lean 共享目录只跑本任务的场景文件；没
   assert.match(none.skipped[0]!, /验收测试.*阶段门禁/);
 });
 
-test('sharedSuiteSelection：场景文件逐个列出；只改辅助文件时退回整个目录；没改动返回空', () => {
-  assert.deepEqual(sharedSuiteSelection(['src/x.ts', 'tests/acceptance/suite/a.test.js', 'tests/acceptance/suite/_helpers.js', 'tests/acceptance/T-1/z.js'], 'suite'), ['suite/a.test.js']);
-  assert.deepEqual(sharedSuiteSelection(['tests/acceptance/suite/_helpers.js'], 'suite'), ['suite']);
-  assert.deepEqual(sharedSuiteSelection(['src/x.ts'], 'suite'), []);
-});
-
-test('acceptanceAudit（偏离 118）：程序扫描本 task 每条 AC 有没有带编号的验收测试；不是 worker 写测试时返回 null', async () => {
+test('acceptanceAudit：程序扫描本 task 每条 AC 有没有带编号的验收测试；不是 worker 写测试时返回 null', async () => {
   const { tmpRepo } = await import('../helpers/repo.ts');
   const { acceptanceAudit } = await import('../../src/core/stage/review-tests.ts');
   const { mkTask } = await import('../helpers/tasks.ts');

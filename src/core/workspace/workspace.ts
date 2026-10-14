@@ -18,7 +18,7 @@ export { LOCKFILES, MANIFESTS, lockHash, hasManifest } from './dep-files.ts';
 
 const SETUP_TIMEOUT_MS = 15 * 60_000;
 
-export const acctestCacheRoot = (root: string) => path.join(worktreesRoot(root), '.acctest-cache');
+export const depsCacheRoot = (root: string) => path.join(worktreesRoot(root), '.deps-cache');
 
 /** 缓存键 = 锁文件哈希 + install 命令内容（纯函数）；没有锁文件时为 null */
 export function cacheKey(lock: string | null, install: string): string | null {
@@ -37,8 +37,8 @@ export function hardlinkTree(src: string, dst: string): void {
   linkSync(src, dst);
 }
 
-/** 缓存目录只接受工作区内的相对路径 */
-export const cacheDirsOf = (config: FlowConfig) => (config.raw.acctest_workspace?.cache ?? []).filter((d) => d && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
+/** 只读工作区（stage-qa）的依赖缓存目录：shared_env.deps 显式配置时才启用；只接受工作区内的相对路径 */
+export const cacheDirsOf = (config: FlowConfig): string[] => (config.raw.shared_env?.deps ?? []).filter((d: string) => d && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
 
 export interface SetupLog { step: string; ok: boolean; detail?: string }
 export type WorkspaceMode = 'readonly' | 'writable';
@@ -49,7 +49,7 @@ export interface WorkspaceResult {
   reason?: string;
   /** readonly 模式下依赖目录来自缓存 */
   cached?: boolean;
-  /** 共享构建环境（偏离 119）：linked 依赖目录链接自共享环境；added 先把追加的依赖装进共享环境再链接；private 依赖有改动，使用私有副本 */
+  /** 共享构建环境：linked 依赖目录链接自共享环境；added 先把追加的依赖装进共享环境再链接；private 依赖有改动，使用私有副本 */
   shared?: 'linked' | 'added' | 'private';
   ms: number;
   log: SetupLog[];
@@ -108,7 +108,7 @@ export async function prepareWorkspace(root: string, config: FlowConfig, dir: st
   const key = opts.mode === 'readonly' && dirs.length
     ? cacheKey(lockHash(files.map((f) => ({ path: f, content: existsSync(path.join(dir, f)) ? readFileSync(path.join(dir, f)) : '' }))), install)
     : null;
-  const cached = key ? path.join(acctestCacheRoot(root), key) : null;
+  const cached = key ? path.join(depsCacheRoot(root), key) : null;
   let hit = false;
   if (cached && existsSync(path.join(cached, '.complete'))) {
     try {

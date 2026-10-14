@@ -1,4 +1,4 @@
-// 来源：pi-flow src/core/verify-runner.ts @ 31f3f15（从 workspace/verify-runner.ts 抽出：state-machine 在最底层也要用，偏离 106）
+// 来源：pi-flow src/core/verify-runner.ts @ 31f3f15（从 workspace/verify-runner.ts 抽出：state-machine 在最底层也要用）
 // 失败签名：同样的失败重复出现时签名相同。
 import { createHash } from 'node:crypto';
 

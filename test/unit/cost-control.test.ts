@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseConfig } from '../../src/core/state/config.ts';
-import { escalationModel, resolveModelRef } from '../../src/core/insight/cost-control.ts';
+import { escalationModel, fallbackModel, resolveModelRef } from '../../src/core/insight/cost-control.ts';
 import { TEMPLATE_YAML, TEST_YAML } from '../helpers/config.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
 
@@ -15,7 +15,7 @@ test('模型引用与升级：档位或 provider/model；占位符取不到；�
   assert.equal(resolveModelRef(config, 'cheap'), null);
   assert.equal(resolveModelRef(config, 'x/y'), 'x/y');
   const none = { version: 1 as const, roles: {} };
-  assert.equal(escalationModel(config, none, 'test-author', 'p/medium'), 'p/strong');
+  assert.equal(escalationModel(config, none, 'reviewer', 'p/medium'), 'p/strong');
   assert.equal(escalationModel(config, none, 'worker', 'p/strong'), null, 'worker 默认 strong，没有上一档');
   assert.equal(escalationModel(config, none, 'architect', 'p/strong'), null, 'strong 没有上一档');
   assert.equal(escalationModel(config, { version: 1, roles: { 'worker': { escalate_model: 'q/big' } } }, 'worker', 'p/medium'), 'q/big');
@@ -23,3 +23,12 @@ test('模型引用与升级：档位或 provider/model；占位符取不到；�
   assert.throws(() => parseConfig(YAML.replace('roles:\n', 'roles:\n  x-role: { model: medium, tools: [read], escalate_model: huge }\n')), /模型档位 huge 未在 models 中定义/);
 });
 
+
+test('兜底模型：/forge-config 优先于 workflow.yaml 的 models.fallback；占位符或没写时为 null', () => {
+  const none = { version: 1 as const, roles: {} };
+  assert.equal(fallbackModel(config, none), null);
+  const withFb = parseConfig(YAML.replace('models:\n', 'models:\n  fallback: "z/fb"\n'));
+  assert.equal(fallbackModel(withFb, none), 'z/fb');
+  assert.equal(fallbackModel(withFb, { ...none, fallback_model: 'q/own' }), 'q/own');
+  assert.equal(fallbackModel(parseConfig(YAML.replace('models:\n', 'models:\n  fallback: "<provider/model>"\n')), none), null);
+});

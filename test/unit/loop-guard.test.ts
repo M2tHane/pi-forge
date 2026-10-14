@@ -117,3 +117,19 @@ test('滑动窗口：来回改成同样的两种内容（改过去又改回来�
     assert.ok(warned);
   } finally { cleanup(); }
 });
+
+test('review 任务结束后（worktree 已删除、字段为空）读自己派发时的工作目录：不被当作越界', async () => {
+  const repo = tmpRepo();
+  try {
+    const store = await StateStore.init(repo.dir, { now, limits: config.limits });
+    const flow = await store.createFlow({ mode: 'build', title: 'rv', stages: ['S3'], base_sha: 'abc' });
+    await store.addTasks(flow.id, [mkTask('T-001.rv', { kind: 'review', role: 'reviewer', scopes: ['review'], writes: [] })], 'architect');
+    const rt = new SubagentRuntime({ root: repo.dir, flow: flow.id, task: 'T-001.rv', run: 'r-1', token: 't', role: 'reviewer' }, store, config, now);
+    const dispatchCwd = path.join(path.dirname(repo.dir), `${path.basename(repo.dir)}.gone-wt`);
+    mkdirSync(path.join(dispatchCwd, 'src/server'), { recursive: true });
+    assert.equal(rt.guardContext(dispatchCwd).workspaceRoot, dispatchCwd);
+    const g = await rt.gate({ toolName: 'read', input: { path: 'src/server/export.ts' } }, dispatchCwd);
+    assert.equal(g.block, false);
+    rmSync(dispatchCwd, { recursive: true, force: true });
+  } finally { repo.cleanup(); }
+});

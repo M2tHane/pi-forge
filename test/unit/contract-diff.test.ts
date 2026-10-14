@@ -32,6 +32,17 @@ test('允许：新增 path、operation、响应状态码', () => {
   ok({ 'paths/datasource.yaml': CONTRACTS['paths/datasource.yaml']!.replace("      '201': { description: 已创建 }", "      '201': { description: 已创建 }\n      '400': { description: 参数错误 }") });
 });
 
+test('模块文件包在 paths: 下也接受：新增 path 与 operation 允许，path item 下新增非 operation 键仍不允许', () => {
+  const wrapped = "paths:\n  /api/boards:\n    get:\n      responses:\n        '200': { description: ok }\n";
+  const base = { ...CONTRACTS, 'paths/boards.yaml': wrapped };
+  const grown = { ...base, 'paths/boards.yaml': wrapped + "  /api/boards/{id}/archive:\n    post:\n      responses:\n        '200': { description: ok }\n" };
+  assert.deepEqual(contractDiff(base, grown, 'boards'), []);
+  const op = { ...base, 'paths/boards.yaml': wrapped.replace('    get:', "    post:\n      responses:\n        '201': { description: ok }\n    get:") };
+  assert.deepEqual(contractDiff(base, op, 'boards'), []);
+  const badKey = { ...base, 'paths/boards.yaml': wrapped.replace('    get:', '    summary: x\n    get:') };
+  assert.ok(contractDiff(base, badKey, 'boards').some((v) => /只能新增 operation/.test(v.message)));
+});
+
 test('允许：响应与请求 schema 新增可选字段，新增 schema', () => {
   ok({ 'components/datasource.yaml': CONTRACTS['components/datasource.yaml']!.replace('name: { type: string } }', 'name: { type: string }, note: { type: string } }') + 'Extra:\n  type: object\n  required: [a]\n  properties: { a: { type: string } }\n' });
   const inline = `/api/datasources:
@@ -125,31 +136,55 @@ test('根文件 openapi.yaml：新增本模块 $ref 允许', () => {
   });
 });
 
-test('根文件 openapi.yaml：指向别的模块、带多余键、改已有键、删键、改 components 不允许', () => {
+test('根文件 openapi.yaml：已有路径可追加 operation 与可选参数、components 可追加 schema 与可选字段；改引用、删路径、改已有值、改 info 不允许', () => {
   const root = CONTRACTS['openapi.yaml']!;
   const withPath = (body: string) => ({ 'openapi.yaml': root.replace('paths:\n', `paths:\n  /api/new:\n${body}`) });
-  bad(withPath("    $ref: './paths/team.yaml#/~1api~1new'\n"), /paths\.\/api\/new/);
-  bad(withPath("    get: { responses: { '200': { description: ok } } }\n"), /paths\.\/api\/new/);
+  // 新路径：任意模块的 $ref 或内联 path item 都可以；$ref 带多余键不行
+  ok(withPath("    $ref: './paths/team.yaml#/~1api~1new'\n"));
+  ok(withPath("    get: { responses: { '200': { description: ok } } }\n"));
   bad(withPath("    $ref: './paths/datasource.yaml#/x'\n    summary: s\n"), /paths\.\/api\/new/);
   bad({ 'openapi.yaml': root.replace("./paths/datasource.yaml#/~1api~1datasources", "./paths/datasource.yaml#/~1api~1other") }, /修改已有路径/);
   bad({ 'openapi.yaml': root.replace("  /api/teams:\n    $ref: './paths/team.yaml#/~1api~1teams'\n", '') }, /删除/);
   bad({ 'openapi.yaml': root.replace('required: [code, message]', 'required: [code]') }, /components/);
-  bad({ 'openapi.yaml': root.replace('paths:\n', '    Extra: { type: string }\npaths:\n') }, /components/);
   bad({ 'openapi.yaml': root.replace('1.0.0', '2.0.0') }, /info/);
-  // 未指定 module 时，任意 ./paths/*.yaml 引用都可以
-  assert.deepEqual(contractDiff(CONTRACTS, edit(withPath("    $ref: './paths/team.yaml#/~1api~1new'\n")), undefined), []);
+  // components：新增 schema、已有 schema 新增可选字段允许；改已有字段不允许
+  ok({ 'openapi.yaml': root.replace('paths:\n', '    Extra: { type: string }\npaths:\n') });
+  ok({ 'openapi.yaml': root.replace('message: { type: string } }', 'message: { type: string }, hint: { type: string } }') });
+  bad({ 'openapi.yaml': root.replace('code: { type: string }', 'code: { type: integer }') }, /components\.schemas\.Error/);
+  // 根文件内联的 path item：追加可选参数允许，必填参数不允许
+  const inline = root.replace('paths:\n', "paths:\n  /api/inline:\n    get:\n      parameters:\n        - { name: q, in: query, schema: { type: string } }\n      responses: { '200': { description: ok } }\n");
+  const base = { ...CONTRACTS, 'openapi.yaml': inline };
+  const more = inline.replace("        - { name: q, in: query, schema: { type: string } }\n", "        - { name: q, in: query, schema: { type: string } }\n        - { name: archived, in: query, schema: { type: boolean } }\n");
+  assert.deepEqual(contractDiff(base, { ...base, 'openapi.yaml': more }, 'datasource'), []);
+  const must = inline.replace("        - { name: q, in: query, schema: { type: string } }\n", "        - { name: q, in: query, schema: { type: string } }\n        - { name: id, in: query, required: true, schema: { type: string } }\n");
+  assert.ok(contractDiff(base, { ...base, 'openapi.yaml': must }, 'datasource').some((v) => /必须是可选/.test(v.message)));
+  const changed = inline.replace("- { name: q, in: query, schema: { type: string } }", "- { name: q, in: query, schema: { type: integer } }");
+  assert.ok(contractDiff(base, { ...base, 'openapi.yaml': changed }, 'datasource').some((v) => /不得修改已有参数/.test(v.message)));
 });
 
-test('文件归属：改别的模块的文件不允许；未指定 module 时不检查', () => {
+test('模块文件的 operation：新增 parameters 键（全部可选）允许；已有 parameters 追加可选参数允许，删参数不允许', () => {
+  const file = CONTRACTS['paths/datasource.yaml']!;
+  const withParams = file.replace('  post:', "  post:\n    parameters:\n      - { name: dry, in: query, schema: { type: boolean } }");
+  ok({ 'paths/datasource.yaml': withParams });
+  bad({ 'paths/datasource.yaml': file.replace('  post:', "  post:\n    parameters:\n      - { name: team, in: header, required: true, schema: { type: string } }") }, /必须是可选/);
+  const base = { ...CONTRACTS, 'paths/datasource.yaml': withParams };
+  assert.deepEqual(contractDiff(base, { ...base, 'paths/datasource.yaml': withParams.replace("{ name: dry, in: query, schema: { type: boolean } }", "{ name: dry, in: query, schema: { type: boolean } }\n      - { name: verbose, in: query, schema: { type: boolean } }") }, 'datasource'), []);
+  const two = withParams.replace("{ name: dry, in: query, schema: { type: boolean } }", "{ name: dry, in: query, schema: { type: boolean } }\n      - { name: verbose, in: query, schema: { type: boolean } }");
+  const base2 = { ...CONTRACTS, 'paths/datasource.yaml': two };
+  assert.ok(contractDiff(base2, { ...base2, 'paths/datasource.yaml': withParams }, 'datasource').some((v) => /不得删除或改名已有参数/.test(v.message)));
+  assert.ok(contractDiff(base, { ...base, 'paths/datasource.yaml': file }, 'datasource').some((v) => /不得删除或改名已有内容 parameters/.test(v.message)));
+});
+
+test('文件归属：改别的模块的契约文件也可以，只看是否追加', () => {
   const next = { 'paths/team.yaml': CONTRACTS['paths/team.yaml']! + "/api/teams/{id}:\n  get:\n    operationId: g\n    responses:\n      '200': { description: ok }\n" };
-  bad(next, /datasource|变更请求/);
-  bad({ 'errors/common.yaml': CONTRACTS['errors/common.yaml']! + 'X: { http: 400, message: x }\n' }, /common/);
+  ok(next);
+  ok({ 'errors/common.yaml': CONTRACTS['errors/common.yaml']! + 'X: { http: 400, message: x }\n' });
   assert.deepEqual(contractDiff(CONTRACTS, edit(next), undefined), []);
 });
 
-test('新建文件：本模块允许，别的模块不允许；删除文件不允许', () => {
+test('新建文件：模块文件允许（不限本模块）；删除文件不允许', () => {
   ok({ 'paths/datasource2.yaml': 'x: 1\n' }, 'datasource2');
-  bad({ 'paths/datasource2.yaml': 'x: 1\n' }, /变更请求/);
+  ok({ 'paths/datasource2.yaml': 'x: 1\n' });
   ok({ 'modules/datasource.md': '# datasource\n\n## f\n' });
   bad({ 'paths/team.yaml': null }, /.*/, undefined);
   bad({ 'errors/datasource.yaml': null }, /删除/);

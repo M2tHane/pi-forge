@@ -1,4 +1,4 @@
-// M9 脚本共用的纯函数与小工具（docs/M9-PLAN.md 第 3、5 节）：
+// M9 脚本共用的纯函数与小工具（M9 实验方案，原 docs/M9-PLAN.md，见 git 历史）：
 // hidden.mjs 输出解析与计分、回归、agent 时间、问句识别、项目自带测试的结果解析、summary.json 的类型。
 // real-build.ts 与 native.ts 都写同一种 summary.json，score.ts 汇总它。
 import { spawn } from 'node:child_process';

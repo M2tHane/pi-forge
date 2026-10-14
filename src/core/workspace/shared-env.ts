@@ -1,4 +1,4 @@
-// 共享构建环境（偏离 119）：S0 结束后一次性装好依赖、起好数据库服务器等，之后所有 worktree 链接同一份依赖目录，不再各自 install。
+// 共享构建环境：S0 结束后一次性装好依赖、起好数据库服务器等，之后所有 worktree 链接同一份依赖目录，不再各自 install。
 //  - 环境目录 <项目>.worktrees/.env-shared/：集成分支 HEAD 的导出树（不是 git worktree，doctor 不会当孤儿清理）+ 安装好的依赖目录；
 //    元数据 <项目>.worktrees/.env-shared.json（与 .resources.json 同一做法：不在 .forge/ 内，程序写）；独占锁 .env-shared.lock。
 //  - worktree 准备（workspace.ts）：依赖清单与共享环境相同 → 符号链接；纯追加（只限根目录 package.json）→ 先在锁内装进共享环境再链接；
@@ -45,9 +45,9 @@ export interface SharedEnvMeta {
 }
 
 export const sharedEnvEnabled = (config: FlowConfig) => config.raw.shared_env?.enabled !== false;
-/** 依赖目录：shared_env.deps，其次 acctest_workspace.cache，默认 node_modules；只接受工作区内的相对路径 */
+/** 依赖目录：shared_env.deps，默认 node_modules；只接受工作区内的相对路径 */
 export function sharedDepsDirs(config: FlowConfig): string[] {
-  const raw = config.raw.shared_env?.deps ?? config.raw.acctest_workspace?.cache ?? DEFAULT_SHARED_DEPS;
+  const raw: string[] = config.raw.shared_env?.deps ?? DEFAULT_SHARED_DEPS;
   const ok = raw.filter((d) => d && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
   return ok.length ? ok : DEFAULT_SHARED_DEPS;
 }

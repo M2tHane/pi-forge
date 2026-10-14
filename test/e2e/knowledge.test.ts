@@ -13,8 +13,8 @@ import { applyDrafts, listDrafts } from '../../src/core/plan/rules-draft.ts';
 import { renderStatus } from '../../src/core/ops/status-view.ts';
 
 // 有 FAIL 的代码只有和集成分支上的 src/server/later.ts 放在一起才失败：审查能过，合并后验证才拦下
-// 偏离 117：合并只跑 merge_check，用它拦下
-const YAML = `${PROJECT_YAML.replace(/(  acceptance_list: .*\n)/, '$1  merge_check: "! { grep -rqs FAIL src/server && test -e src/server/later.ts; }"\n')}
+// 合并只跑 merge_check，用它拦下
+const YAML = `${PROJECT_YAML.replace(/(  acceptance: .*\n)/, '$1  merge_check: "! { grep -rqs FAIL src/server && test -e src/server/later.ts; }"\n')}
 knowledge:
   auto_candidates: true
 `;
@@ -32,10 +32,10 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
   const p = await setupProject({ yaml: YAML, tasks: [
     mkTask('T-001', { verify: ['test'] }),
     mkTask('T-002', { verify: [], deps: [{ task: 'T-001', type: 'hard', reason: '需要订单模型' }] }),
-    mkTask('T-003', { role: 'researcher', scopes: ['research'], writes: ['docs/research/t-003/**'], verify: [] }),
+    mkTask('T-003', { kind: 'doc', role: 'architect', scopes: ['plan'], writes: ['docs/arch/**'], verify: [] }),
   ] });
   try {
-    const settings = { version: 1 as const, roles: { worker: { model: 'f/m' }, reviewer: { model: 'f/m' }, researcher: { model: 'f/m' } } };
+    const settings = { version: 1 as const, roles: { worker: { model: 'f/m' }, reviewer: { model: 'f/m' }, architect: { model: 'f/m' } } };
     const { engine, launcher, errors } = makeEngine(p, async (_role, nth, a) => {
       if (a.env.task === 'T-001') {
         if (nth === 1) {
@@ -51,7 +51,7 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
         return implement(a, 'src/server/t-001/a.ts', `订单模型已建好（第 ${nth} 次）`, nth === 1 ? 'FAIL\n' : 'x\n');
       }
       if (a.env.task === 'T-002') return implement(a, 'src/server/t-002/a.ts', '完成');
-      return implement(a, 'docs/research/t-003/a.md', '完成');
+      return implement(a, 'docs/arch/t-003.md', '完成');
     }, settings, { beforeMerge: async () => {
       // 第一次合并前，别处的改动先进了集成分支
       if (!p.git('ls-tree', '--name-only', p.store.readFlow(p.flowId).integration_branch, 'src/server/later.ts')) {

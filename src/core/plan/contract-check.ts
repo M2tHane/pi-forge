@@ -50,7 +50,7 @@ const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 
 /** 解析全部契约文件，给出符号目录与结构错误。文件为空集合时报"缺少契约"。 */
 export function parseContracts(all: ContractFiles): ContractCheck {
-  // 空文件（含 /forge init 留下的 .gitkeep）视为不存在：architect 没有删除能力，不需要的文件清空即可（偏离 83）
+  // 空文件（含 /forge init 留下的 .gitkeep）视为不存在：architect 没有删除能力，不需要的文件清空即可
   const files: ContractFiles = Object.fromEntries(Object.entries(all).filter(([, text]) => text.trim() !== ''));
   const errors: ContractIssue[] = [];
   const warnings: ContractIssue[] = [];

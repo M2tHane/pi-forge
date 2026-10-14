@@ -1,0 +1,30 @@
+openapi: 3.1.0
+info: { title: mini-boards, version: 0.1.0 }
+paths:
+  /boards:
+    post:
+      summary: 创建看板
+      responses:
+        '201': { description: 看板, content: { application/json: { schema: { $ref: '#/components/schemas/Board' } } } }
+        '400': { description: 校验失败, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    get:
+      summary: 看板列表
+      responses:
+        '200': { description: 看板数组 }
+components:
+  schemas:
+    Board:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        createdAt: { type: string, format: date-time }
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, enum: [E_VALIDATION, E_NOT_FOUND] }
+            message: { type: string }

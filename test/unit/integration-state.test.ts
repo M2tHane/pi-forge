@@ -14,13 +14,11 @@ test('动态 S 阶段：计划与修订同时保存阶段顺序、plan_mode 和�
     const store = await StateStore.init(r.dir, { git: false });
     const f = await store.createFlow({ mode: 'build', title: '阶段存储', stages: ['P0', 'P1'], base_sha: null });
     const stages = [{ id: 'S0', goal: '骨架', exit: ['REQ-001'] }, { id: 'S1', goal: '业务', exit: ['REQ-002'] }];
-    const planned = await store.setStages(f.id, stages, 'standard');
+    const planned = await store.setStages(f.id, stages);
     assert.deepEqual(planned.stages, ['P0', 'P1', 'S0', 'S1']);
     assert.deepEqual(planned.s_stages, stages);
-    assert.equal(planned.plan_mode, 'standard');
-    const revised = await store.setStages(f.id, [stages[0]!], 'lean', 'human', true);
+    const revised = await store.setStages(f.id, [stages[0]!], 'human', true);
     assert.deepEqual(revised.stages, ['P0', 'P1', 'S0']);
-    assert.equal(revised.plan_mode, 'lean');
     assert.deepEqual(store.readEvents().filter((e) => e.type.startsWith('stages_')).map((e) => e.type), ['stages_planned', 'stages_revised']);
     const version = store.readState().version;
     await assert.rejects(store.setStages(f.id, [stages[0]!, stages[0]!], 'standard'), /编号重复/);
@@ -52,17 +50,17 @@ test('阶段打回：awaiting_human 与 needs_human 回 active 时各记录一�
   }
 });
 
-test('预检 facts：最新 .at 与软依赖未完成时，调用方不能伪造等待条件', async () => {
+test('预检 facts：软依赖未完成时，调用方不能伪造等待条件', async () => {
   const r = tmpRepo();
   try {
     const store = await StateStore.init(r.dir, { git: false });
     const f = await store.createFlow({ mode: 'build', title: '等待事实', stages: ['S3'], base_sha: 'base' });
-    await store.addTasks(f.id, [mkTask('T-001', { deps: [soft('T-002')] }), mkTask('T-002'), mkTask('T-001.at-2', { kind: 'acctest', for_task: 'T-001', writes: [] })], 'architect');
+    await store.addTasks(f.id, [mkTask('T-001', { deps: [soft('T-002')] }), mkTask('T-002')], 'architect');
     await store.transitionTask(f.id, 'T-001', { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
     await store.transitionTask(f.id, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher', patch: { lease: lease('r-1'), worktree: '/worktree', branch: 'task', base_sha: 'base' } });
     await store.appendHandoff(f.id, 'T-001', '完成', 'run:r-1');
     await store.transitionTask(f.id, 'T-001', { to: 'awaiting_inputs', trigger: 'submit', actor: 'run:r-1', facts: { token: 'r-1', diff_files: ['src/server/t-001/a.ts'] } });
-    await assert.rejects(store.transitionTask(f.id, 'T-001', { to: 'checking', trigger: 'inputs_ready', actor: 'engine', facts: { inputs_synced: true, latest_acctest_done: true, soft_deps_done: true, status_of: new Map([['T-002', 'done']]) } }), /最新验收测试尚未 done.*软依赖生产方尚未 done/s);
+    await assert.rejects(store.transitionTask(f.id, 'T-001', { to: 'checking', trigger: 'inputs_ready', actor: 'engine', facts: { inputs_synced: true, soft_deps_done: true, status_of: new Map([['T-002', 'done']]) } }), /软依赖生产方尚未 done/s);
     assert.equal(store.readTask(f.id, 'T-001').status, 'awaiting_inputs');
   } finally { r.cleanup(); }
 });

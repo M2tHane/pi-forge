@@ -69,7 +69,7 @@ test('/forge-build 入库 PRD 与原型后停在 P0，启动主会话讨论，�
   } finally { p.cleanup(); }
 });
 
-test('/forge-build 旧参数与路径错误不建流程；没有契约时 feature 提示先 adopt', async () => {
+test('/forge-build 旧参数与路径错误不建流程', async () => {
   const p = await setupProject();
   try {
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
@@ -95,8 +95,6 @@ test('/forge-build 旧参数与路径错误不建流程；没有契约时 featur
       assert.equal(p.store.readState().active_flow, null);
       assert.equal(p.git('for-each-ref', '--format=%(refname)', 'refs/heads/flow/'), branches);
     }
-    assert.match(await runFlowBuild('--feature --prd inputs/prd.md', e), /\/forge init --adopt/);
-    assert.equal(p.store.readState().active_flow, null);
     assert.match(await runFlowBuild('--help', e), /--prd <文件或目录> \[--prototype <路径>\]/);
     assert.match(await runFlowCommand('help', e), /\/forge-build \["<项目名>"\]/);
     assert.doesNotMatch(await runFlowBuild('help', e), /--arch|--design|--from/);

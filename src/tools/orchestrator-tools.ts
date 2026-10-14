@@ -1,68 +1,78 @@
 // 来源：pi-flow src/tools/orchestrator-tools.ts @ 31f3f15
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
-import { checkScope } from '../core/workspace/scope.ts';
-import { submitSpec, proposeSpecAmend, amendSummary } from '../core/spec/spec-flow.ts';
-import { specStatus } from '../core/plan/spec-amend.ts';
-import { ADOPT_STAGE, adoptApprovalSummary } from '../core/plan/adopt.ts';
-import { featurePermissionSummary, submitFeatureSpec } from '../core/plan/feature-spec.ts';
+import { submitSpec } from '../core/spec/spec-flow.ts';
 import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan/plan-flow.ts';
 import { runStageGate } from '../core/stage/gates.ts';
 import { activePauses, describePause } from '../core/engine/model-pause.ts';
 import { Type, type Static } from 'typebox';
 import type { StateStore } from '../core/state/state-store.ts';
 import type { Engine } from '../core/engine/dispatcher.ts';
-import { TASK_STATUSES, type TaskFile } from '../core/state/schemas.ts';
+import { TASK_STATUSES, isLightFlow, type TaskFile } from '../core/state/schemas.ts';
 import { FlowToolError, type ToolResult } from './subagent-tools.ts';
 import type { FlowConfig } from '../core/state/config.ts';
 import { actionsNeeded } from '../core/ops/status-view.ts';
 import { REVIEW_GUIDE, awaitingReview, timeoutReviewText } from '../core/engine/run-budget.ts';
 import { DispatchError } from '../core/engine/dispatcher.ts';
 import { fixHelpHint, fixStatusLine, readFixLog } from '../modes/fix.ts';
+import { ChangeStartError, startChange } from '../modes/change.ts';
+import type { ChangePlanInput } from '../core/plan/change-plan.ts';
 import { isFinished } from '../core/state/state-store.ts';
-import { ChangeError, changeStatus, requestChange } from '../core/plan/change-flow.ts';
+import { ChangeError, changeStatus, requestChange, specStatus } from '../core/plan/change-flow.ts';
 import { ChangeRequestParams } from './subagent-tools.ts';
+import { DECISION_GUIDE, DecisionError, decide, decisionsText, pendingDecisions } from '../core/engine/decisions.ts';
+import { ChangeError as ApproveError } from '../core/plan/change-flow.ts';
+import { StateError } from '../core/state/state-store.ts';
+import { postMergeStatus } from '../core/engine/post-merge-test.ts';
 
 export const SpecParams = Type.Object({
   requirements: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
   screens: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
   permissions: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
   glossary: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
-  /** feature 流程：增量规格的名字与内容（## 需求、## 页面、## 权限三节） */
-  feature_name: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
-  feature: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
-}, { additionalProperties: false });
-export const SpecAmendParams = Type.Object({
-  name: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
-  content: Type.String({ minLength: 1, maxLength: 120000 }),
-  reason: Type.String({ minLength: 1, maxLength: 4000 }),
 }, { additionalProperties: false });
 export async function flowSpec(root: string, store: StateStore, config: FlowConfig, p: Static<typeof SpecParams>): Promise<ToolResult> {
   const id = activeFlowId(store);
   const base = [p.requirements, p.screens, p.permissions, p.glossary];
-  if (store.readFlow(id).mode === 'feature') {
-    if (!p.feature || !p.feature_name) throw new FlowToolError('feature 流程提交增量规格：用 feature_name 与 feature（## 需求、## 页面、## 权限三节）。基线规格已在主分支上时不要传 requirements 等四份文件。');
-    if (base.some(Boolean) && !base.every(Boolean)) throw new FlowToolError('基线规格要么四份（requirements、screens、permissions、glossary）都给，要么都不给。');
-    const f = await submitFeatureSpec(root, store, id, { name: p.feature_name, content: p.feature, ...(base.every(Boolean) ? { baseline: { requirements: p.requirements!, screens: p.screens!, permissions: p.permissions!, glossary: p.glossary! } } : {}) });
-    const g = await runStageGate(root, store, config, id);
-    const perms = g.passed ? featurePermissionSummary(root, store.readFlow(id)) : [];
-    return { text: g.passed ? `增量规格已提交到 ${f.path}，spec-lint（基线 + 全部 feature）通过，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${f.lint.warnings.length ? `\n警告：\n${f.lint.warnings.map((i) => i.message).join('\n')}` : ''}${perms.length ? `\n向用户单独列出权限变更：\n${perms.join('\n')}` : ''}` : `集成分支上的 spec-lint 未通过，已回到规格讨论，请修正后用 forge_spec 重新提交：\n${g.reasons.join('\n')}`, details: { sha: f.sha, lint: f.lint, gate: g } };
-  }
-  if (p.feature || p.feature_name) throw new FlowToolError('build 流程不使用 feature_name 与 feature，请提交四份完整规格。');
   if (!base.every(Boolean)) throw new FlowToolError('请提交四份完整规格：requirements、screens、permissions、glossary。');
   const r = await submitSpec(root, store, id, { requirements: p.requirements!, screens: p.screens!, permissions: p.permissions!, glossary: p.glossary! });
   const gate = await runStageGate(root, store, config, id);
   return { text: gate.passed ? `四份规格已提交，spec-lint 通过，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${r.lint.warnings.length ? `\n警告：\n${r.lint.warnings.map((i) => i.message).join('\n')}` : ''}` : `集成分支上的 spec-lint 未通过，已回到规格讨论，请修正后用 forge_spec 重新提交：\n${gate.reasons.join('\n')}`, details: { sha: r.sha, lint: r.lint, gate } };
 }
-export async function flowSpecAmend(root: string, store: StateStore, p: Static<typeof SpecAmendParams>): Promise<ToolResult> {
-  const a = await proposeSpecAmend(root, store, activeFlowId(store), p);
-  return { text: `${amendSummary(a)}\n已提交修订，等待用户 /forge-approve amend:${a.id} 或 /forge-reject amend:${a.id} "<意见>"。`, details: { amend: a } };
+
+export const ChangeParams = Type.Object({
+  title: Type.String({ minLength: 1, maxLength: 120, description: '一句话写明这次要加什么' }),
+  description: Type.Optional(Type.String({ maxLength: 20000, description: '背景与要求（与用户商量的结论）' })),
+  tasks: Type.Array(Type.Object({
+    id: Type.Optional(Type.String({ pattern: '^T-[0-9]{3,}$', description: '省略时按顺序编号 T-001…' })),
+    title: Type.String({ minLength: 1, maxLength: 200 }),
+    writes: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: '计划改动的文件或目录；不能包含 tests/acceptance、docs/spec、docs/contracts、rules 等' }),
+    depends_on: Type.Optional(Type.Array(Type.Object({ task: Type.String({ pattern: '^T-[0-9]{3,}$' }), type: Type.Union([Type.Literal('hard'), Type.Literal('soft')]) }, { additionalProperties: false }))),
+    ac: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: '验收标准：做到什么算完成' }),
+    layers: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    module: Type.Optional(Type.String({ minLength: 1 })),
+  }, { additionalProperties: false }), { minItems: 1, maxItems: 20, description: '迷你计划的 task（数量上限见 limits.change_max_tasks，默认 3）' }),
+}, { additionalProperties: false });
+/**
+ * forge_change（orchestrator）：在做完的项目上加小功能。提交 1 到 3 个 task 的迷你计划，程序校验后直接开始（不经 P0/P1 批准）：
+ * worker 实现 → reviewer 审查 → 合入主分支 → 程序建“更新架构图与契约”任务 → stage-qa 确认。
+ * 有 build 流程正在等待审批时直接继续（用户在主会话里已经同意）；build 流程在运行时拒绝。
+ */
+export async function flowChange(root: string, store: StateStore, config: FlowConfig, input: Static<typeof ChangeParams>, engine?: Pick<Engine, 'pump'>): Promise<ToolResult> {
+  try {
+    const r = await startChange({ root, store, config, ...(engine ? { pump: (f: string) => engine.pump(f) } : {}) }, input as ChangePlanInput, { yes: true });
+    if (r.kind !== 'started') throw new FlowToolError('小改动没有开始。');
+    return { text: `${r.lines.join('\n')}\n用 forge_wait 等待进展；需要你处理的事项（阻塞、验收未通过）会在 forge_status 中列出。`, details: { flow: r.flow.id, tasks: r.tasks.map((t) => t.id) } };
+  } catch (e) {
+    if (e instanceof ChangeStartError) throw new FlowToolError(e.message);
+    throw e;
+  }
 }
 
 /** forge_change_request（main）：提交变更请求，交给 architect 起草修订（第 12.3 节） */
 export async function flowChangeRequestMain(root: string, store: StateStore, config: FlowConfig, p: Static<typeof ChangeRequestParams>): Promise<ToolResult> {
   try {
     const r = await requestChange(root, store, config, activeFlowId(store), p, 'main');
-    return { text: `已提交变更请求 ${r.change.id}：程序派 architect（${r.task.id}）起草修订。修订提交后等待用户 /forge-approve change:${r.change.id}；批准前被调整或取消的未开始 task 不会派发。`, details: { change: r.change.id, task: r.task.id } };
+    return { text: `已提交变更请求 ${r.change.id}：程序派 architect（${r.task.id}）起草修订。修订提交后先交给你审核（forge_decide 批准、打回或转交用户）；批准前被调整或取消的未开始 task 不会派发。`, details: { change: r.change.id, task: r.task.id } };
   } catch (e) {
     if (e instanceof ChangeError) throw new FlowToolError(e.message);
     throw e;
@@ -105,36 +115,29 @@ export async function flowResolveTimeout(store: StateStore, engine: Engine, p: S
   }
 }
 
-export const ResolveScopeParams = Type.Object({
-  task_id: Type.String({ pattern: '^(T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-[0-9]+)?)$' }),
-  decision: Type.Union([Type.Literal('approve'), Type.Literal('reject')], { description: 'approve：追加到该任务的可写范围（重叠的任务各改各的部分、合并时程序处理冲突）；reject：不追加' }),
-  note: Type.Optional(Type.String({ maxLength: 2000, description: '给子进程的说明（reject 时必填：为什么不行、该怎么做）' })),
+export const DecideParams = Type.Object({
+  target: Type.String({ pattern: '^(T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-[0-9]+)?|S[0-9]+|C-[0-9]{3,})$', description: '等你决定的任务（T-…）、阶段（S…）或变更请求（C-…）' }),
+  decision: Type.Union([Type.Literal('retry'), Type.Literal('accept'), Type.Literal('approve'), Type.Literal('reject'), Type.Literal('user')], { description: 'retry 重新做；accept 放行；approve 批准修订；reject 打回修订；user 转交用户。forge_status 里每项列出可选的决定' }),
+  note: Type.String({ minLength: 1, maxLength: 4000, description: '理由；retry 时是给子进程的意见（也可以是对它提问的回答），reject 时是修改意见，user 时写清楚要用户决定什么' }),
 });
 
-/** 范围申请与其他未完成任务重叠（第六轮 D3）：主会话决定批准还是拒绝 */
-export async function flowResolveScope(store: StateStore, p: Static<typeof ResolveScopeParams>): Promise<ToolResult> {
+/** forge_decide：阻塞、门禁用尽、变更请求的修订先由主会话决定，解决不了的转交用户 */
+export async function flowDecide(root: string, store: StateStore, config: FlowConfig, engine: Engine, p: Static<typeof DecideParams>): Promise<ToolResult> {
   const flowId = activeFlowId(store);
-  let t: TaskFile;
-  try { t = store.readTask(flowId, p.task_id); } catch { throw new FlowToolError(`任务 ${p.task_id} 不存在。`); }
-  const req = t.scope_request;
-  if (!req) throw new FlowToolError(`任务 ${t.id} 没有等待决定的范围申请。`);
-  const note = p.note?.trim();
-  if (p.decision === 'approve') {
-    // 申请之后可能有 task 开工了：与已开工的 task 重叠时不能批准（第 14 节）
-    const started = checkScope(t, store.listTasks(flowId), req.paths, []).started;
-    if (started.length) throw new FlowToolError(`不能批准：${started.map((x) => `${x.path} 与已开工的 ${x.task} 重叠`).join('；')}。用 reject 写明原因。`);
-    await store.grantScope(flowId, t.id, { paths: req.paths, reason: `${req.reason}${note ? `（主会话：${note}）` : ''}`, by: 'orchestrator', run: req.run }, 'orchestrator');
-    if (note) await store.appendHandoff(flowId, t.id, `主会话批准了范围申请（${req.paths.join('、')}）：${note}`, 'orchestrator');
-    return { text: `已批准，${t.id} 的可写范围追加：${req.paths.join('、')}。` };
+  let r;
+  try {
+    r = await decide({ root, store, config }, flowId, p.target, p.decision, p.note);
+  } catch (e) {
+    if (e instanceof DecisionError || e instanceof ApproveError || e instanceof StateError) throw new FlowToolError(e.message);
+    throw e;
   }
-  if (!note) throw new FlowToolError('reject 需要 note：写明为什么不行、该怎么做。');
-  await store.setScopeRequest(flowId, t.id, null, 'orchestrator', `拒绝范围申请（${req.paths.join('、')}）：${note}`);
-  await store.appendHandoff(flowId, t.id, `主会话拒绝了范围申请（${req.paths.join('、')}）：${note}`, 'orchestrator');
-  return { text: `已拒绝 ${t.id} 的范围申请，原因写进了它的 handoff。` };
+  await engine.pump(flowId);
+  return { text: `${r.text}用 forge_wait 等待进展。`, details: { target: p.target, decision: p.decision } };
 }
 
 export function activeFlowId(store: StateStore): string {
-  const id = store.readState().active_flow;
+  // 没有 build 流程时，进行中的轻流程（修复、小改动）就是当前流程
+  const id = store.readState().active_flow ?? store.openLightFlow()?.id;
   if (!id) throw new FlowToolError('当前没有进行中的流程。请用户执行 /forge-build 或 /forge-build --feature 开始。');
   return id;
 }
@@ -149,38 +152,39 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
     `流程 ${flow.id}「${flow.title}」（${flow.mode}）阶段 ${flow.stage}：${flow.stage_status}`,
     `任务 ${tasks.length} 个：${TASK_STATUSES.filter((s) => count(s)).map((s) => `${s} ${count(s)}`).join('，') || '无'}`,
   ];
-  if (flow.mode === 'fix') lines.push(fixStatusLine(flow, tasks));
+  if (isLightFlow(flow)) lines.push(fixStatusLine(flow, tasks));
   const spec = specStatus(store, flowId);
   if (spec) lines.push(spec);
   const plan = planStatus(store, flowId);
   if (plan) lines.push(plan);
   if (flow.stage === P1_STAGE && flow.stage_status === 'awaiting_human') lines.push(planApprovalSummary(store, flowId));
-  if (flow.stage === ADOPT_STAGE && flow.stage_status === 'awaiting_human') lines.push(adoptApprovalSummary(store.root, flow));
   const changes = changeStatus(store, flowId);
   if (changes) lines.push(changes);
+  const pm = postMergeStatus(store, flowId, engine?.postMergeRunning(flowId) ?? false);
+  if (pm) lines.push(pm);
   const running = engine?.activeRuns().filter((r) => r.flow === flowId) ?? [];
   const leased = tasks.filter((t) => t.lease);
   if (leased.length) lines.push(`运行中：${leased.map((t) => `${t.id}（${t.lease!.role}，run ${t.lease!.run_id}${running.some((r) => r.run_id === t.lease!.run_id) ? '' : '，不在本会话'}）`).join('；')}`);
   const ready = tasks.filter((t) => t.status === 'ready');
   if (ready.length) lines.push(`可派发：${ready.map((t) => `${t.id} ${t.title}（${t.role}）`).join('；')}`);
-  const blocked = tasks.filter((t) => t.status === 'blocked');
+  const decisions = pendingDecisions(store, flowId);
+  if (decisions.length) lines.push(`等你决定（forge_decide）：${DECISION_GUIDE}\n${decisionsText(decisions)}`);
+  const blocked = tasks.filter((t) => t.status === 'blocked' && t.blocked_owner !== 'orchestrator');
   if (blocked.length) lines.push(`阻塞，需要用户处理：\n${blocked.map((t) => `- ${t.id}：${one(t.blocked_reason ?? '')} → /forge unblock ${t.id}`).join('\n')}`);
   const now = new Date();
   const pauses = activePauses(store, now);
   if (pauses.length) lines.push(`模型暂停，需要用户处理：\n${pauses.map((p) => `- ${describePause(p, now)} → /forge models resume ${p.model} 或 /forge-config 换模型`).join('\n')}`);
   const reviews = tasks.filter(awaitingReview);
   if (reviews.length) lines.push(`运行超时，等你复核（forge_resolve_timeout）：${REVIEW_GUIDE}\n${reviews.map((t) => timeoutReviewText(store, flowId, t)).join('\n')}`);
-  const scopes = tasks.filter((t) => t.scope_request);
-  if (scopes.length) lines.push(`范围申请，等你决定（forge_resolve_scope）：\n${scopes.map((t) => `- ${t.id} 申请 ${t.scope_request!.paths.join('、')}：${one(t.scope_request!.reason)}（${t.scope_request!.conflicts.join('；')}）`).join('\n')}`);
   const failing = tasks.filter((t) => t.last_failure && !['blocked', 'done', 'cancelled'].includes(t.status));
   if (failing.length) lines.push(`最近失败：\n${failing.map((t) => `- ${t.id}（第 ${t.attempts} 次）：${one(t.last_failure!)}`).join('\n')}`);
-  if (['awaiting_human', 'needs_human'].includes(flow.stage_status)) lines.push(`等待用户：阶段 ${flow.stage}（${flow.stage_status}）→ /forge-approve 或 /forge-reject "<意见>"`);
+  if (['awaiting_human', 'needs_human'].includes(flow.stage_status) && !decisions.some((d) => d.kind === 'stage')) lines.push(`等待用户：阶段 ${flow.stage}（${flow.stage_status}）→ /forge-approve 或 /forge-reject "<意见>"`);
   const gateFail = [...store.readEvents()].reverse().find((e) => e.flow === flowId && e.type === 'gate_result');
   if (gateFail && gateFail.to === 'active' && flow.stage_status === 'active') lines.push(`阶段闸门未通过：${one(gateFail.reason ?? '', 300)}（修复后执行 /forge gate 重跑）`);
-  if (flow.mode === 'fix' && flow.stage_status === 'needs_human') lines.push(fixHelpHint(flow.id));
-  if (flow.mode === 'fix' && isFinished(flow)) {
+  if (isLightFlow(flow) && flow.stage_status === 'needs_human') lines.push(fixHelpHint(flow.id, flow.mode));
+  if (isLightFlow(flow) && isFinished(flow)) {
     const log = readFixLog(store, flowId);
-    if (log) lines.push(`修复日志：\n${log.trim()}`);
+    if (log) lines.push(`${flow.mode === 'change' ? '变更' : '修复'}日志：\n${log.trim()}`);
   }
   return lines.join('\n');
 }
@@ -210,7 +214,7 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
     if (p.task_id) return now.get(p.task_id) !== before.get(p.task_id);
     for (const [id, s] of now) {
       if (s === before.get(id)) continue;
-      // 偏离 117：impl 一律有审查任务，.rv 的新建与完成由程序驱动，不单独唤醒（结论体现在被审查任务的状态上；审查者 blocked 时被审查任务也会 blocked）
+      // impl 一律有审查任务，.rv 的新建与完成由程序驱动，不单独唤醒（结论体现在被审查任务的状态上；审查者 blocked 时被审查任务也会 blocked）
       if (/\.rv(-\d+)?$/.test(id)) continue;
       if (!before.has(id) || s === 'done' || s === 'blocked' || s === 'cancelled') return true;
       if (s === 'ready' && !engine.autoDispatch) return true;
@@ -227,7 +231,7 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
   }
   let flowGone = false;
   try { store.readFlow(flowId); } catch { flowGone = true; }
-  if (flowGone || store.readState().active_flow !== flowId) return { text: `流程 ${flowId} 已结束或不再是活动流程。`, details: { changed: [] } };
+  if (flowGone || (store.readState().active_flow !== flowId && store.openLightFlow()?.id !== flowId)) return { text: `流程 ${flowId} 已结束或不再是活动流程。`, details: { changed: [] } };
   const tasks = store.listTasks(flowId);
   const changed = tasks.filter((t) => before.get(t.id) !== t.status).map((t) => t.id);
   const desc = (id: string) => {

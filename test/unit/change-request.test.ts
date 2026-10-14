@@ -1,4 +1,4 @@
-// 变更请求（规格第 5、12.3 节）：修订差异的每条规则、批准页文本、暂停判断、一个事务里的落地、创建与流程、规格修订的自动关联。
+// 变更请求（规格第 5、12.3 节）：修订差异的每条规则、批准页文本、暂停判断、一个事务里的落地、创建与流程。
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -14,11 +14,10 @@ import { parseContracts } from '../../src/core/plan/contract-check.ts';
 import { effectiveSpec } from '../../src/core/spec/spec.ts';
 import type { ChangeFile, PlanFile, TaskFile } from '../../src/core/state/schemas.ts';
 import { changeSummary, changeTouched, diffPlanRevision, isOpenChange, materializeChange, pausedByChange, summarizeActions, summarizeText, type ChangeAction, type CurrentPlan } from '../../src/core/plan/change-request.ts';
-import { approveChange, changeDocPrecheck, currentPlan, ensureChangeTask, ChangeError, pendingChanges, proposeChange, rejectChange, requestChange } from '../../src/core/plan/change-flow.ts';
+import { approvalTargets, approveChange, changeDocPrecheck, currentPlan, ensureChangeTask, ChangeError, pendingChanges, proposeChange, rejectChange, requestChange } from '../../src/core/plan/change-flow.ts';
 import { flowRel, taskRel } from '../../src/core/state/state-store.ts';
+import { decide, pendingDecisions } from '../../src/core/engine/decisions.ts';
 import { createTaskWorktree, snapshot } from '../../src/core/workspace/worktree.ts';
-import { proposeSpecAmend } from '../../src/core/spec/spec-flow.ts';
-import { approvalTargets, approveSpecAmend } from '../../src/core/plan/spec-amend.ts';
 
 // —— 纯函数：diffPlanRevision ——
 
@@ -27,24 +26,21 @@ const pt = (id: string, stage: string, over: Partial<PT> = {}): PT => ({
   id, stage, module: 'm', title: `任务 ${id}`, size: 'M', layers: ['backend'], ac: [], writes: [`src/${id.toLowerCase()}/**`], produces: [], requires: [], test_interface: [], ...over,
 });
 const stages = (...ids: string[]): PlanFile['stages'] => ids.map((id) => ({ id, goal: `阶段 ${id}`, exit: [`REQ-${id}`] }));
-const oldPlan = (tasks: PT[], st = stages('S0', 'S1', 'S2')): CurrentPlan => ({ mode: 'standard', stages: st, tasks });
+const oldPlan = (tasks: PT[], st = stages('S0', 'S1', 'S2')): CurrentPlan => ({ stages: st, tasks });
 const next = (old: CurrentPlan, edit: (p: PlanFile) => void): PlanFile => {
   const p = structuredClone({ size_estimate: { loc: 9000, modules: 2 }, ...old }) as PlanFile;
   edit(p);
   return p;
 };
-const flowAt = (stage: string, st = stages('S0', 'S1', 'S2')) => ({ stage, s_stages: st, plan_mode: 'standard' as const });
+const flowAt = (stage: string, st = stages('S0', 'S1', 'S2')) => ({ stage, s_stages: st });
 const live = (id: string, status: TaskFile['status'], over: Partial<TaskFile> = {}): TaskFile => mkTask(id, { status, stage: 'S1', title: `任务 ${id}`, ...over });
-const at = (impl: string, status: TaskFile['status'], over: Partial<TaskFile> = {}): TaskFile =>
-  mkTask(`${impl}.at`, { kind: 'acctest', role: 'test-author', for_task: impl, status, stage: 'S1', ...over });
-const kinds = (r: { actions: ChangeAction[] }) => r.actions.map((a) => `${a.kind}${'id' in a ? `:${a.id}` : 'task' in a && !('impl' in a) ? `:${(a.task as PT).id}` : 'impl' in a ? `:${a.impl}` : ''}`);
+const kinds = (r: { actions: ChangeAction[] }) => r.actions.map((a) => `${a.kind}${'id' in a ? `:${a.id}` : 'task' in a ? `:${(a.task as PT).id}` : ''}`);
 const errs = (r: { errors: string[] }) => r.errors.join('\n');
 
 // 基线：S0 的 T-001 已完成；S1（当前阶段）的 T-002 进行中、T-003 未开始、T-004 已完成；S2 的 T-005 未开始
 const OLD = oldPlan([pt('T-001', 'S0'), pt('T-002', 'S1'), pt('T-003', 'S1', { ac: ['REQ-1.AC1'] }), pt('T-004', 'S1'), pt('T-005', 'S2')]);
 const TASKS = (): TaskFile[] => [
   live('T-001', 'done', { stage: 'S0' }), live('T-002', 'in_progress'), live('T-003', 'pending', { ac: ['REQ-1.AC1'] }), live('T-004', 'done'), live('T-005', 'pending', { stage: 'S2' }),
-  at('T-001', 'done', { stage: 'S0' }), at('T-002', 'done'), at('T-003', 'ready', { ac: ['REQ-1.AC1'] }), at('T-004', 'done'), at('T-005', 'pending', { stage: 'S2' }),
 ];
 const diff = (edit: (p: PlanFile) => void, tasks = TASKS(), flow = flowAt('S1'), opts = {}) => diffPlanRevision(OLD, next(OLD, edit), tasks, flow, opts);
 
@@ -67,16 +63,16 @@ test('调整未开始的 task：字段、依赖、阶段（只到当前或之后
   assert.deepEqual(r.errors, []);
   assert.equal(a.kind === 'adjust' && a.id, 'T-003');
   assert.deepEqual(a.kind === 'adjust' && a.fields.sort(), ['title', 'writes']);
-  assert.deepEqual(a.kind === 'adjust' && a.patch, { title: '新标题', writes: ['src/new/**'] });
+  assert.deepEqual(a.kind === 'adjust' && a.patch, { title: '新标题', writes: ['src/new/**', 'tests/acceptance/T-003/**'] });
   // ready 同样可以调整；S2 的 task 可以移到当前阶段
   const ready = TASKS().map((t) => (t.id === 'T-003' ? { ...t, status: 'ready' as const } : t));
-  assert.deepEqual(kinds(diff((p) => { p.tasks.find((t) => t.id === 'T-005')!.stage = 'S1'; }, ready)), ['adjust:T-005', 'acctest:T-005'], '它还没开始的 .at 跟着改阶段');
+  assert.deepEqual(kinds(diff((p) => { p.tasks.find((t) => t.id === 'T-005')!.stage = 'S1'; }, ready)), ['adjust:T-005']);
   // 不能移到已完成的阶段
   assert.match(errs(diff((p) => { p.tasks.find((t) => t.id === 'T-005')!.stage = 'S0'; })), /T-005 的阶段 S0 在当前阶段 S1 之前/);
   // 只有依赖变化也要调整（依赖由修订后的计划推导）
   const deps = new Map([['T-003', [{ task: 'T-004', type: 'hard' as const, reason: 'x' }]]]);
   const r2 = diff(() => {}, TASKS(), flowAt('S1'), { deps });
-  assert.deepEqual(r2.actions.map((x) => x.kind === 'adjust' && x.fields), [['depends_on'], false], '它还没开始的 .at 的依赖跟着改');
+  assert.deepEqual(r2.actions.map((x) => x.kind === 'adjust' && x.fields), [['depends_on']]);
 });
 
 test('已开始或已完成的 task 不能直接修改，错误里指出用 modifies', () => {
@@ -90,51 +86,27 @@ test('已开始或已完成的 task 不能直接修改，错误里指出用 modi
   assert.match(errs(diff((p) => { p.tasks.find((t) => t.id === 'T-003')!.title = 'x'; }, blocked)), /T-003 已开始（blocked）/);
 });
 
-test('取消：从计划里删除未开始的 task（连同还没开始的 .at）；已开始、已完成或 .at 已开始的不行', () => {
+test('取消：从计划里删除未开始的 task；已开始、已完成的不行', () => {
   const r = diff((p) => { p.tasks = p.tasks.filter((t) => t.id !== 'T-003'); });
   assert.deepEqual(r.errors, []);
-  assert.deepEqual(r.actions, [{ kind: 'cancel', id: 'T-003', title: '任务 T-003', also: ['T-003.at'] }]);
+  assert.deepEqual(r.actions, [{ kind: 'cancel', id: 'T-003', title: '任务 T-003', also: [] }]);
   assert.match(errs(diff((p) => { p.tasks = p.tasks.filter((t) => t.id !== 'T-002'); })), /T-002 已开始（in_progress），不能取消/);
   assert.match(errs(diff((p) => { p.tasks = p.tasks.filter((t) => t.id !== 'T-004'); })), /T-004 已完成，不能取消/);
-  const started = TASKS().map((t) => (t.id === 'T-003.at' ? { ...t, status: 'in_progress' as const } : t));
-  assert.match(errs(diff((p) => { p.tasks = p.tasks.filter((t) => t.id !== 'T-003'); }, started)), /T-003 的验收测试 T-003\.at 已经开始/);
   assert.match(errs(diff((p) => { p.tasks = p.tasks.filter((t) => t.id !== 'T-001'); })), /T-001 已完成，不能取消|已完成的阶段 S0/);
 });
 
-test('修改 task（modifies）：对进行中或已完成的原 task 是 followup，并为原 task 建 .at-n；对未开始的 task 拒绝', () => {
+test('修改 task（modifies）：对进行中或已完成的原 task 是 followup；对未开始的 task 拒绝', () => {
   const r = diff((p) => { p.tasks.push(pt('T-010', 'S1', { modifies: 'T-004', ac: ['REQ-1.AC7'] }), pt('T-011', 'S1', { modifies: 'T-002' })); });
   assert.deepEqual(r.errors, []);
-  assert.deepEqual(kinds(r), ['followup:T-010', 'followup:T-011', 'acctest:T-004', 'acctest:T-002']);
+  assert.deepEqual(kinds(r), ['followup:T-010', 'followup:T-011']);
   const f = r.actions[0]!;
   assert.deepEqual(f.kind === 'followup' && [f.of, f.originalStatus], ['T-004', 'done']);
   assert.deepEqual(r.actions[1]!.kind === 'followup' && r.actions[1]!.originalStatus, 'in_progress');
-  assert.deepEqual(r.actions.filter((a) => a.kind === 'acctest').map((a) => a.kind === 'acctest' && a.mode), ['round', 'round']);
   assert.match(errs(diff((p) => { p.tasks.push(pt('T-010', 'S1', { modifies: 'T-003' })); })), /T-003 还没开始，直接调整它/);
   assert.match(errs(diff((p) => { p.tasks.push(pt('T-010', 'S1', { modifies: 'T-099' })); })), /T-099 不是已有的 task/);
   assert.match(errs(diff((p) => { p.tasks.push(pt('T-010', 'S1', { modifies: 'T-004' })); p.tasks = p.tasks.filter((t) => t.id !== 'T-004'); })), /不能同时从计划里删除/);
   assert.match(errs(diff((p) => { p.tasks.push(pt('T-010', 'S0', { modifies: 'T-004' })); })), /阶段 S0 在当前阶段/);
   assert.match(errs(diff((p) => { p.tasks.find((t) => t.id === 'T-003')!.modifies = 'T-004'; })), /已有的 task，不能加 modifies/);
-});
-
-test('验收测试：.at 还没开始时直接改它；已开始或结束时新建 .at-n（等上一个 .at 结束）；AC 没变不动', () => {
-  const r = diff((p) => { p.tasks.find((t) => t.id === 'T-003')!.ac = ['REQ-1.AC1', 'REQ-1.AC2']; });
-  const patch = r.actions.find((x) => x.kind === 'acctest')!;
-  assert.deepEqual(r.errors, []);
-  assert.deepEqual(patch.kind === 'acctest' && patch.mode === 'patch' && [patch.target, patch.patch], ['T-003.at', { ac: ['REQ-1.AC1', 'REQ-1.AC2'] }]);
-  const running = TASKS().map((t) => (t.id === 'T-003.at' ? { ...t, status: 'in_progress' as const } : t));
-  const r2 = diff((p) => { p.tasks.find((t) => t.id === 'T-003')!.ac = ['REQ-1.AC2']; }, running);
-  assert.deepEqual(r2.actions.map((a) => a.kind === 'acctest' && a.mode === 'round' && [a.impl, a.waitFor]), [false, ['T-003', 'T-003.at']]);
-  // 只改标题：不碰验收测试任务的验收标准，但标题要同步
-  const r3 = diff((p) => { p.tasks.find((t) => t.id === 'T-003')!.title = '改名'; });
-  assert.deepEqual(r3.actions.map((a) => a.kind === 'acctest' && a.mode === 'patch' && a.patch), [false, { title: '验收测试：改名' }]);
-});
-
-test('规格修订的 changedAcs：负责这些 AC 的 task 已有验收测试在跑或已完成时建 .at-n，.at 还没开始的不用', () => {
-  const tasks = TASKS().map((t) => (t.id === 'T-004' ? { ...t, ac: ['REQ-1.AC5'] } : t.id === 'T-002' ? { ...t, ac: ['REQ-1.AC5'] } : t));
-  const r = diff(() => {}, tasks, flowAt('S1'), { changedAcs: ['REQ-1.AC5', 'REQ-1.AC1'] });
-  assert.deepEqual(r.actions.map((a) => a.kind === 'acctest' && [a.impl, a.mode]), [['T-002', 'round'], ['T-004', 'round']], 'T-003 的 .at 还是 ready，会按新规格写，不需要返工');
-  const cancelled = diff((p) => { p.tasks = p.tasks.filter((t) => t.id !== 'T-003'); }, tasks, flowAt('S1'), { changedAcs: ['REQ-1.AC1'] });
-  assert.deepEqual(cancelled.actions.map((a) => a.kind), ['cancel']);
 });
 
 test('阶段：当前阶段之后可以新增、调整、删除；已完成与当前阶段的目标不能改；当前阶段的 exit 只能追加', () => {
@@ -149,7 +121,6 @@ test('阶段：当前阶段之后可以新增、调整、删除；已完成与�
   assert.match(errs(diff((p) => { p.stages[1]!.goal = '改'; })), /不能修改当前阶段 S1 的目标/);
   assert.match(errs(diff((p) => { p.stages[1]!.exit = []; })), /当前阶段 S1 的 exit 只能追加/);
   assert.deepEqual(diff((p) => { p.stages[1]!.exit.push('REQ-NEW'); }).errors, []);
-  assert.match(errs(diff((p) => { p.mode = 'lean'; })), /不能把计划模式/);
   assert.match(errs(diff((p) => { p.stages.splice(1, 0, { id: 'SX', goal: 'x', exit: [] }); })), /新增的阶段 SX 在当前阶段 S1 之前/);
   assert.match(errs(diffPlanRevision(OLD, next(OLD, () => {}), TASKS(), flowAt('P1'))), /不是实施阶段/);
 });
@@ -162,14 +133,13 @@ test('批准页：动作清单（中文）、被暂停的 task、changeSummary',
     p.stages.push({ id: 'S3', goal: 'x', exit: [] }); p.tasks.push(pt('T-012', 'S3'));
   });
   assert.deepEqual(r.errors, []);
-  assert.deepEqual(changeTouched(r.actions), ['T-003', 'T-003.at', 'T-005', 'T-005.at']);
+  assert.deepEqual(changeTouched(r.actions), ['T-003', 'T-005']);
   const actions = summarizeActions(r.actions);
   const text = summarizeText(actions);
   assert.match(text, /新增 task T-010（S1）/);
   assert.match(text, /调整未开始的 T-003：title/);
   assert.match(text, /取消未开始的 T-005/);
   assert.match(text, /为 T-004 新增修改 task T-011（S1，硬依赖 T-004）/);
-  assert.match(text, /为 T-004 新建验收测试返工 \.at-n/);
   assert.match(text, /阶段：新增 S3/);
   assert.equal(summarizeText([]), '- 没有任何 task 或阶段的变化（只改了契约或文档）');
   const page = changeSummary({ id: 'C-001', status: 'proposed', what: '改契约', why: '原因', impact: '影响', source: 'worker:T-002', actions, rounds: 2, assumptions: [{ question: 'q', decision: 'd' }], feedback: '上次意见' });
@@ -192,7 +162,7 @@ test('checkPlan：modifies 只在变更请求里允许；重复列出原 task �
   const plan = parsePlan(PLAN_YAML).plan!;
   const withMod = structuredClone(plan);
   withMod.tasks.push({ ...structuredClone(plan.tasks[1]!), id: 'T-009', modifies: 'T-003', produces: [], requires: [], writes: ['server/src/datasource2/**'], shared: [] });
-  const ctx = { catalog: parseContracts(CONTRACTS).catalog, spec: effectiveSpec(P1_SPEC, []), existingTaskIds: ['T-001'], mode: 'build' as const, limits: { max_parallel: 4, max_task_files: 12, lean_below_loc: 6000 } };
+  const ctx = { catalog: parseContracts(CONTRACTS).catalog, spec: effectiveSpec(P1_SPEC), existingTaskIds: ['T-001'], limits: { max_parallel: 4, max_task_files: 12 } };
   assert.match(checkPlan(withMod, ctx).errors.join('\n'), /T-009 写了 modifies/);
   const ok = checkPlan(withMod, { ...ctx, allowModifies: true });
   assert.deepEqual(ok.errors, []);
@@ -203,7 +173,7 @@ test('checkPlan：modifies 只在变更请求里允许；重复列出原 task �
 
 // —— materializeChange ——
 
-test('materializeChange：新增 task 带 .at，修改 task 硬依赖原 task，取消连同 .at，.at-n 的 kind 是 change，阶段整体替换', () => {
+test('materializeChange：新增 task 带自己的验收目录，修改 task 硬依赖原 task，取消，阶段整体替换', () => {
   const r = diff((p) => {
     p.tasks.find((t) => t.id === 'T-003')!.title = '新标题';
     p.tasks = p.tasks.filter((t) => t.id !== 'T-005');
@@ -211,35 +181,19 @@ test('materializeChange：新增 task 带 .at，修改 task 硬依赖原 task，
     p.stages.push({ id: 'S3', goal: 'x', exit: [] }); p.tasks.push(pt('T-012', 'S3'));
   });
   const plan = next(OLD, (p) => { p.tasks.push(pt('T-010', 'S1'), pt('T-011', 'S1', { modifies: 'T-004' })); });
-  const ops = materializeChange(r.actions, plan, TASKS(), { flowStage: 'S1', scopes: { worker: ['code'], testAuthor: ['acctest'] }, verify: ['test'], changeId: 'C-001' });
+  const ops = materializeChange(r.actions, plan, TASKS(), { flowStage: 'S1', scopes: { worker: ['code'] }, verify: ['test'], changeId: 'C-001' });
   const byId = new Map(ops.add.map((t) => [t.id, t]));
-  assert.deepEqual([...byId.keys()].sort(), ['T-004.at-2', 'T-010', 'T-010.at', 'T-011', 'T-011.at', 'T-012', 'T-012.at']);
+  assert.deepEqual([...byId.keys()].sort(), ['T-010', 'T-011', 'T-012']);
   assert.deepEqual(byId.get('T-011')!.depends_on.map((d) => [d.task, d.type]), [['T-004', 'hard']]);
   assert.deepEqual(byId.get('T-011')!.verify, ['test']);
-  assert.deepEqual(byId.get('T-011.at')!.ac, ['REQ-1.AC9'], '修改 task 自己新增的 AC 才有自己的 .at');
-  assert.equal(byId.get('T-004.at-2')!.acctest_round!.kind, 'change');
-  assert.equal(byId.get('T-004.at-2')!.for_task, 'T-004');
-  assert.equal(byId.get('T-004.at-2')!.fork_from_task, 'T-004.at');
+  for (const id of ['T-010', 'T-011', 'T-012']) assert.ok(byId.get(id)!.writes.includes(`tests/acceptance/${id}/**`), id);
   assert.match(ops.handoffs['T-011']!, /修改 task（变更请求 C-001）/);
-  assert.match(ops.handoffs['T-004.at-2']!, /变更请求 C-001 导致这个 task 的验收测试需要返工/);
-  assert.deepEqual(ops.cancels.map((c) => c.id), ['T-005', 'T-005.at']);
-  assert.deepEqual(ops.patches.map((p) => p.id), ['T-003', 'T-003.at']);
+  assert.deepEqual(ops.cancels.map((c) => c.id), ['T-005']);
+  assert.deepEqual(ops.patches.map((p) => p.id), ['T-003']);
   assert.deepEqual(ops.stages!.stages.map((s) => s.id), ['S0', 'S1', 'S2', 'S3']);
   // 与 deriveTasks 的一致性：没有 modifies 的新增 task 和 P1 落地的生成方式相同
-  const derived = deriveTasks({ ...plan, tasks: [pt('T-010', 'S1', { ac: ['REQ-1.AC8'] })] }, new Map(), { worker: ['code'], testAuthor: ['acctest'] }, { acctest: true, verify: ['test'] });
+  const derived = deriveTasks({ ...plan, tasks: [pt('T-010', 'S1', { ac: ['REQ-1.AC8'] })] }, new Map(), { worker: ['code'] }, { verify: ['test'] });
   assert.deepEqual(byId.get('T-010'), derived[0]);
-});
-
-test('materializeChange：selfTest（test_author: false）新增与修改的 impl 不带 .at，writes 含自己的验收目录', () => {
-  const r = diff((p) => {
-    p.tasks.push(pt('T-010', 'S1', { ac: ['REQ-1.AC8'] }), pt('T-011', 'S1', { modifies: 'T-004', ac: ['REQ-1.AC9'] }));
-  });
-  const plan = next(OLD, (p) => { p.tasks.push(pt('T-010', 'S1'), pt('T-011', 'S1', { modifies: 'T-004' })); });
-  const ops = materializeChange(r.actions, plan, TASKS(), { flowStage: 'S1', scopes: { worker: ['code'], testAuthor: ['acctest'] }, verify: ['test'], changeId: 'C-001', selfTest: true });
-  const impls = ops.add.filter((t) => t.kind === 'impl');
-  assert.deepEqual(impls.map((t) => t.id), ['T-010', 'T-011']);
-  assert.ok(!ops.add.some((t) => t.id === 'T-010.at' || t.id === 'T-011.at'), '不派生新的 .at');
-  for (const t of impls) assert.ok(t.writes.includes(`tests/acceptance/${t.id}/**`), t.id);
 });
 
 // —— StateStore：一个事务里落地 ——
@@ -253,14 +207,10 @@ async function stateProject() {
   const p = await setupProject({ stages: ['P1'], tasks: [
     mkTask('T-001', { stage: 'S1', title: '一号' }), mkTask('T-002', { stage: 'S1', title: '二号', ac: ['REQ-001.AC1'] }),
     mkTask('T-003', { stage: 'S2', title: '三号' }),
-    mkTask('T-002.at', { stage: 'S1', kind: 'acctest', role: 'test-author', for_task: 'T-002', ac: ['REQ-001.AC1'] }),
-    mkTask('T-003.at', { stage: 'S2', kind: 'acctest', role: 'test-author', for_task: 'T-003' }),
-    mkTask('T-001.at', { stage: 'S1', kind: 'acctest', role: 'test-author', for_task: 'T-001' }),
   ] });
-  await p.store.setStages(p.flowId, PLAN_STAGES, 'standard');
+  await p.store.setStages(p.flowId, PLAN_STAGES);
   force(p, flowRel(p.flowId), { stage: 'S1', stage_status: 'active' });
   force(p, taskRel(p.flowId, 'T-001'), { status: 'done' });
-  force(p, taskRel(p.flowId, 'T-001.at'), { status: 'done' });
   return p;
 }
 const archTask = (id: string) => ({ id, stage: 'S1', kind: 'doc' as const, role: 'architect', title: '变更', scopes: ['docs'], depends_on: [], inputs: [], writes: ['docs/plan/**'], verify: [] });
@@ -273,22 +223,20 @@ test('applyChange：新增、调整、取消、阶段修订、approved 与 appro
     const before = p.store.readEvents().length;
     const newStages = [...PLAN_STAGES, { id: 'S3', goal: '三', exit: [] }];
     const saved = await p.store.applyChange(p.flowId, change.id, {
-      add: [mkTask('T-010', { stage: 'S1' }) as never, mkTask('T-001.at-2', { stage: 'S1', kind: 'acctest', role: 'test-author', for_task: 'T-001', acctest_round: { kind: 'change' } }) as never],
+      add: [mkTask('T-010', { stage: 'S1' }) as never],
       notes: { 'T-010': ['REQ-001.AC1：x'] }, handoffs: { 'T-010': '来自变更请求' },
       patches: [{ id: 'T-002', patch: { title: '二号（改）', writes: ['src/new/**'], shared: undefined } }],
-      cancels: [{ id: 'T-003', reason: '变更' }, { id: 'T-003.at', reason: '变更' }],
-      stages: { stages: newStages, mode: 'standard' },
+      cancels: [{ id: 'T-003', reason: '变更' }],
+      stages: { stages: newStages },
     });
     assert.equal(saved.status, 'approved');
     assert.ok(saved.decided_at);
     assert.deepEqual(saved.touched, []);
     const tasks = new Map(p.store.listTasks(p.flowId).map((t) => [t.id, t]));
     assert.equal(tasks.get('T-010')!.status, 'pending');
-    assert.equal(tasks.get('T-001.at-2')!.acctest_round!.kind, 'change');
     assert.equal(tasks.get('T-002')!.title, '二号（改）');
     assert.deepEqual(tasks.get('T-002')!.writes, ['src/new/**']);
     assert.equal(tasks.get('T-003')!.status, 'cancelled');
-    assert.equal(tasks.get('T-003.at')!.status, 'cancelled');
     assert.deepEqual(p.store.readFlow(p.flowId).s_stages!.map((s) => s.id), ['S1', 'S2', 'S3']);
     assert.deepEqual(p.store.readFlow(p.flowId).stages, ['P1', 'S1', 'S2', 'S3']);
     assert.match(p.store.readHandoff(p.flowId, 'T-010'), /来自变更请求/);
@@ -331,10 +279,12 @@ test('requestChange：只在计划批准后、阶段 active 时可以；同一�
     assert.equal(r.task.id, 'T-004');
     assert.deepEqual([r.task.kind, r.task.role, r.task.stage, r.task.status], ['doc', 'architect', 'S1', 'pending']);
     assert.deepEqual(r.task.writes, ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md']);
+    assert.deepEqual(r.task.scopes, ['plan'], 'architect 另有 code scope，变更请求的 task 只用 plan scope');
     const brief = p.store.readHandoff(p.flowId, 'T-004');
     assert.match(brief, /# 变更请求 C-001[\s\S]*来源：worker:T-002[\s\S]*变更内容：把 users\.email 改成必填/);
     assert.match(brief, /新增 task 的编号从 T-005 起/);
     assert.match(brief, /modifies: <原 task 编号>/);
+    assert.match(brief, /## 发起者 T-002 的进展/, '说明里带发起者的改动与 handoff');
     // 发起者自己的 task 不受影响
     assert.equal(p.store.readTask(p.flowId, 'T-002').status, 'pending');
     await assert.rejects(requestChange(p.dir, p.store, p.config, p.flowId, input, 'main'), /已有变更请求 C-001 在处理（drafting）/);
@@ -357,16 +307,15 @@ const CONTRACT_FILES = Object.fromEntries(Object.entries(CONTRACTS).map(([k, v])
 async function planProject(withStages = true) {
   const p = await setupProject({ stages: ['P1'], files: { ...SPEC_FILES, ...CONTRACT_FILES, 'docs/plan/plan.yaml': PLAN_YAML } });
   const plan = parsePlan(PLAN_YAML).plan!;
-  const check = checkPlan(plan, { catalog: parseContracts(CONTRACTS).catalog, spec: effectiveSpec(P1_SPEC, []), existingTaskIds: [], mode: 'build', limits: { max_parallel: 4, max_task_files: 12, lean_below_loc: 6000 } });
+  const check = checkPlan(plan, { catalog: parseContracts(CONTRACTS).catalog, spec: effectiveSpec(P1_SPEC), existingTaskIds: [], limits: { max_parallel: 4, max_task_files: 12 } });
   assert.deepEqual(check.errors, []);
-  const tasks = deriveTasks(plan, check.deps, { worker: p.config.role('worker').scopes, testAuthor: p.config.role('test-author').scopes }, { acctest: true, verify: ['test'] });
+  const tasks = deriveTasks(plan, check.deps, { worker: p.config.role('worker').scopes }, { verify: ['test'] });
   force(p, flowRel(p.flowId), { approvals: { P0: { by: 'human', at: new Date().toISOString() } } });
   if (withStages) {
-    await p.store.setStages(p.flowId, plan.stages, 'standard');
+    await p.store.setStages(p.flowId, plan.stages);
     await p.store.addTasks(p.flowId, tasks, 'engine');
     force(p, flowRel(p.flowId), { stage: 'S1', stage_status: 'active', contracts_base: p.git('rev-parse', 'HEAD') });
     force(p, taskRel(p.flowId, 'T-002'), { status: 'done' });
-    force(p, taskRel(p.flowId, 'T-002.at'), { status: 'done' });
   }
   return { p, plan };
 }
@@ -404,10 +353,10 @@ test('完整流程：创建 → 起草提交（proposed）→ doc 预检 → 暂
     assert.match(changeDocPrecheck(p.dir, p.store, p.config, p.flowId, p.store.readTask(p.flowId, 'T-004')) ?? '', /还没有用 forge_propose_plan 提交修订/);
     const r = await d.propose();
     assert.equal(r.ok, true, r.text);
-    for (const re of [/等待用户批准 change:C-001/, /调整未开始的 T-003：title/, /新增 task T-005（S2）/, /为 T-002 新增修改 task T-006/]) assert.match(r.text, re);
+    for (const re of [/等待批准 change:C-001/, /调整未开始的 T-003：title/, /新增 task T-005（S2）/, /为 T-002 新增修改 task T-006/]) assert.match(r.text, re);
     const c = p.store.readChange(p.flowId, 'C-001');
     assert.equal(c.status, 'proposed');
-    assert.deepEqual(c.touched, ['T-003', 'T-003.at']);
+    assert.deepEqual(c.touched, ['T-003']);
     assert.equal(c.plan_text, text);
     assert.deepEqual(c.assumptions, [{ question: '导出格式', decision: 'CSV' }]);
     // 暂停：被调整的 task 不派发；还没合并时不进批准清单
@@ -434,11 +383,9 @@ test('完整流程：创建 → 起草提交（proposed）→ doc 预检 → 暂
     const msg = await approveChange(p.dir, p.store, p.config, p.flowId, 'C-001');
     assert.match(msg, /已批准 change:C-001[\s\S]*新增 task：[\s\S]*T-005[\s\S]*T-006[\s\S]*调整：T-003/);
     const tasks = new Map(p.store.listTasks(p.flowId).map((t) => [t.id, t]));
-    assert.deepEqual(['T-005', 'T-005.at', 'T-006', 'T-002.at-2'].map((id) => tasks.has(id)), [true, true, true, true]);
+    assert.deepEqual(['T-005', 'T-006'].map((id) => tasks.has(id)), [true, true]);
     assert.deepEqual(tasks.get('T-006')!.depends_on.map((x) => [x.task, x.type]), [['T-002', 'hard']]);
-    assert.equal(tasks.get('T-002.at-2')!.acctest_round!.kind, 'change');
     assert.equal(tasks.get('T-003')!.title, '数据源管理（含 SSL）');
-    assert.equal(tasks.get('T-003.at')!.title, '验收测试：数据源管理（含 SSL）');
     assert.equal(tasks.get('T-005')!.stage, 'S2');
     assert.deepEqual(p.store.readFlow(p.flowId).s_stages!.map((s) => s.id), ['S0', 'S1', 'S2']);
     assert.ok(p.store.readEvents().some((e) => e.type === 'stages_revised'));
@@ -491,7 +438,7 @@ test('打回：状态 rejected，程序新建 architect task（fork 上一个）
     assert.deepEqual([c.status, c.task, c.rounds, c.feedback, c.plan_text, c.touched], ['drafting', 'T-005', 2, '不要加导出阶段', undefined, []]);
     const t = p.store.readTask(p.flowId, 'T-005');
     assert.deepEqual([t.kind, t.role, t.fork_from_task], ['doc', 'architect', 'T-004']);
-    assert.match(p.store.readHandoff(p.flowId, 'T-005'), /用户打回的意见：不要加导出阶段[\s\S]*新增 task 的编号从 T-006 起/);
+    assert.match(p.store.readHandoff(p.flowId, 'T-005'), /打回的意见：不要加导出阶段[\s\S]*新增 task 的编号从 T-006 起/);
     assert.equal(await ensureChangeTask(p.dir, p.store, p.config, p.flowId), null, '没有被打回的变更请求时什么也不做');
     // 打回时阶段不是 active：先记下，等 active 后由引擎新建
     const d2 = await draft(p, 'T-005', revisedPlan(plan, ['T-006', 'T-007']));
@@ -506,60 +453,38 @@ test('打回：状态 rejected，程序新建 architect task（fork 上一个）
   } finally { p.cleanup(); }
 });
 
-// —— 规格修订的自动关联（第 13.5 节）——
-
-const AMEND = `# 增量规格
-
-## 需求
-### REQ-001（修订）团队负责人可以创建数据源 [MVP]
-角色：团队负责人
-- AC1：Given 已登录的团队负责人 When 提交合法配置并开启 SSL Then 创建成功
-- AC2：Given 已有同名数据源 When 再次创建 Then 失败，错误码 DATASOURCE_NAME_TAKEN
-- AC3（manual）：新增后列表第一行出现新项
-
-## 页面
-
-## 权限
-| 资源 · 操作 | 团队负责人 | 成员 |
-|---|---|---|
-`;
-
-test('规格修订批准后，计划已批准且 AC 变化时自动发起变更请求（来源 amend、带 diff 与受影响的 task）；已有未结束的变更请求时给出提示', async () => {
-  const { p } = await planProject();
+test('主会话审核修订：就绪后先交给主会话，可以批准落地；转交用户后只有用户能批准', async () => {
+  const { p, plan } = await planProject();
   try {
-    const a = await proposeSpecAmend(p.dir, p.store, p.flowId, { name: 'ssl', content: AMEND, reason: '数据源需要 SSL' });
-    assert.deepEqual([a.diff.changed, a.affected_tasks], [['REQ-001.AC1'], ['T-003.at', 'T-003']]);
-    const text = await approveSpecAmend(p.dir, p.store, p.flowId, a.id, p.config);
-    assert.match(text, /已批准 amend:A-001[\s\S]*已自动发起变更请求 C-001，程序派 architect（T-004）/);
-    const c = p.store.readChange(p.flowId, 'C-001');
-    assert.deepEqual([c.source, c.status, c.changed_acs, c.task], ['amend:A-001', 'drafting', ['REQ-001.AC1'], 'T-004']);
-    assert.match(c.what, /规格修订 A-001「ssl」已批准[\s\S]*修改：REQ-001\.AC1/);
-    assert.equal(c.why, '数据源需要 SSL');
-    assert.match(c.impact, /受影响的 task：T-003\.at、T-003/);
-    assert.match(p.store.readHandoff(p.flowId, 'T-004'), /规格修订变化的验收标准：REQ-001\.AC1/);
-    // 再来一个修订：已有变更请求在处理，修订照常批准，提示 main 稍后发起
-    const a2 = await proposeSpecAmend(p.dir, p.store, p.flowId, { name: 'ssl2', content: AMEND.replace('开启 SSL', '开启 SSL 并校验证书'), reason: '再改' });
-    const text2 = await approveSpecAmend(p.dir, p.store, p.flowId, a2.id, p.config);
-    assert.match(text2, /已批准 amend:A-002[\s\S]*未能自动发起变更请求：已有变更请求 C-001 在处理/);
-    assert.equal(p.store.listChanges(p.flowId).length, 1);
+    await requestChange(p.dir, p.store, p.config, p.flowId, { what: 'w', why: 'y', impact: 'i' }, 'main');
+    const text = revisedPlan(plan);
+    const d = await draft(p, 'T-004', text);
+    assert.equal((await d.propose()).ok, true);
+    commitToBranch(p.dir, p.store.readFlow(p.flowId).integration_branch, { 'docs/plan/plan.yaml': text }, '合并修订');
+    force(p, taskRel(p.flowId, 'T-004'), { status: 'done' });
+    assert.deepEqual(pendingDecisions(p.store, p.flowId).map((x) => [x.id, x.options]), [['C-001', ['approve', 'reject', 'user']]]);
+    await decide({ root: p.dir, store: p.store, config: p.config }, p.flowId, 'C-001', 'user', '新增了一个阶段，请用户确认');
+    assert.equal(p.store.readChange(p.flowId, 'C-001').to_user, '新增了一个阶段，请用户确认');
+    assert.deepEqual(pendingDecisions(p.store, p.flowId), []);
+    await assert.rejects(decide({ root: p.dir, store: p.store, config: p.config }, p.flowId, 'C-001', 'approve', 'ok'), /没有等主会话决定/);
+    // 用户仍可以批准
+    assert.match(await approveChange(p.dir, p.store, p.config, p.flowId, 'C-001'), /已批准 change:C-001/);
   } finally { p.cleanup(); }
 });
 
-test('规格修订：没有传 config、计划还没批准（P0 阶段）时都不发起变更请求', async () => {
-  const { p } = await planProject();
+test('主会话批准修订：在一个事务里落地，批准事件记主会话', async () => {
+  const { p, plan } = await planProject();
   try {
-    const a = await proposeSpecAmend(p.dir, p.store, p.flowId, { name: 'ssl', content: AMEND, reason: 'r' });
-    const text = await approveSpecAmend(p.dir, p.store, p.flowId, a.id);
-    assert.doesNotMatch(text, /变更请求/);
-    assert.deepEqual(p.store.listChanges(p.flowId), []);
+    await requestChange(p.dir, p.store, p.config, p.flowId, { what: 'w', why: 'y', impact: 'i' }, 'main');
+    const text = revisedPlan(plan);
+    const d = await draft(p, 'T-004', text);
+    assert.equal((await d.propose()).ok, true);
+    commitToBranch(p.dir, p.store.readFlow(p.flowId).integration_branch, { 'docs/plan/plan.yaml': text }, '合并修订');
+    force(p, taskRel(p.flowId, 'T-004'), { status: 'done' });
+    assert.match((await decide({ root: p.dir, store: p.store, config: p.config }, p.flowId, 'C-001', 'approve', '修订与原因一致')).text, /已批准 change:C-001/);
+    assert.equal(p.store.readChange(p.flowId, 'C-001').status, 'approved');
+    assert.ok(p.store.readEvents().some((e) => e.type === 'approval' && e.actor === 'orchestrator' && e.data?.['change'] === 'C-001'));
   } finally { p.cleanup(); }
-  const early = await planProject(false);
-  try {
-    const a = await proposeSpecAmend(early.p.dir, early.p.store, early.p.flowId, { name: 'ssl', content: AMEND, reason: 'r' });
-    const text = await approveSpecAmend(early.p.dir, early.p.store, early.p.flowId, a.id, early.p.config);
-    assert.doesNotMatch(text, /变更请求/);
-    assert.deepEqual(early.p.store.listChanges(early.p.flowId), []);
-  } finally { early.p.cleanup(); }
 });
 
 // —— 引擎：暂停与阶段闸门 ——
@@ -569,7 +494,7 @@ test('引擎：等待批准的变更请求要调整的 task 不派发，其他 t
   try {
     await p.store.addTasks(p.flowId, [mkTask('T-009', { stage: 'S1', writes: ['src/other/**'] })], 'architect');
     const { change } = await p.store.createChange(p.flowId, { what: 'w', why: 'y', impact: 'i', source: 'main' }, archTask('T-004'), 'b', 'orchestrator');
-    await p.store.saveChangeProposal(p.flowId, change.id, { task: 'T-004', plan_hash: 'a'.repeat(64), plan_text: 'x', assumptions: [], extras: [], summary: 's', actions: [], touched: ['T-002', 'T-002.at'], warnings: [] }, 'run:r');
+    await p.store.saveChangeProposal(p.flowId, change.id, { task: 'T-004', plan_hash: 'a'.repeat(64), plan_text: 'x', assumptions: [], extras: [], summary: 's', actions: [], touched: ['T-002'], warnings: [] }, 'run:r');
     force(p, taskRel(p.flowId, 'T-004'), { status: 'done' });
     const { engine } = makeEngine(p, async () => {});
     const started = await engine.next(p.flowId);

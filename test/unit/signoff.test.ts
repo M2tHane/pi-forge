@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeMetrics, criticalPath, filterSuggestions, parseCoverageMatrix, qaConclusion, qaCounts, renderMetrics, reworkCounts, stageDurations, taskTimings, deliveryReport, stageSignoff, flowMetrics } from '../../src/core/stage/signoff.ts';
+import { computeMetrics, criticalPath, renderViolations, violationStats, filterSuggestions, parseCoverageMatrix, qaConclusion, qaCounts, renderMetrics, reworkCounts, stageDurations, taskTimings, deliveryReport, stageSignoff, flowMetrics } from '../../src/core/stage/signoff.ts';
 import type { FlowEvent, FlowFile, RunFile } from '../../src/core/state/schemas.ts';
 import { renderCoverageMarkdown } from '../../src/core/acceptance/coverage.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
@@ -49,8 +49,7 @@ test('task 时间与关键路径', () => {
 
 test('返工计数', () => {
   const tasks = [
-    mkTask('T-001', { stage: 'S1', disputes: { a: 2 } }),
-    mkTask('T-001.at-2', { stage: 'S1', kind: 'acctest' }),
+    mkTask('T-001', { stage: 'S1' }),
     mkTask('T-001.fx-1', { stage: 'S1', kind: 'fix', title: '修复stage-qa的问题（S1.qa）：a.ts' }),
     mkTask('T-002.fx-1', { stage: 'S2', kind: 'fix', title: '修复阶段门禁的问题（g）：b.ts' }),
     mkTask('T-002', { stage: 'S2' }),
@@ -60,7 +59,7 @@ test('返工计数', () => {
     taskEv(3, 'T-001', 'in_progress', 'review_changes'), taskEv(4, 'T-002', 'in_progress', 'merge_verify_fail'),
   ];
   const f = flow();
-  assert.deepEqual(reworkCounts(events, tasks, f), { precheck_failures: 2, review_rejects: 1, merge_verify_failures: 1, disputes: 2, acctest_rounds: 1, gate_fixes: 1, qa_fixes: 1 });
+  assert.deepEqual(reworkCounts(events, tasks, f), { precheck_failures: 2, review_rejects: 1, merge_verify_failures: 1, gate_fixes: 1, qa_fixes: 1 });
   const s2 = reworkCounts(events, tasks, f, 'S2');
   assert.equal(s2.precheck_failures, 0);
   assert.equal(s2.merge_verify_failures, 1);
@@ -104,7 +103,7 @@ const run = (task: string, start: number, end: number, cost: number | null): Run
 
 test('computeMetrics 汇总并渲染', () => {
   const f = flow({ approvals: { S2: { by: 'human', at: at(100) } } });
-  const tasks = [mkTask('T-001', { stage: 'S1', status: 'done' }), mkTask('T-002', { stage: 'S2', status: 'done' }), mkTask('T-002.at-1', { stage: 'S2', kind: 'acctest', status: 'done' }), mkTask('T-009', { stage: 'S2', status: 'cancelled' })];
+  const tasks = [mkTask('T-001', { stage: 'S1', status: 'done' }), mkTask('T-002', { stage: 'S2', status: 'done' }), mkTask('T-009', { stage: 'S2', status: 'cancelled' })];
   const events = [
     stageEv(0, 'S1'), stageEv(10, 'awaiting_human', 'S1'), stageEv(30, 'done', 'S1'), stageEv(30, 'S2'),
     taskEv(31, 'T-002', 'ready'), taskEv(33, 'T-002', 'in_progress'), taskEv(43, 'T-002', 'done'),
@@ -120,13 +119,25 @@ test('computeMetrics 汇总并渲染', () => {
   assert.equal(m.stages.find((s) => s.stage === 'S2')!.tasks_cancelled, 1);
   assert.equal(m.queue_avg_min, 2);
   assert.equal(m.quality.ac_coverage_pct, 88);
-  assert.equal(m.quality.acceptance_tests, 1);
   assert.equal(m.quality.fix_after_delivery, 2);
   assert.equal(m.cost.runs, 2);
   assert.equal(m.cost.tokens, 300);
   assert.equal(m.cost.cost, 0.5);
   const text = renderMetrics(m);
-  for (const k of ['## 速度', '## 返工', '## 质量', '## 成本', 'AC 覆盖率 88%', '交付后的 /forge-fix 2 次']) assert.match(text, new RegExp(k.replace(/[/]/g, '\\/')));
+  for (const k of ['## 速度', '## 返工', '## 质量', '## 成本', '## 被拦下的操作', 'AC 覆盖率 88%', '交付后的 /forge-fix 2 次']) assert.match(text, new RegExp(k.replace(/[/]/g, '\\/')));
+});
+
+test('violationStats：按角色与规则汇总，同一 run 同一规则 3 次以上列为反复撞墙', () => {
+  const v = (run: string, rule: string, n: number, detail: string) => ({ ...taskEv(n, 'T-001', 'in_progress'), type: 'violation' as const, reason: `拒绝 ${rule}`, data: { run, role: 'worker', tool: 'bash', rule, count: 1, detail } });
+  const events = [v('r1', 'bash', 1, 'rm -rf $X'), v('r1', 'bash', 2, 'rm -rf *'), v('r1', 'bash', 3, 'rm -rf dist/*'), v('r1', 'protected', 4, '.forge/x'), v('r2', 'bash', 5, 'cd ..')];
+  const s = violationStats(events, 'B-001');
+  assert.equal(s.total, 5);
+  assert.deepEqual(s.by_role_rule, [{ role: 'worker', rule: 'bash', count: 4 }, { role: 'worker', rule: 'protected', count: 1 }]);
+  assert.deepEqual(s.repeated.map((r) => [r.run, r.rule, r.count, r.last]), [['r1', 'bash', 3, 'rm -rf dist/*']]);
+  const text = renderViolations(s).join('\n');
+  assert.match(text, /共 5 次：worker\/bash 4、worker\/protected 1/);
+  assert.match(text, /反复撞同一条规则：T-001 run r1 worker\/bash 3 次，最后一次：rm -rf dist\/\*/);
+  assert.deepEqual(renderViolations(violationStats([], 'B-001')), ['- 无']);
 });
 
 test('签收材料与交付汇报包含关键章节；needs_human 展示原因与三个选项', async () => {

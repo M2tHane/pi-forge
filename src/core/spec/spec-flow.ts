@@ -1,36 +1,32 @@
 // 来源：pi-flow src/core/requirements.ts @ 31f3f15（M2 按 P0 规格与人工修订改编）
 // 程序校验后通过独立索引提交产物，所有流程与修订状态只经 StateStore 写入。
 import type { StateStore } from '../state/state-store.ts';
-import type { AmendFile, FlowFile } from '../state/schemas.ts';
+import { isLightFlow, type FlowFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
 import { commitFilesToBranch } from './intake.ts';
-import { diffAcs, effectiveSpec, lintSpec, type SpecFiles, type SpecFeature, type LintResult } from './spec.ts';
+import { lintSpec, type SpecFiles, type LintResult } from './spec.ts';
 import { planStageTransition } from '../state/state-machine.ts';
 
 export const SPEC_PATHS = ['requirements', 'screens', 'permissions', 'glossary'] as const;
 export class SpecFlowError extends Error {}
-export function readSpec(root: string, branch: string): { files: SpecFiles; features: SpecFeature[] } {
+export function readSpec(root: string, branch: string): { files: SpecFiles } {
   const ref = `refs/heads/${branch}`;
   const files = Object.fromEntries(SPEC_PATHS.map((name) => {
     const rel = `docs/spec/${name}.md`;
     if (!gitOk(root, ['cat-file', '-e', `${ref}:${rel}`])) throw new SpecFlowError(`集成分支上没有规格文件 ${rel}，请用 forge_spec 提交四份规格。`);
     return [name, git(root, ['show', `${ref}:${rel}`])];
   })) as unknown as SpecFiles;
-  const features = git(root, ['ls-tree', '-rz', '--name-only', ref, '--', 'docs/spec/features/']).split('\0')
-    .filter((f) => /^docs\/spec\/features\/[^/]+\.md$/.test(f)).sort()
-    .map((f) => ({ name: f.slice('docs/spec/features/'.length), content: git(root, ['show', `${ref}:${f}`]) }));
-  return { files, features };
+  return { files };
 }
 export function specGateLint(root: string, flow: FlowFile): LintResult {
   try {
-    const { files, features } = readSpec(root, flow.integration_branch);
-    return lintSpec(files, features);
+    return lintSpec(readSpec(root, flow.integration_branch).files);
   } catch (e) { return { errors: [{ file: 'docs/spec', rule: 'missing-spec', message: (e as Error).message }], warnings: [] }; }
 }
 export async function submitSpec(root: string, store: StateStore, flowId: string, files: SpecFiles): Promise<{ sha: string | null; lint: LintResult }> {
   return store.transaction((tx) => {
     const flow = tx.readFlow(flowId);
-    if (store.readState().active_flow !== flowId || flow.mode === 'fix' || flow.stage !== 'P0' || flow.stage_status !== 'active') throw new SpecFlowError('只能在活动流程的 P0 规格阶段为 active 时提交；已提交时请等待用户 /forge-approve 或 /forge-reject。');
+    if (store.readState().active_flow !== flowId || isLightFlow(flow) || flow.stage !== 'P0' || flow.stage_status !== 'active') throw new SpecFlowError('只能在活动流程的 P0 规格阶段为 active 时提交；已提交时请等待用户 /forge-approve 或 /forge-reject。');
     const lint = lintSpec(files);
     if (lint.errors.length) throw new SpecFlowError(`spec-lint 未通过，未写入任何文件：\n${lint.errors.map((e) => `- ${e.message}`).join('\n')}`);
     const errors = planStageTransition(flow.stage_status, 'awaiting_gate', 'submit_gate', { actor: 'orchestrator' });
@@ -41,29 +37,4 @@ export async function submitSpec(root: string, store: StateStore, flowId: string
     tx.event({ flow: flowId, actor: 'orchestrator', type: 'transition', from: 'active', to: 'awaiting_gate', trigger: 'submit_gate', data: { entity: 'stage', stage: 'P0' } });
     return { sha, lint };
   });
-}
-export function amendSummary(a: AmendFile): string {
-  return [`amend:${a.id}「${a.name}」（${a.status}）：${a.reason}`, `AC 新增：${a.diff.added.join('、') || '无'}；修改：${a.diff.changed.join('、') || '无'}；删除：${a.diff.removed.join('、') || '无'}`, `受影响的 task：${a.affected_tasks.join('、') || '无'}`, ...(a.feedback ? [`打回意见：${a.feedback}`] : [])].join('\n');
-}
-export async function proposeSpecAmend(root: string, store: StateStore, flowId: string, input: { name?: string; content: string; reason: string }): Promise<AmendFile> {
-  const flow = store.readFlow(flowId);
-  if (!flow.approvals['P0']) throw new SpecFlowError('P0 批准之后才能提交规格修订；当前请用 forge_spec。');
-  const amends = store.listAmends(flowId);
-  if (amends.some((a) => a.status === 'proposed')) throw new SpecFlowError('已有修订等待批准，请先等待用户 /forge-approve 或 /forge-reject。');
-  if (!input.content.trim() || !input.reason.trim()) throw new SpecFlowError('修订内容和理由不能为空。');
-  const name = input.name?.trim() || '规格修订';
-  if (!/^[\p{L}\p{N}_-]{1,80}$/u.test(name)) throw new SpecFlowError('修订名字只能包含文字、数字、下划线和短横线，最多 80 字。');
-  const seq = String(Math.max(0, ...amends.map((a) => Number(a.id.slice(2)))) + 1).padStart(3, '0');
-  const date = new Date().toISOString().slice(0, 10);
-  // 日期回拨时仍在所有已批准 features 后面叠加，避免修订顺序倒置。
-  const { files, features } = readSpec(root, flow.integration_branch);
-  const latestDate = features.map((f) => f.name.slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().at(-1);
-  const filename = `${latestDate && latestDate > date ? latestDate : date}-${seq}-${name}.md`;
-  const next = [...features, { name: filename, content: input.content }];
-  const lint = lintSpec(files, next);
-  if (lint.errors.length) throw new SpecFlowError(`spec-lint 未通过，未保存修订：\n${lint.errors.map((e) => `- ${e.message}`).join('\n')}`);
-  const diff = diffAcs(effectiveSpec(files, features), effectiveSpec(files, next));
-  const changed = new Set([...diff.added, ...diff.changed, ...diff.removed]);
-  const affected_tasks = store.listTasks(flowId).filter((t) => t.ac?.some((ac) => changed.has(ac))).map((t) => t.id);
-  return store.proposeAmend(flowId, { name, path: `docs/spec/features/${filename}`, content: input.content, reason: input.reason.trim(), diff, affected_tasks, base_sha: git(root, ['rev-parse', `refs/heads/${flow.integration_branch}`]).trim() });
 }

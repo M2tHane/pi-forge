@@ -10,11 +10,11 @@ const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
 /** 全量测试：仓库里有 BROKEN 文件时失败 */
 export const FLOW5_YAML = REAL_TEMPLATE_YAML
-  .replace(/commands:[\s\S]*?\nlimits:/, 'commands:\n  install: "true"\n  typecheck: "true"\n  lint: "true"\n  test: "test ! -e BROKEN"\n  acceptance: "true"\n  acceptance_list: "true"\nlimits:')
+  .replace(/commands:[\s\S]*?\nlimits:/, 'commands:\n  install: "true"\n  typecheck: "true"\n  lint: "true"\n  test: "test ! -e BROKEN"\n  acceptance: "true"\nlimits:')
   .replace(/^limits:/m, 'limits:\n  timeout_review: auto')
   .replace(/^  auto_dispatch: true.*$/m, '  auto_dispatch: false');
 export const SETTINGS5: RoleSettingsFile = { version: 1, roles: Object.fromEntries(
-  ['orchestrator', 'worker', 'test-author', 'architect', 'stage-qa', 'reviewer', 'researcher'].map((r) => [r, { model: 'fake/m' }])) };
+  ['orchestrator', 'worker', 'architect', 'stage-qa', 'reviewer'].map((r) => [r, { model: 'fake/m' }])) };
 
 export function cmdEnv(p: Project, engine: ReturnType<typeof makeEngine>['engine']): CommandEnv {
   return {

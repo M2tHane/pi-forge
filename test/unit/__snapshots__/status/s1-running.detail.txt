@@ -1,6 +1,6 @@
 需要你处理：
-- T-004「创建看板接口」与验收测试有争议，等你裁决：验收测试要求 title 可为空，与 REQ-001.AC2 不一致
-  → /forge-decide T-004 keep-test 或 /forge-decide T-004 fix-test "<说明>"
+- T-004「创建看板接口」有问题要问你：规格里 title 是否可为空没有说清，与 REQ-001.AC2 不一致
+  → /forge answer T-004
 
 B-001「演示」（新项目）
 规格 ✓ → 契约与计划 ✓ → [实施] → 交付
@@ -9,7 +9,7 @@ B-001「演示」（新项目）
 进度：S1 0 / 4 个任务完成（全部实施阶段 1 / 6）
 正在进行：
 - T-002 看板列表接口（worker）实现中
-- T-003 看板列表验收测试（test-author）编写验收测试
+- T-003 看板列表接口审查（reviewer）代码审查中
 阻塞：T-004
 
 ## B-001「演示」内部状态
@@ -18,14 +18,14 @@ B-001「演示」（新项目）
 - 已批准的闸门：P0、P1
 
 ### 任务表（6 个）
-| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 争议 | 尝试 | 阻塞原因 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-001 | impl | worker | done | S0 | 0 | 0 | 0 | 0 | 0 | - |
-| T-002 | impl | worker | in_progress | S1 | 0 | 0 | 0 | 0 | 0 | - |
-| T-003 | acctest | test-author | in_progress | S1 | 0 | 0 | 0 | 0 | 0 | - |
-| T-004 | impl | worker | blocked | S1 | 0 | 1 | 0 | 1 | 0 | dispute |
-| T-005 | impl | worker | ready | S1 | 0 | 0 | 0 | 0 | 0 | - |
-| T-006 | impl | worker | pending | S2 | 0 | 0 | 0 | 0 | 0 | - |
+| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 尝试 | 阻塞原因 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| T-001 | impl | worker | done | S0 | 0 | 0 | 0 | 0 | - |
+| T-002 | impl | worker | in_progress | S1 | 0 | 0 | 0 | 0 | - |
+| T-003 | review | reviewer | in_progress | S1 | 0 | 0 | 0 | 0 | - |
+| T-004 | impl | worker | blocked | S1 | 0 | 1 | 0 | 0 | agent |
+| T-005 | impl | worker | ready | S1 | 0 | 0 | 0 | 0 | - |
+| T-006 | impl | worker | pending | S2 | 0 | 0 | 0 | 0 | - |
 
 ### 最近事件
 #2 <时间> transition none→active

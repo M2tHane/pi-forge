@@ -73,6 +73,15 @@ export function setEscalation(settings: RoleSettingsFile, role: string, model: s
   return { ...settings, roles };
 }
 
+/** 设置兜底模型（所有角色共用）；undefined 表示清除（回到 workflow.yaml 的 models.fallback） */
+export function setFallback(settings: RoleSettingsFile, model: string | undefined): RoleSettingsFile {
+  if (model !== undefined && !/^[^/\s]+\/\S+$/.test(model)) throw new RoleSettingsError(`模型必须写成 provider/model 形式（收到：${model}）`);
+  const next = { ...settings };
+  if (model) next.fallback_model = model;
+  else delete next.fallback_model;
+  return next;
+}
+
 export function unsetRole(settings: RoleSettingsFile, role: string): RoleSettingsFile {
   const roles = { ...settings.roles };
   delete roles[role];

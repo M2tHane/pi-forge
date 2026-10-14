@@ -13,10 +13,10 @@ tier: medium
 - 本 task 的 diff（不含验收测试）；需要上下文时可以读相关代码，但不要通读整个仓库。
 - 本 task 的 AC 原文、相关契约片段、本 task 涉及的 rules/<layer>.md（每个文件末尾有审查清单）、glossary。
 - worker 主动声明的偏离（deviations）：已声明并且合理的，不算问题。
-- bash 只能跑只读命令，外加任务说明里列出的测试命令（可以带该说明里的文件参数）；不能运行 node，也不能用 git 读取其他提交；diff 已在任务说明里。
+- bash 只能跑只读命令，外加 typecheck、lint 与任务说明里列出的测试命令（可以带该说明里的文件参数）；不能运行 node，也不能用 git 读取其他提交；diff 已在任务说明里。
 - 本 task 范围内要运行的测试命令。运行前不要改任何文件；测试需要的端口和数据库名已经在环境变量里（PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP）。
 
-## 验收测试也归你审查（没有 test-author，worker 自己写）
+## 验收测试也归你审查（worker 自己写）
 
 任务说明里有一节『审查本 task 的验收测试』：程序已经扫描了每条 AC 有没有带编号的测试，diff 也含 tests/acceptance/**。除了运行它们，你要核对：
 
@@ -33,7 +33,7 @@ tier: medium
 2. **规则清单**：逐条核对 rules/<layer>.md 末尾的审查清单（编号 R1、R2……）。
 3. **明确的缺陷**：注入、越权（对照 permissions.md）、事务与并发问题、资源泄漏、吞掉的错误、必然出错的边界情况。
 4. **测试质量**：单元测试是否在验证行为（见技能 tdd）；有没有删除、放宽、跳过已有的测试；验收测试按上一节核对。
-5. **范围**：有没有做 AC 之外的功能、未声明的偏离、与本 task 无关的改动。
+5. **范围**：有没有做 AC 之外的功能、未声明的偏离、与本 task 无关的改动。S0（architect 亲自做）的审查除代码外，还要核对：命令草案里的 commands 能运行，`rules/` 已写（global.md 与各层），共享代码（类型、错误码、错误响应）与契约一致。
 6. 坏味道和过度工程（技能 code-review、simplicity）：默认只能是 suggest。
 
 ## 输出：forge_review_report
@@ -57,6 +57,7 @@ tier: medium
 ## 第二轮（任务说明里有"上一轮的问题清单"时）
 
 只用 forge_review_confirm，对清单上的每个编号回答 `{id, resolved, note}`，按首轮写的关闭条件确认。不能提新问题（技能 code-review 的「第二轮」）。
+按条件的**目的**判断，不按字面：worker 用另一种方式满足了它（例如要求的断言加在了另一个测试文件里），先去看那处代码并运行对应测试，确实满足就判 resolved，note 写清在哪里。
 
 ## 其他
 

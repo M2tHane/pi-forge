@@ -52,7 +52,7 @@ test('Enter 打开选择列表，上下选择，Enter 确认，Esc 返回不改'
   assert.equal(t.rows[0]!.model, undefined);
 });
 
-test('左右键切列、选行；备用模型与思考强度；Backspace 恢复默认；Esc 保存退出', () => {
+test('左右键切列、选行；升级模型与思考强度；Backspace 恢复默认；Esc 保存退出', () => {
   const t = new RoleTable(rows(), models);
   t.handleInput(RIGHT); t.handleInput(ENTER); t.handleInput(DOWN); t.handleInput(ENTER);
   assert.equal(t.rows[0]!.escalate, 'a/big');
@@ -106,6 +106,22 @@ test('下拉框紧贴当前格展开：在所选行下方、与所选列左对�
   assert.ok(top2 > 2);
 });
 
+test('兜底模型行：只能改模型列，升级模型与思考强度显示 — 且改不了', () => {
+  const t = new RoleTable([...rows(), { role: '兜底模型', purpose: '所有角色共用', kind: 'fallback', defaults: {} }], models);
+  t.handleInput(DOWN); t.handleInput(DOWN);  // 第三行：兜底模型
+  t.handleInput(ENTER); t.handleInput(DOWN); t.handleInput(DOWN); t.handleInput(ENTER);
+  assert.equal(t.rows[2]!.model, 'b/small');
+  for (const k of [RIGHT, RIGHT]) {
+    t.handleInput(k);
+    t.handleInput(ENTER);
+    assert.equal(t.picker, null, '不可改的列不打开列表');
+    t.handleInput('\x7f');
+  }
+  assert.deepEqual([t.rows[2]!.escalate, t.rows[2]!.thinking], [undefined, undefined]);
+  const line = t.render(140).map((l) => l.replace(/\x1b\[[0-9;]*m/g, '')).find((l) => l.includes('兜底模型') && l.includes('b/small'))!;
+  assert.match(line, /b\/small\s+—\s+—/);
+});
+
 test('渲染：每行不超过终端宽度，含表头与当前行标记', () => {
   const t = new RoleTable(rows(), models);
   for (const width of [60, 100, 160]) {
@@ -113,12 +129,12 @@ test('渲染：每行不超过终端宽度，含表头与当前行标记', () =>
     for (const l of lines) assert.ok(textWidth(l.replace(/\x1b\[[0-9;]*m/g, '')) <= width, `宽 ${width}：${l}`);
   }
   const text = t.render(120).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
-  assert.match(text, /角色\s+职责\s+模型\s+备用模型\s+思考强度/);
+  assert.match(text, /角色\s+职责\s+模型\s+升级模型\s+思考强度/);
   assert.match(text, /→ architect/);
   assert.match(t.render(120).at(-1)!, /Esc 保存并退出/);
 });
 
-test('/forge-config 表格：保存各行的模型、备用模型与思考强度，放弃时不写', async () => {
+test('/forge-config 表格：保存各行的模型、升级模型与思考强度，放弃时不写', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'pi-forge-rt-'));
   try {
     const settingsPath = path.join(dir, 'pi-forge.json');
@@ -148,6 +164,19 @@ test('/forge-config 表格：保存各行的模型、备用模型与思考强度
     })));
     assert.match(out2, /已保存/);
     assert.deepEqual(loadRoleSettings(settingsPath).roles, {});
+
+    // 兜底模型在最后一行：表格里设置、清除
+    await runFlowConfig('', deps(mk((r) => {
+      assert.equal(r.at(-1)!.kind, 'fallback');
+      return r.map((x) => (x.kind === 'fallback' ? { ...x, model: 'B/Small' } : x));
+    })));
+    assert.equal(loadRoleSettings(settingsPath).fallback_model, 'b/small');
+    await runFlowConfig('', deps(mk((r) => {
+      assert.equal(r.at(-1)!.model, 'b/small');
+      return r.map((x) => (x.kind === 'fallback' ? { ...x, model: undefined } : x));
+    })));
+    assert.equal(loadRoleSettings(settingsPath).fallback_model, undefined);
+    await assert.rejects(runFlowConfig('', deps(mk((r) => r.map((x) => (x.kind === 'fallback' ? { ...x, model: 'no/such' } : x))))), /不可用/);
 
     assert.match(await runFlowConfig('', deps(mk(() => null))), /放弃/);
   } finally { rmSync(dir, { recursive: true, force: true }); }

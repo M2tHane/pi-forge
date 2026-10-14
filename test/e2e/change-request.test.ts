@@ -1,5 +1,5 @@
 // M7 验收：进行中的 worker 发起变更请求 → 程序派 architect 起草修订（forge_propose_plan）→ 合并 → /forge-approve change:C-001
-// → 任务图、S 阶段与 .at-n 在一个事务里正确更新。fake-subagent 经真实的引擎、SubagentRuntime 与工具操作。
+// → 任务图与 S 阶段在一个事务里正确更新。fake-subagent 经真实的引擎、SubagentRuntime 与工具操作。
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -34,14 +34,14 @@ async function project() {
   plan.tasks.push({ id: 'T-004', stage: 'S1', module: 'datasource', title: '数据源重名校验', size: 'S', layers: ['backend'], ac: ['REQ-001.AC2'], writes: ['server/src/dsimport/**'], produces: [], requires: [], test_interface: [] });
   const planYaml = stringify(plan);
   const p = await setupProject({ yaml: PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "true"'), stages: ['P1'], files: { ...SPEC_FILES, ...CONTRACT_FILES, 'docs/plan/plan.yaml': planYaml } });
-  const check = checkPlan(plan, { catalog: parseContracts(CONTRACTS).catalog, spec: effectiveSpec(P1_SPEC, []), existingTaskIds: [], mode: 'build', limits: { max_parallel: 4, max_task_files: 12, lean_below_loc: 6000 } });
+  const check = checkPlan(plan, { catalog: parseContracts(CONTRACTS).catalog, spec: effectiveSpec(P1_SPEC), existingTaskIds: [], limits: { max_parallel: 4, max_task_files: 12 } });
   assert.deepEqual(check.errors, []);
-  const tasks = deriveTasks(plan, check.deps, { worker: p.config.role('worker').scopes, testAuthor: p.config.role('test-author').scopes }, { acctest: true, verify: ['test'] });
+  const tasks = deriveTasks(plan, check.deps, { worker: p.config.role('worker').scopes }, { verify: ['test'] });
   force(p, flowRel(p.flowId), { approvals: { P0: { by: 'human', at: new Date().toISOString() }, P1: { by: 'human', at: new Date().toISOString() } } });
-  await p.store.setStages(p.flowId, plan.stages, 'standard');
+  await p.store.setStages(p.flowId, plan.stages);
   await p.store.addTasks(p.flowId, tasks.map((t) => ({ ...t, review: 'skip' as const })), 'engine');
   force(p, flowRel(p.flowId), { stage: 'S1', stages: ['P0', 'P1', ...plan.stages.map((s) => s.id)], stage_status: 'active', contracts_base: p.git('rev-parse', 'HEAD') });
-  for (const id of ['T-002', 'T-002.at', 'T-003.at', 'T-004.at']) force(p, taskRel(p.flowId, id), { status: 'done' });
+  force(p, taskRel(p.flowId, 'T-002'), { status: 'done' });
   const t3 = p.store.readTask(p.flowId, 'T-003');
   force(p, taskRel(p.flowId, 'T-003'), { depends_on: [...t3.depends_on, { task: 'T-004', type: 'hard' }] });
   return { p, plan };
@@ -60,7 +60,7 @@ function revisedPlan(plan: PlanFile): string {
 }
 
 
-test('变更请求：worker 发起 → architect 起草并提交修订 → 合并 → 批准后任务图、S 阶段与 .at-n 正确更新；等待批准期间被调整的 task 不派发', async () => {
+test('变更请求：worker 发起 → architect 起草并提交修订 → 合并 → 批准后任务图与 S 阶段正确更新；等待批准期间被调整的 task 不派发', async () => {
   const { p, plan } = await project();
   const text = revisedPlan(plan);
   const results: Record<string, { ok: boolean; text: string }> = {};
@@ -97,9 +97,9 @@ test('变更请求：worker 发起 → architect 起草并提交修订 → 合�
     assert.match(await runFlowCommand('approve change:C-001', e.cmd), /已批准 change:C-001/);
     const tasks = new Map(p.store.listTasks(p.flowId).map((t) => [t.id, t]));
     assert.equal(tasks.get('T-003')!.title, '数据源管理（含 SSL）');
-    assert.deepEqual(['T-006', 'T-006.at', 'T-007', 'T-002.at-2'].map((id) => tasks.has(id)), [true, true, true, true]);
+    assert.deepEqual(['T-006', 'T-007'].map((id) => tasks.has(id)), [true, true]);
     assert.deepEqual(tasks.get('T-007')!.depends_on.map((d) => [d.task, d.type]), [['T-002', 'hard']]);
-    assert.equal(tasks.get('T-002.at-2')!.acctest_round?.kind, 'change');
+    assert.ok(tasks.get('T-006')!.writes.includes('tests/acceptance/T-006/**'));
     const flow = p.store.readFlow(p.flowId);
     assert.deepEqual(flow.s_stages!.map((s) => s.id), [...plan.stages.map((s) => s.id), 'S2']);
     assert.ok(flow.stages.includes('S2'));

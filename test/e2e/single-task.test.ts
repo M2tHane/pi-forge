@@ -41,7 +41,7 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), 'export const a = 1;');
 
     // 子进程规格：模型、思考级别、工具白名单、guard 扩展最后、token 只在环境变量中
-    assert.equal(launcher.launched.length, 2, 'impl 一律审查（偏离 117）：worker 之后派一个 reviewer');
+    assert.equal(launcher.launched.length, 2, 'impl 一律审查：worker 之后派一个 reviewer');
     const [impl] = launcher.launched;
     assert.equal(impl!.thinking, 'low');
     assert.ok(impl!.tools.includes('forge_submit') && impl!.tools.includes('notes') && !impl!.tools.includes('forge_accept'));
@@ -55,7 +55,7 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
       assert.ok(r.ended_at && r.tokens.input! > 0 && r.tokens.output! > 0 && r.model === 'fake/model');
       assert.equal(r.token_hash.length, 64);
     }
-    // 偏离 117：预检不跑命令，合并只跑 merge_check（本用例没有配置），所以 T-001 没有任何命令的 evidence
+    // 预检不跑命令，合并只跑 merge_check（本用例没有配置），所以 T-001 没有任何命令的 evidence
     assert.ok(!existsSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence/T-001')), '没有预检与合并的命令 evidence');
     assert.match(p.store.readHandoff(p.flowId, 'T-001'), /提交说明：实现 a/);
     // 主工作区没有被实施角色改动
@@ -88,14 +88,15 @@ test('无 token 或错 token 的提交被拒；实施角色没有验收工具', 
   } finally { p.cleanup(); }
 });
 
-test('偏离 115：writes 之外的文件可以直接改并合入；规格、验收测试、未列测试路径时的测试代码被拦下', async () => {
+test('writes 之外的文件（含别的 task 的验收测试、任何测试代码）可以直接改并合入；只有规格与受保护路径被拦下', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
     const { engine } = makeEngine(p, async (role, _n, a) => {
       await a.call('forge_claim');
       await a.call('write', { path: 'src/server/t-001/a.ts', content: 'x' });
       assert.ok((await a.call('write', { path: 'README.md', content: 'changed outside writes' })).ok);
-      for (const f of ['docs/spec/requirements.md', 'tests/acceptance/T-009/a.test.ts', 'tests/unit/a.test.ts']) {
+      for (const f of ['tests/acceptance/T-009/a.test.ts', 'tests/unit/a.test.ts']) assert.ok((await a.call('write', { path: f, content: 'x' })).ok, f);
+      for (const f of ['docs/spec/requirements.md', 'rules/global.md', 'workflow.yaml']) {
         const r = await a.call('write', { path: f, content: 'x' });
         assert.equal(r.ok, false, f);
       }
@@ -110,15 +111,16 @@ test('偏离 115：writes 之外的文件可以直接改并合入；规格、验
   } finally { p.cleanup(); }
 });
 
-test('提交前清理落在不能改的位置、未被跟踪的文件；writes 外的普通新文件照常提交（偏离 115）', async () => {
+test('提交前清理落在不能改的位置（docs/spec）、未被跟踪的文件；writes 外的新文件（含测试）照常提交', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
     let submitText = '';
     const { engine } = makeEngine(p, async (role, _n, a) => {
       assert.ok((await a.call('forge_claim')).ok);
       assert.ok((await a.call('write', { path: 'src/server/t-001/a.ts', content: 'export const a = 1;' })).ok);
-      // 不经过工具（guard 看不到）写下的文件：测试代码（writes 没列测试路径）被清理；writes 外的普通文件保留
-      for (const d of ['tests/unit', 'src/shared']) mkdirSync(path.join(a.spec.cwd, d), { recursive: true });
+      // 不经过工具（guard 看不到）写下的文件：规格目录里的被清理；测试代码与普通文件保留
+      for (const d of ['tests/unit', 'src/shared', 'docs/spec']) mkdirSync(path.join(a.spec.cwd, d), { recursive: true });
+      writeFileSync(path.join(a.spec.cwd, 'docs/spec/leftover.md'), '');
       writeFileSync(path.join(a.spec.cwd, 'tests/unit/leftover.test.ts'), '');
       writeFileSync(path.join(a.spec.cwd, 'src/shared/util.ts'), 'export const u = 1;');
       await a.call('forge_note', { text: '完成' });
@@ -129,8 +131,9 @@ test('提交前清理落在不能改的位置、未被跟踪的文件；writes �
     await engine.next(p.flowId);
     await engine.idle();
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
-    assert.match(submitText, /已清理可写范围外、未被跟踪的文件 1 个：tests\/unit\/leftover\.test\.ts/);
-    assert.throws(() => p.git('show', `flow/${p.flowId}/integration:tests/unit/leftover.test.ts`));
+    assert.match(submitText, /已清理可写范围外、未被跟踪的文件 1 个：docs\/spec\/leftover\.md/);
+    assert.throws(() => p.git('show', `flow/${p.flowId}/integration:docs/spec/leftover.md`));
+    assert.equal(p.git('show', `flow/${p.flowId}/integration:tests/unit/leftover.test.ts`), '');
     assert.match(p.git('show', `flow/${p.flowId}/integration:src/shared/util.ts`), /u = 1/);
   } finally { p.cleanup(); }
 });
@@ -162,7 +165,7 @@ test('失败达上限转 blocked，不再派发；同样的原因连续失败两
     const t = q.store.readTask(q.flowId, 'T-001');
     assert.equal(t.status, 'blocked');
     assert.equal(t.attempts, 2);
-    assert.match(t.blocked_reason ?? '', /同样的原因连续失败 2 次（没有可升级的模型）[\s\S]*模型连接失败[\s\S]*\/forge unblock T-001/);
+    assert.match(t.blocked_reason ?? '', /同样的原因连续失败 2 次（没有可升级的模型，也没有设置兜底模型）[\s\S]*模型连接失败[\s\S]*\/forge unblock T-001/);
     assert.equal(launcher.launched.length, 2);
     assert.deepEqual(errors, [], '交给用户不算程序出错');
   } finally { q.cleanup(); }

@@ -367,10 +367,10 @@ footer { color: var(--faint); font-size: 12px; padding: 40px 0 60px; border-top:
 
   <section class="act" id="score">
     <div class="act-head"><span class="act-no">ACT 6</span><h2>交付</h2></div>
-    <p class="act-intro">最后一个阶段验收通过，集成分支合入 main。交付后用 agent 看不到的隐藏测试打分。第一次 build 只做核心模块，之后每个新功能单独走一次 feature 流程。</p>
+    <p class="act-intro">最后一个阶段验收通过，集成分支合入 main。交付后用 agent 看不到的隐藏测试打分。第一次 build 只做核心模块，之后每个新功能用小改动完成。</p>
     <div class="score-grid">
       <div class="panel" id="hidden"></div>
-      <div class="panel"><div id="loc"></div><h4 style="margin:22px 0 4px">之后的功能（每项一次 feature 流程）</h4><p class="muted" style="margin:0 0 6px;font-size:13px">点一个功能，看它的 feature 流程怎么走。</p><div class="backlog" id="backlog"></div></div>
+      <div class="panel"><div id="loc"></div><h4 style="margin:22px 0 4px">之后的功能（每项一次小改动）</h4><p class="muted" style="margin:0 0 6px;font-size:13px">点一个功能，看小改动怎么走。</p><div class="backlog" id="backlog"></div></div>
     </div>
   </section>
 </main>
@@ -476,8 +476,8 @@ function peakConcurrency() {
       d: `## S0 骨架\n只做所有任务都依赖的东西，单独一个阶段先做完、先审查，后面的并行才不会互相等。\n\n本示例的 S0：租户上下文、员工登录、数据库访问层、路由注册入口、后台外壳。\n\n## 共享开发环境\nS0 结束时程序一次性建好共享环境：装好依赖、启动数据库服务器、准备工具链和环境脚本。之后：\n- **所有 worktree 直接链接**共享的依赖，不再各自安装。\n- worker 缺依赖：**直接装进共享环境**（程序加锁，同一时间只有一个安装）。\n- 要升级或删除已有依赖的任务：单独装一份自己的副本，不影响别人。\n- 审查员在共享环境里跑测试：每次审查分到**独立端口和独立数据库**（在共享数据库服务器上一条语句建库，几秒），并行审查互不覆盖数据。` },
     { no: 'S1…Sn', t: '实施', c: 'var(--worker)', who: ['worker ×N', '程序', '审查员', '阶段验收'], p: '每个阶段内多个 worker 并行；阶段之间有门禁。', stage: true,
       d: `## S1…Sn 实施\n每个阶段内部是同一个循环（见下方放大图）：按依赖图派发，最多同时 3 个 worker；审查员看代码并跑本任务的测试，通过后逐个合并；全量测试与阶段验收在门禁跑一次。\n\n阶段门禁通过才进下一阶段。` },
-    { no: '✓', t: '交付', c: 'var(--ok)', who: ['程序', '用户'], p: '集成分支合入 main；之后每个新功能走一次 feature 流程。',
-      d: `## 交付\n最后一个阶段验收通过后，程序把集成分支合入 main。\n\n第一次 build 只做核心模块（大约 30–80 条 AC）。之后每个新功能单独走一次 **feature** 流程：同样的规格 → 计划 → 实施，但只针对这一个功能。` },
+    { no: '✓', t: '交付', c: 'var(--ok)', who: ['程序', '用户'], p: '集成分支合入 main；之后每个新功能用小改动完成。',
+      d: `## 交付\n最后一个阶段验收通过后，程序把集成分支合入 main。\n\n第一次 build 只做核心模块（大约 30–80 条 AC）。之后每个新功能用一次**小改动**完成：主会话写 1–3 个 task 的迷你计划，实施、审查、合并后更新架构图与契约，不再走规格与计划的批准。` },
   ];
   $('#pipeline').innerHTML = phases.map((x, i) => `<div class="phase${x.stage ? ' stage' : ''}" data-i="${i}" style="--c:${x.c}"><div class="no">${x.no}</div><h4>${x.t}</h4><p>${x.p}</p><div class="who">${x.who.map((w) => `<span>${w}</span>`).join('')}</div></div>`).join('');
   $('#pipeline').onclick = (e) => { const n = e.target.closest('.phase'); if (n) openModal(`${phases[n.dataset.i].no} ${phases[n.dataset.i].t}`, md(phases[n.dataset.i].d)); };
@@ -728,23 +728,22 @@ function showOutput(id) {
   io.observe($('#steps'));
 })();
 
-// feature 流程说明：已有工程上加一个功能，流程和 build 一样走四段，但只针对这一个功能
+// 小改动说明：已交付的工程上加一个功能，不再走规格与计划两段批准
 function featureDoc(name) {
-  return `**feature 流程**是在已经交付的工程上加一个功能。它和第一次 build 走同样的四段，区别是**只处理这一个功能**，并且建立在已有的规格、契约和代码之上。
+  return `**小改动**是在已经交付的工程上加一个功能。不再走一遍规格和计划的批准：主会话读架构图、rules 和契约，和你商量后写一份 1–3 个 task 的迷你计划，程序检查依赖图后直接开工。
 
-| 阶段 | 第一次 build | feature「${name}」 |
+| 环节 | 第一次 build | 小改动「${name}」 |
 |---|---|---|
-| P0 规格 | 整个产品的需求（14 条 REQ） | 只写这个功能的增量规格，放进 \`docs/spec/features/\`；可以引用已有的 REQ |
-| P1 契约与计划 | 从零设计全部接口和数据模型 | 已有契约锁定，只能**追加**新接口、新字段；计划只拆这个功能的任务（通常 2–6 个） |
-| 实施 | S0 骨架 + 多个阶段 | 骨架已经有了，直接按依赖图并行做这几个任务 |
-| 交付 | 集成分支合入 main | 同样合入 main；已有功能的验收测试一起跑，防止改坏 |
+| 规格与计划 | P0 规格、P1 契约与计划，各要你批准 | 迷你计划（1–3 个 task），程序检查后直接开工 |
+| 实施 | S0 骨架 + 多个阶段 | 每个 task 照常 worker 实现 → reviewer 审查 → 合并，直接合入 main |
+| 收尾 | 每个阶段门禁 + stage-qa，最后签收 | 程序强制一个「更新架构图与契约」任务，让文档和代码一致；再由 stage-qa 全量确认 |
 
-**为什么不一次做完**
-- 一次 build 的 AC 控制在 30–80 条：规格看得过来，计划不会失控，出问题容易定位。
-- 每个 feature 有自己的规格、计划和验收，彼此独立；做完一个再开下一个（同一时间只有一个进行中的流程）。
-- 已有契约锁定、只能追加，保证新功能不会悄悄改掉老接口。
+**为什么这样分**
+- 第一次 build 把架构、契约和规则立起来；之后的功能大多是在这些基础上加东西，不需要再走完整的规格和计划。功能大的拆成几次小改动。
+- 同一时间只有一个进行中的小改动或修复；build 流程运行时不能开始。
+- 共享代码和契约只追加；改动超出计划太多或要改已有契约时，worker 用 forge_block 说明，由你决定。
 
-**怎么启动**：把这个功能的需求文档放进 \`docs/\`，执行 \`/forge-build --feature "${name}" --prd <文档路径>\`。`;
+**怎么启动**：在主会话里描述这个功能，主会话整理成迷你计划后提交；也可以自己写好计划，执行 \`/forge-change --from <yaml>\`。`;
 }
 
 // ---------- 终幕 ----------
@@ -764,7 +763,7 @@ function featureDoc(name) {
   $('#loc').innerHTML = `<h4 style="margin:0 0 10px">代码量 · 共 ${D.project.loc.toLocaleString()} 行</h4><div class="bars">${parts.map(([n, v], i) => `<div class="b"><span>${n}</span><span><span class="v" data-w="${(v / max) * 100}" style="--c:${pc[i]}"></span></span><span class="n">${v.toLocaleString()}</span></div>`).join('')}</div>
     <h4 style="margin:22px 0 10px">各阶段用时</h4><div class="bars">${stageMins.map(([s, m]) => `<div class="b"><span>${s}</span><span><span class="v" data-w="${(m / sm) * 100}" style="--c:var(--worker)"></span></span><span class="n">${Math.round(m)} 分钟</span></div>`).join('')}</div>`;
   $('#backlog').innerHTML = (D.backlog ?? []).map((b) => `<button>${esc(b)}</button>`).join('');
-  $('#backlog').onclick = (e) => { const b = e.target.closest('button'); if (b) openModal(`feature 流程：${b.textContent}`, md(featureDoc(b.textContent))); };
+  $('#backlog').onclick = (e) => { const b = e.target.closest('button'); if (b) openModal(`小改动：${b.textContent}`, md(featureDoc(b.textContent))); };
   new IntersectionObserver((es, o) => { if (es[0].isIntersecting) { o.disconnect(); document.querySelectorAll('#loc .v').forEach((v) => { v.style.width = v.dataset.w + '%'; }); } }, { threshold: .3 }).observe($('#loc'));
   $('#foot').innerHTML = `「${esc(D.project.name)}」是为演示编写的虚构工程，需求、计划、运行记录和产出都不是真实运行结果；结构与 pi-forge 的 .forge/ 状态一致。页面无外部依赖，数据在 <span class="mono">docs/demo/example.js</span>。`;
 })();

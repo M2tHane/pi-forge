@@ -7,8 +7,6 @@ import type { FlowConfig } from '../core/state/config.ts';
 
 /** 工具组 → 提供这些工具的 Pi 包 */
 export const GROUP_PACKAGES: Record<string, string> = {
-  serena_read: '@bacnh85/pi-serena',
-  serena_edit: '@bacnh85/pi-serena',
   codegraph: '@vndv/pi-codegraph',
   web: 'pi-web-access',
   ask: '@tian.zuo/pi-ask-user',

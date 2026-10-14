@@ -19,24 +19,8 @@ description: 写边界契约：数据模型、OpenAPI、错误码、跨模块调
   （实测：前端内部回调被写进契约并锁定后，来回修订了三次，耗时 1.5 小时。）
 - **按需写细。** 被别的 task 直接调用的函数写到函数级；只通过 REST 对外的模块，只写接口和数据模型。
 - **P1 默认只写 openapi、errors、data-model**。modules/<m>.md 只在有跨 task 的函数调用时写；行为细则（逐条状态转换、边界取值、文案）只写规格明确要求的，不为每个接口另写一份细则文件。
-- 契约批准后，实施中只能追加（新增接口、新增可选字段、新增错误码），不能修改（改 required、改 enum、新增必填字段都算修改）。所以拿不准的细节宁可不写，留给 worker 在实现时追加。
+- 契约批准后，实施中只能追加（新增接口、已有接口新增 operation 或可选参数、新增可选字段、新增错误码、新增 schema），不能修改（改已有参数、改 required、改 enum、新增必填字段或必填参数都算修改）。根文件与模块文件同一套规则。所以拿不准的细节宁可不写，留给 worker 在实现时追加。
 - glossary 在 P1 只能追加新条目；要改已有条目，在 assumptions 里写明，由用户通过规格修订确认。
-
-## lean 契约：只写接口清单
-
-plan 的 `mode: lean` 时，openapi 只当接口清单用，**不写** components schema，也不写请求体、响应体的 schema。每个接口只写路径、方法、一句 summary、成功状态码、错误码。文件结构不变（根文件 paths 下仍是一条 `$ref`，path item 在 paths/<模块>.yaml），程序的契约检查只要求每个 operation 有 responses：
-
-```yaml
-# paths/board.yaml
-/api/boards:
-  post:
-    operationId: createBoard
-    summary: 创建看板，名称 1 到 50 字
-    x-req: [REQ-001]
-    responses: { '201': { description: 已创建 }, '400': { description: BOARD_NAME_INVALID }, '401': { description: UNAUTHORIZED } }
-```
-
-字段细节写在 summary 或规格里，由 worker 与共享集成测试对齐；data-model.yaml（表与字段）和 errors/<模块>.yaml 仍按下文写全，那是测试与实现要对齐的东西。standard 模式不受影响，仍按下文写 schema。
 
 ## 文件与顺序
 
@@ -67,7 +51,7 @@ DATASOURCE_NAME_TAKEN: { http: 409, message: 数据源名称已存在, req: [REQ
 FORBIDDEN:             { http: 403, message: 没有权限 }
 ```
 
-   统一的错误响应格式写在 openapi.yaml 的 `components.schemas.Error` 中，所有错误都用它。
+   统一的错误响应格式写在 openapi.yaml 的 `components.schemas.Error` 中，所有错误都用它。S0 会把错误码和统一错误响应结构落成代码常量与类型，契约是来源。
 
 3. **openapi.yaml 与 paths/<模块>.yaml**（OpenAPI 3.1）
    - openapi.yaml 是根文件，只放 info、**公共** components（Error、分页、通用参数）和 paths。OpenAPI 3.1 的 paths 不能整体引用另一个文件，所以根文件的 paths 下每个路径写一条引用：
@@ -76,7 +60,7 @@ FORBIDDEN:             { http: 403, message: 没有权限 }
        /api/datasources:
          $ref: './paths/datasource.yaml#/~1api~1datasources'
      ```
-   - 每个模块的 path item 写在 paths/<模块>.yaml；模块自己的 schema 写在 components/<模块>.yaml，由 paths 文件用 `$ref` 引用。
+   - 每个模块的 path item 写在 paths/<模块>.yaml（顶层直接写 path item，或包在 `paths:` 下，两种都可以，$ref 的片段路径随之不同）；模块自己的 schema 写在 components/<模块>.yaml，由 paths 文件用 `$ref` 引用。
      这样并行的 worker 只追加自己模块的文件，以及根文件 paths 下的一行引用。模块名与 plan.yaml 中 task 的 `module` 一致。
    - 公共 components 在 P1 定好，实施中不能改；拿不准是否公共的 schema，先放模块自己的文件。
    - 每个 operation 写 `operationId`、请求与响应 schema、所有可能的状态码；错误响应引用 `Error`，在 description 中列出可能的错误码。

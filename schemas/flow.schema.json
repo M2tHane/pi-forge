@@ -18,7 +18,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^[BFX]-[0-9]{3,}$"
+      "pattern": "^[BCFX]-[0-9]{3,}$"
     },
     "mode": {
       "anyOf": [
@@ -28,11 +28,11 @@
         },
         {
           "type": "string",
-          "const": "feature"
+          "const": "fix"
         },
         {
           "type": "string",
-          "const": "fix"
+          "const": "change"
         }
       ]
     },
@@ -162,7 +162,7 @@
         },
         "task": {
           "type": "string",
-          "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+          "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
         },
         "files": {
           "type": "array",
@@ -198,7 +198,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+              "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
             }
           },
           "at": {
@@ -237,12 +237,6 @@
         },
         "additionalProperties": false
       }
-    },
-    "plan_mode": {
-      "enum": [
-        "standard",
-        "lean"
-      ]
     },
     "contracts_base": {
       "type": "string",
@@ -337,12 +331,6 @@
         },
         "sha": {
           "type": "string"
-        },
-        "permission_changes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
         }
       },
       "additionalProperties": false

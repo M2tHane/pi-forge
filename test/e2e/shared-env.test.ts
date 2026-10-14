@@ -1,4 +1,4 @@
-// 共享构建环境（偏离 119）的引擎级验证：阶段开始时建立共享环境（install 一次），之后任务的 worktree 链接依赖目录而不再 install；
+// 共享构建环境的引擎级验证：阶段开始时建立共享环境（install 一次），之后任务的 worktree 链接依赖目录而不再 install；
 // 追加依赖（forge_add_dependency）装进共享环境；改版本（forge_private_deps）得到私有副本；每次运行有各自的数据库。
 // 命令都是写日志的假命令；不使用真实模型。
 import { test } from 'node:test';

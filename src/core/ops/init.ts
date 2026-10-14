@@ -23,7 +23,6 @@ export function skeleton(packageRoot: string, projectName: string): Map<string, 
   // 通用规则；项目专属规则 rules/project.md 由规划阶段的主 agent 起草、用户批准时写入
   for (const f of readdirSync(path.join(packageRoot, 'rules')).filter((x) => x.endsWith('.md')).sort()) files.set(`rules/${f}`, t(`rules/${f}`));
   for (const dir of ['docs/spec', 'docs/contracts/paths', 'docs/contracts/components', 'docs/contracts/errors', 'docs/arch', 'docs/plan', 'tests/acceptance']) files.set(`${dir}/.gitkeep`, '');
-  files.set('docs/research/.gitkeep', '');
   return files;
 }
 

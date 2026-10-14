@@ -39,6 +39,11 @@ export function escalationModel(config: FlowConfig, settings: RoleSettingsFile, 
   return m && m !== current ? m : null;
 }
 
+/** 兜底模型：/forge-config fallback > workflow.yaml 的 models.fallback；所有角色共用。没有设置时返回 null */
+export function fallbackModel(config: FlowConfig, settings: RoleSettingsFile): string | null {
+  return settings.fallback_model ?? resolveModelRef(config, 'fallback');
+}
+
 // —— I：预算 ——
 
 export interface BudgetState {

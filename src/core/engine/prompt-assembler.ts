@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 import type { AgentDef } from './agents.ts';
 import type { TaskFile } from '../state/schemas.ts';
-import { acceptanceDirOf, SHARED_ACCEPTANCE_DIR, writesOwnAcceptance } from '../state/paths.ts';
+import { acceptanceDirOf, writesOwnAcceptance } from '../state/paths.ts';
 
 export interface RuleFile { path: string; content: string }
 
@@ -19,15 +19,17 @@ export const UPSTREAM_TOTAL = 16000;
 /**
  * global.md、任务 scopes 对应的规则文件、task 的 layers 对应的 rules/<layer>.md（第 16 节：按 layers 选规则），按顺序去重；路径相对项目根。
  * 缺失的文件跳过（例如 P1 批准之前还没有分层规则）。
+ * 给出 worktree 时每个规则文件先在 worktree 里找，有就用它，没有再用项目根目录（S0 的 architect 写进 rules/ 的规则合入集成分支后，后续 worktree 都读得到）。
  */
-export function ruleFilesFor(config: FlowConfig, projectRoot: string, scopes: readonly string[], layers: readonly string[] = []): { rules: RuleFile[]; missing: string[] } {
+export function ruleFilesFor(config: FlowConfig, projectRoot: string, scopes: readonly string[], layers: readonly string[] = [], worktree?: string): { rules: RuleFile[]; missing: string[] } {
   const wanted = [GLOBAL_RULES, ...scopes.flatMap((s) => config.raw.scopes[s]?.rules ?? [])];
   // 按层的规则（architect 的规则草案按层命名）可有可无，不存在时不算缺失
   const optional = layers.filter((l) => /^[\w-]+$/.test(l)).map((l) => `rules/${l}.md`);
   const rules: RuleFile[] = [];
   const missing: string[] = [];
   for (const rel of [...new Set([...wanted, ...optional])]) {
-    const abs = path.join(projectRoot, rel);
+    const inWorktree = worktree ? path.join(worktree, rel) : null;
+    const abs = inWorktree && existsSync(inWorktree) ? inWorktree : path.join(projectRoot, rel);
     if (existsSync(abs)) rules.push({ path: rel, content: readFileSync(abs, 'utf8').trim() });
     else if (wanted.includes(rel)) missing.push(rel);
   }
@@ -62,7 +64,7 @@ export interface AssembleInput {
   /** 确认轮（.rv-2 起）：只能用 forge_review_confirm 回答上一轮的 must 清单 */
   confirmRound?: boolean;
   /** 本任务依赖的上游任务及其 handoff（需求汇总者从这里读两方意见） */
-  /** 本流程的全部 task，用来渲染「允许的测试入口」与「已交付的接口」（worker、test-author、reviewer） */
+  /** 本流程的全部 task，用来渲染「允许的测试入口」与「已交付的接口」（worker、reviewer） */
   flowTasks?: readonly TaskFile[];
   upstream?: { id: string; title: string; type: 'hard' | 'soft'; status: string; handoff: string }[];
 }
@@ -82,7 +84,7 @@ const SEGMENT_HEAD = /^## \d{4}-\S+ (\S+)[ \t]*$/gm;
 const PROGRAM_ACTORS = new Set(['dispatcher', 'engine', 'merge-queue', 'forge-submit']);
 
 /**
- * 给下游任务看的上游 handoff：只取上游任务最后一次 run（actor 为 run:<id>）写的段，丢掉 dispatcher / engine 等程序段（偏离 101）。
+ * 给下游任务看的上游 handoff：只取上游任务最后一次 run（actor 为 run:<id>）写的段，丢掉 dispatcher / engine 等程序段。
  * 没有任何 run 写的段时（例如由程序或用户完成的任务）保留非程序段；没有段落头的纯文本原样返回。
  */
 export function usefulHandoff(handoff: string): string {
@@ -110,13 +112,13 @@ export function upstreamSection(ups: NonNullable<AssembleInput['upstream']>): st
 }
 
 /** 渲染接口清单的角色：这些角色的任务说明里带「允许的测试入口」与「已交付的接口」（stage-qa、architect 不需要） */
-const INTERFACE_ROLES: readonly string[] = ['worker', 'test-author', 'reviewer'];
+const INTERFACE_ROLES: readonly string[] = ['worker', 'reviewer'];
 /** 已交付的接口最多列出的条数，超出的截断并注明总数 */
 export const DELIVERED_MAX = 40;
 const DELIVERED_KEY = /^(api|page):/;
 
 /**
- * 任务说明里的两节接口信息（偏离 99）：本 task（.at / .fx / .rv 取 for_task 的 impl）的 test_interface，以及
+ * 任务说明里的两节接口信息：本 task（.at / .fx / .rv 取 for_task 的 impl）的 test_interface，以及
  * 本流程中已 done 的 impl 的 api: / page: 产出加上本 task 自己的 produces。没有内容的节不输出。
  */
 export function interfaceSections(task: TaskFile, all: readonly TaskFile[]): string[] {
@@ -192,15 +194,14 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     `## 可写范围（writes）\n${list(writes, '（只读）')}`,
     ...(verify.length ? [`## 测试命令\n${list(verify)}\n提交前自己跑通 typecheck、lint 与本任务的测试。合并时程序不再跑这些，reviewer 会运行本任务自己的测试，全量测试在阶段门禁运行。`] : []),
   ];
-  // test_author 为 false（偏离 81）：没有 test-author，worker 自己按 AC 编号写本任务的验收测试（写在用户消息里，不动系统提示）
+  // worker 自己按 AC 编号写本任务的验收测试（写在用户消息里，不动系统提示）
   if (i.mode === 'impl' && (t.kind === 'impl' || t.kind === 'fix') && writesOwnAcceptance(t)) {
     const impl = acceptanceDirOf(t);
     const acs = (t.ac ?? []).filter((a) => /^REQ-\d+\.AC\d+$/.test(a));
-    if (impl === SHARED_ACCEPTANCE_DIR) {
-      parts.push(`## 验收测试（由你编写）\n精简模式（lean）：本项目只有一份共享的集成测试，放在 \`tests/acceptance/${impl}/\`，所有任务共用这一个目录；辅助函数只有一份 \`tests/acceptance/${impl}/_helpers.js\`（已存在就复用，缺什么往里补；不要新建辅助文件或按任务建子目录）。写集成场景，不为每条 AC 单独写一个用例：一个场景走完一条关键业务流程，测试名可以带多个编号，如 \`[REQ-001.AC1][REQ-001.AC2] 创建看板后列表可见\`，本任务的每条 AC 至少出现在一个场景的名字里。不要写单元测试（writes 里没有的路径写不进去）。reviewer 会运行你本任务新增或修改的场景文件（\`acceptance -- ${impl}/<文件>\`），这些场景必须通过；全部场景在阶段门禁一起运行，别的任务的场景被你破坏时，门禁会派修复任务。提交前自己先跑通。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
-    } else parts.push(`## 验收测试（由你编写）\n本任务没有单独的测试作者：按 AC 编号为本任务写验收测试，放在 \`tests/acceptance/${impl}/\`（辅助代码也放在这个目录下），用例标题带 \`[REQ-xxx.ACn]\`，每条 AC 至少一个用例。reviewer 会运行 \`acceptance -- ${impl}\`，这些测试必须通过；全部验收测试在阶段门禁运行。提交前自己先跑通。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
+    parts.push(`## 验收测试（由你编写）\n本任务没有单独的测试作者：按 AC 编号为本任务写验收测试，放在 \`tests/acceptance/${impl}/\`（辅助代码也放在这个目录下），用例标题带 \`[REQ-xxx.ACn]\`，每条 AC 至少一个用例。reviewer 会运行 \`acceptance -- ${impl}\`，这些测试必须通过；全部验收测试在阶段门禁运行。提交前自己先跑通。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
   }
-  if (i.flowTasks && INTERFACE_ROLES.includes(i.agent.name)) parts.push(...interfaceSections(t, i.flowTasks));
+  // S0 由 architect 执行 impl / fix，同样需要接口清单（P1 与变更请求的 doc task 不需要）
+  if (i.flowTasks && (INTERFACE_ROLES.includes(i.agent.name) || (i.agent.name === 'architect' && (t.kind === 'impl' || t.kind === 'fix')))) parts.push(...interfaceSections(t, i.flowTasks));
   if (i.priorTask) {
     parts.push(`## 接着你之前的对话\n上面的对话是你完成 ${i.priorTask.id}「${i.priorTask.title}」时的过程（run ${i.priorTask.run}），你熟悉这些代码，不必从头重读。那个任务已经合入；现在是一个新任务、新的 worktree（集成分支最新代码，可能包含别人之后的改动），文件路径与可写范围以本次说明为准。`);
   }

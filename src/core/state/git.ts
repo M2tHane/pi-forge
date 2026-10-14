@@ -9,7 +9,7 @@ export const ENGINE_GIT_ENV = {
 
 /**
  * 路径按 UTF-8 原样输出（core.quotePath=false）：默认会把中文等非 ASCII 路径转义并加引号，按行解析时读不到文件
- * （M9 冒烟：feature 规格文件名是中文，P1 预检按 ref 读规格时漏掉了增量需求，偏离 91）。用环境变量注入，不改参数。
+ * （M9 冒烟：feature 规格文件名是中文，P1 预检按 ref 读规格时漏掉了增量需求）。用环境变量注入，不改参数。
  */
 const QUOTE_PATH_ENV = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.quotePath', GIT_CONFIG_VALUE_0: 'false' };
 
@@ -55,7 +55,7 @@ export function gitOk(cwd: string, args: string[]): boolean {
   }
 }
 
-/** 工作区未提交的文件（含未跟踪，排除 .forge）；从 engine/context-injector.ts 移入（偏离 106，stage/release 也要用） */
+/** 工作区未提交的文件（含未跟踪，排除 .forge）；从 engine/context-injector.ts 移入（stage/release 也要用） */
 export function dirtyFiles(root: string): Set<string> {
   const out = git(root, ['status', '--porcelain', '-uall', '--', '.', ':(exclude).forge']).split('\n').filter(Boolean);
   return new Set(out.map((l) => l.slice(3)));

@@ -1,4 +1,4 @@
-// 共享构建环境（偏离 119）：依赖清单的追加/改动判断（纯函数）、建立与对齐、worktree 链接/追加/私有副本、
+// 共享构建环境：依赖清单的追加/改动判断（纯函数）、建立与对齐、worktree 链接/追加/私有副本、
 // forge_add_dependency 的同步、每次运行独立的数据库。命令都是计数用的假命令，不依赖真实包管理器。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -103,7 +103,6 @@ appendFileSync(${JSON.stringify(log)}, 'add ' + dep + '\\n'); rmSync('.adding');
     db_drop: `echo drop $FORGE_DB_NAME >> ${log}`,
   });
   delete config.raw.commands['codegen'];
-  config.raw.acctest_workspace = { cache: [] };
   const lines = () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
   const wt = (name: string) => { const d = path.join(worktreesRoot(root), name); git(root, 'worktree', 'add', '-q', '--detach', d, 'main'); return d; };
   return { base, root, config, lines, wt, cleanup: () => rmSync(base, { recursive: true, force: true }) };
@@ -246,12 +245,10 @@ test('withSharedEnv：并行的两次运行各有独立端口段和独立数据�
   } finally { p.cleanup(); }
 });
 
-test('sharedDepsDirs：shared_env.deps 优先，其次 acctest_workspace.cache，默认 node_modules；拒绝绝对路径与 ..', () => {
+test('sharedDepsDirs：shared_env.deps，默认 node_modules；拒绝绝对路径与 ..', () => {
   const c = parseConfig(TEST_YAML);
-  delete c.raw.acctest_workspace;
+  delete c.raw.shared_env;
   assert.deepEqual(sharedDepsDirs(c), ['node_modules']);
-  c.raw.acctest_workspace = { cache: ['.venv'] };
-  assert.deepEqual(sharedDepsDirs(c), ['.venv']);
   c.raw.shared_env = { deps: ['node_modules', '/etc', '../x', 'web/node_modules'] };
   assert.deepEqual(sharedDepsDirs(c), ['node_modules', 'web/node_modules']);
 });

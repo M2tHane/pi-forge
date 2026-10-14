@@ -67,10 +67,10 @@ test('真实 pi 子进程：实施 → 审查 → 合并；越权被拦且计入
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), 'export const a = 1;');
 
     const violations = p.store.readEvents().filter((e) => e.type === 'violation');
-    // 偏离 115：worker 不再受 writes 限制，写 .forge/ 由受保护路径规则拦下
+    // worker 不再受 writes 限制，写 .forge/ 由受保护路径规则拦下
     assert.deepEqual(violations.map((v) => [v.data?.['role'], v.data?.['rule']]), [['worker', 'protected']]);
 
-    // 偏离 117：impl 一律审查，先 worker 后 reviewer
+    // impl 一律审查，先 worker 后 reviewer
     const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at));
     assert.deepEqual(runs.map((r) => r.role), ['worker', 'reviewer'], '提交后先审查再合并');
     const impl = runs[0]!;
@@ -121,8 +121,8 @@ test('真实 pi 子进程：模型返回额度用完（429 insufficient_quota）
   } finally { p.cleanup(); }
 });
 
-test('真实 pi 子进程：合并后验证（merge_check）失败退回，接着上一次的对话修好后合入（偏离 117：预检不再跑命令）', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
-  const yaml = DIRECT_YAML.replace(/(  acceptance_list: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n');
+test('真实 pi 子进程：合并后验证（merge_check）失败退回，接着上一次的对话修好后合入（预检不再跑命令）', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
+  const yaml = DIRECT_YAML.replace(/(  acceptance: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n');
   const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: ['typecheck', 'test'] })] });
   try {
     const logFile = '/tmp/pi-forge-e2e-llm.log';

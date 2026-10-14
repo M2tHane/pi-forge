@@ -17,7 +17,6 @@ export const PROJECT_YAML = TEST_YAML
   test:      "test -f src/server/t-001/a.ts && ! grep -q FAIL src/server/t-001/a.ts"
   e2e:       "true"
   acceptance: "true"
-  acceptance_list: "true"
 limits:`)
   // 旧的流水线测试不跑 stage-qa；M6 的测试显式打开
   .replace(/^  qa: true$/m, '  qa: false');

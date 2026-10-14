@@ -22,6 +22,18 @@ test('ownerOf：取 writes 覆盖、已 done 的 impl 中编号最大的；未 d
   assert.equal(ownerOf('src/c/y.ts', TASKS), undefined);
 });
 
+test('ownerOf：实际改过的文件（changed）也算归属；groupIssuesByOwner 找不到负责者时归兜底的 impl', () => {
+  const changed = new Map([['T-002', ['src/server/main.ts']]]);
+  assert.equal(ownerOf('src/server/main.ts', TASKS, changed)?.id, 'T-002');
+  assert.equal(ownerOf('src/server/main.ts', TASKS), undefined);
+  const r = groupIssuesByOwner([{ files: ['src/server/main.ts', 'src/c/y.ts'], text: '崩溃' }], TASKS, { changed, fallback: 'T-010' });
+  assert.deepEqual([...r.groups.keys()].sort(), ['T-002', 'T-010']);
+  assert.deepEqual([...r.groups.get('T-010')!.files], ['src/c/y.ts']);
+  assert.deepEqual(r.unowned, []);
+  // 兜底必须是已 done 的 impl，否则仍算找不到
+  assert.deepEqual(groupIssuesByOwner([{ files: ['src/c/y.ts'], text: 'x' }], TASKS, { fallback: 'T-001.fx-1' }).unowned, ['src/c/y.ts']);
+});
+
 test('lastWorkerTask：最近一个已 done 的 .fx-n，否则 impl 本身', () => {
   assert.equal(lastWorkerTask('T-001', TASKS), 'T-001.fx-1');
   assert.equal(lastWorkerTask('T-002', TASKS), 'T-002');
@@ -62,13 +74,13 @@ test('createStageFixTasks：fix 的 writes = 问题文件 + 原 impl 的非验�
     mkTask('T-001', { writes: ['src/a/**', 'tests/unit/a/**', 'tests/acceptance/T-001/**'] }), mkTask('T-002', { writes: ['src/b/**'] }),
   ] });
   try {
-    const r = await createStageFixTasks(p.store, p.flowId, 'review', [
+    const r = await createStageFixTasks(p.store, p.flowId, 'qa', [
       { files: ['src/a/x.ts'], text: '问题 A', owner: 'T-001' }, { files: ['src/b/y.ts'], text: '问题 B', owner: 'T-002' },
-    ], 'S1.rv 第 1 轮', 'engine', { task: 'S1.rv', round: 1 });
+    ], 'S1.qa 第 1 轮', 'engine', { task: 'S1.qa', round: 1 });
     assert.deepEqual(r.tasks, ['T-001.fx-1', 'T-002.fx-1']);
     const a = p.store.readTask(p.flowId, 'T-001.fx-1');
     assert.deepEqual(a.writes, ['src/a/x.ts', 'tests/unit/a/**', 'tests/acceptance/T-001/**']);
-    assert.deepEqual(a.source_round, { task: 'S1.rv', round: 1 });
+    assert.deepEqual(a.source_round, { task: 'S1.qa', round: 1 });
     assert.deepEqual(p.store.readTask(p.flowId, 'T-002.fx-1').writes, ['src/b/y.ts']);
   } finally { p.cleanup(); }
 });

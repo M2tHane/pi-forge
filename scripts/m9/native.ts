@@ -54,7 +54,7 @@ export async function main(argv: string[]): Promise<number> {
   // 插件：沿用原生对照组的做法，--no-extensions 之后用 -e 显式加载
   const agentDir = process.env['PI_CODING_AGENT_DIR'] ?? path.join(homedir(), '.pi/agent');
   const pluginRoot = path.join(agentDir, 'npm/node_modules');
-  const plugins = o.plugins ? ['@bacnh85/pi-serena', '@vndv/pi-codegraph', 'pi-subagents'].map((p) => path.join(pluginRoot, p)) : [];
+  const plugins = o.plugins ? ['@vndv/pi-codegraph', 'pi-subagents'].map((p) => path.join(pluginRoot, p)) : [];
   for (const e of plugins) if (!existsSync(e)) throw new Error(`缺少插件：${e}`);
 
   let out = o.out;

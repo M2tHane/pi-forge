@@ -33,7 +33,7 @@ test('/forge-fix：worker 修复 → 合入主分支 → stage-qa 第一轮有 m
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
     const msg = await runFlowFix('"登录后看板列表为空"', e.cmd);
     assert.match(msg, /已创建修复 X-/);
-    const fix = p.store.openFixFlow() ?? p.store.listFlows().map((id) => p.store.readFlow(id)).find((f) => f.mode === 'fix')!;
+    const fix = p.store.openLightFlow() ?? p.store.listFlows().map((id) => p.store.readFlow(id)).find((f) => f.mode === 'fix')!;
     await settle(e, fix.id);
     assert.deepEqual(e.errors, []);
     assert.equal(p.git('show', 'main:src/server/t-001/a.ts'), 'ok v2', '直接合入主分支');

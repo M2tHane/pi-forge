@@ -1,5 +1,5 @@
 // 改编自 pi-flow test/e2e/tools6.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
-// 第六轮 D1–D3：forge_service 启动并在运行结束时清理服务；forge_request_scope 程序批准或交给主会话；guard 拒绝时给出可行做法。
+// 第六轮 D1–D3：forge_service 启动并在运行结束时清理服务；guard 拒绝时给出可行做法。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
@@ -46,12 +46,11 @@ test('forge_service：只能启动 serve 命令；ready 等端口就绪；本次
   } finally { p.cleanup(); }
 });
 
-test('偏离 115：实现任务直接改 writes 外、与其他 task 重叠的文件（m9b STD 的路由注册入口），forge_request_scope 回答不需要申请，改动随任务合入', async () => {
+test('实现任务直接改 writes 外、与其他 task 重叠的文件（m9b STD 的路由注册入口），改动随任务合入', async () => {
   const p = await setupProject({ tasks: [mkTask('T-001', { verify: [] }), mkTask('T-002', { verify: [], shared: ['src/shared/date.ts'], deps: [{ task: 'T-001', type: 'hard', reason: 'x' }] })] });
   try {
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
       await a.call('forge_claim');
-      assert.match((await a.call('forge_request_scope', { paths: ['src/shared/date.ts'], reason: '前后端共用' })).text, /不需要申请/);
       for (const f of ['src/server/common/date.ts', 'src/shared/date.ts', 'src/server/t-002/util.ts', 'src/server/t-001/a.ts']) {
         const r = await a.call('write', { path: f, content: 'x\n' });
         assert.ok(r.ok, `${f}：${r.text}`);
@@ -64,7 +63,6 @@ test('偏离 115：实现任务直接改 writes 外、与其他 task 重叠的�
     assert.deepEqual(errors, []);
     const done = p.store.readTask(p.flowId, 'T-001');
     assert.equal(done.status, 'done');
-    assert.equal(done.scope_grants, undefined);
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/shared/date.ts`).trim(), 'x');
   } finally { p.cleanup(); }
 });

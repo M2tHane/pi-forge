@@ -2,19 +2,20 @@
 // 纯函数：只根据程序推导的 facts 判断，不做 IO，也不修改入参。
 import { createHash } from 'node:crypto';
 import type { Lease, StageStatus, TaskFile, TaskStatus } from './schemas.ts';
-import { isProtected, matchesAny, openWriteAllowed, opensWrites, SHARED_ACCEPTANCE_GLOB } from './paths.ts';
+import { isProtectedFor, matchesAny, openWriteAllowed, opensWrites } from './paths.ts';
 import { failureSignature } from './failure-signature.ts';
 
 export type Trigger =
   | 'schedule' | 'dispatch' | 'submit' | 'inputs_ready' | 'sync_conflict'
-  | 'precheck_fail' | 'precheck_pass' | 'precheck_pass_skip' | 'precheck_fail_handoff'
+  | 'precheck_fail' | 'precheck_pass' | 'precheck_pass_skip'
   | 'review_changes' | 'review_pass' | 'review_exhausted'
   | 'merge_start' | 'merge_done' | 'merge_verify_fail' | 'merge_conflict' | 'merge_blocked' | 'merge_requeue'
-  | 'dispute' | 'dispute_fixed' | 'dispute_upheld' | 'dispute_escalated' | 'decide_keep' | 'decide_fix'
-  | 'accept' | 'foreign_tests_broken' | 'block' | 'unblock' | 'lease_expired'
-  | 'run_failed' | 'run_interrupted' | 'run_paused' | 'run_timeout' | 'report' | 'cancel';
+  | 'accept' | 'block' | 'unblock' | 'lease_expired'
+  | 'run_failed' | 'run_interrupted' | 'run_paused' | 'run_timeout' | 'report' | 'cancel' | 'hand_to_user';
 
 export const MAX_INTERRUPTIONS = 5;
+/** 同一个任务主会话最多决定几次（放行、重试、取消）；之后再阻塞直接交给用户，避免主会话与子进程来回打转 */
+export const MAX_ORCHESTRATOR_DECISIONS = 2;
 export const DEFAULT_MAX_CONTINUATIONS = 2;
 
 export interface Facts {
@@ -22,7 +23,7 @@ export interface Facts {
   limits: {
     max_attempts: number; max_parallel: number; max_continuations?: number;
     max_parallel_aux?: number; max_precheck_failures?: number; max_merge_failures?: number;
-    review_max_rounds?: number; max_disputes?: number;
+    review_max_rounds?: number;
   };
   /** 发起者：human、orchestrator、engine、dispatcher、run:<id> 等 */
   actor: string;
@@ -34,7 +35,7 @@ export interface Facts {
   running_count?: number;
   /** 辅助池中的运行数；缺省沿用单池运行数 */
   aux_running_count?: number;
-  /** 与全部在途任务的可写范围互斥的任务编号 */
+  /** 与在途任务 writes 重叠的任务编号（只作调度优先级与报告，不再拒绝派发） */
   conflicting_running?: string[];
   /** 是否已有其他任务占用合并名额 */
   merging_other?: string | null;
@@ -42,8 +43,8 @@ export interface Facts {
   queue_head?: boolean;
   /** 本次运行是否已写 handoff */
   handoff_written?: boolean;
-  /** 最新的验收测试派生任务是否 done；不需要派生测试时由程序传 true */
-  latest_acctest_done?: boolean;
+  /** 本任务 handoff 的全文（程序读出；用于"更新架构图与契约"任务认「无需更新」的说明） */
+  handoff_text?: string;
   /** 所有软依赖生产方是否 done；缺省由 status_of 推导 */
   soft_deps_done?: boolean;
   /** 集成分支与验收测试是否已成功同步进任务分支 */
@@ -56,34 +57,16 @@ export interface Facts {
   review_required?: boolean;
   /** 最近一轮审查尚未解决的 must 数量 */
   unresolved_must?: number;
-  /** acctest 对应的原 impl 是否已经 done */
-  impl_done?: boolean;
   /** 只读辅助任务是否已提交通过形状校验的结构化结论 */
   structured_report?: boolean;
-  /** 争议对应的测试标识，按测试分别计数 */
-  dispute_test?: string;
-  /** 争议中引用的规格或契约具体位置 */
-  dispute_evidence?: string;
-  /** 程序是否确认引用的位置存在且来自规格或契约 */
-  dispute_evidence_valid?: boolean;
-  /** 最新 .at-n 相对于上一版是否改动了测试 */
-  acctest_changed_tests?: boolean;
-  /** 最新 .at-n 是否把争议交给用户 */
-  acctest_escalated?: boolean;
-  /** 失败是否涉及另一个任务的验收目录；M4 校验契约追加后提供 */
-  foreign_acceptance_failed?: boolean;
-  /** foreign_tests_broken：当前 task 要等的 .at-n（第 9.4 节） */
-  waits_for?: string[];
-  /** inputs_ready：waits_for 里的 task 都已 done */
-  waits_for_done?: boolean;
-  /** 失败测试是否全部在当前 .at 所属任务的验收目录；false 表示含目录外失败 */
-  failed_tests_own_directory?: boolean;
   /** 程序验证为本模块契约的纯追加文件，可以越出 writes */
   contract_additions?: string[];
   /** 修改或删除了契约已有内容的文件；保留原名供运行时集成 */
   interface_rewrites?: string[];
   /** 程序验证为只改已有测试的文件；验收目录仍不能放行 */
   test_adjustments?: string[];
+  /** 合并时任务分支相对集成分支没有改动（多半已被别的任务做了）：阻塞原因记为 no_changes，确认后可以直接视为完成 */
+  no_changes?: boolean;
   /** 用户要求清零 blocked_by 对应的计数 */
   reset?: boolean;
   /** 原调用接口保留；只有 --reset 且阻塞原因为 attempts 时应用 */
@@ -108,18 +91,40 @@ interface Rule {
   failure?: boolean;
   counter?: 'precheck_failures' | 'review_rounds' | 'merge_failures';
 }
+/** 辅助池（review、qa）的任务种类；并发上限用 limits.max_parallel_aux，与实施池分开计数 */
+export const isAuxKind = (kind: string): boolean => kind === 'review' || kind === 'qa';
 export const IN_FLIGHT: readonly TaskStatus[] = [
-  'in_progress', 'awaiting_inputs', 'checking', 'in_review', 'disputed', 'queued_merge', 'merging',
+  'in_progress', 'awaiting_inputs', 'checking', 'in_review', 'queued_merge', 'merging',
 ];
 export const isSettled = (t: { status: TaskStatus }) => t.status === 'done' || t.status === 'cancelled';
 export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 const need = (cond: boolean | undefined, msg: string): string[] => cond ? [] : [msg];
 const reasonRequired = (f: { reason?: string }) => need(!!f.reason?.trim(), '必须写明原因');
 const humanOnly = (f: Facts) => need(f.actor === 'human', '只有用户可以执行此操作');
+/** 阻塞交给主会话决定时，主会话也可以执行（用户始终可以） */
+const humanOrDelegate = (t: TaskFile, f: Facts) =>
+  need(f.actor === 'human' || (f.actor === 'orchestrator' && t.blocked_owner === 'orchestrator'), '只有用户（或被交付决定的主会话）可以执行此操作');
+/** 主会话做的决定计数 */
+const countDecision = (t: TaskFile, f: Facts) => { if (f.actor === 'orchestrator') t.decisions = (t.decisions ?? 0) + 1; };
+/** 小改动（change）流程结束前由程序建的"更新架构图与契约"任务：X1 阶段的 doc 任务（轻流程只有它是 doc） */
+export const isDocsUpdateTask = (t: Pick<TaskFile, 'kind' | 'stage'>) => t.kind === 'doc' && t.stage === 'X1';
+/** 该任务的 diff 必须触及的文档路径 */
+export const DOCS_UPDATE_PATHS = ['docs/arch/**', 'docs/contracts/**'] as const;
+/**
+ * handoff 里是否有 agent 写的「无需更新：原因」。只认非 engine 写入的段落（程序写的交接说明里提到这句话不算）。
+ * handoff 的段落格式见 StateStore.appendHandoff：`## <时间> <actor>`。
+ */
+export function docsUpdateWaived(handoff: string): boolean {
+  const parts = handoff.split(/^## (\S+) (\S+)[ \t]*$/m);
+  // split 带捕获组：[前言, ts, actor, 正文, ts, actor, 正文, …]
+  for (let i = 1; i + 2 < parts.length; i += 3) {
+    if (parts[i + 1] !== 'engine' && /无需更新\s*[:：]\s*\S/.test(parts[i + 2] ?? '')) return true;
+  }
+  return false;
+}
 const workerKind = (t: TaskFile) => ['impl', 'fix', 'doc', 'merge-fix'].includes(t.kind);
 const pipelineOnly = (t: TaskFile) => need(workerKind(t), '只有实现、修复、文档或合并修复任务可以走此流水线');
-const mergeOnly = (t: TaskFile) => need(workerKind(t) || t.kind === 'acctest', '只有实施类任务与验收测试可以进入合并流程');
-const workerDisputeOnly = (t: TaskFile) => need(t.kind === 'impl' || t.kind === 'fix', '只有 impl 或 fix 可以提出或处理争议');
+const mergeOnly = pipelineOnly;
 const softDone = (t: TaskFile, f: Facts) => f.soft_deps_done ?? t.depends_on.filter((d) => d.type === 'soft').every((d) => f.status_of?.get(d.task) === 'done');
 const started = (t: TaskFile) => !!(t.worktree || t.branch);
 
@@ -138,22 +143,26 @@ function submitErrors(t: TaskFile, f: Facts): string[] {
   const errors = leaseValid(t.lease, f, '提交被拒');
   const diff = f.diff_files;
   if (!diff) errors.push('缺少 worktree diff');
-  else if (!diff.length) errors.push('worktree 没有改动，无可提交内容');
+  else if (!diff.length) errors.push(isDocsUpdateTask(t)
+    ? 'worktree 没有改动：请把 docs/arch/overview.md 与 docs/contracts/ 改到与代码一致；确认不需要更新时先用 forge_note 写「无需更新：原因」再提交'
+    : 'worktree 没有改动，无可提交内容');
   else {
-    const protectedFiles = diff.filter(isProtected);
+    if (isDocsUpdateTask(t) && !diff.some((p) => matchesAny(p, DOCS_UPDATE_PATHS)) && !docsUpdateWaived(f.handoff_text ?? '')) {
+      errors.push('更新架构图与契约：改动里没有 docs/arch/** 或 docs/contracts/** 的文件。请把架构图与契约改到与代码一致；确认不需要更新时先用 forge_note 写「无需更新：原因」再提交');
+    }
+    // S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时放行（其余受保护路径不变）
+    const protectedFiles = diff.filter((p) => isProtectedFor(p, t.writes));
     if (protectedFiles.length) errors.push(`diff 含受保护路径：${protectedFiles.join('、')}`);
-    if (workerKind(t)) {
-      const forbidden = diff.filter((p) => matchesAny(p, ['tests/acceptance/**']) &&
-        !(t.kind === 'impl' && t.stage === 'S0' && matchesAny(p, ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**'])) &&
-        // test_author 为 false（偏离 81、107）：impl 与它的 fix 只放开 writes 里的验收目录（自己的，以及程序因旧测试被打破而加入的）
-        !((t.kind === 'impl' || t.kind === 'fix') && matchesAny(p, t.writes.filter((g) => g === SHARED_ACCEPTANCE_GLOB || /^tests\/acceptance\/(?:_support\/)?T-\d+\/\*\*$/.test(g)))));
+    // impl / fix 可以改任何验收测试；doc、merge-fix 不能碰验收测试
+    if (workerKind(t) && !opensWrites(t)) {
+      const forbidden = diff.filter((p) => matchesAny(p, ['tests/acceptance/**']));
       if (forbidden.length) errors.push(`不能修改验收测试：${forbidden.join('、')}`);
     }
     const allowed = [...t.writes, ...(t.shared ?? [])];
     const adjusted = new Set(f.test_adjustments ?? []);
     const additions = new Set(canAppendInterfaces(t) ? f.contract_additions ?? [] : []);
-    // 偏离 115：impl / fix 不受 writes 限制（验收测试已在上面单独检查）
-    const inAllowed = (p: string) => opensWrites(t) ? matchesAny(p, ['tests/acceptance/**']) || openWriteAllowed(p, allowed) : matchesAny(p, allowed);
+    // impl / fix 不受 writes 限制（只有 docs/spec 与受保护路径除外）
+    const inAllowed = (p: string) => opensWrites(t) ? openWriteAllowed(p) : matchesAny(p, allowed);
     const outside = diff.filter((p) => !inAllowed(p) && !adjusted.has(p) &&
       !(additions.has(p) && matchesAny(p, ['docs/contracts/**'])));
     if (outside.length) errors.push(`diff 越出任务 writes：${outside.join('、')}`);
@@ -173,11 +182,11 @@ function blocked(t: TaskFile, f: Facts, by: NonNullable<TaskFile['blocked_by']>)
   t.blocked_reason = f.reason ?? '需要用户处理';
   t.lease = null;
   delete t.timeout_review;
+  // 程序或子进程造成的阻塞先交给主会话决定；主会话自己交出来的、或主会话已决定过多次的，直接等用户
+  if (f.actor !== 'human' && f.actor !== 'orchestrator' && (t.decisions ?? 0) < MAX_ORCHESTRATOR_DECISIONS) t.blocked_owner = 'orchestrator';
+  else delete t.blocked_owner;
 }
 function clearRun(t: TaskFile): void { t.lease = null; }
-function acctestOnly(t: TaskFile, f: Facts): string[] {
-  return [...need(t.kind === 'acctest', '只有 acctest 可以单独合并验收测试'), ...need(f.impl_done === true, '原 impl 尚未 done，验收测试应提交结论')];
-}
 function unblockEffect(t: TaskFile, f: Facts): void {
   if (f.reset) {
     switch (t.blocked_by) {
@@ -189,9 +198,6 @@ function unblockEffect(t: TaskFile, f: Facts): void {
       case 'precheck_exhausted': t.precheck_failures = 0; break;
       case 'review_exhausted': t.review_rounds = 0; break;
       case 'merge_exhausted': t.merge_failures = 0; break;
-      case 'dispute':
-        t.disputes = f.dispute_test ? { ...t.disputes, [f.dispute_test]: 0 } : Object.fromEntries(Object.keys(t.disputes ?? {}).map((id) => [id, 0]));
-        break;
       case 'dispatcher': delete t.interruptions; break;
     }
   }
@@ -213,12 +219,11 @@ export const TRANSITIONS: readonly Rule[] = [
   {
     from: ['ready'], to: 'in_progress', trigger: 'dispatch',
     check: (t, f) => {
-      const aux = ['acctest', 'review', 'qa'].includes(t.kind);
+      const aux = ['review', 'qa'].includes(t.kind);
       const count = aux ? f.aux_running_count ?? f.running_count : f.running_count;
       const limit = aux ? f.limits.max_parallel_aux ?? f.limits.max_parallel : f.limits.max_parallel;
       return [
         ...need((count ?? Infinity) < limit, `并发已达上限 ${limit}`),
-        ...need((f.conflicting_running ?? []).length === 0, `与在途任务互斥：${(f.conflicting_running ?? []).join('、')}`),
         ...need(!!t.worktree && !!t.branch, '尚未建立 worktree 与任务分支'),
         ...need(!!t.base_sha, '尚未记录 base_sha'), ...need(!!t.lease, '尚未颁发 token 与租约'),
         ...need(!!t.lease && Date.parse(t.lease.expires_at) > f.now.getTime(), '颁发的租约已过期'),
@@ -230,19 +235,12 @@ export const TRANSITIONS: readonly Rule[] = [
     check: (t, f) => [...pipelineOnly(t), ...submitErrors(t, f)], effect: submitted,
   },
   {
-    from: ['in_progress'], to: 'checking', trigger: 'submit',
-    // acctest 走 submit 只发生在单独合并（impl 已 done 且改了测试）；争议裁决靠它认出"改了测试"
-    check: (t, f) => [...acctestOnly(t, f), ...submitErrors(t, f)], effect: (t, f) => { submitted(t, f); if (t.kind === 'acctest') t.changed_tests = true; },
-  },
-  {
     from: ['awaiting_inputs'], to: 'checking', trigger: 'inputs_ready',
     check: (t, f) => [
       ...pipelineOnly(t), ...need(f.actor === 'engine', '只有 engine 可以开始预检'),
-      ...need(f.latest_acctest_done, '最新验收测试尚未 done'), ...need(softDone(t, f), '软依赖生产方尚未 done'),
+      ...need(softDone(t, f), '软依赖生产方尚未 done'),
       ...need(f.inputs_synced, '输入尚未同步成功'), ...need(!f.conflict_files?.length, '输入同步仍有冲突'),
-      ...need(!t.waits_for?.length || f.waits_for_done === true, `还在等 ${t.waits_for?.join('、')} 修好被破坏的验收测试`),
     ],
-    effect: (t) => { delete t.waits_for; },
   },
   {
     from: ['awaiting_inputs'], to: 'in_progress', trigger: 'sync_conflict',
@@ -251,7 +249,7 @@ export const TRANSITIONS: readonly Rule[] = [
   },
   {
     from: ['checking'], to: 'in_progress', trigger: 'precheck_fail', counter: 'precheck_failures',
-    check: (t, f) => [...pipelineOnly(t), ...need(f.precheck_ok === false, '预检并未失败'), ...need(!f.foreign_acceptance_failed, '其他任务验收测试失败应等待输入'), ...reasonRequired(f)],
+    check: (t, f) => [...pipelineOnly(t), ...need(f.precheck_ok === false, '预检并未失败'), ...reasonRequired(f)],
   },
   {
     from: ['checking'], to: 'in_review', trigger: 'precheck_pass',
@@ -260,18 +258,6 @@ export const TRANSITIONS: readonly Rule[] = [
   {
     from: ['checking'], to: 'queued_merge', trigger: 'precheck_pass_skip',
     check: (t, f) => [...pipelineOnly(t), ...need(f.precheck_ok === true, '预检尚未通过'), ...need(f.review_required === false, '此任务需要审查')],
-  },
-  {
-    from: ['checking'], to: 'queued_merge', trigger: 'precheck_pass',
-    check: (t, f) => [...acctestOnly(t, f), ...need(f.precheck_ok === true, '验收测试预检尚未通过')],
-  },
-  {
-    from: ['checking', 'merging'], to: 'done', trigger: 'precheck_fail_handoff',
-    check: (t, f) => [
-      ...acctestOnly(t, f), ...need((t.status === 'checking' ? f.precheck_ok : f.post_verify_ok) === false, '验收测试验证并未失败'),
-      ...need(f.failed_tests_own_directory === true, '失败测试不全在本验收目录'), ...reasonRequired(f),
-    ],
-    effect: (t) => { t.lease = null; t.worktree = null; },
   },
   {
     from: ['in_review'], to: 'in_progress', trigger: 'review_changes', counter: 'review_rounds',
@@ -297,57 +283,41 @@ export const TRANSITIONS: readonly Rule[] = [
   },
   {
     from: ['merging'], to: 'in_progress', trigger: 'merge_verify_fail', counter: 'merge_failures',
-    check: (t, f) => [...pipelineOnly(t), ...need(f.post_verify_ok === false, '合并后验证并未失败'), ...need(!f.foreign_acceptance_failed, '其他任务验收测试失败应等待输入'), ...reasonRequired(f)],
+    check: (t, f) => [...pipelineOnly(t), ...need(f.post_verify_ok === false, '合并后验证并未失败'), ...reasonRequired(f)],
   },
   {
-    // 偏离 116：合并时的文本冲突交回原任务的 worker；与 merge_verify_fail 共用 merge_failures（同属"合并把任务退回"，共用上限防止反复来回）
+    // 合并时的文本冲突交回原任务的 worker；与 merge_verify_fail 共用 merge_failures（同属"合并把任务退回"，共用上限防止反复来回）
     from: ['merging'], to: 'in_progress', trigger: 'merge_conflict', counter: 'merge_failures',
     check: (t, f) => [...pipelineOnly(t), ...need(opensWrites(t), '只有 impl / fix 的合并冲突交回 worker'), ...need(!!f.conflict_files?.length, '没有冲突文件'), ...reasonRequired(f)],
   },
   {
     from: ['merging'], to: 'blocked', trigger: 'merge_blocked',
-    check: (t, f) => [
-      ...mergeOnly(t), ...reasonRequired(f),
-      ...(t.kind === 'acctest' && f.post_verify_ok === false ? [...acctestOnly(t, f), ...need(f.failed_tests_own_directory === false, '本目录内失败应交给原实现任务修复')] : []),
-    ],
-    effect: (t, f) => blocked(t, f, t.kind === 'acctest' && f.post_verify_ok === false && f.failed_tests_own_directory === false ? 'integration_broken' : 'dispatcher'),
+    check: (t, f) => [...mergeOnly(t), ...reasonRequired(f)],
+    effect: (t, f) => blocked(t, f, f.no_changes ? 'no_changes' : 'dispatcher'),
   },
   { from: ['merging'], to: 'queued_merge', trigger: 'merge_requeue', check: (t) => mergeOnly(t) },
   {
-    from: ['checking', 'merging'], to: 'awaiting_inputs', trigger: 'foreign_tests_broken',
-    check: (t, f) => [...pipelineOnly(t), ...need(f.foreign_acceptance_failed === true, '没有其他任务的验收测试失败'), ...need(!!f.waits_for?.length, '缺少要等待的 .at-n')],
-    effect: (t, f) => { clearRun(t); t.waits_for = [...f.waits_for!]; },
-  },
-  {
-    from: ['in_progress'], to: 'disputed', trigger: 'dispute',
-    check: (t, f) => [...workerDisputeOnly(t), ...leaseValid(t.lease, f, '争议被拒'), ...reasonRequired(f), ...need(!!f.dispute_test?.trim(), '缺少争议测试标识'), ...need(!!f.dispute_evidence?.trim() && f.dispute_evidence_valid === true, '争议必须引用规格或契约的具体位置')],
-    effect: (t, f) => { t.disputes = { ...t.disputes, [f.dispute_test!]: (t.disputes?.[f.dispute_test!] ?? 0) + 1 }; t.impl_run = t.lease!.run_id; t.lease = null; },
-  },
-  {
-    from: ['disputed'], to: 'checking', trigger: 'dispute_fixed',
-    check: (t, f) => [...workerDisputeOnly(t), ...need(f.latest_acctest_done, '最新 .at-n 尚未 done'), ...need(f.acctest_changed_tests === true, '.at-n 没有修改测试'), ...need(softDone(t, f), '软依赖生产方尚未 done')],
-  },
-  {
-    from: ['disputed'], to: 'in_progress', trigger: 'dispute_upheld',
-    check: (t, f) => [...workerDisputeOnly(t), ...need(f.latest_acctest_done, '最新 .at-n 尚未 done'), ...need(f.acctest_changed_tests === false, '.at-n 没有维持原测试')], effect: clearRun,
-  },
-  {
-    from: ['disputed'], to: 'blocked', trigger: 'dispute_escalated',
-    check: (t, f) => [...workerDisputeOnly(t), ...need(f.acctest_escalated === true || (!!f.dispute_test && (t.disputes?.[f.dispute_test] ?? 0) > (f.limits.max_disputes ?? 1)), '该测试争议次数未超过上限，且未交给用户'), ...reasonRequired(f)],
-    effect: (t, f) => blocked(t, f, 'dispute'),
-  },
-  ...(['decide_keep', 'decide_fix'] as const).map((trigger): Rule => ({
-    from: ['blocked'], to: trigger === 'decide_keep' ? 'in_progress' : 'disputed', trigger,
-    check: (t, f) => [...humanOnly(f), ...workerDisputeOnly(t), ...need(t.blocked_by === 'dispute', '只能裁决因争议而阻塞的任务')], effect: clearRun,
-  })),
-  {
     from: ['blocked'], to: 'queued_merge', trigger: 'accept',
-    check: (t, f) => [...humanOnly(f), ...need(t.blocked_by === 'review_exhausted', '只能人工放行因审查轮数用尽而阻塞的任务')], effect: clearRun,
+    check: (t, f) => [...humanOrDelegate(t, f), ...need(t.blocked_by === 'review_exhausted', '只能放行因审查轮数用尽而阻塞的任务')],
+    effect: (t, f) => { countDecision(t, f); clearRun(t); },
   },
   ...(['in_progress', 'ready'] as const).map((to): Rule => ({
     from: ['blocked'], to, trigger: 'unblock',
-    check: (t, f) => [...humanOnly(f), ...need(started(t) === (to === 'in_progress'), to === 'in_progress' ? '任务尚未开工，应回到 ready' : '任务已开工，应保留工作区回到 in_progress')], effect: unblockEffect,
+    check: (t, f) => [...humanOrDelegate(t, f), ...need(started(t) === (to === 'in_progress'), to === 'in_progress' ? '任务尚未开工，应回到 ready' : '任务已开工，应保留工作区回到 in_progress')],
+    effect: (t, f) => { countDecision(t, f); unblockEffect(t, f); },
   })),
+  {
+    // 合并时没有改动：要做的已经在集成分支上（多半被别的任务做了），确认后视为完成，依赖它的任务照常推进
+    from: ['blocked'], to: 'done', trigger: 'accept',
+    check: (t, f) => [...humanOrDelegate(t, f), ...need(t.blocked_by === 'no_changes', '只有合并时没有改动的任务可以直接视为完成'), ...reasonRequired(f)],
+    effect: (t, f) => { countDecision(t, f); t.worktree = null; t.lease = null; },
+  },
+  {
+    // 主会话看过后交给用户：仍是 blocked，之后只有用户能处理
+    from: ['blocked'], to: 'blocked', trigger: 'hand_to_user',
+    check: (t, f) => [...need(f.actor === 'orchestrator' && t.blocked_owner === 'orchestrator', '只有被交付决定的主会话可以转交用户'), ...reasonRequired(f)],
+    effect: (t, f) => { delete t.blocked_owner; t.blocked_reason = `${t.blocked_reason ?? ''}\n主会话：${f.reason}`.trim(); },
+  },
   {
     from: ['ready'], to: 'blocked', trigger: 'block',
     check: (_t, f) => [...need(f.actor === 'dispatcher', '只有调度器可以阻塞还没开始的任务'), ...reasonRequired(f)], effect: (t, f) => blocked(t, f, 'dispatcher'),
@@ -359,13 +329,12 @@ export const TRANSITIONS: readonly Rule[] = [
   {
     from: ['in_progress'], to: 'done', trigger: 'report',
     check: (t, f) => [
-      ...leaseValid(t.lease, f, '提交被拒'), ...need(['acctest', 'review', 'qa'].includes(t.kind), '只有 acctest、review、qa 可以直接提交结论'),
-      ...need(t.kind !== 'acctest' || f.impl_done === false, '原 impl 已 done 或状态未知，acctest 应单独合并'),
+      ...leaseValid(t.lease, f, '提交被拒'), ...need(['review', 'qa'].includes(t.kind) || isDocsUpdateTask(t), '只有 review、qa 可以直接提交结论'),
+      ...need(!isDocsUpdateTask(t) || docsUpdateWaived(f.handoff_text ?? ''), '更新架构图与契约任务没有改动时，必须先用 forge_note 写「无需更新：原因」'),
       ...need(!!f.diff_files && f.diff_files.length === 0, '只读任务不得有改动，且必须提供 diff'),
       ...need(f.handoff_written, '尚未写 handoff，请先调用 forge_note'), ...need(f.structured_report, '缺少结构化结论'),
-    ], effect: (t, f) => {
+    ], effect: (t) => {
       t.impl_run = t.lease!.run_id; t.lease = null; t.worktree = null;
-      if (t.kind === 'acctest') t.changed_tests = f.acctest_changed_tests === true;
     },
   },
   {
@@ -440,7 +409,7 @@ export function planTransition(task: TaskFile, to: TaskStatus, trigger: Trigger,
   if (trigger === 'run_timeout' && (next.timeouts ?? 0) > (facts.limits.max_continuations ?? DEFAULT_MAX_CONTINUATIONS)) {
     effective = 'blocked'; blocked(next, { ...facts, reason: `运行已超时 ${next.timeouts} 次：${facts.reason ?? ''}` }, 'attempts');
   }
-  if (task.status === 'blocked' && effective !== 'blocked') { next.blocked_by = null; next.blocked_reason = null; }
+  if (task.status === 'blocked' && effective !== 'blocked') { next.blocked_by = null; next.blocked_reason = null; delete next.blocked_owner; }
   next.status = effective;
   return { ok: true, task: next, to: effective, rule };
 }
@@ -450,15 +419,21 @@ export type StageTrigger = 'submit_gate' | 'gate_failed' | 'gate_passed' | 'gate
 interface StageRule {
   from: readonly StageStatus[]; to: StageStatus; trigger: StageTrigger;
   humanOnly?: boolean; check?: (f: StageFacts) => string[];
+  /** 交给主会话决定时，主会话也可以执行 */
+  delegable?: boolean;
 }
-export interface StageFacts { actor: string; /** 该阶段是否需要人工签收 */ needs_human?: boolean; reason?: string }
+export interface StageFacts {
+  actor: string; /** 该阶段是否需要人工签收 */ needs_human?: boolean; reason?: string;
+  /** needs_human 交给主会话决定（程序按事件推导，见 engine/decisions.ts） */
+  delegated?: boolean;
+}
 export const STAGE_TRANSITIONS: readonly StageRule[] = [
   { from: ['active'], to: 'awaiting_gate', trigger: 'submit_gate' },
   { from: ['awaiting_gate'], to: 'active', trigger: 'gate_failed', check: reasonRequired },
   { from: ['awaiting_gate'], to: 'awaiting_human', trigger: 'gate_passed', check: (f) => need(f.needs_human === true, '该阶段不需要人工批准') },
   { from: ['awaiting_gate'], to: 'done', trigger: 'gate_passed', check: (f) => need(f.needs_human === false, '该阶段需要人工批准') },
   { from: ['awaiting_gate'], to: 'needs_human', trigger: 'gate_exhausted', check: reasonRequired },
-  { from: ['needs_human'], to: 'awaiting_human', trigger: 'accept', humanOnly: true },
+  { from: ['needs_human'], to: 'awaiting_human', trigger: 'accept', humanOnly: true, delegable: true },
   { from: ['needs_human'], to: 'awaiting_gate', trigger: 'gate_rerun', humanOnly: true },
   { from: ['awaiting_human'], to: 'done', trigger: 'approve', humanOnly: true },
   { from: ['awaiting_human', 'needs_human'], to: 'active', trigger: 'reject', humanOnly: true, check: reasonRequired },
@@ -467,6 +442,7 @@ export const STAGE_TRANSITIONS: readonly StageRule[] = [
 export function planStageTransition(from: StageStatus, to: StageStatus, trigger: StageTrigger, facts: StageFacts): string[] {
   const rule = STAGE_TRANSITIONS.find((r) => r.trigger === trigger && r.to === to && r.from.includes(from));
   if (!rule) return [`非法的阶段转移：${from} -> ${to}（触发 ${trigger}）`];
-  if (rule.humanOnly && facts.actor !== 'human') return ['阶段操作只能由用户执行，agent 无权审批'];
+  const delegate = rule.delegable && facts.actor === 'orchestrator' && facts.delegated === true;
+  if (rule.humanOnly && facts.actor !== 'human' && !delegate) return ['阶段操作只能由用户执行，agent 无权审批'];
   return rule.check?.(facts) ?? [];
 }

@@ -58,6 +58,25 @@ test('按 task 的 layers 附上 rules/<层>.md：存在才附上，不存在不
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('给出 worktree 时，规则先取 worktree 里的文件，没有再用项目根目录', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'pi-forge-rules-'));
+  const wt = mkdtempSync(path.join(tmpdir(), 'pi-forge-rules-wt-'));
+  try {
+    mkdirSync(path.join(dir, 'rules')); mkdirSync(path.join(wt, 'rules'));
+    writeFileSync(path.join(dir, 'rules/global.md'), 'ROOT-G');
+    writeFileSync(path.join(dir, 'rules/backend.md'), 'ROOT-B');
+    writeFileSync(path.join(wt, 'rules/global.md'), 'WT-G');
+    writeFileSync(path.join(wt, 'rules/frontend.md'), 'WT-F');
+    const r = ruleFilesFor(config, dir, ['code'], ['backend', 'frontend'], wt);
+    assert.deepEqual(r.rules.map((x) => [x.path, x.content]), [['rules/global.md', 'WT-G'], ['rules/backend.md', 'ROOT-B'], ['rules/frontend.md', 'WT-F']]);
+    // 根目录没有 global.md、只有 worktree 有时也能读到（S0 的 architect 刚写的规则）
+    rmSync(path.join(dir, 'rules/global.md'));
+    assert.deepEqual(ruleFilesFor(config, dir, ['code'], [], wt).missing, []);
+    // 不给 worktree 时保持原行为
+    assert.deepEqual(ruleFilesFor(config, dir, ['code']).missing, ['rules/global.md']);
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(wt, { recursive: true, force: true }); }
+});
+
 test('提示组装顺序：角色提示 → 规则 → 任务与输入 → handoff 与打回意见；稳定前缀与任务无关', () => {
   const agent = { name: 'worker', tier: 'strong', thinking: null, description: '', prompt: 'ROLE-PROMPT' };
   const rules = [{ path: 'rules/global.md', content: 'RULE-G' }, { path: 'rules/backend.md', content: 'RULE-B' }];
@@ -119,13 +138,11 @@ test('任务说明：writes 含自己的验收目录（test_author: false）时�
   assert.ok(!review.user.includes('由你编写'));
 });
 
-// —— 偏离 99：允许的测试入口与已交付的接口 ——
+// —— 允许的测试入口与已交付的接口 ——
 const ifaceAgent = (name: string) => ({ name, tier: 'strong', thinking: null, description: '', prompt: 'R' });
 const ifaceTasks = () => [
   mkTask('T-002', { status: 'done', produces: ['table:teams', 'api:GET /api/teams', 'page:/teams'], test_interface: ['HTTP /api/teams'] }),
-  mkTask('T-002.at', { kind: 'acctest', status: 'done', for_task: 'T-002', role: 'test-author', produces: ['api:GET /api/fake'] }),
   mkTask('T-003', { status: 'in_progress', produces: ['api:POST /api/datasources', 'fn:ds#create'], test_interface: ['HTTP /api/datasources*', 'page /datasources'] }),
-  mkTask('T-003.at', { kind: 'acctest', for_task: 'T-003', role: 'test-author', test_interface: ['HTTP /api/datasources*', 'page /datasources'] }),
   mkTask('T-004', { status: 'pending', produces: ['api:GET /api/later'] }),
 ];
 const ifaceUser = (role: string, taskId: string, tasks = ifaceTasks()) => assemblePrompt({ agent: ifaceAgent(role), rules: [], task: tasks.find((x) => x.id === taskId)!, flowId: 'B-001', handoff: '', mode: 'impl', commands: config.commands, flowTasks: tasks }).user;
@@ -138,12 +155,16 @@ test('任务说明带「允许的测试入口」与「本阶段及之前已交�
   assert.doesNotMatch(sec, /table:teams|api\/fake|api\/later/, '只列 api/page、只列 impl、不列未完成的');
 });
 
-test('.at 与 reviewer 用 for_task 的 impl 的 test_interface 和 produces；stage-qa、architect 不输出', () => {
-  const at = ifaceUser('test-author', 'T-003.at');
-  assert.match(at, /## 允许的测试入口[\s\S]*page \/datasources/);
-  assert.match(at, /api:POST \/api\/datasources（T-003 正在实现）/);
-  assert.match(ifaceUser('reviewer', 'T-003.at'), /## 本阶段及之前已交付的接口/);
-  for (const role of ['stage-qa', 'architect']) assert.doesNotMatch(ifaceUser(role, 'T-003'), /## 允许的测试入口|## 本阶段及之前已交付的接口/, role);
+test('reviewer 用 for_task 的 impl 的 test_interface 和 produces；stage-qa、architect 不输出', () => {
+  const rv = ifaceUser('reviewer', 'T-003.rv', [...ifaceTasks(), mkTask('T-003.rv', { kind: 'review', role: 'reviewer', for_task: 'T-003', writes: [] })]);
+  assert.match(rv, /## 允许的测试入口[\s\S]*page \/datasources/);
+  assert.match(rv, /api:POST \/api\/datasources（T-003 正在实现）/);
+  assert.match(rv, /## 本阶段及之前已交付的接口/);
+  assert.doesNotMatch(ifaceUser('stage-qa', 'T-003'), /## 允许的测试入口|## 本阶段及之前已交付的接口/);
+  // architect：P1 / 变更请求的 doc task 不输出；S0 的 impl / fix 与 worker 一样输出
+  const doc = mkTask('T-009', { kind: 'doc', role: 'architect', test_interface: ['HTTP /api/x'] });
+  assert.doesNotMatch(ifaceUser('architect', 'T-009', [...ifaceTasks(), doc]), /## 允许的测试入口|## 本阶段及之前已交付的接口/);
+  assert.match(ifaceUser('architect', 'T-003'), /## 允许的测试入口[\s\S]*page \/datasources/);
   // test_interface 为空时不输出这一节
   assert.doesNotMatch(ifaceUser('worker', 'T-004'), /## 允许的测试入口/);
 });

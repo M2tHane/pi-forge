@@ -1,10 +1,11 @@
 // 来源：pi-flow src/core/intake.ts @ 31f3f15（改编）
 // 将需求文档与原型原件提交到集成分支，返回文件清单；不解析或生成输入内容。
-// 来源有两种：/forge-build --prd/--prototype 指定的路径；不指定时扫描项目 docs/ 下用户放的文档（偏离第 71 条）。
+// 来源有两种：/forge-build --prd/--prototype 指定的路径；不指定时扫描项目 docs/ 下用户放的文档。
 import { existsSync, lstatSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { StateStore } from '../state/state-store.ts';
+import { isLightFlow } from '../state/schemas.ts';
 import { git } from '../state/git.ts';
 import { isSensitive, normalizeRelPath } from '../state/paths.ts';
 import { IMAGE_MIME_TYPES } from '../workspace/forge-read.ts';
@@ -41,7 +42,7 @@ export function commitFilesToBranch(root: string, branch: string, files: readonl
 
 export class IntakeError extends Error {}
 /** prd、prototype 是用户指定的路径；都不给时 docs 为 true，扫描项目 docs/ */
-export interface IntakeInput { prd?: string; prototype?: string; docs?: { ingested: ReadonlySet<string> } }
+export interface IntakeInput { prd?: string; prototype?: string; docs?: true }
 export interface IntakeFile { path: string; size: number; type: string }
 /** prd：需求文档在集成分支上的位置（文件或目录）；没有任何需求文档时为 undefined */
 export interface IntakeResult { prd?: string; prototype?: string; files: IntakeFile[]; skipped?: string[] }
@@ -98,7 +99,6 @@ export function prepareInputs(root: string, input: IntakeInput): PreparedIntake 
     const before = files.length;
     for (const rel of listDocInputs(root, skipped)) {
       const content = readFileSync(path.join(root, 'docs', rel));
-      if (input.docs.ingested.has(gitBlobId(content))) { skipped.push(`docs/${rel}（已在之前的流程入库）`); continue; }
       if (files.length >= MAX_FILES) throw new IntakeError(`docs/ 下的文档超过 ${MAX_FILES} 个；请只保留本次需要的需求文档。`);
       bytes += content.length;
       if (bytes > MAX_BYTES) throw new IntakeError(`docs/ 下的文档超过 ${MAX_BYTES / 1048576} MiB。`);
@@ -114,7 +114,7 @@ export function prepareInputs(root: string, input: IntakeInput): PreparedIntake 
 }
 
 /** 项目 docs/ 下由 pi-forge 写入的目录：不是用户放的需求文档 */
-export const MANAGED_DOC_DIRS = ['spec', 'contracts', 'arch', 'plan', 'qa', 'review', 'research', 'rules-draft'] as const;
+export const MANAGED_DOC_DIRS = ['spec', 'contracts', 'arch', 'plan', 'qa', 'review', 'rules-draft'] as const;
 /** docs/ 下的文档入库到集成分支的位置（保持 docs/ 内的相对路径） */
 export const DOCS_INPUT_DEST = 'docs/spec/inputs/docs';
 
@@ -161,17 +161,11 @@ function listDocInputs(root: string, skipped: string[]): string[] {
   return take;
 }
 
-/** 已经入库过的文档（某个分支 docs/spec/inputs/ 下的 blob 编号），feature 模式用来跳过旧文档 */
-export function ingestedBlobs(root: string, ref: string): Set<string> {
-  try {
-    return new Set(git(root, ['ls-tree', '-r', ref, '--', 'docs/spec/inputs']).split('\n').filter(Boolean).map((l) => l.split(/\s+/)[2]!).filter(Boolean));
-  } catch { return new Set(); }
-}
 
 /** 独立索引提交不改变主工作区或主索引，重复接收相同内容不产生新提交。 */
 export async function importInputs(root: string, store: StateStore, flowId: string, input: IntakeInput, prepared?: PreparedIntake): Promise<IntakeResult> {
   const flow = store.readFlow(flowId);
-  if (flow.mode === 'fix') throw new IntakeError('修复流程不接收 PRD。');
+  if (isLightFlow(flow)) throw new IntakeError('修复与小改动流程不接收 PRD。');
   const result = prepared ?? prepareInputs(root, input);
   const out = { ...(result.prd !== undefined ? { prd: result.prd } : {}), ...(result.prototype !== undefined ? { prototype: result.prototype } : {}), files: result.files, ...(result.skipped ? { skipped: result.skipped } : {}) };
   // 没有任何文档：不记 intake，主会话从访谈开始

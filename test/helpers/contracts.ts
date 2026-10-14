@@ -125,7 +125,6 @@ REQ：REQ-002
 
 /** 合格的计划：S0 骨架（团队），S1 数据源（软依赖团队接口） */
 export const PLAN_YAML = `size_estimate: { loc: 9000, modules: 2 }
-mode: standard
 stages:
   - { id: S0, goal: 骨架：登录后看到团队列表, exit: [REQ-002] }
   - { id: S1, goal: 数据源管理, exit: [REQ-001] }

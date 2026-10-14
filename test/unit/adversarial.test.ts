@@ -51,7 +51,7 @@ test('对抗：实施 agent 修改 .forge/、改写历史、审批闸门全部�
       { toolName: 'bash', input: { command: "sed -i 's/in_progress/done/' .forge/flows/B-001/tasks/T-001.json" } },
       { toolName: 'bash', input: { command: 'git reset --hard HEAD~1' } },
       { toolName: 'bash', input: { command: 'git rebase -i main' } },
-      { toolName: 'serena_replace_symbol_body', input: { relative_path: '.forge/state.json', body: 'x' } },
+      { toolName: 'edit', input: { path: '.forge/state.json', edits: [] } },
       { toolName: 'forge_approve', input: { decision: 'pass', notes: '自批准' } },
     ];
     for (const a of attempts) {

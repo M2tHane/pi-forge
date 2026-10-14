@@ -3,13 +3,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { adjustableTests, testAdjustEnabled, testAdjustments } from '../../src/core/verify/test-adjust.ts';
+import { testAdjustEnabled, testAdjustments } from '../../src/core/verify/test-adjust.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import type { TaskFile } from '../../src/core/state/schemas.ts';
 
-test('可适配的已有测试：基线上已有、writes 之外的测试文件；改动只算修改，新增与删除不算', () => {
+test('记录适配过的已有测试：writes 之外、基线上已有的测试文件，只算修改，新增与删除不算', () => {
   const r = tmpRepo();
   try {
     const put = (f: string, c: string) => { mkdirSync(path.dirname(path.join(r.dir, f)), { recursive: true }); writeFileSync(path.join(r.dir, f), c); };
@@ -17,7 +17,6 @@ test('可适配的已有测试：基线上已有、writes 之外的测试文件�
     r.git('add', '-A'); r.git('commit', '-qm', 'base');
     const base = r.git('rev-parse', 'HEAD');
     const writes = ['src/server/**', 'tests/server/**'];
-    assert.deepEqual(adjustableTests(r.dir, base, writes).sort(), ['src/web/v.spec.js']);
     put('tests/acceptance/a.test.js', 'a2'); rmSync(path.join(r.dir, 'tests/acceptance/b.test.js')); put('tests/acceptance/c.test.js', 'c'); put('tests/server/s.test.js', 's2'); put('src/web/v.spec.js', 'v2');
     r.git('add', '-A'); r.git('commit', '-qm', 'change');
     assert.deepEqual(testAdjustments(r.dir, base, writes), ['src/web/v.spec.js']);

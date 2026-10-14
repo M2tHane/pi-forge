@@ -1,4 +1,4 @@
-// M9 用户模拟：docs/M9-PLAN.md 第 4 节的规则表，做成纯函数。
+// M9 用户模拟：M9 实验方案的规则表（原 docs/M9-PLAN.md 第 4 节，见 git 历史），做成纯函数。
 // decide(snapshot, state) 只读快照与计数状态，返回要做的动作；apply(state, action) 返回新的计数状态。
 // 表里没有的情况一律返回 stuck 动作（算作流程失败），不即兴处理。
 // 不依赖 Pi，不读磁盘；脚本（real-build.ts）负责把 .forge/ 与 RPC 事件整理成快照、把动作发出去。
@@ -34,7 +34,7 @@ export interface UiRequest {
 
 export interface FlowSnap {
   id: string;
-  mode: 'build' | 'feature' | 'fix';
+  mode: 'build' | 'fix' | 'change';
   stage: string;
   /** active | awaiting_gate | needs_human | awaiting_human | done | aborted */
   stageStatus: string;

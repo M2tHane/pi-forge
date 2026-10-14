@@ -50,9 +50,9 @@ test('阶段边界同步主分支：无冲突直接合入；writes 内冲突生�
       mkTask('T-001', { stage: 'S3', verify: ['test'] }),
       mkTask('T-002', { stage: 'S4', verify: [], writes: ['src/server/t-002/**'] }),
       // 混合编号不能让同步冲突的 merge-fix 编号变成 T-NaN
-      mkTask('T-009.fx-1', { stage: 'S3', kind: 'fix', writes: [], verify: [] }), mkTask('S3.rv', { stage: 'S3', kind: 'review', writes: [], verify: [] }),
+      mkTask('T-009.fx-1', { stage: 'S3', kind: 'fix', writes: [], verify: [] }), mkTask('T-008.rv', { stage: 'S3', kind: 'review', writes: [], verify: [] }),
     ], 'architect');
-    for (const id of ['T-009.fx-1', 'S3.rv']) await p.store.transitionTask(flowId, id, { to: 'cancelled', trigger: 'cancel', actor: 'human', facts: { reason: '只占编号' } });
+    for (const id of ['T-009.fx-1', 'T-008.rv']) await p.store.transitionTask(flowId, id, { to: 'cancelled', trigger: 'cancel', actor: 'human', facts: { reason: '只占编号' } });
     const integ = p.store.readFlow(flowId).integration_branch;
     let mergeFixSaw = '';
     const { engine, errors } = makeEngine({ ...p, flowId }, async (_role, _n, a) => {

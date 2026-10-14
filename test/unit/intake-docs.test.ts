@@ -1,4 +1,4 @@
-// /forge-build 不指定 --prd：扫描项目 docs/ 下用户放的需求文档（偏离第 71 条）。有文档时入库并让主会话只问疑点，没有时详细访谈。
+// /forge-build 不指定 --prd：扫描项目 docs/ 下用户放的需求文档。有文档时入库并让主会话只问疑点，没有时详细访谈。
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -45,10 +45,9 @@ test('parseBuildArgs：--prd 可选，位置参数是流程名；未知参数与
   assert.throws(() => parseBuildArgs(['--prd']), /缺少路径/);
 });
 
-test('p0Opening：有文档时先读、只问疑点；没有文档时详细访谈；feature 模式写增量规格', () => {
-  assert.match(p0Opening('build', ['- docs/spec/inputs/docs/prd.md']), /逐份读完[\s\S]*只就这些点[\s\S]*不要再问/);
-  assert.match(p0Opening('build', []), /没有提供需求文档[\s\S]*详细地向用户了解/);
-  assert.match(p0Opening('feature', []), /feature 模式[\s\S]*feature_name \+ feature/);
+test('p0Opening：有文档时先读、只问疑点；没有文档时详细访谈', () => {
+  assert.match(p0Opening(['- docs/spec/inputs/docs/prd.md']), /逐份读完[\s\S]*只就这些点[\s\S]*不要再问/);
+  assert.match(p0Opening([]), /没有提供需求文档[\s\S]*详细地向用户了解/);
 });
 
 test('/forge-build（不带参数）：docs/ 下的文档入库到集成分支 docs/spec/inputs/docs/，保持相对路径；主会话只问疑点', async () => {
@@ -79,21 +78,6 @@ test('/forge-build "<名字>"：docs/ 下没有文档时照常建流程，不记
     assert.equal(flow.intake, undefined);
     assert.match(talks[0]!, /没有提供需求文档/);
     assert.match(nextStep(p.store, 3).next, /详细地向用户了解需求/);
-  } finally { p.cleanup(); }
-});
-
-test('feature 模式：主分支上已经入库过的文档跳过，只收新文档', async () => {
-  const contracts = Object.fromEntries(Object.entries(CONTRACTS).map(([k, v]) => [`docs/contracts/${k}`, v]));
-  const p = await fresh({ ...contracts, 'docs/spec/inputs/docs/prd.md': '# 旧 PRD', 'docs/prd.md': '# 旧 PRD' });
-  put(p, { 'docs/导出功能.md': '# 导出' });
-  try {
-    const ingested = new Set([gitBlobId(Buffer.from('# 旧 PRD'))]);
-    const r = prepareInputs(p.dir, { docs: { ingested } });
-    assert.deepEqual(r.files.map((f) => f.path), [`${DOCS_INPUT_DEST}/导出功能.md`]);
-    assert.ok(r.skipped?.some((s) => s.includes('docs/prd.md（已在之前的流程入库）')));
-    const talks: string[] = [];
-    const out = await runFlowBuild('--feature', env(p, talks));
-    assert.match(out, /共 1 个文件[\s\S]*已在之前的流程入库/);
   } finally { p.cleanup(); }
 });
 

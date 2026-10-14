@@ -1,17 +1,16 @@
-// M6：阶段验收（第 11 节）与精简模式的阶段审查（第 7.6 节）。fake-subagent 经真实的引擎、SubagentRuntime 与工具操作。
-// 覆盖：覆盖率缺口生成 .at-n；stage-qa 的 must 生成 fix 并走流水线；超出轮数进入 needs_human、accept 放行；
+// M6：阶段验收（第 11 节）。fake-subagent 经真实的引擎、SubagentRuntime 与工具操作。
+// 覆盖：覆盖率缺口生成 .fx-n；stage-qa 的 must 生成 fix 并走流水线；超出轮数进入 needs_human、accept 放行；
 // 没有 worktree 的 stage-qa 用 forge_service 启动的服务运行在集成分支 HEAD 的临时 worktree 里，主工作区没有任何改动。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
-import { hard, mkTask } from '../helpers/tasks.ts';
+import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
 import { runFlowCommand } from '../../src/commands/forge.ts';
 import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
-import { sessionDirOf } from '../../src/core/engine/session-log.ts';
 import { drive, engineEnv, submitWork, writeFiles } from '../helpers/commands.ts';
 
 const REQS = P0_SPEC.requirements.replace('- AC1：Given 已登录 When 创建看板 Then 返回看板编号', '- AC1：Given 已登录 When 创建看板 Then 返回看板编号\n- AC2：Given 名称为空 When 创建看板 Then 返回 400');
@@ -19,39 +18,35 @@ const FILES = { ...Object.fromEntries(Object.entries({ ...P0_SPEC, requirements:
 // serve 把自己的工作目录写到测试指定的文件
 const OUT = mkdtempSync(path.join(tmpdir(), 'pi-forge-serve-'));
 const yamlWith = (qa: boolean) => (qa ? PROJECT_YAML.replace(/^  qa: false$/m, '  qa: true') : PROJECT_YAML)
-  .replace('acceptance_list: "true"', `acceptance_list: "true"\n  serve:     "pwd > ${OUT}/cwd; sleep 30"`);
-const impl = mkTask('T-001', { stage: 'S1', ac: ['REQ-001.AC1', 'REQ-001.AC2'] });
-const at = mkTask('T-001.at', { stage: 'S1', kind: 'acctest', role: 'test-author', scopes: ['acctest'], for_task: 'T-001', verify: [], ac: ['REQ-001.AC1', 'REQ-001.AC2'],
-  depends_on: [], writes: ['tests/acceptance/T-001/**', 'tests/acceptance/_support/T-001/**'] });
+  .replace('acceptance: "true"', `acceptance: "true"\n  serve:     "pwd > ${OUT}/cwd; sleep 30"`);
+const impl = mkTask('T-001', { stage: 'S1', ac: ['REQ-001.AC1', 'REQ-001.AC2'], writes: ['src/server/t-001/**', 'tests/acceptance/T-001/**'] });
 const must = { level: 'must' as const, basis: 'ac:REQ-001.AC2', files: ['src/server/t-001/a.ts'], location: 'create', problem: '名称为空时仍然创建成功', expected: '返回 400' };
 
-async function project(qa: boolean, tasks = [impl, at]): Promise<Project> {
+async function project(qa: boolean, tasks = [impl]): Promise<Project> {
   const p = await setupProject({ yaml: yamlWith(qa), files: FILES, stages: ['S1'], tasks });
-  await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }], 'standard');
+  await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }]);
   return p;
 }
 const stageStatus = (p: Project) => p.store.readFlow(p.flowId).stage_status;
 const AC1_TEST = "test('[REQ-001.AC1] 返回编号', () => {});\n";
 const AC2_TEST = "test('[REQ-001.AC2] 名称为空返回 400', () => {});\n";
 
-test('覆盖率缺口：AC2 没有带编号的测试 → 为 T-001 建 .at-2（coverage），补齐后门禁通过、docs/qa/S1.md 写入集成分支', async () => {
-  // .at 提交时只检查它自己的 ac；它只分到了 AC1，AC2 的缺口要到阶段门禁的覆盖率检查才发现
-  const p = await project(false, [impl, { ...at, ac: ['REQ-001.AC1'] }]);
-  const e = engineEnv(p, async (role, _n, a) => {
+test('覆盖率缺口：AC2 没有带编号的测试 → 为 T-001 建 .fx-1（coverage），补齐后门禁通过、docs/qa/S1.md 写入集成分支', async () => {
+  const p = await project(false);
+  const e = engineEnv(p, async (_role, _n, a) => {
     await a.call('forge_claim');
     const id = a.env.task;
-    if (role === 'worker') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n' }); return submitWork(a, '实现'); }
-    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': AC1_TEST }); return submitWork(a, '只覆盖了 AC1'); }
-    assert.equal(id, 'T-001.at-2');
-    assert.match(p.store.readHandoff(p.flowId, id), /补充 AC 的测试[\s\S]*REQ-001\.AC2/);
+    if (id === 'T-001') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST }); return submitWork(a, '只覆盖了 AC1'); }
+    assert.equal(id, 'T-001.fx-1');
+    assert.match(p.store.readHandoff(p.flowId, id), /补齐验收测试[\s\S]*REQ-001\.AC2/);
     await writeFiles(a, { 'tests/acceptance/T-001/b.test.ts': AC2_TEST });
     return submitWork(a, '补上 AC2');
   });
   try {
     await drive(e, p.flowId);
     assert.deepEqual(e.errors, []);
-    const at2 = p.store.readTask(p.flowId, 'T-001.at-2');
-    assert.deepEqual([at2.status, at2.acctest_round?.kind], ['done', 'coverage']);
+    const fx = p.store.readTask(p.flowId, 'T-001.fx-1');
+    assert.deepEqual([fx.status, fx.kind, fx.for_task], ['done', 'fix', 'T-001']);
     assert.equal(stageStatus(p), 'awaiting_human');
     const integ = p.store.readFlow(p.flowId).integration_branch;
     const md = p.git('show', `${integ}:docs/qa/S1.md`);
@@ -60,14 +55,13 @@ test('覆盖率缺口：AC2 没有带编号的测试 → 为 T-001 建 .at-2（c
   } finally { p.cleanup(); }
 });
 
-test('stage-qa 的 must → T-001.fx-1（fork worker 会话、writes 只含问题文件）走流水线合并 → S1.qa-2 只确认 → 签收', async () => {
+test('stage-qa 的 must → T-001.fx-1（fork worker 会话、writes 含问题文件与自己的验收目录）走流水线合并 → S1.qa-2 只确认 → 签收', async () => {
   const p = await project(true);
   const seen: Record<string, string> = {};
   const e = engineEnv(p, async (role, _n, a) => {
     await a.call('forge_claim');
     const id = a.env.task;
-    if (id === 'T-001') { await writeFiles(a, { 'src/server/t-001/a.ts': 'v1\n' }); return submitWork(a, '实现'); }
-    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, 'AC1、AC2'); }
+    if (id === 'T-001') { await writeFiles(a, { 'src/server/t-001/a.ts': 'v1\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, '实现'); }
     if (id === 'T-001.fx-1') {
       assert.equal(role, 'worker');
       seen['fx'] = p.store.readHandoff(p.flowId, id);
@@ -86,7 +80,7 @@ test('stage-qa 的 must → T-001.fx-1（fork worker 会话、writes 只含问�
     await drive(e, p.flowId, 40);
     assert.deepEqual(e.errors, []);
     const fx = p.store.readTask(p.flowId, 'T-001.fx-1');
-    assert.deepEqual([fx.kind, fx.status, fx.for_task, fx.fork_from_task, fx.writes], ['fix', 'done', 'T-001', 'T-001', ['src/server/t-001/a.ts']]);
+    assert.deepEqual([fx.kind, fx.status, fx.for_task, fx.fork_from_task, fx.writes], ['fix', 'done', 'T-001', 'T-001', ['src/server/t-001/a.ts', 'tests/acceptance/T-001/**']]);
     assert.match(seen['fx']!, /名称为空时仍然创建成功/);
     assert.ok(!p.store.listTasks(p.flowId).some((t) => t.id.startsWith('T-001.fx') && t.id.includes('.rv')), 'fix 不做逐任务审查');
     assert.equal(p.git('show', `${p.store.readFlow(p.flowId).integration_branch}:src/server/t-001/a.ts`), 'v2 返回 400');
@@ -101,8 +95,7 @@ test('stage-qa 超出 qa.max_rounds → needs_human；/forge accept S1 --note �
   const e = engineEnv(p, async (_role, _n, a) => {
     await a.call('forge_claim');
     const id = a.env.task;
-    if (id === 'T-001' || id === 'T-001.fx-1') { await writeFiles(a, { 'src/server/t-001/a.ts': `${id}\n` }); return submitWork(a, id); }
-    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, 'AC'); }
+    if (id === 'T-001' || id === 'T-001.fx-1') { await writeFiles(a, { 'src/server/t-001/a.ts': `${id}\n`, 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, id); }
     if (id === 'S1.qa') { await a.call('forge_qa_report', { verdict: 'changes', issues: [must] }); return; }
     await a.call('forge_qa_confirm', { items: [{ id: 'R-1', resolved: false, note: '仍然创建成功' }] });
   });
@@ -125,8 +118,7 @@ test('第 14 节：stage-qa 没有自己的 worktree，forge_service 的服务�
   const e = engineEnv(p, async (_role, _n, a) => {
     await a.call('forge_claim');
     const id = a.env.task;
-    if (id === 'T-001') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n' }); return submitWork(a, '实现'); }
-    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, 'AC'); }
+    if (id === 'T-001') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, '实现'); }
     const s = await a.call('forge_service', { action: 'start', name: 'serve' });
     assert.ok(s.ok, s.text);
     for (let i = 0; i < 50 && !cwd; i++) {
@@ -135,7 +127,7 @@ test('第 14 节：stage-qa 没有自己的 worktree，forge_service 的服务�
       if (existsSync(f)) cwd = readFileSync(f, 'utf8').trim();
     }
     await a.call('forge_service', { action: 'stop', name: 'serve' });
-    // full 档 bash 也写不到主工作区：绝对路径参数与内联脚本里写死的路径都被拦下（偏离 79）
+    // full 档 bash 也写不到主工作区：绝对路径参数与内联脚本里写死的路径都被拦下
     for (const command of [`touch ${p.dir}/qa-wrote.txt`, `node -e "require('fs').writeFileSync('${p.dir}/qa-wrote.txt','x')"`]) {
       const r = await a.call('bash', { command });
       assert.ok(!r.ok && /主工作区|工作区之外/.test(r.text), `应被拦下：${command}\n${r.text}`);
@@ -152,44 +144,4 @@ test('第 14 节：stage-qa 没有自己的 worktree，forge_service 的服务�
     assert.ok(!existsSync(path.join(p.dir, 'qa-wrote.txt')));
     assert.equal(stageStatus(p), 'awaiting_human');
   } finally { p.cleanup(); rmSync(OUT, { recursive: true, force: true }); }
-});
-
-test('精简模式：阶段 impl 合并后 S1.rv 审查整个阶段的 diff；must → .fx-1 → S1.rv-2 只确认 → 门禁 → 签收；S2 的 impl 接着 S1 的 worker 会话', async () => {
-  const p = await setupProject({ yaml: yamlWith(false), files: FILES, stages: ['S1', 'S2'], tasks: [
-    impl, at, mkTask('T-002', { stage: 'S2', ac: [], writes: ['src/server/t-002/**'], deps: [hard('T-001')] }),
-  ] });
-  await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }, { id: 'S2', goal: '收尾', exit: [] }], 'lean');
-  const e = engineEnv(p, async (role, _n, a) => {
-    await a.call('forge_claim');
-    const id = a.env.task;
-    if (role === 'worker') {
-      // 模拟 pi 的会话留档，下一阶段的 impl 接着它
-      const dir = sessionDirOf(p.dir, a.env.run);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(path.join(dir, 's.jsonl'), '{"type":"session"}\n');
-      await writeFiles(a, { [`src/server/${id.slice(0, 5).toLowerCase()}/a.ts`]: `${id}\n` });
-      return submitWork(a, id);
-    }
-    if (id === 'T-001.at') { await writeFiles(a, { 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, 'AC'); }
-    assert.equal(role, 'reviewer');
-    if (/^T-\d+\.rv$/.test(id)) { const r = await a.call('forge_review_report', { verdict: 'pass', issues: [] }); assert.ok(r.ok, r.text); return; } // 逐任务审查（偏离 117：lean 也审）
-    if (id === 'S1.rv') { const r = await a.call('forge_review_report', { verdict: 'changes', issues: [must] }); assert.ok(r.ok, r.text); return; }
-    assert.equal(id, 'S1.rv-2');
-    const r = await a.call('forge_review_confirm', { items: [{ id: 'R-1', resolved: true }] });
-    assert.ok(r.ok, r.text);
-  });
-  try {
-    await drive(e, p.flowId, 40);
-    assert.deepEqual(e.errors, []);
-    assert.ok(p.store.listTasks(p.flowId).some((t) => t.id === 'T-001.rv'), 'impl 一律逐任务审查，精简模式也一样（偏离 117）；阶段审查照旧');
-    assert.equal(p.store.readTask(p.flowId, 'T-001.fx-1').status, 'done');
-    assert.equal(p.store.readTask(p.flowId, 'S1.rv-2').status, 'done');
-    assert.equal(stageStatus(p), 'awaiting_human');
-    await runFlowCommand('approve', e.cmd).catch(() => runFlowCommand('approve S1', e.cmd));
-    await drive(e, p.flowId, 10);
-    const s2 = e.launcher.launched.find((s) => s.env['PI_FORGE_TASK'] === 'T-002');
-    assert.ok(s2, 'T-002 已派发');
-    const fx = p.store.listRuns().find((r) => r.task === 'T-001.fx-1')!;
-    assert.equal(s2.forkFrom, path.join(sessionDirOf(p.dir, fx.run_id), 's.jsonl'), '接着上一阶段 worker 最后一次（.fx-1）的会话');
-  } finally { p.cleanup(); }
 });

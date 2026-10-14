@@ -1,4 +1,4 @@
-// M9 判定与结果表（docs/M9-PLAN.md 第 3.2、3.3 节）。纯函数导出供单元测试；命令行：
+// M9 判定与结果表（M9 实验方案的通过条件与决定规则，原 docs/M9-PLAN.md 第 3 节，见 git 历史）。纯函数导出供单元测试；命令行：
 //   node scripts/m9/score.ts table <summary.json>...        汇总成结果表 markdown 并给出判定
 //   node scripts/m9/score.ts hidden <hidden输出文本文件> [<变更那次的输出>]   解析隐藏测试输出并计分
 // 判定只用 summary.json；每组 1 次，"平均"就是这一次的值。

@@ -10,8 +10,8 @@ import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { mkTask } from '../helpers/tasks.ts';
 
 const withTest = (cmd: string) => PROJECT_YAML.replace(/  test:      ".*"/, `  test:      "${cmd}"`);
-// 偏离 117：合并只检查冲突标记并运行 merge_check，不跑 typecheck、lint、test、acceptance
-const withMergeCheck = (yaml: string, cmd: string) => yaml.replace(/(  acceptance_list: .*\n)/, `$1  merge_check: "${cmd}"\n`);
+// 合并只检查冲突标记并运行 merge_check，不跑 typecheck、lint、test、acceptance
+const withMergeCheck = (yaml: string, cmd: string) => yaml.replace(/(  acceptance: .*\n)/, `$1  merge_check: "${cmd}"\n`);
 async function implement(a: FakeAgent, files: Record<string, string>) {
   await a.call('forge_claim');
   for (const [p, c] of Object.entries(files)) assert.ok((await a.call('write', { path: p, content: c })).ok, p);
@@ -124,10 +124,10 @@ test('非 impl / fix（doc）的文本冲突在 writes 内：仍生成 merge-fix
     yaml: withTest("! grep -rq '<<<<<<<' src"),
     files: { 'src/server/t-001/a.ts': 'line1\nbase\nline3\n' },
     // 混合编号（审查 .rv、修复 .fx-n）不能让 merge-fix 编号变成 T-NaN
-    tasks: [mkTask('T-001', { kind: 'doc', verify: ['test'] }), mkTask('S1.rv', { kind: 'review', writes: [], verify: [] }), mkTask('T-009.fx-1', { kind: 'fix', writes: [], verify: [] })],
+    tasks: [mkTask('T-001', { kind: 'doc', verify: ['test'] }), mkTask('T-008.rv', { kind: 'review', writes: [], verify: [] }), mkTask('T-009.fx-1', { kind: 'fix', writes: [], verify: [] })],
   });
   try {
-    for (const id of ['S1.rv', 'T-009.fx-1']) await p.store.transitionTask(p.flowId, id, { to: 'cancelled', trigger: 'cancel', actor: 'human', facts: { reason: '只占编号' } });
+    for (const id of ['T-008.rv', 'T-009.fx-1']) await p.store.transitionTask(p.flowId, id, { to: 'cancelled', trigger: 'cancel', actor: 'human', facts: { reason: '只占编号' } });
     let fixPrompt = '';
     const { engine, merges, errors } = makeEngine(p, async (_role, _n, a) => {
       if (a.env.task === 'T-001') {
@@ -198,7 +198,7 @@ test('doc 的 merge-fix 残留冲突标记：合并后检查拦下，回到 in_p
   } finally { p.cleanup(); }
 });
 
-test('偏离 116：两个 impl 并行改同一文件，后合并者的冲突交回自己的任务解决（不生成 merge-fix），两处改动都进集成分支', async () => {
+test('两个 impl 并行改同一文件，后合并者的冲突交回自己的任务解决（不生成 merge-fix），两处改动都进集成分支', async () => {
   const p = await setupProject({
     yaml: withTest("! grep -rq '<<<<<<<' src"),
     files: { 'src/server/index.js': '// routes\n' },
@@ -210,8 +210,8 @@ test('偏离 116：两个 impl 并行改同一文件，后合并者的冲突交�
       const id = a.env.task;
       (seen[id] ??= []).push(a.spec.prompt);
       if (seen[id]!.length === 1) {
-        // 两个任务都在各自 worktree 里追加一行路由；先把两个都做完，再让它们依次合并
-        await implement(a, { 'src/server/index.js': `// routes\nroute ${id}\n`, [`src/server/${id.toLowerCase()}/a.js`]: id });
+        // 两个任务都改同一行（只追加的改动会被程序自动合并）；先把两个都做完，再让它们依次合并
+        await implement(a, { 'src/server/index.js': `// routes (${id})\nroute ${id}\n`, [`src/server/${id.toLowerCase()}/a.js`]: id });
         return;
       }
       // 冲突交回：工作区里是带冲突标记的文件；删掉标记，两边的行都保留
@@ -248,7 +248,7 @@ test('偏离 116：两个 impl 并行改同一文件，后合并者的冲突交�
   } finally { p.cleanup(); }
 });
 
-test('偏离 116：impl 交回冲突后仍留着冲突标记再提交 → 合并验证失败，次数达到上限转 blocked（merge_exhausted）', async () => {
+test('impl 交回冲突后仍留着冲突标记再提交 → 合并验证失败，次数达到上限转 blocked（merge_exhausted）', async () => {
   const p = await setupProject({
     files: { 'src/server/t-001/a.ts': 'base\n' },
     tasks: [mkTask('T-001', { verify: ['typecheck'] })],
@@ -276,7 +276,7 @@ test('偏离 116：impl 交回冲突后仍留着冲突标记再提交 → 合并
   } finally { p.cleanup(); }
 });
 
-test('合并只跑 merge_check（偏离 117）：不跑 typecheck、lint、test、acceptance；文档类任务（verify 为空）合并时不跑命令', async () => {
+test('合并只跑 merge_check：不跑 typecheck、lint、test、acceptance；文档类任务（verify 为空）合并时不跑命令', async () => {
   const p = await setupProject({ yaml: withMergeCheck(DIRECT_YAML, 'true').replace(/^  merge_batch: 3.*$/m, '  merge_batch: 1'), tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('T-002', { verify: [] })] });
   try {
     const { engine, errors } = makeEngine(p, async (_role, _nth, a) => {
@@ -304,7 +304,7 @@ test('合并不跑 test：test 命令会失败的任务照样合入（回归留�
   } finally { p.cleanup(); }
 });
 test('批量合并：队列里的 3 个任务一起叠加、只跑一次 merge_check，依次快进；有一个坏的时整批退回逐个合并，坏的被退回修好', async () => {
-  // 坏的 T-003 自己审查时 merge_check 不跑（偏离 117）（它的 worktree 里没有 T-001），与 T-001 叠加后才失败
+  // 坏的 T-003 自己审查时 merge_check 不跑（它的 worktree 里没有 T-001），与 T-001 叠加后才失败
   const yaml = withMergeCheck(DIRECT_YAML.replace(/^  max_parallel: 2$/m, '  max_parallel: 3'), '! { grep -rqs BAD src/server && test -e src/server/t-001/a.ts; }');
   for (const bad of [false, true]) {
     const p = await setupProject({ yaml, tasks: ['T-001', 'T-002', 'T-003'].map((id) => mkTask(id, { verify: ['test'] })) });
@@ -344,8 +344,8 @@ test('批量合并：队列里的 3 个任务一起叠加、只跑一次 merge_c
   }
 });
 
-test('适配已有测试：接口变化让其他 task 的旧测试失败时，worker 可以直接修改基线上已有的单元测试并一起合入；不能新增、删除可写范围外的文件；testing.adjust_tests 关闭时不能改', async () => {
-  // test 命令仍按旧语义写（合并不再跑它，偏离 117）；本用例关心的是适配旧测试的权限与记录
+test('适配已有测试：接口变化让其他 task 的旧测试失败时，worker 直接修改基线上已有的单元测试并一起合入，程序记下改了哪些旧测试（写入不再受 writes 限制）', async () => {
+  // test 命令仍按旧语义写（合并不再跑它）；本用例关心的是适配旧测试的权限与记录
   const yaml = DIRECT_YAML.replace(/  test:      ".*"/, '  test:      "! grep -qs OLD tests/server/api.test.js || ! grep -rqs NEW src/server"');
   const files = { 'tests/server/api.test.js': 'assert OLD\n', 'tests/server/other.test.js': 'keep\n' };
   const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: ['test'] })], files });
@@ -353,10 +353,6 @@ test('适配已有测试：接口变化让其他 task 的旧测试失败时，wo
     const attempts: string[] = [];
     const { engine, errors } = makeEngine(p, async (_role, _nth, a) => {
       await a.call('forge_claim');
-      const created = await a.call('write', { path: 'tests/server/new.test.js', content: 'x' });
-      assert.ok(!created.ok, '不能新建可写范围外的测试');
-      const removed = await a.call('bash', { command: 'rm tests/server/other.test.js' });
-      assert.ok(!removed.ok, '不能删除可写范围外的测试');
       assert.ok((await a.call('write', { path: 'tests/server/api.test.js', content: 'assert NEW\n' })).ok);
       assert.ok((await a.call('write', { path: 'src/server/t-001/a.ts', content: 'NEW' })).ok);
       await a.call('forge_note', { text: '完成' });
@@ -374,17 +370,4 @@ test('适配已有测试：接口变化让其他 task 的旧测试失败时，wo
     assert.equal(p.git('show', `flow/${p.flowId}/integration:tests/server/api.test.js`), 'assert NEW');
     assert.match(p.store.readHandoff(p.flowId, 'T-001'), /修改了可写范围外的已有测试.*tests\/server\/api\.test\.js/);
   } finally { p.cleanup(); }
-
-  const off = await setupProject({ yaml: yaml.replace(/^  adjust_tests: true.*$/m, '  adjust_tests: false'), tasks: [mkTask('T-001', { verify: ['test'] })], files });
-  try {
-    let blocked = '';
-    const { engine } = makeEngine(off, async (_role, nth, a) => {
-      await a.call('forge_claim');
-      if (nth === 1) blocked = (await a.call('write', { path: 'tests/server/api.test.js', content: 'assert NEW\n' })).text;
-      await a.call('forge_block', { reason: '需要改别人的测试' });
-    });
-    await engine.next(off.flowId);
-    await engine.idle();
-    assert.match(blocked, /tests\/server\/api\.test\.js 不能改/); // writes 没列测试路径（偏离 115）
-  } finally { off.cleanup(); }
 });

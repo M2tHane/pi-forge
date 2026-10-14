@@ -41,14 +41,13 @@ test('损坏或不合法的文件给出中文错误', () => {
 
 test('解析优先级：/forge-config 设置 > workflow.yaml 档位', () => {
   const config = parseConfig(TEST_YAML.replace('medium: "<provider/model>"', 'medium: "workbuddy/glm-5.3-flash"').replace('strong: "<provider/model>"', 'strong: "openai/worker"'));
-  const settings = { version: 1 as const, roles: { architect: { model: 'openai/gpt-x', thinking: 'high' as const }, researcher: { thinking: 'low' as const } } };
+  const settings = { version: 1 as const, roles: { architect: { model: 'openai/gpt-x', thinking: 'high' as const }, reviewer: { thinking: 'low' as const } } };
   assert.deepEqual(resolveRoleModel(config, settings, 'architect'), { model: 'openai/gpt-x', thinking: 'high', modelSource: 'forge-config', thinkingSource: 'forge-config' });
-  assert.deepEqual(resolveRoleModel(config, settings, 'test-author'), { model: 'workbuddy/glm-5.3-flash', thinking: null, modelSource: 'workflow', thinkingSource: 'default' });
   // 档位为占位符时没有模型
   assert.deepEqual(resolveRoleModel(config, settings, 'worker'), { model: 'openai/worker', thinking: null, modelSource: 'workflow', thinkingSource: 'default' });
-  assert.deepEqual(resolveRoleModel(config, settings, 'researcher'), { model: 'workbuddy/glm-5.3-flash', thinking: 'low', modelSource: 'workflow', thinkingSource: 'forge-config' });
+  assert.deepEqual(resolveRoleModel(config, settings, 'reviewer'), { model: 'workbuddy/glm-5.3-flash', thinking: 'low', modelSource: 'workflow', thinkingSource: 'forge-config' });
   const placeholders = parseConfig(TEST_YAML);
-  assert.deepEqual(resolveRoleModel(placeholders, settings, 'researcher'), { model: null, thinking: 'low', modelSource: 'unset', thinkingSource: 'forge-config' });
+  assert.deepEqual(resolveRoleModel(placeholders, settings, 'reviewer'), { model: null, thinking: 'low', modelSource: 'unset', thinkingSource: 'forge-config' });
   assert.throws(() => resolveRoleModel(config, settings, 'nobody'), /nobody/);
 });
 

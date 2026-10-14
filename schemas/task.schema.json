@@ -30,7 +30,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+      "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
     },
     "stage": {
       "type": "string",
@@ -40,7 +40,6 @@
       "enum": [
         "impl",
         "doc",
-        "acctest",
         "review",
         "qa",
         "fix",
@@ -72,7 +71,7 @@
         "properties": {
           "task": {
             "type": "string",
-            "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+            "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
           },
           "type": {
             "anyOf": [
@@ -160,7 +159,7 @@
     },
     "for_task": {
       "type": "string",
-      "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+      "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
     },
     "source_round": {
       "type": "object",
@@ -171,47 +170,12 @@
       "properties": {
         "task": {
           "type": "string",
-          "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+          "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
         },
         "round": {
           "type": "integer",
           "minimum": 1
         }
-      }
-    },
-    "acctest_round": {
-      "type": "object",
-      "required": [
-        "kind"
-      ],
-      "properties": {
-        "kind": {
-          "enum": [
-            "dispute",
-            "foreign",
-            "decide",
-            "coverage",
-            "change",
-            "legacy"
-          ]
-        },
-        "test": {
-          "type": "string"
-        },
-        "from_task": {
-          "type": "string",
-          "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
-        }
-      }
-    },
-    "changed_tests": {
-      "type": "boolean"
-    },
-    "waits_for": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
       }
     },
     "deviations": {
@@ -235,7 +199,6 @@
         "awaiting_inputs",
         "checking",
         "in_review",
-        "disputed",
         "queued_merge",
         "merging",
         "done",
@@ -259,20 +222,10 @@
       "type": "integer",
       "minimum": 0
     },
-    "disputes": {
-      "type": "object",
-      "patternProperties": {
-        "^.*$": {
-          "type": "integer",
-          "minimum": 0
-        }
-      }
-    },
     "blocked_by": {
       "anyOf": [
         {
           "enum": [
-            "dispute",
             "review_exhausted",
             "precheck_exhausted",
             "merge_exhausted",
@@ -280,13 +233,22 @@
             "agent",
             "dispatcher",
             "user",
-            "integration_broken"
+            "integration_broken",
+            "no_changes"
           ]
         },
         {
           "type": "null"
         }
       ]
+    },
+    "blocked_owner": {
+      "type": "string",
+      "const": "orchestrator"
+    },
+    "decisions": {
+      "type": "integer",
+      "minimum": 0
     },
     "violations": {
       "type": "integer",
@@ -380,92 +342,6 @@
               "const": "restart"
             }
           ]
-        }
-      },
-      "additionalProperties": false
-    },
-    "scope_grants": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "paths",
-          "reason",
-          "by",
-          "at"
-        ],
-        "properties": {
-          "paths": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            },
-            "minItems": 1
-          },
-          "reason": {
-            "type": "string"
-          },
-          "by": {
-            "anyOf": [
-              {
-                "type": "string",
-                "const": "program"
-              },
-              {
-                "type": "string",
-                "const": "orchestrator"
-              },
-              {
-                "type": "string",
-                "const": "human"
-              }
-            ]
-          },
-          "at": {
-            "type": "string",
-            "minLength": 1
-          },
-          "run": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      }
-    },
-    "scope_request": {
-      "type": "object",
-      "required": [
-        "paths",
-        "reason",
-        "conflicts",
-        "run",
-        "at"
-      ],
-      "properties": {
-        "paths": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "minItems": 1
-        },
-        "reason": {
-          "type": "string"
-        },
-        "conflicts": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "run": {
-          "type": "string"
-        },
-        "at": {
-          "type": "string",
-          "minLength": 1
         }
       },
       "additionalProperties": false
@@ -589,7 +465,7 @@
     },
     "merge_fix_for": {
       "type": "string",
-      "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+      "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
     },
     "conflict_files": {
       "type": "array",
@@ -603,7 +479,7 @@
     },
     "fork_from_task": {
       "type": "string",
-      "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+      "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
     },
     "test_adjustments": {
       "type": "array",

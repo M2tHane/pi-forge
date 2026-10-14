@@ -7,7 +7,7 @@ import type { StateStore } from '../state/state-store.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import { canAppendInterfaces, hashToken } from '../state/state-machine.ts';
 import { scratchDir } from '../workspace/worktree.ts';
-import { TEST_GLOBS, adjustableTests, testAdjustEnabled } from '../verify/test-adjust.ts';
+import { TEST_GLOBS } from '../verify/test-adjust.ts';
 import { matchesAny, INTERFACES_PATH, opensWrites } from '../state/paths.ts';
 import { enforceToolCall, type GuardContext, type ToolCall } from '../security/guard.ts';
 import { failureSummary } from '../workspace/verify-runner.ts';
@@ -88,35 +88,22 @@ export class SubagentRuntime {
       config: this.config,
       role: this.env.role,
       cwd,
-      workspaceRoot: t.worktree ?? this.env.root,
+      // review / qa 在任务结束后可能还会调用读工具：此时 worktree 已删除，不能回退到主工作区（会被当作越界）。cwd 就是派发时的工作目录（原任务的 worktree 或 qa 的临时 worktree）
+      workspaceRoot: t.kind === 'review' || t.kind === 'qa' ? cwd : t.worktree ?? this.env.root,
       mainRoot: this.env.root,
       // 实现类任务可以在模块之间的接口文档里追加（只能新增，forge_submit 检查）
       ...(canAppendInterfaces(t) ? { interfaceAdditions: true } : {}),
-      // test-author 在隔离工作区里：路径不能越出工作区（第 9.2 节第 5 条）；
-      // stage-qa 有 full 档 bash，在集成分支的临时 worktree 里同样不能越出（规格第 14 节：除临时目录外不能写；偏离 79）
-      ...(t.kind === 'acctest' || t.kind === 'qa' ? { isolatedWorkspace: true } : {}),
+      // stage-qa 有 full 档 bash，在集成分支的临时 worktree 里不能越出工作区（规格第 14 节：除临时目录外不能写）
+      ...(t.kind === 'qa' ? { isolatedWorkspace: true } : {}),
       ...(opensWrites(t) && role.writes.length ? { openWrites: true } : {}),
-      ...(t.scope_grants?.length && !t.conflict_files ? { granted: t.scope_grants.flatMap((g) => g.paths) } : {}),
+      // S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时，rules/** 不算受保护路径
+      ...(t.writes.includes('rules/**') ? { rulesWritable: true as const } : {}),
       // 模块登记的公共文件（第五轮）也可以写；没有可写范围但能运行命令的角色（验收者）也有临时目录
       ...(role.writes.length ? { writes: [...(t.conflict_files ?? t.writes), ...(t.conflict_files ? [] : t.shared ?? [])], scratchDir: scratchDir(this.env.root, this.env.run) } : {}),
       ...(!role.writes.length && role.bash === 'full' ? { scratchDir: scratchDir(this.env.root, this.env.run) } : {}),
-      ...(testAdjustEnabled(this.config, t) && t.worktree && t.base_sha ? { adjustableTests: this.adjustable(t.worktree, t.base_sha, t.writes) } : {}),
       // merge-fix：冲突文件里原任务适配过的已有测试、契约文件（docs/contracts/**）不在角色可写范围内，也要能改
-      ...(t.kind === 'merge-fix' && t.conflict_files ? { adjustableTests: t.conflict_files.filter((f) => matchesAny(f, [...TEST_GLOBS, INTERFACES_PATH])) } : {}),
+      ...(t.kind === 'merge-fix' && t.conflict_files ? { extraWritable: t.conflict_files.filter((f) => matchesAny(f, [...TEST_GLOBS, INTERFACES_PATH])) } : {}),
     };
-  }
-
-  private adjustableCache: { key: string; files: string[] } | null = null;
-
-  /** 基线上已有、writes 之外的测试文件；每次工具调用都会用到，按 base_sha 缓存 */
-  private adjustable(worktree: string, base: string, writes: readonly string[]): string[] {
-    const key = `${base}\0${writes.join('\0')}`;
-    if (this.adjustableCache?.key !== key) {
-      let files: string[] = [];
-      try { files = adjustableTests(worktree, base, writes); } catch { /* 取不到时不放行任何额外文件 */ }
-      this.adjustableCache = { key, files };
-    }
-    return this.adjustableCache.files;
   }
 
   /**

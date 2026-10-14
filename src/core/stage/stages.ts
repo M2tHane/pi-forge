@@ -11,9 +11,10 @@ import { deliveryReport } from './signoff.ts';
 
 export interface StageDeps { root: string; store: StateStore; config: FlowConfig }
 
-export async function startFlow(d: StageDeps, mode: 'build' | 'feature', description: string): Promise<FlowFile> {
-  const def = d.config.raw.modes[mode];
-  if (!def) throw new Error(`workflow.yaml 没有定义 modes.${mode}`);
+export async function startFlow(d: StageDeps, description: string): Promise<FlowFile> {
+  const mode = 'build';
+  const def = d.config.raw.modes.build;
+  if (!def) throw new Error('workflow.yaml 没有定义 modes.build');
   const main = d.config.raw.main_branch;
   if (!gitOk(d.root, ['show-ref', '--verify', '--quiet', `refs/heads/${main}`])) throw new Error(`主分支 ${main} 不存在，请检查 workflow.yaml 的 main_branch`);
   const base = git(d.root, ['rev-parse', main]).trim();

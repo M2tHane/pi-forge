@@ -14,12 +14,12 @@ const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 /** 子进程只加载包内的七个角色定义。 */
 export const AGENTS = path.join(PACKAGE_ROOT, 'agents');
 export const ALL_FAKE: RoleSettingsFile = { version: 1, roles: Object.fromEntries(
-  ['orchestrator', 'architect', 'worker', 'test-author', 'reviewer', 'stage-qa', 'researcher'].map((r) => [r, { model: 'fake/model', thinking: 'low' as const }])) };
+  ['orchestrator', 'architect', 'worker', 'reviewer', 'stage-qa'].map((r) => [r, { model: 'fake/model', thinking: 'low' as const }])) };
 
 export type RoleScript = (role: string, nth: number, a: FakeAgent) => Promise<void>;
 
 export function makeEngine(p: Project, scripts: RoleScript, settings = ALL_FAKE, mergeHooks?: MergeHooks, extra: Partial<EngineDeps> = {}) {
-  // 偏离 117：impl / fix 一律审查。脚本里没有出现 reviewer 的（按任务编号分支的老脚本）不会处理审查者，默认审查者直接通过；
+  // impl / fix 一律审查。脚本里没有出现 reviewer 的（按任务编号分支的老脚本）不会处理审查者，默认审查者直接通过；
   // 脚本处理了 reviewer 但没有提交结论的（forge_review_*、forge_block）同样补一次通过
   const handlesReviewer = /forge_review_|'reviewer'|"reviewer"/.test(scripts.toString());
   const launcher = new FakeLauncher(p.store, p.config, (spec, nth) => async (a) => {

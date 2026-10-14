@@ -1,4 +1,4 @@
-// 阶段级只读任务（stage-qa 的 .qa 与精简模式的阶段审查 .rv）使用的临时 worktree（规格第 7.6、11、14 节）。
+// 阶段级只读任务（stage-qa 的 .qa）使用的临时 worktree（规格第 11、14 节）。
 // 它们没有自己的任务分支：在集成分支 HEAD 上新建一个 detached 的 worktree，放在 worktreesRoot(root) 下，
 // 任务结束（done 或 cancelled）后删除。这类任务的流水线只有 ready → in_progress → done（report），
 // 不经过预检、合并、同步，也不会在其中提交；branch 字段只是记账（集成分支名），检出本身是 detached。
@@ -10,12 +10,8 @@ import type { StateStore } from '../state/state-store.ts';
 import { git, gitOk } from '../state/git.ts';
 import { headSha, removeWorktree, worktreePath, type TaskWorktree } from './worktree.ts';
 
-/** 阶段级审查 task 的编号：S1.rv、S1.rv-2 */
-export const STAGE_RV_ID = /^[A-Za-z][A-Za-z0-9_]*\.rv(?:-\d+)?$/;
-
-/** 需要临时 worktree 的任务：qa，以及没有 for_task 的阶段级 review（纯函数） */
-export const isStageLevelTask = (t: Pick<TaskFile, 'id' | 'kind' | 'for_task'>): boolean =>
-  t.kind === 'qa' || (t.kind === 'review' && !t.for_task && STAGE_RV_ID.test(t.id));
+/** 需要临时 worktree 的任务：qa（纯函数） */
+export const isStageLevelTask = (t: Pick<TaskFile, 'id' | 'kind' | 'for_task'>): boolean => t.kind === 'qa';
 
 /**
  * 在 at（默认集成分支 HEAD）上建 detached 的临时 worktree；已存在（重新派发）时复用。

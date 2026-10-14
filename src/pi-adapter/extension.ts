@@ -26,8 +26,8 @@ import { dirtyFiles } from '../core/state/git.ts';
 import { parseAgentFile } from '../core/engine/agents.ts';
 import { runFlowConfig, type ModelOption } from '../commands/forge-config.ts';
 import { RoleTable, type RoleRow, type TableModel } from '../commands/role-table.ts';
-import { runFlowCommand, runFlowBuild, runFlowFix, FLOW_USAGE, type CommandEnv, type EngineHandle } from '../commands/forge.ts';
-import { flowChangeRequestMain, flowSpec, flowSpecAmend, SpecParams, SpecAmendParams, ResolveScopeParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveScope, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
+import { runFlowCommand, runFlowBuild, runFlowFix, runFlowChange, FLOW_USAGE, type CommandEnv, type EngineHandle } from '../commands/forge.ts';
+import { flowChange, flowChangeRequestMain, flowDecide, flowSpec, ChangeParams, DecideParams, SpecParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
 import { PiLauncher } from './launcher.ts';
 import { lastFailureKind, notices, snapshotOf, statusLine, visibleFlows } from '../core/ops/status-view.ts';
 import { packageRoots, pluginExtensionsFor } from './plugins.ts';
@@ -42,7 +42,7 @@ import { MAIN_NOTES_REL } from '../core/state/state-store.ts';
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TEMPLATE_WORKFLOW = path.join(PACKAGE_ROOT, 'templates', 'workflow.yaml');
 const SUBAGENT_EXTENSION = path.join(PACKAGE_ROOT, 'src', 'pi-adapter', 'subagent.ts');
-const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_spec', 'forge_spec_amend', 'forge_change_request', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_resolve_scope'];
+const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_spec', 'forge_change', 'forge_change_request', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_decide'];
 
 /** 用户级设置文件：~/.pi/agent/pi-forge.json（与 Pi 官方 preset 示例的全局配置位置一致） */
 export function roleSettingsPath(): string {
@@ -106,7 +106,7 @@ const orchUsage = new Map<string, { runId: string; acc: UsageAccumulator; chain:
 
 function recordOrchestratorUsage(s: RootSession, message: Record<string, unknown>): Promise<void> {
   const { store } = s.handle!;
-  const flow = store.readState().active_flow ?? store.openFixFlow()?.id ?? null;
+  const flow = store.readState().active_flow ?? store.openLightFlow()?.id ?? null;
   const key = `${store.abs('')}|${flow ?? '-'}`;
   let u = orchUsage.get(key);
   if (!u) {
@@ -282,7 +282,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交 requirements、screens、permissions、glossary 四份完整规格；feature 流程改为提交增量规格 feature_name + feature（需求、页面、权限三节，基线已存在时不传四份）。spec-lint 拒绝时修正重提；通过后等待用户批准。',
+      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交 requirements、screens、permissions、glossary 四份完整规格。spec-lint 拒绝时修正重提；通过后等待用户批准。',
       parameters: SpecParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
@@ -291,16 +291,16 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_spec_amend', label: 'forge_spec_amend', description: 'P0 批准后提交增量规格修订（需求、页面、权限三节），列出变化 AC 与受影响 task，等待用户批准。',
-      parameters: SpecAmendParams,
+      name: 'forge_change', label: 'forge_change', description: '在做完的项目上加小功能：与用户商量后提交 1 到 3 个 task 的迷你计划（title、description、tasks[]：title、writes、ac、可选 id/depends_on/layers/module）。程序校验通过后直接开始实施（不经 P0/P1 批准）：实现者实现、审查者审查、合入主分支，结束前程序建“更新架构图与契约”任务，最后由验收者确认。改动更大时让用户用 /forge-build。',
+      parameters: ChangeParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
-        const r = await flowSpecAmend(ctx.cwd, h.store, checked(SpecAmendParams, p, 'forge_spec_amend'));
+        const r = await flowChange(ctx.cwd, h.store, h.config, checked(ChangeParams, p, 'forge_change'), h.engine);
         return toolResult(r.text, r.details);
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_change_request', label: 'forge_change_request', description: '计划批准后需要修改已有契约或计划时提交变更请求（what、why、impact）：程序派 architect 起草修订，用户批准后落地。同一时间只能有一个未结束的变更请求。',
+      name: 'forge_change_request', label: 'forge_change_request', description: '计划批准后需要修改已有契约或计划时提交变更请求（what、why、impact）：程序派 architect 起草修订，修订先交给你审核（forge_decide），必要时转交用户。同一时间只能有一个未结束的变更请求。',
       parameters: ChangeRequestParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
@@ -326,11 +326,11 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_resolve_scope', label: 'forge_resolve_scope', description: '子进程申请追加的可写范围与其他未完成任务重叠时调用：approve 追加，reject 不追加（写明原因与做法）。',
-      parameters: ResolveScopeParams,
+      name: 'forge_decide', label: 'forge_decide', description: '程序交给你决定的事（forge_status 的"等你决定"）：阻塞的任务 retry 重新做或 accept 放行，门禁用尽的阶段 accept 放行进入签收，变更请求的修订 approve 批准或 reject 打回；解决不了的 user 转交用户。note 必填。',
+      parameters: DecideParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
-        const r = await flowResolveScope(h.store, checked(ResolveScopeParams, p, 'forge_resolve_scope'));
+        const r = await flowDecide(ctx.cwd, h.store, h.config, h.engine, checked(DecideParams, p, 'forge_decide'));
         return toolResult(r.text, r.details);
       },
     }));
@@ -398,8 +398,7 @@ export default function piFlow(pi: ExtensionAPI): void {
     s.driftBefore = dirtyFiles(ctx.cwd);
     const flowId = store.readState().active_flow;
     const flow = flowId ? store.readFlow(flowId) : null;
-    const amendInProgress = flowId && store.listAmends(flowId).some((a) => a.status === 'proposed' || a.status === 'rejected');
-    const skills = flow?.stage === 'P0' || amendInProgress
+    const skills = flow?.stage === 'P0'
       ? ['spec-from-prd', 'grilling'].map((name) => readFileSync(path.join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'), 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim()).join('\n\n') : '';
     const injected = `${agentPrompt(ctx.cwd, 'orchestrator')}\n\n${skills}\n\n${turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t))}`;
     event.systemPromptOptions.appendSystemPrompt = `${event.systemPromptOptions.appendSystemPrompt ?? ''}\n\n${injected}`.trim();
@@ -456,7 +455,7 @@ export default function piFlow(pi: ExtensionAPI): void {
 
   pi.registerCommand('forge', {
     description: 'pi-forge 管理：status、next、resume、approve、reject、unblock、gate、doctor、init',
-    getArgumentCompletions: (prefix) => ['status', 'report', 'next', 'resume', 'answer', 'accept', 'add', 'rules', 'knowledge', 'run', 'sync', 'budget', 'models', 'off', 'approve', 'reject', 'unblock', 'decide', 'gate', 'abort', 'doctor', 'init', 'help']
+    getArgumentCompletions: (prefix) => ['status', 'report', 'next', 'resume', 'answer', 'accept', 'rules', 'knowledge', 'run', 'sync', 'budget', 'models', 'off', 'approve', 'reject', 'unblock', 'gate', 'abort', 'doctor', 'init', 'help']
       .filter((x) => x.startsWith(prefix.trim())).map((x) => ({ value: x, label: x })),
     handler: async (args, ctx) => {
       try {
@@ -467,14 +466,12 @@ export default function piFlow(pi: ExtensionAPI): void {
     },
   });
 
-  // 常用操作的独立命令（第五轮）：/forge-approve、/forge-reject、/forge-add、/forge-resume、/forge-status
+  // 常用操作的独立命令（第五轮）：/forge-approve、/forge-reject、/forge-resume、/forge-status
   const shortcuts: [string, string, string][] = [
     ['forge-approve', 'approve', 'pi-forge：批准当前阶段（规划、最终合入主分支）或待批准的计划修订'],
     ['forge-reject', 'reject', 'pi-forge：打回需求、规划或计划修订并写明意见，主 agent 带着意见修改'],
-    ['forge-add', 'add', 'pi-forge：中途追加需求，交给主 agent 整理成规格修订（P0 批准之后）'],
     ['forge-resume', 'resume', 'pi-forge：会话丢失或进程被杀后恢复流程，并进入调度模式'],
     ['forge-status', 'status', 'pi-forge：当前阶段、进度、正在做什么、需要你处理什么（--detail 看完整任务列表）'],
-    ['forge-decide', 'decide', 'pi-forge：裁决交给你的验收测试争议（keep-test 维持测试 / fix-test "<说明>" 按说明改测试）'],
   ];
   for (const [name, sub, description] of shortcuts) {
     pi.registerCommand(name, {
@@ -490,8 +487,8 @@ export default function piFlow(pi: ExtensionAPI): void {
   }
 
   pi.registerCommand('forge-build', {
-    description: 'pi-forge：建新项目。需求文档放在 docs/ 下（可选，也可用 --prd/--prototype 指定），主会话先读文档、只问疑点，没有文档时详细问你；--feature 在已有项目上加功能（需要主分支已有 docs/contracts/，没有时先 /forge init --adopt）',
-    getArgumentCompletions: (prefix) => ['--prd', '--prototype', '--feature'].filter((x) => x.startsWith(prefix.trim().split(' ').at(-1) ?? '')).map((x) => ({ value: x, label: x })),
+    description: 'pi-forge：建新项目。需求文档放在 docs/ 下（可选，也可用 --prd/--prototype 指定），主会话先读文档、只问疑点，没有文档时详细问你',
+    getArgumentCompletions: (prefix) => ['--prd', '--prototype'].filter((x) => x.startsWith(prefix.trim().split(' ').at(-1) ?? '')).map((x) => ({ value: x, label: x })),
     handler: async (args, ctx) => {
       try {
         report(ctx, await runFlowBuild(args, commandEnv(ctx)));
@@ -506,6 +503,17 @@ export default function piFlow(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       try {
         report(ctx, await runFlowFix(args, commandEnv(ctx)));
+      } catch (e) {
+        report(ctx, (e as Error).message, 'error');
+      }
+    },
+  });
+
+  pi.registerCommand('forge-change', {
+    description: 'pi-forge：在做完的项目上加小功能（--from <yaml 计划文件>：1 到 3 个 task → 实现、审查、合入主分支 → 更新架构图与契约 → 验收者确认）',
+    handler: async (args, ctx) => {
+      try {
+        report(ctx, await runFlowChange(args, commandEnv(ctx)));
       } catch (e) {
         report(ctx, (e as Error).message, 'error');
       }

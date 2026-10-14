@@ -76,18 +76,19 @@ export function removeWorktree(root: string, wt: string, branch?: string): void 
   if (branch && branchExists(root, branch)) git(root, ['branch', '-D', branch]);
 }
 
-/** 插件在工作目录中生成的产物（serena 的项目配置、codegraph 索引），不应进入任务快照 */
-export const TOOL_ARTIFACTS = ['.serena/', '.codegraph/'];
+/** 插件在工作目录中生成的产物（codegraph 索引），不应进入任务快照 */
+export const TOOL_ARTIFACTS = ['.codegraph/'];
+/** 每个 worktree 各自生成的环境与缓存（uv 的 .venv、Python 字节码与测试缓存）：项目的 .gitignore 漏写时也不进入任务快照 */
+export const ENV_ARTIFACTS = ['.venv/', '__pycache__/', '.pytest_cache/'];
 
 /**
- * 写入仓库本地的 info/exclude（不被跟踪，所有 worktree 共享），避免插件产物出现在任务 diff 中被判越界。
- * 已核实：pi-serena 在项目根生成 .serena/.gitignore 与 .serena/project.yml。
+ * 写入仓库本地的 info/exclude（不被跟踪，所有 worktree 共享），避免插件产物与各 worktree 的环境出现在任务 diff 中被判越界。
  */
-export function ensureLocalExcludes(root: string, patterns: readonly string[] = TOOL_ARTIFACTS): void {
+export function ensureLocalExcludes(root: string, patterns: readonly string[] = [...TOOL_ARTIFACTS, ...ENV_ARTIFACTS]): void {
   const common = git(root, ['rev-parse', '--git-common-dir']).trim();
   const file = path.join(path.isAbsolute(common) ? common : path.join(root, common), 'info', 'exclude');
   mkdirSync(path.dirname(file), { recursive: true });
   const cur = existsSync(file) ? readFileSync(file, 'utf8') : '';
   const missing = patterns.filter((p) => !cur.split('\n').includes(p));
-  if (missing.length) appendFileSync(file, `${cur && !cur.endsWith('\n') ? '\n' : ''}# pi-forge：插件产物不进入任务快照\n${missing.join('\n')}\n`);
+  if (missing.length) appendFileSync(file, `${cur && !cur.endsWith('\n') ? '\n' : ''}# pi-forge：插件产物与各 worktree 的环境不进入任务快照\n${missing.join('\n')}\n`);
 }

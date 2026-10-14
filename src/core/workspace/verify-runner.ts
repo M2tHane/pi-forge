@@ -47,7 +47,7 @@ export function evidenceText(r: CommandRun, shell: string): string {
   return [`命令：${r.command}`, `实际执行：${shell}`, `退出码：${r.exit_code}${r.timed_out ? '（超时）' : ''}`, `耗时：${r.duration_ms} ms`, ...(missing ? [`工具缺失，已跳过：${r.command}（${missing.tool}）`] : []), '', r.output].join('\n');
 }
 
-// —— 工具缺失（偏离 108）——
+// —— 工具缺失——
 
 const PEEK_LINES = 10;
 /** 测试框架的输出标记：出现在匹配行之前，说明命令已经跑起来了，后面的 not found 是测试自己的输出 */

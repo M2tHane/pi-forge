@@ -6,28 +6,23 @@
 // - 调整 task：只能调整还没开始（pending、ready）的 task，阶段只能改到当前阶段或之后；
 // - 取消 task：只能取消还没开始的 task（从计划里删除即取消）；
 // - 已开始或已完成的 task 不能直接修改、删除：新增一个带 modifies 的修改 task，程序让它硬依赖原 task（followup）；
-// - 验收测试：AC 变化或实现被修改时，为受影响 task 改 .at（还没开始）或新建 .at-n（kind 为 change）；
 // - 阶段：已完成的阶段与当前阶段的目标不能改（当前阶段的 exit 只能追加），之后的阶段可以新增、调整、删除。
 import type { ChangeActionSummary, ChangeFile, Dependency, FlowFile, PlanFile, TaskFile } from '../state/schemas.ts';
-import { acctestRoundInput } from '../acceptance/acceptance-flow.ts';
-import { latestAcctest } from '../state/acctest-lookup.ts';
-import { deriveAcctest, deriveTasks, S0_EXTRA_WRITES } from './plan.ts';
-import { selfTestGlobOf, writesOwnAcceptance } from '../state/paths.ts';
+import { deriveTasks, S0_EXTRA_WRITES } from './plan.ts';
+import { ownAcceptanceGlob } from '../state/paths.ts';
 import type { ChangeOps } from '../state/state-store.ts';
 
 export type PlanTask = PlanFile['tasks'][number];
 export type PlanStageDef = PlanFile['stages'][number];
 /** 当前计划：只需要阶段、task 与模式 */
-export type CurrentPlan = Pick<PlanFile, 'stages' | 'tasks' | 'mode'>;
-type FlowView = Pick<FlowFile, 'stage'> & Partial<Pick<FlowFile, 's_stages' | 'plan_mode'>>;
+export type CurrentPlan = Pick<PlanFile, 'stages' | 'tasks'>;
+type FlowView = Pick<FlowFile, 'stage'> & Partial<Pick<FlowFile, 's_stages'>>;
 
 export type ChangeAction =
   | { kind: 'add'; task: PlanTask; deps: Dependency[] }
   | { kind: 'adjust'; id: string; fields: string[]; patch: Record<string, unknown> }
   | { kind: 'cancel'; id: string; title: string; also: string[] }
   | { kind: 'followup'; of: string; task: PlanTask; deps: Dependency[]; originalStatus: TaskFile['status'] }
-  | { kind: 'acctest'; impl: string; mode: 'patch'; target: string; reason: string; patch: Record<string, unknown> }
-  | { kind: 'acctest'; impl: string; mode: 'round'; reason: string; waitFor?: string }
   | { kind: 'stages'; stages: PlanStageDef[]; added: string[]; adjusted: string[]; removed: string[] };
 
 export interface RevisionDiff { errors: string[]; actions: ChangeAction[] }
@@ -35,8 +30,6 @@ export interface RevisionDiff { errors: string[]; actions: ChangeAction[] }
 export interface DiffOptions {
   /** 修订后计划的依赖边（checkPlan 的 deps）；不给时不比较、不调整依赖 */
   deps?: ReadonlyMap<string, Dependency[]>;
-  /** 来自规格修订：变化的 AC（新增、修改、删除），其负责 task 的验收测试要跟着改 */
-  changedAcs?: readonly string[];
 }
 
 const NOT_STARTED = ['pending', 'ready'];
@@ -51,21 +44,17 @@ const depKey = (d: readonly Dependency[]) => JSON.stringify(d.map((x) => `${x.ta
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n');
 const stageDefEq = (a: PlanStageDef, b: PlanStageDef) => a.goal === b.goal && sameSet(a.exit, b.exit);
 
-/** 计划里的 task 字段 → TaskFile 的字段（用于调整未开始的 task） */
-/** ownTests：该 task 自己写验收测试（test_author: false，偏离 81），writes 里保留它原来的验收目录（自己的，lean 时是共享目录 suite，偏离 110） */
-function taskPatch(t: PlanTask, fields: readonly string[], ownTests: string | null = null): Record<string, unknown> {
+/** 计划里的 task 字段 → TaskFile 的字段（用于调整未开始的 task）；writes 保留它自己的验收目录 */
+function taskPatch(t: PlanTask, fields: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
     const v = (t as Record<string, unknown>)[f];
-    if (f === 'writes') out['writes'] = [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ...(ownTests ? [ownTests] : [])])];
+    if (f === 'writes') out['writes'] = [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ownAcceptanceGlob(t.id)])];
     else if (OPTIONAL_LISTS.has(f) && Array.isArray(v) && !v.length) out[f] = undefined;
     else out[f] = structuredClone(v);
   }
   return out;
 }
-
-const acOf = (t: Pick<TaskFile, 'ac'>) => t.ac ?? [];
-const acctestsOf = (tasks: readonly TaskFile[], impl: string) => tasks.filter((t) => t.kind === 'acctest' && t.for_task === impl && t.status !== 'cancelled');
 
 /**
  * 修订后的计划相对当前计划的动作与错误。oldPlan 是当前生效的计划（上一次批准的版本），tasks 是流程里的全部 task。
@@ -86,7 +75,6 @@ export function diffPlanRevision(oldPlan: CurrentPlan, newPlan: PlanFile, tasks:
   const depsOf = (id: string) => deps?.get(id) ?? [];
 
   // —— 阶段 ——
-  if (newPlan.mode !== oldPlan.mode) errors.push(`不能把计划模式从 ${oldPlan.mode} 改成 ${newPlan.mode}`);
   const added: string[] = [];
   const adjusted: string[] = [];
   const removed: string[] = [];
@@ -115,9 +103,6 @@ export function diffPlanRevision(oldPlan: CurrentPlan, newPlan: PlanFile, tasks:
   if (added.length || adjusted.length || removed.length) actions.push({ kind: 'stages', stages: structuredClone(newPlan.stages), added, adjusted, removed });
 
   const stageOk = (stage: string) => (newIdx.get(stage) ?? -1) >= cur;
-  const roundReasons = new Map<string, string[]>();
-  const wantRound = (impl: string, why: string) => roundReasons.set(impl, [...(roundReasons.get(impl) ?? []), why]);
-  const patchedAt = new Set<string>();
 
   // —— 修订后计划里的 task ——
   for (const t of newPlan.tasks) {
@@ -137,25 +122,9 @@ export function diffPlanRevision(oldPlan: CurrentPlan, newPlan: PlanFile, tasks:
       }
       if (!stageOk(t.stage)) { errors.push(`${t.id} 的阶段 ${t.stage} 在当前阶段 ${flow.stage} 之前或不存在，只能调整到当前阶段或之后`); continue; }
       if ((oldIdx.get(old.stage) ?? -1) < cur) { errors.push(`${t.id} 属于已完成的阶段 ${old.stage}，不能调整`); continue; }
-      const patch = taskPatch(t, fields, writesOwnAcceptance(l) ? selfTestGlobOf(l) : null);
+      const patch = taskPatch(t, fields);
       if (depsChanged) patch['depends_on'] = newDeps.map((d) => ({ ...d }));
       actions.push({ kind: 'adjust', id: t.id, fields: [...fields, ...(depsChanged ? ['depends_on'] : [])], patch });
-      if (fields.some((f) => ['ac', 'test_interface', 'title', 'stage', 'writes'].includes(f)) || depsChanged) {
-        const at = acctestsOf(tasks, t.id);
-        const first = latestAcctest(tasks, t.id);
-        // 验收测试还没开始：直接改它；已经开始或结束：新建 .at-n（测试可能已经按旧要求写好）
-        if (first && isNotStarted(first) && at.length === 1 && first.id === `${t.id}.at`) {
-          const p: Record<string, unknown> = {};
-          if (fields.includes('ac')) p['ac'] = [...t.ac];
-          if (fields.includes('test_interface')) p['test_interface'] = [...t.test_interface];
-          if (fields.includes('title')) p['title'] = `验收测试：${t.title}`;
-          if (fields.includes('stage')) p['stage'] = t.stage;
-          if ((depsChanged || fields.includes('stage')) && t.stage !== 'S0') p['depends_on'] = newDeps.filter((d) => d.type === 'hard').map((d) => ({ ...d }));
-          if (Object.keys(p).length) { actions.push({ kind: 'acctest', impl: t.id, mode: 'patch', target: first.id, reason: '计划调整了 task 的验收标准、接口或依赖', patch: p }); patchedAt.add(first.id); }
-        } else if (first && fields.some((f) => f === 'ac' || f === 'test_interface')) {
-          wantRound(t.id, `计划调整了验收标准或测试接口（${fields.filter((f) => f === 'ac' || f === 'test_interface').join('、')}）`);
-        }
-      }
       continue;
     }
     // 计划里新增的 task
@@ -170,7 +139,6 @@ export function diffPlanRevision(oldPlan: CurrentPlan, newPlan: PlanFile, tasks:
       if (isNotStarted(target)) { errors.push(`${t.modifies} 还没开始，直接调整它即可，不需要 modifies 的修改 task`); continue; }
       if ((newIdx.get(t.stage) ?? 0) < (newIdx.get(newTasks.get(t.modifies)!.stage) ?? 0)) { errors.push(`${t.id} 的阶段不能早于它修改的 ${t.modifies}`); continue; }
       actions.push({ kind: 'followup', of: t.modifies, task: structuredClone(t), deps: depsOf(t.id).map((d) => ({ ...d })), originalStatus: target.status });
-      if (acctestsOf(tasks, t.modifies).length) wantRound(t.modifies, `${t.id} 修改了它的实现`);
       continue;
     }
     actions.push({ kind: 'add', task: structuredClone(t), deps: depsOf(t.id).map((d) => ({ ...d })) });
@@ -184,33 +152,7 @@ export function diffPlanRevision(oldPlan: CurrentPlan, newPlan: PlanFile, tasks:
     if (l.status === 'cancelled') continue;
     if (!isNotStarted(l)) { errors.push(`${old.id} 已${l.status === 'done' ? '完成' : `开始（${l.status}）`}，不能取消或从计划里删除；让它做完，再新增带 modifies 的修改 task`); continue; }
     if ((oldIdx.get(old.stage) ?? -1) < cur) { errors.push(`${old.id} 属于已完成的阶段 ${old.stage}，不能取消`); continue; }
-    const also: string[] = [];
-    for (const a of acctestsOf(tasks, old.id)) {
-      if (isNotStarted(a)) also.push(a.id);
-      else errors.push(`${old.id} 的验收测试 ${a.id} 已经开始（${a.status}），暂时不能取消 ${old.id}；等它结束后再提出变更`);
-    }
-    actions.push({ kind: 'cancel', id: old.id, title: l.title, also });
-  }
-
-  // —— 规格修订里变化的 AC：负责这些 AC 的 task，验收测试要跟着改 ——
-  const changed = new Set(opts.changedAcs ?? []);
-  if (changed.size) {
-    const cancelled = new Set(actions.filter((a) => a.kind === 'cancel').map((a) => (a as { id: string }).id));
-    for (const t of tasks) {
-      if (t.kind !== 'impl' || t.status === 'cancelled' || cancelled.has(t.id)) continue;
-      const hit = acOf(t).filter((a) => changed.has(a));
-      if (hit.length) wantRound(t.id, `规格修订改动了它负责的验收标准：${hit.join('、')}`);
-    }
-  }
-
-  // —— 验收测试返工（.at-n）——
-  for (const [impl, why] of roundReasons) {
-    const latest = latestAcctest(tasks, impl);
-    if (!latest || patchedAt.has(latest.id)) continue;
-    // 验收测试还没开始：测试会按当前的规格与契约来写，不需要返工
-    if (isNotStarted(latest)) continue;
-    const reason = [...new Set(why)].join('；');
-    actions.push({ kind: 'acctest', impl, mode: 'round', reason, ...(latest.status !== 'done' ? { waitFor: latest.id } : {}) });
+    actions.push({ kind: 'cancel', id: old.id, title: l.title, also: [] });
   }
   return { errors, actions };
 }
@@ -223,19 +165,17 @@ export function summarizeActions(actions: readonly ChangeAction[]): ChangeAction
       case 'adjust': return { kind: 'adjust', task: a.id, fields: [...a.fields] };
       case 'cancel': return { kind: 'cancel', task: a.id, detail: a.title };
       case 'followup': return { kind: 'followup', task: a.task.id, of: a.of, stage: a.task.stage, detail: a.task.title };
-      case 'acctest': return { kind: 'acctest', task: a.impl, mode: a.mode, detail: a.reason };
       case 'stages': return { kind: 'stages', fields: [...a.added.map((s) => `新增 ${s}`), ...a.adjusted.map((s) => `调整 ${s}`), ...a.removed.map((s) => `删除 ${s}`)] };
     }
   });
 }
 
-/** 等待批准期间不派发的 task：要调整或取消的未开始 task，以及要改的还没开始的验收测试 */
+/** 等待批准期间不派发的 task：要调整或取消的未开始 task */
 export function changeTouched(actions: readonly ChangeAction[]): string[] {
   const out = new Set<string>();
   for (const a of actions) {
     if (a.kind === 'adjust') out.add(a.id);
     else if (a.kind === 'cancel') { out.add(a.id); for (const x of a.also) out.add(x); }
-    else if (a.kind === 'acctest' && a.mode === 'patch') out.add(a.target);
   }
   return [...out].sort();
 }
@@ -255,7 +195,6 @@ export function summarizeText(actions: readonly ChangeActionSummary[]): string {
       case 'adjust': return `调整未开始的 ${a.task}：${(a.fields ?? []).join('、')}`;
       case 'cancel': return `取消未开始的 ${a.task}：${a.detail ?? ''}`;
       case 'followup': return `为 ${a.of} 新增修改 task ${a.task}（${a.stage}，硬依赖 ${a.of}）：${a.detail ?? ''}`;
-      case 'acctest': return a.mode === 'patch' ? `改 ${a.task} 还没开始的验收测试任务：${a.detail ?? ''}` : `为 ${a.task} 新建验收测试返工 .at-n：${a.detail ?? ''}`;
       case 'stages': return `阶段：${(a.fields ?? []).join('、')}`;
     }
   });
@@ -278,11 +217,9 @@ export function changeSummary(c: Pick<ChangeFile, 'id' | 'status' | 'what' | 'wh
 
 export interface MaterializeContext {
   flowStage: string;
-  scopes: { worker: string[]; testAuthor: string[] };
+  scopes: { worker: string[] };
   verify: string[];
   changeId: string;
-  /** test_author 为 false（偏离 81）：新增与修改的 impl 自己写验收测试，不派生 .at */
-  selfTest?: boolean;
 }
 
 /**
@@ -298,40 +235,28 @@ export function materializeChange(actions: readonly ChangeAction[], newPlan: Pla
     if (a.kind === 'add') { addedPlan.push(a.task); depsMap.set(a.task.id, a.deps); }
   }
   if (addedPlan.length) {
-    ops.add.push(...deriveTasks(sub(addedPlan), depsMap, ctx.scopes, { acctest: !ctx.selfTest, selfTest: !!ctx.selfTest, verify: ctx.verify }));
+    ops.add.push(...deriveTasks(sub(addedPlan), depsMap, ctx.scopes, { verify: ctx.verify }));
     for (const t of addedPlan) ops.handoffs[t.id] = `由变更请求 ${ctx.changeId} 新增。`;
   }
   for (const a of actions) {
     switch (a.kind) {
       case 'followup': {
         const m = new Map<string, Dependency[]>([[a.task.id, a.deps]]);
-        const [impl] = deriveTasks(sub([a.task]), m, ctx.scopes, { acctest: false, selfTest: !!ctx.selfTest, verify: ctx.verify });
+        const [impl] = deriveTasks(sub([a.task]), m, ctx.scopes, { verify: ctx.verify });
         const i = impl!;
         if (!i.depends_on.some((d) => d.task === a.of && d.type === 'hard')) i.depends_on = [...i.depends_on.filter((d) => d.task !== a.of), { task: a.of, type: 'hard', reason: `变更请求 ${ctx.changeId}：修改 ${a.of}` }];
         ops.add.push(i);
         const original = tasks.find((t) => t.id === a.of);
-        const own = a.task.ac.filter((x) => !(original?.ac ?? []).includes(x));
-        if (own.length && !ctx.selfTest) ops.add.push(deriveAcctest({ ...i, ac: own }, ctx.scopes.testAuthor));
         ops.handoffs[i.id] = `这是对 ${a.of}「${original?.title ?? ''}」的修改 task（变更请求 ${ctx.changeId}）。${a.of} ${a.originalStatus === 'done' ? '已经完成并合并' : `${a.originalStatus}，做完后才会开始本任务`}；在它的基础上做本任务要求的修改，不要重写。`;
         break;
       }
       case 'adjust': ops.patches.push({ id: a.id, patch: a.patch }); break;
-      case 'acctest':
-        if (a.mode === 'patch') ops.patches.push({ id: a.target, patch: a.patch });
-        break;
       case 'cancel':
         for (const id of [a.id, ...a.also]) ops.cancels.push({ id, reason: `变更请求 ${ctx.changeId}：计划已删除 ${a.id}` });
         break;
-      case 'stages': ops.stages = { stages: structuredClone(a.stages), mode: newPlan.mode }; break;
+      case 'stages': ops.stages = { stages: structuredClone(a.stages) }; break;
       case 'add': break;
     }
-  }
-  // 验收测试返工：同一个 impl 一轮；编号接着已有的 .at-n
-  const rounds = actions.filter((a): a is Extract<ChangeAction, { kind: 'acctest'; mode: 'round' }> => a.kind === 'acctest' && a.mode === 'round');
-  for (const r of rounds) {
-    const input = acctestRoundInput(tasks, ctx.flowStage, r.impl, { kind: 'change' }, r.waitFor);
-    ops.add.push(input);
-    ops.handoffs[input.id] = `变更请求 ${ctx.changeId} 导致这个 task 的验收测试需要返工：${r.reason}。对照当前的规格与契约（docs/spec、docs/contracts，已更新）修改 tests/acceptance/${r.impl}/ 下的测试。`;
   }
   return ops;
 }

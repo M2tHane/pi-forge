@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { FlowConfig } from '../state/config.ts';
 import { costReport, formatRow, type CostRow } from '../insight/cost.ts';
 import { git } from '../state/git.ts';
-import type { FlowEvent, FlowFile, RunFile, TaskFile } from '../state/schemas.ts';
+import { FAILURE_LABEL, type FailureKind, type FlowEvent, type FlowFile, type RunFile, type TaskFile } from '../state/schemas.ts';
 import { evidenceRel, type StateStore } from '../state/state-store.ts';
 
 const HUMAN_WAIT = new Set(['awaiting_human', 'needs_human']);
@@ -97,15 +97,11 @@ export interface Rework {
   precheck_failures: number;
   review_rejects: number;
   merge_verify_failures: number;
-  disputes: number;
-  /** .at-n 验收测试返工轮数 */
-  acctest_rounds: number;
   gate_fixes: number;
   qa_fixes: number;
 }
 
 const FIX_TITLE = { gate: '修复阶段门禁的问题', qa: '修复stage-qa的问题' } as const;
-export const isAcctestRound = (t: Pick<TaskFile, 'id' | 'kind'>) => t.kind === 'acctest' && /\.at-\d+$/.test(t.id);
 
 /** 返工次数；stage 给出时只算该阶段的 task（纯函数） */
 export function reworkCounts(events: readonly Pick<FlowEvent, 'flow' | 'task' | 'type' | 'trigger'>[], tasks: readonly TaskFile[], flow: Pick<FlowFile, 'id' | 'gate_rounds'>, stage?: string): Rework {
@@ -118,8 +114,6 @@ export function reworkCounts(events: readonly Pick<FlowEvent, 'flow' | 'task' | 
     precheck_failures: count('precheck_fail'),
     review_rejects: count('review_changes'),
     merge_verify_failures: count('merge_verify_fail'),
-    disputes: scoped.reduce((n, t) => n + Object.values(t.disputes ?? {}).reduce((a, b) => a + b, 0), 0),
-    acctest_rounds: scoped.filter(isAcctestRound).length,
     gate_fixes: Math.max(gateTasks, gateRounds),
     qa_fixes: scoped.filter((t) => t.kind === 'fix' && t.title.startsWith(FIX_TITLE.qa)).length,
   };
@@ -231,16 +225,51 @@ export interface Metrics {
   workspace: WorkspaceStats;
   rework: Rework;
   rework_by_stage: Record<string, Rework>;
+  /** 没有提交就结束的 run，按失败类别计数 */
+  run_failures: Partial<Record<FailureKind, number>>;
   quality: {
     /** 有矩阵的阶段合计；没有任何矩阵时为 null */
     ac_coverage_pct: number | null;
-    acceptance_tests: number;
     qa_must: number;
     fix_after_delivery: number;
   };
   cost: RunSum;
   cost_by_stage: Record<string, RunSum>;
   cost_row: CostRow | null;
+  /** guard 拦下的操作（violation 事件）：总数、按角色与规则、同一 run 里反复撞同一条规则的 */
+  violations: Violations;
+}
+
+export interface Violations {
+  total: number;
+  by_role_rule: { role: string; rule: string; count: number }[];
+  /** 同一 run 同一规则被拦 3 次以上：提示词或规则该改的信号 */
+  repeated: { run: string; task: string | null; role: string; rule: string; count: number; last: string }[];
+}
+
+/** 纯函数：从事件里汇总 guard 的拦截 */
+export function violationStats(events: readonly FlowEvent[], flowId: string): Violations {
+  const vs = events.filter((e) => e.flow === flowId && e.type === 'violation');
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const byKey = new Map<string, { role: string; rule: string; count: number }>();
+  const byRun = new Map<string, { run: string; task: string | null; role: string; rule: string; count: number; last: string }>();
+  for (const e of vs) {
+    const role = str(e.data?.['role']) || '?';
+    const rule = str(e.data?.['rule']) || '?';
+    const k = `${role}\n${rule}`;
+    byKey.set(k, { role, rule, count: (byKey.get(k)?.count ?? 0) + 1 });
+    const run = str(e.data?.['run']);
+    const rk = `${run}\n${rule}`;
+    const cur = byRun.get(rk) ?? { run, task: e.task ?? null, role, rule, count: 0, last: '' };
+    cur.count += 1;
+    cur.last = str(e.data?.["detail"]) || e.reason || "";
+    byRun.set(rk, cur);
+  }
+  return {
+    total: vs.length,
+    by_role_rule: [...byKey.values()].sort((a, b) => b.count - a.count),
+    repeated: [...byRun.values()].filter((r) => r.count >= 3).sort((a, b) => b.count - a.count),
+  };
 }
 
 export interface MetricsInput {
@@ -303,15 +332,16 @@ export function computeMetrics(i: MetricsInput): Metrics {
     queue_avg_min: queues.length ? ratio1(queues.reduce((a, b) => a + b, 0) / queues.length) : null,
     rework: reworkCounts(i.events, tasks, flow),
     rework_by_stage: Object.fromEntries(stages.map((s) => [s, reworkCounts(i.events, tasks, flow, s)])),
+    run_failures: runFailures(i.runs),
     quality: {
       ac_coverage_pct: covTotal ? Math.round((cov.reduce((n, c) => n + c.covered, 0) / covTotal) * 100) : null,
-      acceptance_tests: live.filter((t) => t.kind === 'acctest' && t.status === 'done').length,
       qa_must: stages.reduce((n, s) => n + qaConclusion(i.events, flow.id, s, tasks, i.qaReports).must, 0),
       fix_after_delivery: deliveredAt ? i.fixFlowCreated.filter((c) => Date.parse(c) >= Date.parse(deliveredAt)).length : 0,
     },
     cost: sumRuns(i.runs, now),
     cost_by_stage: costBy,
     cost_row: i.costRow ?? null,
+    violations: violationStats(i.events, flow.id),
   };
 }
 
@@ -351,8 +381,28 @@ const fmtTokens = (n: number | null) => (n === null ? '—' : n >= 10_000 ? `${(
 const fmtCost = (c: number | null) => (c === null ? '—' : `$${c.toFixed(2)}`);
 const fmtMin = (m: number | null) => (m === null ? '—' : `${m} 分钟`);
 
+/** 没有提交就结束的 run 按失败类别计数（纯函数） */
+export function runFailures(runs: readonly Pick<RunFile, 'failure_kind'>[]): Partial<Record<FailureKind, number>> {
+  const out: Partial<Record<FailureKind, number>> = {};
+  for (const r of runs) if (r.failure_kind) out[r.failure_kind] = (out[r.failure_kind] ?? 0) + 1;
+  return out;
+}
+
+export function renderRunFailures(f: Partial<Record<FailureKind, number>>): string {
+  const parts = Object.entries(f).map(([k, n]) => `${FAILURE_LABEL[k as FailureKind]} ${n}`);
+  return `运行没提交就结束：${parts.length ? parts.join('、') : '0'}`;
+}
+
 export function renderRework(r: Rework): string {
-  return `预检失败 ${r.precheck_failures}，审查打回 ${r.review_rejects}，合并验证失败 ${r.merge_verify_failures}，争议 ${r.disputes}，验收测试返工（.at-n）${r.acctest_rounds}，门禁修复 ${r.gate_fixes}，stage-qa 修复 ${r.qa_fixes}`;
+  return `预检失败 ${r.precheck_failures}，审查打回 ${r.review_rejects}，合并验证失败 ${r.merge_verify_failures}，门禁修复 ${r.gate_fixes}，stage-qa 修复 ${r.qa_fixes}`;
+}
+
+export function renderViolations(v: Violations): string[] {
+  if (!v.total) return ['- 无'];
+  return [
+    `- 共 ${v.total} 次：${v.by_role_rule.map((x) => `${x.role}/${x.rule} ${x.count}`).join('、')}`,
+    ...(v.repeated.length ? v.repeated.map((r) => `- 反复撞同一条规则：${r.task ?? '—'} run ${r.run.slice(0, 8)} ${r.role}/${r.rule} ${r.count} 次，最后一次：${r.last.slice(0, 120)}`) : ['- 没有在同一次运行里反复撞同一条规则的']),
+  ];
 }
 
 export function renderMetrics(m: Metrics): string {
@@ -366,11 +416,14 @@ export function renderMetrics(m: Metrics): string {
     `- 工作区准备 ${m.workspace.count} 次（跳过 ${m.workspace.skipped}，失败 ${m.workspace.failed}），总耗时 ${(m.workspace.total_ms / 1000).toFixed(1)} 秒，缓存命中 ${m.workspace.cache_hits} 次`,
     '## 返工',
     `- ${renderRework(m.rework)}`,
+    `- ${renderRunFailures(m.run_failures)}`,
     '## 质量',
-    `- AC 覆盖率 ${q.ac_coverage_pct === null ? '—' : `${q.ac_coverage_pct}%`}；验收测试 ${q.acceptance_tests} 个；stage-qa 的 must ${q.qa_must} 条；交付后的 /forge-fix ${q.fix_after_delivery} 次`,
+    `- AC 覆盖率 ${q.ac_coverage_pct === null ? '—' : `${q.ac_coverage_pct}%`}；stage-qa 的 must ${q.qa_must} 条；交付后的 /forge-fix ${q.fix_after_delivery} 次`,
     '## 成本',
     `- 合计：${m.cost.runs} 次运行，token ${fmtTokens(m.cost.tokens)}，金额 ${fmtCost(m.cost.cost)}，运行时间 ${min(m.cost.duration_ms)} 分钟`,
     ...(m.cost_row ? [`- ${formatRow(m.cost_row)}`] : []),
+    '## 被拦下的操作（guard）',
+    ...renderViolations(m.violations),
   ].join('\n');
 }
 

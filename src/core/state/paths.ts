@@ -9,25 +9,15 @@ const GLOB_CHARS = /[*?[\]{}]/;
 export const PROTECTED_PATHS = ['.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
 /** 模块之间的接口文档（第五轮）：实现者只能追加 */
 export const INTERFACES_PATH = 'docs/contracts/**';
-/** implementation_gate.test_author 为 false 时（偏离 81），impl 自己写验收测试：它自己的验收目录 */
+/** impl 自己写验收测试：它自己的验收目录 */
 export const ownAcceptanceGlob = (impl: string) => `tests/acceptance/${impl}/**`;
-/**
- * 偏离 110：lean 且 test_author 关闭时，所有 impl / fix 共用一个验收目录（目录名避开 T-xxx，以免与 usedTaskIds、legacy 判定冲突），
- * 辅助函数只有一份（suite/_helpers.js）。预检只运行本 task 新增或修改的场景文件（`acceptance -- suite/<文件>`），全量验收在阶段门禁（偏离 117）。
- */
-export const SHARED_ACCEPTANCE_DIR = 'suite';
-export const SHARED_ACCEPTANCE_GLOB = `tests/acceptance/${SHARED_ACCEPTANCE_DIR}/**`;
-/** impl 自己写验收测试时要加进 writes 的 glob：shared（lean）为共享目录，否则是 impl 自己的目录 */
-export const selfTestGlob = (impl: string, shared: boolean) => (shared ? SHARED_ACCEPTANCE_GLOB : ownAcceptanceGlob(impl));
 type WritesOf = { id: string; for_task?: string | undefined; writes: readonly string[] };
-/** task 的 writes 里带有共享验收目录 */
-export const writesSharedAcceptance = (t: Pick<WritesOf, 'writes'>) => t.writes.includes(SHARED_ACCEPTANCE_GLOB);
-/** task（impl 或它的 fix）的 writes 里带有自己的验收目录（或共享目录），即由 worker 自己写验收测试 */
-export const writesOwnAcceptance = (t: WritesOf) => writesSharedAcceptance(t) || t.writes.includes(ownAcceptanceGlob(t.for_task ?? t.id));
-/** worker 自己写验收测试时，该 task 的验收目录名：共享目录 suite，否则是 impl 编号 */
-export const acceptanceDirOf = (t: WritesOf) => (writesSharedAcceptance(t) ? SHARED_ACCEPTANCE_DIR : (t.for_task ?? t.id));
-/** 该 task 自己的验收目录 glob（writesOwnAcceptance 为真时才有意义） */
-export const selfTestGlobOf = (t: WritesOf) => selfTestGlob(t.for_task ?? t.id, writesSharedAcceptance(t));
+/** task（impl 或它的 fix）的 writes 里带有自己的验收目录，即由 worker 自己写验收测试 */
+export const writesOwnAcceptance = (t: WritesOf) => t.writes.includes(ownAcceptanceGlob(t.for_task ?? t.id));
+/** 该 task 自己的验收目录名（impl 编号） */
+export const acceptanceDirOf = (t: Pick<WritesOf, 'id' | 'for_task'>) => t.for_task ?? t.id;
+/** 该 task 自己的验收目录 glob */
+export const selfTestGlobOf = (t: Pick<WritesOf, 'id' | 'for_task'>) => ownAcceptanceGlob(t.for_task ?? t.id);
 export const SENSITIVE_PATHS = ['**/.env*', '**/*.pem', 'secrets/**', '**/secrets/**'] as const;
 
 /** 把路径规范化为相对 root 的 posix 路径；越出 root 返回 null。不解析符号链接（由调用方用 realpath 处理）。 */
@@ -44,7 +34,7 @@ export function matchesAny(rel: string, globs: readonly string[]): boolean {
 }
 
 /**
- * lean 的计划里 writes 属于单元测试 / 测试代码的路径（偏离 110，纯函数；偏离 115 起也用于判断单个文件）：任一路径段是 test、tests、__tests__、spec、specs、e2e，
+ * writes 属于单元测试 / 测试代码的路径（纯函数；也用于判断单个文件）：任一路径段是 test、tests、__tests__、spec、specs、e2e，
  * 或文件名带 test / spec 标记（a.test.js、foo_test.go、test-utils.js）。不用 globsOverlap：`src/**\/*.js` 与 `*.test.*` 会被误判为重叠。
  */
 export function isTestWrite(w: string): boolean {
@@ -55,16 +45,12 @@ export function isTestWrite(w: string): boolean {
 }
 
 /**
- * 偏离 115：impl / fix 不受计划 writes 限制，writes 只用于调度互斥与冲突分类。仍不能改的：验收测试（writes 里自己的验收目录除外）、规格；
- * writes 里没有测试路径时也不能新建测试代码（保留偏离 111 的 lean 约束；已有测试的适配另走 adjustableTests）。受保护路径另行检查。
+ * impl / fix 不受计划 writes 限制（writes 只用于调度互斥与合并冲突归属）：除 docs/spec/ 与受保护路径外，工作区内任何文件都可以改。
+ * 受保护路径另行检查（isProtectedFor）；docs/contracts/ 提交时仍由契约只追加检查把关。
  */
-export const OPEN_WRITES_EXCEPT = ['tests/acceptance/**', 'docs/spec/**'] as const;
+export const OPEN_WRITES_EXCEPT = ['docs/spec/**'] as const;
 export const opensWrites = (t: { kind: string }) => t.kind === 'impl' || t.kind === 'fix';
-export function openWriteAllowed(rel: string, writes: readonly string[]): boolean {
-  if (matchesAny(rel, writes)) return true;
-  if (matchesAny(rel, OPEN_WRITES_EXCEPT)) return false;
-  return !isTestWrite(rel) || writes.some((w) => isTestWrite(w) && !w.startsWith('tests/acceptance/'));
-}
+export const openWriteAllowed = (rel: string): boolean => !matchesAny(rel, OPEN_WRITES_EXCEPT);
 
 /** read_paths 按顺序覆盖：普通模式允许，! 模式排除；没有匹配默认拒绝。 */
 export function matchesReadPaths(rel: string, globs: readonly string[]): boolean {
@@ -87,6 +73,10 @@ export function protectedGlobs(): string[] {
 
 export function isProtected(rel: string): boolean {
   return matchesAny(rel, PROTECTED_PATHS);
+}
+/** task 的 writes 显式包含 rules/**（S0 的 architect）时，rules/** 对它不算受保护路径；其余受保护路径不变 */
+export function isProtectedFor(rel: string, writes: readonly string[]): boolean {
+  return isProtected(rel) && !(writes.includes('rules/**') && matchesAny(rel, ['rules/**']));
 }
 
 export function isSensitive(rel: string): boolean {

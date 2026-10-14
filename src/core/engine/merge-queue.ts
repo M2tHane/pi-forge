@@ -1,21 +1,21 @@
 // 来源：pi-flow src/core/merge-queue.ts @ 31f3f15
 // 合并队列：串行合并（squash → rebase → 冲突分类 → 合并后验证 → 快进集成分支 → 清理）。第 12 节。
 // 冲突一律交给程序分类：writes 内（含登记的公共文件、本模块的契约文件与根契约文件）的文本冲突生成 merge-fix 任务，涉及受保护路径或 writes 之外的转 blocked。
-// docs/contracts/** 的冲突先做结构化三方合并（contract-merge.ts），合并不了才走 merge-fix。
+// 冲突先做结构化三方合并：docs/contracts/** 用 contract-merge.ts，task 可写范围内双方都只追加的普通文件用 append-merge.ts；合并不了才走 merge-fix。
 // 引擎内的 LLM 不参与解决冲突。
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
-import type { TaskFile } from '../state/schemas.ts';
+import { isLightFlow, type TaskFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
 import { headSha, removeWorktree, taskBranch, worktreePath, worktreesRoot } from '../workspace/worktree.ts';
-import { matchesAny, isProtected, INTERFACES_PATH, openWriteAllowed, opensWrites } from '../state/paths.ts';
+import { matchesAny, isProtected, isProtectedFor, INTERFACES_PATH, openWriteAllowed, opensWrites } from '../state/paths.ts';
 import { mergeContractThreeWay } from '../plan/contract-merge.ts';
+import { mergeAppendOnlyThreeWay } from '../plan/append-merge.ts';
 import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, noteToolMissing, runShell } from '../workspace/verify-runner.ts';
 import { testAdjustEnabled } from '../verify/test-adjust.ts';
-import { withScopeHint } from '../workspace/scope-hint.ts';
 import { softDepsDone } from '../state/waits.ts';
 import { cleanTreeOf, recordVerified, reusableRuns, reuseText } from '../verify/verify-cache.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
@@ -25,15 +25,22 @@ import { usedTaskIds } from '../plan/plan-flow.ts';
 
 
 /**
- * 冲突文件全部是契约（docs/contracts/**）时做结构化三方合并（第 12.2 节），写回并 git add；有一个合并不了就什么都不写、返回 false。
+ * 对冲突文件逐个做结构化三方合并（第 12.2 节）：docs/contracts/** 用契约合并；其他文件在 allowed(rel) 为 true 时做"只追加"的行级合并，否则整体失败。
+ * 全部成功才写回并 git add；有一个合并不了就什么都不写、返回 false。allowed 缺省时只处理契约文件。
  * stages 指明冲突的 stage 2、3 分别是集成分支还是任务（rebase 与 merge 相反），合并结果里集成分支的内容在前。
  */
-export function resolveContractConflicts(wt: string, conflicts: readonly string[], stages: { integration: 2 | 3; task: 2 | 3 }): boolean {
-  if (!conflicts.length || !conflicts.every((f) => matchesAny(f, [INTERFACES_PATH]))) return false;
+export function resolveConflictsStructured(
+  wt: string, conflicts: readonly string[], stages: { integration: 2 | 3; task: 2 | 3 },
+  allowed: (rel: string) => boolean = () => false,
+): boolean {
+  if (!conflicts.length) return false;
   const merged = new Map<string, string>();
   for (const f of conflicts) {
+    const contract = matchesAny(f, [INTERFACES_PATH]);
+    if (!contract && !allowed(f)) return false;
     try {
-      const r = mergeContractThreeWay(f, git(wt, ['show', `:1:${f}`]), git(wt, ['show', `:${stages.integration}:${f}`]), git(wt, ['show', `:${stages.task}:${f}`]));
+      const [base, ours, theirs] = [git(wt, ['show', `:1:${f}`]), git(wt, ['show', `:${stages.integration}:${f}`]), git(wt, ['show', `:${stages.task}:${f}`])];
+      const r = contract ? mergeContractThreeWay(f, base, ours, theirs) : mergeAppendOnlyThreeWay(base, ours, theirs);
       if (!r.ok) return false;
       merged.set(f, r.text);
     } catch {
@@ -44,6 +51,14 @@ export function resolveContractConflicts(wt: string, conflicts: readonly string[
   git(wt, ['add', '--', ...merged.keys()]);
   return true;
 }
+
+/** impl / fix 不受 writes 限制（docs/spec 除外），其他 task 限于 writes + shared */
+export function conflictInScope(t: TaskFile, f: string): boolean {
+  return opensWrites(t) ? openWriteAllowed(f) : matchesAny(f, [...t.writes, ...(t.shared ?? [])]);
+}
+
+/** 冲突文件能否交给只追加合并：task 能写、且不是受保护路径 */
+export const appendMergeAllowed = (t: TaskFile) => (f: string) => conflictInScope(t, f) && !isProtectedFor(f, t.writes);
 
 export interface MergeHooks {
   /** 合并后验证开始前调用（测试用：让合并停在验证前，模拟中断） */
@@ -66,7 +81,7 @@ export type MergeResult =
   | { kind: 'merged'; task: string; sha: string; finished: string[] }
   | { kind: 'verify_failed'; task: string; reason: string }
   | { kind: 'merge_fix'; task: string; mergeFix: string; conflicts: string[] }
-  /** 偏离 116：impl / fix 的合并冲突交回原任务的 worker 解决 */
+  /** impl / fix 的合并冲突交回原任务的 worker 解决 */
   | { kind: 'conflict_returned'; task: string; conflicts: string[] }
   | { kind: 'blocked'; task: string; reason: string };
 
@@ -107,21 +122,21 @@ export class MergeQueue {
 
   /**
    * 批量合并（第四轮后续）：队首连续的几个普通任务先在临时 worktree 里依次叠加到集成分支上，
-   * 只跑一次 merge_check（偏离 117）；通过后逐个转 merging → done，集成分支依次快进到每个任务的提交（同一时间仍只有一个 merging）。
-   * 冲突、验证失败、或有不适合批量的任务（merge-fix、承载先行测试、同步修复、fix 流程）时返回 null，退回逐个合并。
+   * 只跑一次 merge_check；通过后逐个转 merging → done，集成分支依次快进到每个任务的提交（同一时间仍只有一个 merging）。
+   * 冲突、验证失败、或有不适合批量的任务（merge-fix、承载先行测试、同步修复、轻流程）时返回 null，退回逐个合并。
    */
   private async mergeBatch(flowId: string): Promise<MergeResult | null> {
     const limit = this.config.limits.merge_batch ?? 3;
     if (limit < 2) return null;
     const flow = this.store.readFlow(flowId);
-    if (flow.mode === 'fix') return null;
+    if (isLightFlow(flow)) return null;
     const integ = flow.integration_branch;
     const tasks = this.store.listTasks(flowId);
     const candidates: TaskFile[] = [];
     for (const e of this.store.readMergeQueue().queue) {
       if (e.flow !== flowId || candidates.length >= limit) break;
       const t = tasks.find((x) => x.id === e.task);
-      if (!t || t.status !== 'queued_merge' || !softDepsDone(t, tasks) || t.sync_main || t.kind === 'merge-fix' || t.kind === 'acctest' || !t.worktree || !existsSync(t.worktree)) break;
+      if (!t || t.status !== 'queued_merge' || !softDepsDone(t, tasks) || t.sync_main || t.kind === 'merge-fix' || !t.worktree || !existsSync(t.worktree)) break;
       candidates.push(t);
     }
     if (candidates.length < 2) return null;
@@ -218,7 +233,7 @@ export class MergeQueue {
     // 1. squash：以与集成分支的分叉点为基准合成一个提交（任务分支里的多次本地提交、forge_sync 的合并提交都合成一个）
     const fork = git(wt, ['merge-base', 'HEAD', integ]).trim();
     const tree = (ref: string) => git(wt, ['rev-parse', `${ref}^{tree}`]).trim();
-    if (tree('HEAD') === tree(fork)) return this.blocked(flowId, t, '任务分支相对集成分支没有任何改动，无法合并');
+    if (tree('HEAD') === tree(fork)) return this.blocked(flowId, t, '任务分支相对集成分支没有任何改动，无法合并（多半已被别的任务做了）', true);
     const commitTree = (ref: string, parent: string, msg: string) =>
       git(wt, ['commit-tree', `${ref}^{tree}`, '-p', parent, '-m', msg], { engineIdentity: true }).trim();
     const msg = `[${flowId}/${msgFor}] ${label}`;
@@ -231,17 +246,17 @@ export class MergeQueue {
       git(wt, ['rebase', '-q', integHead], { engineIdentity: true, allowFail: true });
     } catch {
       const conflicts = git(wt, ['diff', '--name-only', '--diff-filter=U']).split('\n').filter(Boolean).sort();
-      // 契约文件（docs/contracts/**）的冲突先尝试结构化三方合并（第 12.2 节）；成功则继续原来的合并流程
-      if (!this.autoMergeContracts(wt, conflicts)) {
+      // 契约文件与双方都只追加的普通文件先尝试结构化三方合并（第 12.2 节）；成功则继续原来的合并流程
+      if (!this.autoMergeConflicts(wt, conflicts, t)) {
         gitOk(wt, ['rebase', '--abort']);
         return this.conflict(flowId, t, conflicts, squashed, integHead);
       }
-      await this.store.recordEvent({ flow: flowId, task: t.id, actor: 'merge-queue', type: 'note', reason: `契约文件冲突已结构化合并：${conflicts.join('、')}`, data: { files: conflicts } });
+      await this.store.recordEvent({ flow: flowId, task: t.id, actor: 'merge-queue', type: 'note', reason: `冲突文件已结构化合并：${conflicts.join('、')}`, data: { files: conflicts, append_only: conflicts.filter((f) => !matchesAny(f, [INTERFACES_PATH])) } });
     }
     const newBase = integHead;
     await this.store.updateTask(flowId, t.id, { base_sha: newBase }, { actor: 'merge-queue', type: 'note', reason: 'rebase 到集成分支', data: { base: newBase } });
 
-    // 3. 合并后验证：不得残留冲突标记；merge_check（偏离 117：不跑 typecheck、lint、test、acceptance）
+    // 3. 合并后验证：不得残留冲突标记；merge_check（不跑 typecheck、lint、test、acceptance）
     const changed = git(wt, ['diff', '--name-only', '--no-renames', integHead, 'HEAD']).split('\n').filter(Boolean);
     const marked = changed.filter((f) => {
       const p = path.join(wt, f);
@@ -250,8 +265,6 @@ export class MergeQueue {
     if (marked.length) return this.verifyFailed(flowId, t, `文件中残留冲突标记：${marked.join('、')}`, []);
     const verify = await this.postMergeVerify(flowId, t, wt);
     if (!verify.ok) {
-      const routed = await this.routeAcceptanceFailure(flowId, t, verify);
-      if (routed) return routed;
       // 合并后验证失败多半是与已合入任务的语义冲突：提炼为知识候选，用户确认后才生效
       await proposeCandidate(this.store, this.config, t, flowId, verify.reason);
       return this.verifyFailed(flowId, t, verify.reason, verify.results);
@@ -345,14 +358,14 @@ export class MergeQueue {
   }
 
   /**
-   * 合并后验证要跑的命令（偏离 117）：rebase 之后只检查冲突标记（调用方做）和 merge_check（commands 中定义且非空的）；
-   * 不跑 typecheck、lint、test、acceptance：本 task 自己的测试由审查者运行，全量验证在阶段门禁（fix 流程没有门禁，仍跑 typecheck、lint、test）。文档类任务（verify 为空）都不跑，否则新项目在建好脚手架前永远无法合并。
+   * 合并后验证要跑的命令：rebase 之后只检查冲突标记（调用方做）和 merge_check（commands 中定义且非空的）；
+   * 不跑 typecheck、lint、test、acceptance：本 task 自己的测试由审查者运行，全量验证在阶段门禁（轻流程没有门禁，仍跑 typecheck、lint、test）。文档类任务（verify 为空）都不跑，否则新项目在建好脚手架前永远无法合并。
    */
   private mergeVerifyPlan(flowId: string, t: TaskFile): { name: string; shell: string }[] {
     const cmds = this.config.commands;
-    if (!t.verify.length && t.kind !== 'acctest') return [];
-    // fix 流程没有阶段门禁，直接合入主分支，合并时仍跑全量 test（不跑 acceptance）
-    const fix = this.store.readFlow(flowId).mode === 'fix';
+    if (!t.verify.length) return [];
+    // 轻流程（fix、change）没有阶段门禁，直接合入主分支，合并时仍跑全量 test（不跑 acceptance）
+    const fix = isLightFlow(this.store.readFlow(flowId));
     return (fix ? ['typecheck', 'lint', 'test', 'merge_check'] : ['merge_check']).filter((name) => cmds[name]?.trim()).map((name) => ({ name, shell: cmds[name]! }));
   }
 
@@ -361,7 +374,7 @@ export class MergeQueue {
     const full = this.mergeVerifyPlan(flowId, t);
     const results: { command: string; exit_code: number }[] = [];
     if (!full.length) return { ok: true as const, results, reason: '' };
-    // 同一棵代码树上、命令内容相同、已经通过的命令（通常是预检跑过的）沿用结果，并写沿用记录（偏离 76）
+    // 同一棵代码树上、命令内容相同、已经通过的命令（通常是预检跑过的）沿用结果，并写沿用记录
     const tree = cleanTreeOf(wt);
     const reused = reusableRuns(this.store.readEvents(), flowId, tree, full);
     if (reused.size) await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-reused.txt`, reuseText(tree!, reused), 'merge-queue');
@@ -380,9 +393,8 @@ export class MergeQueue {
           // 验证失败多半是任务自己的问题，日志多给一些
           const why = `已 rebase 到集成分支最新，${plan.map((x) => x.name).join('、')} 中 `;
           const adjust = testAdjustEnabled(this.config, t) ? '\n失败的如果是别的模块已有的测试、原因是本任务改了接口，可以直接修改那些测试来适配（不删用例、不放宽断言）。' : '';
-          // 失败的文件不在可写范围内时，引导 worker 用 forge_request_scope（F7 第一步）；只验收测试的合并（acctest）不适用
           const reason = `合并后验证失败（${why}${c.name} 退出码 ${r.exit_code}）\n${failureSummary(r.output)}${adjust}`;
-          return { ok: false as const, results, reason: t.kind === 'acctest' ? reason : withScopeHint(reason, r.output, t, wt), command: c.name, output: r.output };
+          return { ok: false as const, results, reason, command: c.name, output: r.output };
         }
       }
       await recordVerified(this.store, flowId, tree, passed, { task: t.id, actor: 'merge-queue' });
@@ -390,13 +402,6 @@ export class MergeQueue {
     });
   }
 
-  /** 只合入验收测试（acctest）的合并，验证失败说明集成分支本身坏了：转 blocked；其余任务返回 null（按合并验证失败处理）。合并验证不再跑 acceptance（偏离 117） */
-  private async routeAcceptanceFailure(flowId: string, t: TaskFile, v: { reason: string }): Promise<MergeResult | null> {
-    if (t.kind !== 'acctest') return null;
-    await this.store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'merge_blocked', actor: 'merge-queue',
-      facts: { post_verify_ok: false, failed_tests_own_directory: false, reason: `只合入验收测试，${v.reason}` } });
-    return { kind: 'blocked', task: t.id, reason: v.reason };
-  }
 
   private async verifyFailed(flowId: string, t: TaskFile, reason: string, _results: unknown[], alreadyRequeued = false): Promise<MergeResult> {
     if (!alreadyRequeued) {
@@ -405,19 +410,19 @@ export class MergeQueue {
     return { kind: 'verify_failed', task: t.id, reason };
   }
 
-  private async blocked(flowId: string, t: TaskFile, reason: string): Promise<MergeResult> {
-    await this.store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'merge_blocked', actor: 'merge-queue', facts: { reason } });
+  private async blocked(flowId: string, t: TaskFile, reason: string, noChanges = false): Promise<MergeResult> {
+    await this.store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'merge_blocked', actor: 'merge-queue', facts: { reason, ...(noChanges ? { no_changes: true } : {}) } });
     return { kind: 'blocked', task: t.id, reason };
   }
 
   /**
-   * rebase 冲突时，冲突文件全部是 docs/contracts/** 则逐个做结构化三方合并，全部成功后 git add 并 rebase --continue。
+   * rebase 冲突时逐个做结构化三方合并（契约文件；以及 task 可写范围内、双方都只追加的普通文件），全部成功后 git add 并 rebase --continue。
    * rebase 期间 git 的 stage：1 = 共同祖先（base），2 = "ours" = 被 rebase 到的上游（集成分支），3 = "theirs" = 正在应用的任务提交。
    * 返回 true 表示 rebase 已完成；false 表示无法自动合并（调用方负责 rebase --abort，工作区内容无需还原）。
    */
-  private autoMergeContracts(wt: string, conflicts: string[]): boolean {
+  private autoMergeConflicts(wt: string, conflicts: string[], t: TaskFile): boolean {
     // rebase 时 stage 2 是集成分支、stage 3 是任务提交
-    if (!resolveContractConflicts(wt, conflicts, { integration: 2, task: 3 })) return false;
+    if (!resolveConflictsStructured(wt, conflicts, { integration: 2, task: 3 }, appendMergeAllowed(t))) return false;
     try {
       git(wt, ['-c', 'core.editor=true', 'rebase', '--continue'], { engineIdentity: true, env: { GIT_EDITOR: 'true' } });
       return true;
@@ -428,14 +433,13 @@ export class MergeQueue {
 
   /** 冲突分类：全部在 writes 内（含登记的公共文件）且不涉及受保护路径 → merge-fix；否则 blocked */
   private async conflict(flowId: string, t: TaskFile, conflicts: string[], squashed: string, integHead: string): Promise<MergeResult> {
-    const contracts = conflicts.filter((f) => isProtected(f));
+    const contracts = conflicts.filter((f) => isProtectedFor(f, t.writes));
     // 适配过的已有测试（testing.adjust_tests）也算任务自己的文件，冲突交给 merge-fix
     // 契约文件：本 task 的 module 自己的契约文件与根 openapi.yaml / data-model.yaml 的冲突也交给 merge-fix（第 12.2 节）
     const mod = t.module ?? (t.merge_fix_for ? this.store.readTask(flowId, t.merge_fix_for).module : undefined);
     const ownContracts = ['openapi.yaml', 'data-model.yaml', ...(mod ? [`paths/${mod}.yaml`, `components/${mod}.yaml`, `errors/${mod}.yaml`, `modules/${mod}.md`] : [])].map((f) => `docs/contracts/${f}`);
-    // 偏离 115：impl / fix 不受 writes 限制，冲突文件只要是它能改的就交给 merge-fix
-    const inScope = (f: string) => opensWrites(t) ? openWriteAllowed(f, [...t.writes, ...(t.shared ?? [])]) : matchesAny(f, [...t.writes, ...(t.shared ?? [])]);
-    const outside = conflicts.filter((f) => !inScope(f) && !(t.test_adjustments ?? []).includes(f) && !ownContracts.includes(f));
+    // impl / fix 不受 writes 限制，冲突文件只要是它能改的就交给 merge-fix
+    const outside = conflicts.filter((f) => !conflictInScope(t, f) && !(t.test_adjustments ?? []).includes(f) && !ownContracts.includes(f));
     if (!conflicts.length || contracts.length || outside.length) {
       const why = contracts.length ? `冲突涉及受保护文件：${contracts.join('、')}`
         : outside.length ? `冲突文件不在任务 writes 内：${outside.join('、')}` : 'rebase 失败但没有冲突文件';
@@ -443,7 +447,7 @@ export class MergeQueue {
       return this.blocked(flowId, t, `${why}。需要用户处理（例如人工合并后 /forge unblock ${t.id}）`);
     }
 
-    // 偏离 116：impl / fix 的冲突交回原任务的 worker，在自己的 worktree 里解决，不另起 merge-fix 会话
+    // impl / fix 的冲突交回原任务的 worker，在自己的 worktree 里解决，不另起 merge-fix 会话
     if (opensWrites(t)) return this.returnConflict(flowId, t, integHead);
 
     // 准备 merge-fix 的 worktree：集成分支 HEAD + 原任务的改动（冲突文件保留冲突标记），作为它的基线提交
@@ -482,7 +486,7 @@ export class MergeQueue {
   }
 
   /**
-   * 偏离 116：把集成分支 HEAD 合入任务自己的 worktree（冲突标记留在文件里并提交，工作区保持干净），
+   * 把集成分支 HEAD 合入任务自己的 worktree（冲突标记留在文件里并提交，工作区保持干净），
    * base_sha 设为集成分支 HEAD，使别的任务带进来的文件不算 worker 的改动；任务以 merge_conflict 回到 in_progress，
    * 由同一个 worker（尽量接着原会话）解决后走正常的提交流程。重复冲突计入 merge_failures，达到上限转人工。
    * 调用时 worktree 停在 squash 提交上（rebase 已中止），工作区干净。

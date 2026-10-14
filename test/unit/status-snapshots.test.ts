@@ -12,7 +12,6 @@ import { changeRel, flowRel, taskRel, type TaskInput } from '../../src/core/stat
 import { hashToken } from '../../src/core/state/state-machine.ts';
 import { actionsNeeded, renderStatus, statusLine } from '../../src/core/ops/status-view.ts';
 import { renderDetail, renderMetricsView, renderCostView, sortTasks, taskTable } from '../../src/core/ops/status-detail.ts';
-import { startAdoptFlow } from '../../src/core/plan/adopt.ts';
 import type { TaskFile } from '../../src/core/state/schemas.ts';
 
 const SNAP_DIR = path.join(import.meta.dirname, '__snapshots__/status');
@@ -110,25 +109,16 @@ scenario('p1-awaiting-approval', async () => {
   return p;
 });
 
-scenario('adopt-drafting', async () => {
-  const p = await setupProject({ stages: ['P0', 'P1'], now: ticker(), files: { 'src/app.ts': 'export const app = 1;\n' } });
-  await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
-  const flow = await startAdoptFlow({ root: p.dir, store: p.store, config: p.config }, '订单');
-  await p.store.addTasks(flow.id, [mkTask('T-001', { stage: 'ADOPT', kind: 'doc', role: 'architect', scopes: ['plan'], writes: ['docs/**'], title: '整理订单契约' }) as TaskInput], 'engine');
-  forceTask(Object.assign(p, { flowId: flow.id }), 'T-001', running('architect', 'r-adopt'));
-  return p;
-});
-
 // —— 实施阶段 ——
 
 scenario('s1-running', async () => {
   const p = await mk({ plan: true, at: 'S1', approvals: ['P0', 'P1'], tasks: [
-    impl('T-001', 'S0'), impl('T-002', 'S1', { title: '看板列表接口' }), impl('T-003', 'S1', { kind: 'acctest', role: 'test-author', title: '看板列表验收测试', for_task: 'T-002' }),
+    impl('T-001', 'S0'), impl('T-002', 'S1', { title: '看板列表接口' }), impl('T-003', 'S1', { kind: 'review', role: 'reviewer', title: '看板列表接口审查', for_task: 'T-002', writes: [] }),
     impl('T-004', 'S1', { title: '创建看板接口' }), impl('T-005', 'S1', { title: '看板页面', deps: [{ task: 'T-002', type: 'hard' }] }), impl('T-006', 'S2', { title: '成员邀请' })] });
   forceTask(p, 'T-001', { status: 'done' });
   forceTask(p, 'T-002', running('worker', 'r-2'));
-  forceTask(p, 'T-003', running('test-author', 'r-3'));
-  forceTask(p, 'T-004', { status: 'blocked', blocked_by: 'dispute', blocked_reason: '验收测试要求 title 可为空，与 REQ-001.AC2 不一致', disputes: { 'boards.create.title': 1 }, review_rounds: 1, version: 4 });
+  forceTask(p, 'T-003', running('reviewer', 'r-3'));
+  forceTask(p, 'T-004', { status: 'blocked', blocked_by: 'agent', blocked_reason: '规格里 title 是否可为空没有说清，与 REQ-001.AC2 不一致', review_rounds: 1, version: 4 });
   forceTask(p, 'T-005', { status: 'ready' });
   await addRun(p, 'r-1', 'T-001', 'worker', 5, 12, 20000, 0.2);
   await addRun(p, 'r-2', 'T-002', 'worker', 30, 8, 15000, 0.15);
@@ -214,19 +204,12 @@ scenario('change-request-pending', async () => {
   return p;
 });
 
-scenario('amend-pending', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P0', 'P1'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' })] });
-  forceTask(p, 'T-001', running('worker', 'r-1'));
-  await p.store.proposeAmend(p.flowId, { name: '看板归档', path: 'docs/spec/features/archive.md', content: '# 归档\n', reason: '用户新增需求', diff: { added: ['REQ-009.AC1'], changed: [], removed: [] }, affected_tasks: ['T-001'], base_sha: 'a'.repeat(40) });
-  return p;
-});
-
 // —— 修复流程、结束 ——
 
 async function fixProject(): Promise<Project> {
   const p = await setupProject({ yaml: QA_YAML, now: ticker() });
   await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
-  const fix = await p.store.createFixFlow('登录失败', 'main', p.git('rev-parse', 'HEAD'));
+  const fix = await p.store.createLightFlow('fix', '登录失败', 'main', p.git('rev-parse', 'HEAD'));
   await p.store.saveFlowBrief(fix.id, '# 登录失败\n输入正确密码仍提示错误。');
   return Object.assign(p, { flowId: fix.id });
 }
@@ -288,14 +271,14 @@ for (const s of scenarios) {
 // —— 非快照断言 ——
 
 test('默认视图不暴露内部状态名和任务类型；这些只在 --detail', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P0', 'P1'], tasks: [impl('T-001', 'S1'), impl('T-002', 'S1', { kind: 'acctest', role: 'test-author', for_task: 'T-001' })] });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['P0', 'P1'], tasks: [impl('T-001', 'S1'), impl('T-002', 'S1', { kind: 'review', role: 'reviewer', for_task: 'T-001', writes: [] })] });
   try {
     forceTask(p, 'T-001', running('worker', 'r-1'));
-    forceTask(p, 'T-002', { status: 'blocked', blocked_by: 'dispute', blocked_reason: 'x', version: 2 });
+    forceTask(p, 'T-002', { status: 'blocked', blocked_by: 'review_exhausted', blocked_reason: 'x', version: 2 });
     const out = renderStatus(p.store, p.config, NOW);
-    assert.doesNotMatch(out, /in_progress|awaiting_|queued_merge|needs_human|blocked_by|acctest|dispute/, '不出现内部状态、任务类型、blocked_by 取值');
+    assert.doesNotMatch(out, /in_progress|awaiting_|queued_merge|needs_human|blocked_by|review_exhausted/, '不出现内部状态、任务类型、blocked_by 取值');
     const detail = renderDetail(p.store, p.config, NOW);
-    assert.match(detail, /\| T-002 \| acctest \| test-author \| blocked \| S1 \|/);
+    assert.match(detail, /\| T-002 \| review \| reviewer \| blocked \| S1 \|/);
     assert.match(detail, /in_progress/);
   } finally { p.cleanup(); }
 });
@@ -303,10 +286,9 @@ test('默认视图不暴露内部状态名和任务类型；这些只在 --detai
 test('阻塞任务按 blocked_by 给出不同的解除命令', async () => {
   const p = await mk({ plan: true, at: 'S1', approvals: ['P0', 'P1'], tasks: ['T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006'].map((id) => impl(id, 'S1')) });
   try {
-    const kinds = ['dispute', 'review_exhausted', 'precheck_exhausted', 'agent', 'integration_broken', 'attempts'];
-    kinds.forEach((k, i) => forceTask(p, `T-00${i + 1}`, { status: 'blocked', blocked_by: k, blocked_reason: 'r', version: 2 }));
+    const kinds = ['review_exhausted', 'precheck_exhausted', 'agent', 'integration_broken', 'attempts'];
+    kinds.forEach((k, i) => forceTask(p, `T-00${i + 2}`, { status: 'blocked', blocked_by: k, blocked_reason: 'r', version: 2 }));
     const cmd = (id: string) => actionsNeeded(p.store, p.config, NOW).find((a) => a.key.includes(`:blocked:${id}:`))!.command;
-    assert.match(cmd('T-001'), /^\/forge-decide T-001 keep-test/);
     assert.match(cmd('T-002'), /^\/forge accept T-002 --note/);
     assert.match(cmd('T-003'), /^\/forge unblock T-003 .*--reset/);
     assert.equal(cmd('T-004'), '/forge answer T-004');
@@ -322,23 +304,15 @@ test('--detail 的任务表按阶段顺序、编号自然序排列，输出稳�
     const flow = p.store.readFlow(p.flowId);
     assert.deepEqual(sortTasks(flow, [...tasks].reverse()).map((t) => t.id), ['T-003', 'T-002', 'T-010', 'T-001']);
     assert.equal(taskTable(flow, tasks), taskTable(flow, [...tasks].reverse()));
-    assert.match(taskTable(flow, tasks).split('\n')[0]!, /任务 \| 类型 \| 角色 \| 状态 \| 阶段 \| 预检失败 \| 审查轮 \| 合并失败 \| 争议/);
+    assert.match(taskTable(flow, tasks).split('\n')[0]!, /任务 \| 类型 \| 角色 \| 状态 \| 阶段 \| 预检失败 \| 审查轮 \| 合并失败 \| 尝试/);
     assert.equal(renderDetail(p.store, p.config, NOW), renderDetail(p.store, p.config, NOW));
   } finally { p.cleanup(); }
 });
 
-test('--metrics 与 --cost：build、feature、fix、没有运行记录的流程都不抛错', async () => {
+test('--metrics 与 --cost：build、fix、没有运行记录的流程都不抛错', async () => {
   const cfg = parseConfig(PROJECT_YAML);
-  const mkFlow = async (mode: 'build' | 'feature') => {
-    const p = await setupProject({ now: ticker() });
-    if (mode === 'feature') {
-      await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
-      const f = await p.store.createFlow({ mode: 'feature', title: '新功能', stages: ['F0', 'S1'], base_sha: null });
-      return Object.assign(p, { flowId: f.id });
-    }
-    return p;
-  };
-  for (const make of [() => mkFlow('build'), () => mkFlow('feature'), fixProject]) {
+  const mkFlow = async () => setupProject({ now: ticker() });
+  for (const make of [mkFlow, fixProject]) {
     const p = await make();
     try {
       assert.match(renderMetricsView(p.store, NOW, p.dir), /度量/);

@@ -12,14 +12,13 @@ const catalog: DagCatalog = {
     'test-author': { scopes: ['acctest'] },
     reviewer: { scopes: ['review'] },
     'stage-qa': { scopes: ['qa'] },
-    researcher: { scopes: ['research'] },
     orchestrator: { scopes: [] },
   },
   scopes: {
     code: ['**'],
     plan: ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'docs/rules-draft/**', 'AGENTS.md'],
     acctest: ['tests/acceptance/**'],
-    review: [], qa: [], research: ['docs/research/**'],
+    review: [], qa: [],
   },
   commands: ['typecheck', 'test', 'e2e'],
   maxTaskFiles: 12,
@@ -27,8 +26,8 @@ const catalog: DagCatalog = {
 
 test('合法 DAG 通过校验', () => {
   const tasks = [
-    mkTask('T-001', { kind: 'acctest', role: 'test-author', scopes: ['acctest'], writes: ['tests/acceptance/T-002/**'], for_task: 'T-002' }),
-    mkTask('T-002', { writes: ['src/server/orders/**', 'src/web/orders/**', 'migrations/*_orders.sql'], deps: [hard('T-001', '先有验收测试')] }),
+    mkTask('T-001', { writes: ['src/server/teams/**'] }),
+    mkTask('T-002', { writes: ['src/server/orders/**', 'src/web/orders/**', 'migrations/*_orders.sql'], deps: [hard('T-001', '先有团队')] }),
   ];
   const r = validateDag(tasks, catalog);
   assert.deepEqual(r.errors, []);

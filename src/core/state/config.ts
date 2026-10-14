@@ -9,8 +9,8 @@ export const BUILTIN_WRITE_TOOLS = ['write', 'edit'] as const;
 export const FLOW_TOOLS = [
   'forge_status', 'forge_wait', 'forge_claim', 'forge_note', 'forge_submit',
   'forge_block', 'forge_learn', 'notes', 'history', 'forge_sync',
-  'forge_read', 'forge_spec', 'forge_spec_amend', 'forge_change_request',
-  'forge_resolve_timeout', 'forge_resolve_scope', 'forge_request_scope', 'forge_dispute',
+  'forge_read', 'forge_spec', 'forge_change', 'forge_change_request',
+  'forge_resolve_timeout', 'forge_decide',
   'forge_service', 'forge_propose_plan', 'forge_review_report', 'forge_review_confirm',
   'forge_qa_report', 'forge_qa_confirm',
   'forge_add_dependency', 'forge_private_deps',
@@ -25,16 +25,15 @@ export const DEFAULT_COMPACT_AT = 0.7;
 export const ORCHESTRATING_TOOLS = ['codemode'] as const;
 /** 只能显式分配给特定角色；按层运行时夹具的 *-engineer 视为 worker */
 const ROLE_EXCLUSIVE: Record<string, readonly string[]> = {
-  forge_request_scope: ['worker'], forge_dispute: ['worker'], forge_add_dependency: ['worker'], forge_private_deps: ['worker'],
-  forge_service: ['worker', 'stage-qa'], forge_propose_plan: ['architect'],
+  forge_add_dependency: ['worker', 'architect'], forge_private_deps: ['worker', 'architect'],
+  forge_service: ['worker', 'architect', 'stage-qa'], forge_propose_plan: ['architect'],
   forge_review_report: ['reviewer'], forge_review_confirm: ['reviewer'],
   forge_qa_report: ['stage-qa'], forge_qa_confirm: ['stage-qa'],
-  forge_read: ['orchestrator'], forge_spec: ['orchestrator'], forge_spec_amend: ['orchestrator'],
-  forge_resolve_timeout: ['orchestrator'], forge_resolve_scope: ['orchestrator'],
+  forge_read: ['orchestrator'], forge_spec: ['orchestrator'], forge_change: ['orchestrator'],
+  forge_resolve_timeout: ['orchestrator'], forge_decide: ['orchestrator'],
 };
 /** orchestrator 严格使用第 13.1 节的白名单 */
-const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_spec', 'forge_spec_amend', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_resolve_scope', ...MEMORY_TOOLS]);
-const WRITE_GROUP = 'serena_edit';
+const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_spec', 'forge_change', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_decide', ...MEMORY_TOOLS]);
 const WEB_GROUP = 'web';
 
 export type ToolKind = 'read' | 'write' | 'bash' | 'flow' | 'web' | 'ext-read' | 'other';
@@ -81,13 +80,6 @@ export class FlowConfig {
     this.warnings = warnings;
   }
 
-  /**
-   * 该流程的实施阶段是否有 test-author 写验收测试（偏离 81、98、118）：默认不要，任何模式都由 worker 自己写验收测试，reviewer 审查；
-   * 只有 implementation_gate.test_author 显式写了 true 才启用（旧路径保留，模板里已不再定义 test-author 角色，需要自己加）。
-   */
-  testAuthorFor(_flow: { plan_mode?: 'lean' | 'standard' | undefined }): boolean {
-    return this.raw.implementation_gate?.test_author === true;
-  }
   get limits() { return this.raw.limits; }
   get commands() { return this.raw.commands; }
   /** 触发压缩的上下文占比 */
@@ -141,6 +133,26 @@ export function parseConfig(source: string): FlowConfig {
     return off === undefined ? label : `${label}（第 ${lc.linePos(off).line} 行）`;
   };
 
+  // 已删除的配置项：旧项目的 workflow.yaml 里还有时忽略并提醒，不当错误
+  const removedWarnings: string[] = [];
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, Record<string, unknown> | undefined>;
+    const dropKey = (parent: string | null, key: string) => {
+      const holder = parent ? o[parent] : (o as Record<string, unknown>);
+      if (holder && typeof holder === 'object' && key in holder) { delete (holder as Record<string, unknown>)[key]; removedWarnings.push(`${parent ? `${parent}.` : ''}${key} 已不再支持，已忽略`); }
+    };
+    dropKey(null, 'acctest_workspace'); dropKey('modes', 'feature'); dropKey('limits', 'lean_below_loc'); dropKey('testing', 'max_disputes'); dropKey('implementation_gate', 'test_author'); dropKey('review', 'per_task'); dropKey('review', 'skip_sizes');
+    // 已删除的工具名：旧 workflow.yaml 里还列着时去掉并告警，不让整个配置失效
+    const REMOVED_TOOLS = new Set(['forge_request_scope', 'forge_resolve_scope', 'forge_spec_amend', 'forge_dispute']);
+    const roles = o['roles'];
+    if (roles && typeof roles === 'object') {
+      for (const [name, def] of Object.entries(roles as Record<string, { tools?: unknown }>)) {
+        if (!def || !Array.isArray(def.tools)) continue;
+        const gone = def.tools.filter((t) => typeof t === 'string' && REMOVED_TOOLS.has(t));
+        if (gone.length) { def.tools = def.tools.filter((t) => !gone.includes(t)); removedWarnings.push(`roles.${name}.tools 里的 ${gone.join('、')} 已不再支持，已忽略`); }
+      }
+    }
+  }
   const schemaErrors = validate('workflow', raw);
   if (schemaErrors.length) {
     throw new ConfigError(schemaErrors.map((e) => {
@@ -153,17 +165,18 @@ export function parseConfig(source: string): FlowConfig {
   // schema 的 default 只描述配置；解析时补齐实际运行所需的默认值。
   wf.limits.max_precheck_failures ??= 3;
   wf.limits.max_merge_failures ??= 2;
+  wf.limits.change_max_tasks ??= 3;
   // 状态机按 limits.review_max_rounds 判定审查轮数用尽；取自 review.max_rounds（第 10 节）
   (wf.limits as Record<string, unknown>)['review_max_rounds'] ??= wf.review?.max_rounds ?? 2;
   const errors: string[] = [];
-  const warnings: string[] = [];
+  const warnings: string[] = [...removedWarnings];
 
   for (const [tier, model] of Object.entries(wf.models)) {
     if (/^<.*>$/.test(model.trim())) warnings.push(`${at(['models', tier])}: 未填写具体模型（当前为占位符 ${model}）`);
   }
 
   // 闸门命令
-  for (const mode of ['build', 'feature'] as const) {
+  for (const mode of ['build'] as const) {
     const stages = wf.modes[mode]?.stages ?? [];
     if (wf.modes[mode] && (stages.length !== 2 || stages[0]?.id !== 'P0' || stages[1]?.id !== 'P1')) {
       errors.push(`${at(['modes', mode, 'stages'])}: ${mode} 只能按顺序配置 P0、P1；S 阶段由计划生成，使用 implementation_gate`);
@@ -194,13 +207,11 @@ export function parseConfig(source: string): FlowConfig {
   kinds.set('ask_user', 'ext-read');
   for (const [group, tools] of Object.entries(wf.tool_groups)) {
     for (const t of tools) {
-      const kind: ToolKind = group === WRITE_GROUP ? 'write' : group === WEB_GROUP ? 'web' : 'ext-read';
+      // 扩展工具只读或联网；写文件只用内置 write/edit
+      const kind: ToolKind = group === WEB_GROUP ? 'web' : 'ext-read';
       const prev = kinds.get(t);
-      if (prev && prev !== kind && !(prev === 'ext-read' && kind === 'write')) {
-        errors.push(`${at(['tool_groups', group])}: 工具 ${t} 的类别冲突（${prev} 与 ${kind}）`);
-      }
-      // 同时出现在读组与编辑组时按写操作处理
-      if (prev !== 'write') kinds.set(t, kind);
+      if (prev && prev !== kind) errors.push(`${at(['tool_groups', group])}: 工具 ${t} 的类别冲突（${prev} 与 ${kind}）`);
+      else kinds.set(t, kind);
     }
   }
 
@@ -224,8 +235,9 @@ export function parseConfig(source: string): FlowConfig {
     if (def.bash_allow && def.bash !== 'allowlist') {
       errors.push(`${at(['roles', name, 'bash_allow'])}: bash_allow 只能用于 bash: allowlist`);
     }
+    // bash_allow 里没有定义的命令只是没有可放行的内容（模板默认列出 typecheck、lint，项目未必都有），不算错误
     for (const [i, command] of (def.bash_allow ?? []).entries()) {
-      if (!Object.hasOwn(wf.commands, command)) errors.push(`${at(['roles', name, 'bash_allow', i])}: 命令 ${command} 未在 commands 中定义`);
+      if (!Object.hasOwn(wf.commands, command)) warnings.push(`${at(['roles', name, 'bash_allow', i])}: 命令 ${command} 未在 commands 中定义，不会放行`);
     }
     const addTool = (t: string, loc: string) => {
       if (t === 'bash' || t === 'bash_readonly') {
@@ -244,6 +256,8 @@ export function parseConfig(source: string): FlowConfig {
     if (bash !== 'none') toolList.push('bash');
     // 子进程角色隐式拥有 forge_block、forge_learn；专属工具均须显式授予。
     if (name !== 'orchestrator') toolList.push('forge_block', 'forge_learn');
+    // orchestrator 隐式拥有 forge_decide：阻塞、门禁用尽、变更请求先由它决定
+    else toolList.push('forge_decide');
     // 第 14 节：有 forge_submit 的角色隐式拥有 forge_claim
     if (toolList.includes('forge_submit')) toolList.push('forge_claim');
     toolList.push(...MEMORY_TOOLS);

@@ -1,36 +1,35 @@
 ---
 name: write-rules
-description: 写分层的项目规则草案（docs/rules-draft/<layer>.md）与命令草案：具体、可检查、带审查清单
+description: 写分层的项目规则（rules/<layer>.md，S0 写）与命令草案（docs/rules-draft/commands.yaml，P1 写）：具体、可检查、带审查清单
 ---
 
-# 写项目规则草案
+# 写项目规则
 
 （改编自 pi-flow 的 write-rules。pi-forge 的改动：按层拆文件，按 task 的 layers 注入；每个文件末尾的审查清单是 reviewer 判断"必须改"的依据。）
 
 规则会被注入到相关层的 worker、reviewer、stage-qa 的提示里。写得具体，模型才会照做；写得含糊或与契约矛盾，task 就会卡住。
-你不能改 `rules/` 和 `workflow.yaml`，只能写草案到 `docs/rules-draft/`，用户批准计划时由程序应用。
+分两段做：**P1 只写命令草案** `docs/rules-draft/commands.yaml`（你不能改 `workflow.yaml`，用户批准计划时由程序应用）；**规则在 S0 由你直接写到 `rules/`**（`global.md` 必写，再按计划里的 layers 写 `rules/<layer>.md`）。
 
 ## 文件
 
 | 文件 | 写什么 |
 |---|---|
-| `backend.md` | 框架用法、分层（路由、服务、仓储）与依赖方向、错误处理（如何抛出 errors/*.yaml 里的错误码）、权限检查放在哪一层、日志、配置读取 |
-| `database.md` | ORM 或查询库、迁移的命名与写法、主键与时间等通用字段、事务、禁止的写法（拼接 SQL）、多租户过滤（team_id） |
-| `frontend.md` | 框架、目录、请求方式（只用生成的客户端）、状态管理、路由、表单校验、四种页面状态的统一组件 |
-| `ui.md` | 设计变量与组件库、怎样对照原型、可访问名称与四种状态的呈现方式（验收测试靠可访问名称定位元素）。不写焦点管理、键盘循环等交互细节，它们进 manual_checks |
-| `commands.yaml` | 必配 test、serve（acceptance、acceptance_list 用同一个测试器指定目录）。typecheck、lint、codegen、e2e、contract_lint、contract_test、merge_check 只在项目已有现成工具时配置，零第三方依赖一律不配；gui_commands；acctest_workspace.include 按需 |
+| `rules/backend.md` | 框架用法、分层（路由、服务、仓储）与依赖方向、错误处理（如何抛出 errors/*.yaml 里的错误码）、权限检查放在哪一层、日志、配置读取 |
+| `rules/database.md` | ORM 或查询库、迁移的命名与写法、主键与时间等通用字段、事务、禁止的写法（拼接 SQL）、多租户过滤（team_id） |
+| `rules/frontend.md` | 框架、目录、请求方式（只用生成的客户端）、状态管理、路由、表单校验、四种页面状态的统一组件 |
+| `rules/ui.md` | 设计变量与组件库、怎样对照原型、可访问名称与四种状态的呈现方式（验收测试靠可访问名称定位元素）。不写焦点管理、键盘循环等交互细节，它们进 manual_checks |
+| `docs/rules-draft/commands.yaml`（P1） | 必配 test、serve（acceptance 用同一个测试器指定目录）。typecheck、lint、codegen、e2e、contract_lint、contract_test、merge_check 只在项目已有现成工具时配置，零第三方依赖一律不配；gui_commands 按需 |
 
-不适用的层不写。通用规则在 rules/global.md 里，不要重复。
+不适用的层不写（层名按计划里的 layers）。通用规则写在 `rules/global.md`，各层文件不要重复。
 
-## 命令要求
+## 命令要求（P1 的命令草案；S0 负责让这些命令真的能跑）
 
 - 都能在干净的 worktree 里直接运行，不需要交互。
-- `acceptance -- <task>` 只运行 tests/acceptance/<task>/；`acceptance -- suite/<文件>` 只运行共享目录 tests/acceptance/suite/ 下的这些文件（可带多个，lean 预检用）；不带参数时运行全部（阶段门禁用）。参数是相对 tests/acceptance/ 的路径，命令要同时支持目录和文件。需要的服务由命令自己启动和停止，端口用空闲端口。
-- `acceptance_list -- <task>`：只收集、不执行（例如 `vitest list`、`pytest --collect-only -q`）。
+- `acceptance -- <task>` 只运行 tests/acceptance/<task>/；不带参数时运行全部（阶段门禁用）。参数是相对 tests/acceptance/ 的路径。需要的服务由命令自己启动和停止，端口用空闲端口。
 - `merge_check`：合并时额外跑的检查，例如"生成的客户端与 openapi.yaml 一致"、"迁移只能有一个 head"。
 - 所有会启动服务或连数据库的命令，都从环境变量 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP 取端口、数据库和临时目录，不写死。
-- `acctest_workspace`：仅 `test_author: true` 时有用（默认没有 test-author）。test-author 的隔离工作区只导出文档、验收测试和根目录配置。`include` 列出 monorepo 中运行 install 与 acceptance_list 还需要的文件（子包的 package.json、测试配置）；`cache` 列出可以按锁文件哈希复用的依赖目录（如 node_modules、.venv）。
 - `db_create`、`db_drop`（可选）：项目使用服务器类数据库时，按 `FORGE_DB_NAME` 建库、删库的命令。
+- Python 项目用 uv 管理时：`install` 写 `uv sync --frozen`，其他命令写 `uv run --frozen <工具>`（例如 `uv run --frozen pytest`）。每个 worktree 有自己的 `.venv`，包从 uv 的全局缓存链接，同步很快；加依赖用 `uv add`，会记进 pyproject.toml 与 uv.lock（guard 不允许 pip install）。
 
 ## 写法
 

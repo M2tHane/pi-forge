@@ -1,4 +1,4 @@
-// 同一棵代码树只验证一次（偏离 76）：沿用条件是代码树相同、命令名相同、命令内容的哈希相同。
+// 同一棵代码树只验证一次：沿用条件是代码树相同、命令名相同、命令内容的哈希相同。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';

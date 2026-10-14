@@ -1,15 +1,15 @@
 // M8：/forge-status 的 --detail、--metrics、--cost 视图。纯函数：只读 store，当前时间由调用者传入（测试用固定时钟）。
 // 默认视图（status-view.ts）只显示高层阶段；内部状态、任务类型、计数器都放在这里。
+import { postMergeStatus } from '../engine/post-merge-test.ts';
 import type { FlowConfig } from '../state/config.ts';
 import { budgetState, formatBudget } from '../insight/cost-control.ts';
 import { costReport, formatCost } from '../insight/cost.ts';
 import { flowMetrics, renderMetrics } from '../stage/signoff.ts';
 import type { FlowEvent, FlowFile, TaskFile } from '../state/schemas.ts';
 import type { StateStore } from '../state/state-store.ts';
-import { actionsNeeded, renderFlow, renderStatus, visibleFlows } from './status-view.ts';
+import { actionsBlock, actionsNeeded, renderFlow, renderStatus, visibleFlows } from './status-view.ts';
 
 const one = (s: string, n = 100) => (s.length > n ? `${s.slice(0, n)}…` : s).replace(/\s+/g, ' ').replace(/\|/g, '/');
-const sum = (r: Record<string, number> | undefined) => Object.values(r ?? {}).reduce((a, b) => a + b, 0);
 const naturalId = (a: string, b: string) => a.localeCompare(b, 'en', { numeric: true });
 
 /** 任务排序：先按阶段在流程里的顺序，再按编号（自然序），保证同样的数据输出同样的表 */
@@ -22,9 +22,9 @@ export function sortTasks(flow: Pick<FlowFile, 'stages' | 's_stages'>, tasks: re
 /** 完整任务表（Markdown 表格）：编号、类型、角色、状态、阶段、计数器 */
 export function taskTable(flow: Pick<FlowFile, 'stages' | 's_stages'>, tasks: readonly TaskFile[]): string {
   if (!tasks.length) return '（还没有任务）';
-  const head = '| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 争议 | 尝试 | 阻塞原因 |';
-  const rows = sortTasks(flow, tasks).map((t) => `| ${[t.id, t.kind, t.lease?.role ?? t.role, t.status, t.stage, t.precheck_failures ?? 0, t.review_rounds ?? 0, t.merge_failures ?? 0, sum(t.disputes), t.attempts, t.blocked_by ?? '-'].join(' | ')} |`);
-  return [head, `|${' --- |'.repeat(11)}`, ...rows].join('\n');
+  const head = '| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 尝试 | 阻塞原因 |';
+  const rows = sortTasks(flow, tasks).map((t) => `| ${[t.id, t.kind, t.lease?.role ?? t.role, t.status, t.stage, t.precheck_failures ?? 0, t.review_rounds ?? 0, t.merge_failures ?? 0, t.attempts, t.blocked_by ?? '-'].join(' | ')} |`);
+  return [head, `|${' --- |'.repeat(10)}`, ...rows].join('\n');
 }
 
 /** 最近的事件（按 seq 升序，最后 n 条）：序号、时间、类型、任务、转移、触发、原因 */
@@ -45,6 +45,7 @@ function flowDetail(store: StateStore, config: FlowConfig, flow: FlowFile, now: 
     ...(flow.sync ? [`- 与 ${config.raw.main_branch} 同步：${flow.sync.status}（${flow.sync.stage}）${flow.sync.reason ? `：${one(flow.sync.reason, 80)}` : ''}`] : []),
     ...(flow.gate_rounds?.length ? [`- 门禁修复轮次：${flow.gate_rounds.map((g) => `${g.stage}:${g.tasks.join('+')}`).join('；')}`] : []),
     ...(budget ? [`- ${formatBudget(budget)}`] : []),
+    ...(postMergeStatus(store, flow.id, false) ? [`- ${postMergeStatus(store, flow.id, false)}`] : []),
     '',
     `### 任务表（${tasks.length} 个）`,
     taskTable(flow, tasks),
@@ -64,7 +65,7 @@ export function renderDetail(store: StateStore, config: FlowConfig, now = new Da
   const actions = actionsNeeded(store, config, now);
   if (!flows.length) return renderStatus(store, config, now);
   return [
-    actions.length ? `需要你处理：\n${actions.map((a) => `- ${a.text}\n  → ${a.command}`).join('\n')}` : '需要你处理：无',
+    actionsBlock(actions),
     ...flows.flatMap((f) => [renderFlow(store, config, f, now), flowDetail(store, config, f, now)]),
   ].join('\n\n');
 }

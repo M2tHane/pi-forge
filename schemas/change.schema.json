@@ -11,7 +11,6 @@
     "source",
     "status",
     "task",
-    "changed_acs",
     "touched",
     "rounds",
     "created_at"
@@ -39,7 +38,7 @@
     },
     "source": {
       "type": "string",
-      "pattern": "^(main|worker:T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|amend:A-[0-9]{3,})$"
+      "pattern": "^(main|worker:T-[0-9]{3,}(\\.(rv|fx)(-[0-9]+)?)?)$"
     },
     "status": {
       "enum": [
@@ -52,14 +51,7 @@
     },
     "task": {
       "type": "string",
-      "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
-    },
-    "changed_acs": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
+      "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
     },
     "plan_hash": {
       "type": "string",
@@ -127,7 +119,6 @@
               "adjust",
               "cancel",
               "followup",
-              "acctest",
               "stages"
             ]
           },
@@ -149,12 +140,6 @@
               "type": "string"
             }
           },
-          "mode": {
-            "enum": [
-              "patch",
-              "round"
-            ]
-          },
           "detail": {
             "type": "string"
           }
@@ -166,7 +151,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^(T-\\d{3,}(\\.(at|rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-\\d+)?)$"
+        "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
       }
     },
     "warnings": {
@@ -189,6 +174,10 @@
     },
     "feedback": {
       "type": "string"
+    },
+    "to_user": {
+      "type": "string",
+      "minLength": 1
     }
   },
   "additionalProperties": false

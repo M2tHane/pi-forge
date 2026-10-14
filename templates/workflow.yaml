@@ -6,8 +6,7 @@ commands:                         # 由 architect 在 P1 按技术栈改写（do
   typecheck:       "pnpm typecheck"
   lint:            "pnpm lint"
   test:            "pnpm test"                         # worker 的单元与组件测试
-  acceptance:      "pnpm test:acceptance"              # 加 "-- <task>" 时只跑 tests/acceptance/<task>/，加 "-- suite/<文件>" 时只跑该文件（相对 tests/acceptance/，可多个）；自己启停服务
-  acceptance_list: "pnpm test:acceptance --list"       # 只收集、不执行
+  acceptance:      "pnpm test:acceptance"              # 加 "-- <task>" 时只跑 tests/acceptance/<task>/；自己启停服务
   # e2e:           "pnpm test:e2e"                     # 无界面浏览器端到端，阶段门禁时运行
   contract_lint:   "pnpm exec redocly lint docs/contracts/openapi.yaml"   # 根文件引用 paths/<模块>.yaml
   # contract_test: "pnpm contract:test"                # 例如 schemathesis 对着启动的服务跑，阶段门禁时运行
@@ -20,23 +19,22 @@ commands:                         # 由 architect 在 P1 按技术栈改写（do
   # env_down:      "docker compose down"              # 可选：拆除共享环境时运行
   # add_dep:       "pnpm add \"$FORGE_DEP\""          # 可选：forge_add_dependency 追加依赖的命令，默认按锁文件推断（pnpm/npm/yarn/bun）
 generated_paths: ["web/src/api/generated/**"]          # 由契约生成的代码
-acctest_workspace:                # 仅 test_author: true 时有用（默认没有 test-author，偏离 118）：test-author 的隔离工作区（独立仓库）额外导出的路径；默认已导出 docs/spec、docs/contracts、docs/arch/overview.md、AGENTS.md、tests/acceptance、根目录的包清单与锁文件
-  include: ["packages/*/package.json", "vitest.config.*", "playwright.config.*"]
-  cache: [node_modules]           # 按锁文件哈希缓存，命中时硬链接复制，跳过 install
 shared_env:                       # 共享构建环境：S0 结束后一次性装好依赖，之后所有 worktree 链接同一份依赖目录，不再各自 install
   # enabled: true                 # 默认开启；false 时每个 worktree 自己准备依赖
-  deps: [node_modules]            # 链接进 worktree 的依赖目录；不写则取 acctest_workspace.cache，再默认 node_modules
+  deps: [node_modules]            # 链接进 worktree 的依赖目录；默认 node_modules
 limits:
-  max_parallel: 3                 # 同时运行的 impl task 数（acctest、review、qa 另计）
-  max_parallel_aux: 4             # 同时运行的 acctest、review、qa 数
+  max_parallel: 3                 # 同时运行的 impl task 数（review、qa 另计）
+  max_parallel_aux: 4             # 同时运行的 review、qa 数
   max_attempts: 3                 # 只计运行失败（崩溃、超时等）
   max_precheck_failures: 3
   max_merge_failures: 2
+  post_merge_test: true           # 每次合并后在后台跑一遍门禁命令，变红时二分定位到 task 并建修复
   port_block: 10                  # 每次运行分配的连续端口数
   lease_minutes: 45
   max_violations_per_run: 5
   max_task_files: 40
   fix_max_files: 5
+  change_max_tasks: 3            # /forge-change 与 forge_change 的迷你计划最多几个 task
   session_retention_days: 14
   bash_timeout_s: 300
   auto_dispatch: true
@@ -45,15 +43,11 @@ limits:
   run_minutes: 30                 # M 号 task 的时间预算；S 减半、L 加倍；只读 task 减半
   run_grace_minutes: 5
   max_continuations: 2
-  lean_below_loc: 6000            # 估算规模低于此值时建议精简模式
 gui_commands: []
 review:
-  per_task: true                  # false：不逐任务审查，改为阶段末审查一次（精简模式自动为 false）
   max_rounds: 2                   # 第 2 轮（.rv-2）只确认；仍未解决转 blocked
-  skip_sizes: [S]                 # plan 没写 review 时：先看 strong 条件，再看 size 在此列表且没有追加契约 → skip，否则 auto
 testing:
   adjust_tests: true              # worker 可以修改已有测试来适配接口变化（只改不增删）
-  max_disputes: 1                 # 同一个测试被争议超过此次数，转人工裁决
 qa:
   max_rounds: 2                   # stage-qa 报告 → 修复 → 只确认
 context:
@@ -62,6 +56,7 @@ models:
   strong: "<provider/model>"
   medium: "<provider/model>"
   cheap:  "<provider/model>"
+  # fallback: "<provider/model>"  # 兜底模型：原模型暂停（服务中断、额度用完），或换了升级模型仍同样失败时改用；也可以 /forge-config fallback 设置
 escalation:
   after_failures: 2
   critical_fanout: 3              # 被大于等于 3 个 task 硬依赖：第一次就用升级模型，review 推导为 strong
@@ -72,40 +67,28 @@ modes:
       - { id: P0, name: spec,     phase: spec,     gate: { human: true } }
       - { id: P1, name: plan,     phase: plan,     gate: { human: true } }
       # S0…Sn 在 P1 批准时由 plan.yaml 生成，闸门见 implementation_gate
-  feature:
-    stages:
-      - { id: P0, name: spec,     phase: spec,     gate: { human: true } }
-      - { id: P1, name: plan,     phase: plan,     gate: { human: true } }
 implementation_gate:              # 所有 S 阶段共用的闸门（只运行配置了的命令）
   all_tasks_done: true
   auto: [typecheck, lint, test, acceptance, e2e, contract_lint, contract_test, merge_check]
-  coverage: true                  # AC 覆盖率矩阵，有缺口则失败并生成 .at-n（test_author: false 时生成 .fx-n）
+  coverage: true                  # AC 覆盖率矩阵，有缺口则失败并生成 .fx-n 让原 worker 补测试
   qa: true                        # stage-qa
-  # test_author: true             # 不写时：lean 计划默认 false（不派生 .at，worker 自己按 AC 编号写 tests/acceptance/<T>/；覆盖缺口改为 .fx-n），standard 默认 true；写 true/false 则不分模式一律照办（偏离 98）
   human: true
 scopes:
   spec:       { writes: ["docs/spec/**"] }                         # 只经 forge_spec 由程序写入
   plan:       { writes: ["docs/contracts/**", "docs/arch/**", "docs/plan/**", "docs/spec/glossary.md", "docs/rules-draft/**", "AGENTS.md"] }
   code:       { rules: [rules/global.md], writes: ["**"] }         # 实际范围 = task 的 writes + shared；按 layers 追加 rules/<layer>.md
-  acctest:    { rules: [rules/global.md], writes: ["tests/acceptance/**"] }   # 在隔离工作区里；实际范围 = tests/acceptance/<task>/** 与 _support/ 下新建的文件
   review:     { rules: [rules/global.md], writes: [] }
   qa:         { rules: [rules/global.md], writes: [] }
-  research:   { writes: ["docs/research/**"] }
 tool_groups:
-  serena_read: [serena_get_symbols_overview, serena_find_symbol, serena_find_referencing_symbols, serena_search_for_pattern,
-                serena_find_declaration, serena_find_implementations, serena_get_diagnostics_for_file]
-  serena_edit: [serena_replace_symbol_body, serena_insert_before_symbol, serena_insert_after_symbol,
-                serena_safe_delete_symbol, serena_replace_content]
   codegraph:   [codegraph_search, codegraph_callers, codegraph_callees, codegraph_impact, codegraph_explore,
                 codegraph_node, codegraph_status, codegraph_files]
-  web:         [web_search, fetch_content, get_search_content, source_check]
+  web:         [web_search, fetch_content, get_search_content, source_check]   # pi-web-access 的搜索工具，默认不分配；要用时在角色 tools 里加 "@web"
   ask:         [ask_user]
 # read_paths 按 gitignore 规则从上到下匹配，后面的覆盖前面的，! 表示排除
 # bash: full | readonly | allowlist 是唯一依据，写了才有 bash 工具（tools 里不写 bash）
-roles:                            # notes、history、forge_block、forge_learn 所有子进程角色隐式拥有；forge_service 只给 worker 与 stage-qa，forge_request_scope、forge_add_dependency、forge_private_deps 只给 worker
-  orchestrator:        { model: strong, tools: [read, grep, find, ls, forge_read, "@ask", forge_spec, forge_spec_amend, forge_status, forge_wait, forge_change_request, forge_resolve_timeout, forge_resolve_scope], read_paths: ["**"], writes: [] }   # notes、history 隐式拥有
-  architect:   { model: strong, scopes: [plan], read_paths: ["**", "!.forge/**"], bash: readonly, tools: [codemode, read, write, edit, "@serena_read", "@codegraph", forge_propose_plan, forge_note, forge_submit] }
-  worker:      { model: strong, scopes: [code], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, write, edit, forge_service, "@serena_read", "@serena_edit", "@codegraph", forge_sync, forge_change_request, forge_request_scope, forge_add_dependency, forge_private_deps, forge_note, forge_submit] }
-  reviewer:    { model: medium, scopes: [review], read_paths: ["**", "!.forge/**"], bash: allowlist, bash_allow: [test, acceptance], tools: [read, "@serena_read", "@codegraph", forge_review_report, forge_review_confirm] }
-  stage-qa:    { model: strong, scopes: [qa], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, forge_service, "@serena_read", "@codegraph", forge_qa_report, forge_qa_confirm] }
-  researcher:  { model: medium, scopes: [research], read_paths: ["**", "!.forge/**"], tools: [read, write, "@web", forge_note, forge_submit] }
+roles:                            # notes、history、forge_block、forge_learn 所有子进程角色隐式拥有；forge_service 只给 worker、architect（S0）与 stage-qa，forge_add_dependency、forge_private_deps 给 worker 与 architect（S0）
+  orchestrator:        { model: strong, tools: [read, grep, find, ls, forge_read, "@ask", forge_spec, forge_change, forge_status, forge_wait, forge_change_request, forge_resolve_timeout], read_paths: ["**"], writes: [] }   # notes、history 隐式拥有
+  architect:   { model: strong, scopes: [plan, code], read_paths: ["**", "!.forge/**"], bash: full, tools: [codemode, read, write, edit, forge_service, "@codegraph", forge_sync, forge_add_dependency, forge_private_deps, forge_propose_plan, forge_note, forge_submit] }
+  worker:      { model: strong, scopes: [code], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, write, edit, forge_service, "@codegraph", forge_sync, forge_change_request, forge_add_dependency, forge_private_deps, forge_note, forge_submit] }
+  reviewer:    { model: medium, scopes: [review], read_paths: ["**", "!.forge/**"], bash: allowlist, bash_allow: [typecheck, lint, test, acceptance], tools: [read, "@codegraph", forge_review_report, forge_review_confirm] }
+  stage-qa:    { model: strong, scopes: [qa], read_paths: ["**", "!.forge/**"], bash: full, tools: [read, forge_service, "@codegraph", forge_qa_report, forge_qa_confirm] }

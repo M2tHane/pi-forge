@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
+import { setupProject, type Project } from '../helpers/project.ts';
 import { commitToBranch } from '../helpers/engine.ts';
 import type { MergeHooks } from '../../src/core/engine/merge-queue.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
@@ -16,7 +16,7 @@ import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { engineEnv } from '../helpers/commands.ts';
 
 const RULE_DRAFT = '# 后端\n- 服务层抛出 AppError\n\n## 审查清单\n- [ ] R1 错误码来自 errors/*.yaml\n';
-const COMMANDS_DRAFT = 'commands:\n  test: "true"\n  contract_lint: "true"\nacctest_workspace:\n  include: ["packages/api/package.json"]\n  cache: ["node_modules"]\n';
+const COMMANDS_DRAFT = 'commands:\n  test: "true"\n  contract_lint: "true"\nshared_env:\n  deps: ["node_modules", "web/node_modules"]\n';
 const GLOSSARY_ADD = '\n**连接测试（ConnectionTest）**：\n检查数据源能否连上。\n';
 
 async function writeAll(a: FakeAgent, files: Record<string, string>) {
@@ -48,8 +48,9 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
   const p = await setupProject({ stages: ['P0', 'P1'] });
   const results: { tool: string; ok: boolean; text: string }[] = [];
   let workerSystem = '';
+  let architectRuns = 0; // 第 1 次是 P1 的 doc task，第 2 次是 S0 的 impl
   const e = engineEnv(p, async (role, nth, a) => {
-    if (role === 'architect') {
+    if (role === 'architect' && ++architectRuns === 1) {
       await a.call('forge_claim');
       await writeDesign(a);
       // 缺少生产方：S1 需要的 table:teams 没人产出
@@ -64,8 +65,8 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
       results.push({ tool: 'forge_submit', ...(await a.call('forge_submit', { summary: '契约与计划' })) });
       return;
     }
-    // S0 的 worker：这里只确认被派发，然后交给用户
-    if (role === 'worker') {
+    // S0 的 architect（第二次派发）：这里只确认被派发，然后交给用户
+    if (role === 'architect') {
       workerSystem = readFileSync(e.launcher.launched.at(-1)!.appendSystemPromptFiles[0]!, 'utf8');
       await a.call('forge_claim'); await a.call('forge_block', { reason: '测试到此为止' });
       return;
@@ -98,26 +99,23 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     const integrationHead = p.git('rev-parse', p.store.readFlow(p.flowId).integration_branch);
     const out = await runFlowCommand('approve', e.cmd);
     assert.doesNotMatch(out, /合入/, 'P1 批准不会合入主分支');
-    assert.match(out, /已生成 2 个 S 阶段（S0、S1，标准模式）与 4 个 task[\s\S]*契约已锁定[\s\S]*已应用规则与命令草案[\s\S]*进入阶段 S0/);
+    assert.match(out, /已生成 2 个 S 阶段（S0、S1）与 2 个 task[\s\S]*契约已锁定[\s\S]*已应用命令草案[\s\S]*进入阶段 S0/);
     const after = p.store.readFlow(p.flowId);
     assert.deepEqual(after.stages, ['P0', 'P1', 'S0', 'S1']);
     assert.deepEqual(after.s_stages!.map((s) => [s.id, s.exit]), [['S0', ['REQ-002']], ['S1', ['REQ-001']]]);
-    assert.equal(after.plan_mode, 'standard');
     assert.equal(after.contracts_base, integrationHead, '契约锁定在批准时集成分支的提交上');
     assert.equal(after.stage, 'S0');
     assert.ok(p.store.readEvents().some((ev) => ev.type === 'stages_planned'));
-    // task：impl 归 worker；依赖由符号推导；S0 多两个验收目录
+    // task：S0 的 impl 归 architect；依赖由符号推导；S0 多两个验收目录
     const t2 = p.store.readTask(p.flowId, 'T-002');
     const t3 = p.store.readTask(p.flowId, 'T-003');
-    assert.deepEqual([t2.kind, t2.role, t2.stage, t2.module], ['impl', 'worker', 'S0', 'team']);
-    assert.ok(t2.writes.includes('tests/acceptance/_support/**') && t2.writes.includes('tests/acceptance/S0-smoke/**'));
+    assert.deepEqual([t2.kind, t2.role, t2.stage, t2.module], ['impl', 'architect', 'S0', 'team']);
+    assert.ok(t2.writes.includes('tests/acceptance/_support/**') && t2.writes.includes('tests/acceptance/S0-smoke/**') && t2.writes.includes('rules/**'));
     assert.deepEqual(t3.depends_on, [{ task: 'T-002', type: 'hard', reason: 'table:teams、api:GET /api/teams、fn:team#currentTeam' }]);
     assert.deepEqual(t3.ac, ['REQ-001.AC1', 'REQ-001.AC2']);
-    // .at：S0 的在骨架合并后编写（硬依赖 impl），S1 的继承 impl 的硬依赖、与 impl 同时就绪
-    const at2 = p.store.readTask(p.flowId, 'T-002.at');
-    const at3 = p.store.readTask(p.flowId, 'T-003.at');
-    assert.deepEqual([at2.kind, at2.role, at2.for_task, at2.depends_on.map((d) => [d.task, d.type])], ['acctest', 'test-author', 'T-002', [['T-002', 'hard']]]);
-    assert.deepEqual([at3.for_task, at3.depends_on.map((d) => d.task), at3.writes], ['T-003', ['T-002'], ['tests/acceptance/T-003/**', 'tests/acceptance/_support/T-003/**']]);
+    // 没有 .at：worker 自己写验收测试，writes 带自己的验收目录
+    assert.ok(!p.store.listTasks(p.flowId).some((t) => t.id.endsWith('.at')));
+    assert.ok(t3.writes.includes('tests/acceptance/T-003/**'));
     const notes = p.store.readNotes(`flows/${p.flowId}/notes/T-003.json`)!;
     assert.match(notes.goal.join('\n'), /REQ-001\.AC2：Given 已有同名数据源 When 再次创建 Then 失败[\s\S]*manual/);
     // 规则与命令应用到主分支（单独一个提交），运行中的配置同步更新
@@ -125,12 +123,13 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     assert.equal(readFileSync(path.join(p.dir, 'rules/backend.md'), 'utf8'), RULE_DRAFT);
     const wf = parseConfig(readFileSync(path.join(p.dir, 'workflow.yaml'), 'utf8'));
     assert.equal(wf.commands['contract_lint'], 'true');
-    assert.deepEqual(wf.raw.acctest_workspace, { include: ['packages/api/package.json'], cache: ['node_modules'] });
+    assert.deepEqual(wf.raw.shared_env, { deps: ['node_modules', 'web/node_modules'] });
     assert.equal(p.config.commands['contract_lint'], 'true');
-    // S0 开工：worker 被派发，提示里注入了按 layers 选择的 rules/backend.md
+    // S0 开工：由 architect 执行（S0 由架构师搭骨架），提示里注入了按 layers 选择的 rules/backend.md
     await e.engine.idle();
-    const worker = e.launcher.launched.find((s) => s.env['PI_FORGE_ROLE'] === 'worker')!;
-    assert.ok(worker, '进入 S0 后派发了 worker');
+    const worker = e.launcher.launched.find((s) => s.env['PI_FORGE_TASK'] === 'T-002')!;
+    assert.ok(worker, '进入 S0 后派发了 S0 的 task');
+    assert.equal(worker.env['PI_FORGE_ROLE'], 'architect');
     assert.equal(worker.env['PI_FORGE_TASK'], 'T-002');
     assert.match(workerSystem, /服务层抛出 AppError/);
     assert.ok((await p.store.verifyIntegrity()).ok);
@@ -232,40 +231,4 @@ test('P1 闸门：集成分支上的契约不合格时回到 active，派 archit
     assert.match(p.store.readHandoff(p.flowId, 'T-002'), /P1 闸门未通过[\s\S]*BAD 必须以模块前缀 TEAM_ 开头/);
     assert.equal(p.store.readFlow(p.flowId).stage, 'P1');
   } finally { p.cleanup(); }
-});
-
-/** 批准一份 mode: lean 的计划，返回落地后的 task 列表（偏离 98：test_author 未配置时 lean 不派生 .at） */
-async function approveLean(yaml?: string) {
-  const p = await setupProject({ stages: ['P0', 'P1'], ...(yaml ? { yaml } : {}) });
-  const e = engineEnv(p, async (role, _nth, a) => {
-    if (role === 'worker') { await a.call('forge_claim'); await a.call('forge_block', { reason: '测试到此为止' }); return; }
-    assert.equal(role, 'architect');
-    await a.call('forge_claim');
-    await writeDesign(a);
-    await writeAll(a, { 'docs/plan/plan.yaml': PLAN_YAML.replace('mode: standard', 'mode: lean') });
-    assert.ok((await a.call('forge_propose_plan', {})).ok);
-    await a.call('forge_note', { text: 'ok' });
-    assert.ok((await a.call('forge_submit', { summary: '契约与计划' })).ok);
-  });
-  try {
-    await toP1(p, e.cmd);
-    await e.engine.idle();
-    await runFlowCommand('approve', e.cmd);
-    assert.equal(p.store.readFlow(p.flowId).plan_mode, 'lean');
-    return p.store.listTasks(p.flowId);
-  } finally { p.cleanup(); }
-}
-
-test('lean 且 test_author 未配置（任何模式默认关闭，偏离 118）：批准 P1 不派生 .at，impl 的 writes 带共享验收目录 suite（偏离 110），不带按 task 的目录', async () => {
-  // 运行时夹具显式写了 test_author: true；这里去掉，验证模板默认（偏离 118：任何模式默认都没有 test-author）
-  const tasks = await approveLean(PROJECT_YAML.replace(/^  test_author: true.*\n/m, ''));
-  assert.ok(!tasks.some((t) => t.kind === 'acctest'), '没有 .at');
-  const w = tasks.find((t) => t.id === 'T-003')!.writes;
-  assert.ok(w.includes('tests/acceptance/suite/**'));
-  assert.ok(!w.includes('tests/acceptance/T-003/**'));
-});
-
-test('lean 但 test_author 显式写 true：照旧派生 .at', async () => {
-  const tasks = await approveLean(PROJECT_YAML);
-  assert.ok(tasks.some((t) => t.id === 'T-003.at'));
 });

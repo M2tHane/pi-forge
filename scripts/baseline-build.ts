@@ -1,7 +1,7 @@
 // 来源：pi-flow scripts/baseline-build.ts @ 31f3f15
 // 对照实验：不加载 pi-forge，用原生 pi 从零做同一个项目，统计耗时、token、轮数、工具调用（含 subagent 子会话）。
 //   node scripts/baseline-build.ts [--model provider/id] [--thinking high] [--desc "<描述>"] [--keep]
-// 只加载 pi-serena、pi-codegraph、pi-subagents 三个插件（--no-extensions 后用 -e 显式加载），不加载其他全局插件、技能、提示模板与上下文文件。
+// 只加载 pi-codegraph、pi-subagents 两个插件（--no-extensions 后用 -e 显式加载），不加载其他全局插件、技能、提示模板与上下文文件。
 // pi 以 -p 运行；它停下来提问时，代替用户回答"按建议继续"（与 real-build.ts 代替用户采纳建议的做法一致），最多 3 次。
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -19,7 +19,7 @@ const DESC_TEXT = argv.includes('--desc-file') ? readFileSync(path.resolve(opt('
 const THEN = argv.includes('--then-file') ? readFileSync(path.resolve(opt('--then-file', '')), 'utf8').trim() : undefined;
 const ANSWER = '同意你给出的建议（默认方案），按建议继续。';
 const PLUGINS = path.join(homedir(), '.pi/agent/npm/node_modules');
-const EXT = ['@bacnh85/pi-serena', '@vndv/pi-codegraph', 'pi-subagents'].map((p) => path.join(PLUGINS, p));
+const EXT = ['@vndv/pi-codegraph', 'pi-subagents'].map((p) => path.join(PLUGINS, p));
 for (const e of EXT) if (!existsSync(e)) { console.error(`缺少插件：${e}`); process.exit(1); }
 
 const dir = mkdtempSync(path.join(tmpdir(), 'pi-baseline-'));

@@ -162,7 +162,7 @@ export function resumeBrief(store: StateStore, flowId: string, actions: string[]
     `- #${e.seq} ${e.ts.slice(5, 19).replace('T', ' ')} ${e.type}${e.task ? ` ${e.task}` : ''}${e.from ? ` ${e.from}→${e.to}` : ''}${e.reason ? `：${e.reason.slice(0, 80)}` : ''}`);
   const decisions = [
     ...pending.map((q) => `- ${q.task}：租约已过期，worktree 有 ${q.changes.length} 处未提交改动。继续（保留改动重新派发）或丢弃？执行 /forge-resume 并选择。`),
-    ...(config ? actionsNeeded(store, config).map((a) => `- ${a.text} → ${a.command}`) : []),
+    ...(config ? actionsNeeded(store, config).map((a) => `- ${a.owner === 'orchestrator' ? '（主会话处理中）' : ''}${a.text} → ${a.command}`) : []),
   ];
   return [
     '# pi-forge 恢复摘要',

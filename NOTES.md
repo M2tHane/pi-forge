@@ -1,405 +1,111 @@
 # pi-forge 开发笔记
 
-记录已核实的事实（版本、Pi API）、偏离规格（`docs/BUILD_PROMPT.md`）的决定、真实模型实验的结论。实现细节以代码与测试为准，这里只写"为什么这样做"。
-偏离记录的编号不变；新增条目往后追加，一条 1–3 行，被后来的条目修订时注明。代码注释里的"第 N 条"在 M0 迁入的文件中指 pi-flow `NOTES.md` 的编号，改编时逐步换成本文的编号。
-
-目录：[已验证版本](#已验证版本) · [Pi API（已核实）](#pi-api已核实) · [待确认与已知局限](#待确认与已知局限) · [偏离记录](#偏离记录)（第 1–119 条，按里程碑 M0–M8.5 分组） · [M1 删除、由 Mx 重建](#m1-删除由-mx-重建) · [M2 删除按层角色](#m2-删除按层角色) · [真实模型实验](#真实模型实验) · [缓存提醒](#缓存提醒)。用户文档见 `README.md`，流程图见 `docs/flow.md`。
+记录已核实的事实、偏离规格（`docs/BUILD_PROMPT.md`）的决定、真实模型实验的结论。细节以代码与测试为准，这里只写"现在是什么样、为什么"。
+偏离按主题写现状：新决定改写或追加到对应主题，被取代的内容直接删掉（历史看 git）。代码注释与测试不引用本文条目。用户文档见 `README.md`，流程图见 `docs/flow.md`。
 
 ## 已验证版本
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
-| Node | 24.18.0 | 要求 ≥22；测试用原生 TS 类型剥离（只用可擦除语法） |
-| git | 2.50.1 | 要求 ≥2.30（worktree） |
-| Pi | `@earendil-works/pi-coding-agent` **1.1.0**（本机全局安装，10-10 由 1.0.0 升级） | 评估见下方；M9 在 1.1.0 上跑 |
-| typebox | 1.3.27 | Pi 内置核心包，`peerDependencies: "*"`，不打包 |
-| minimatch 10.2.6、proper-lockfile 4.1.2、yaml 2.9.0 | | 与 pi-flow 相同，不新增运行时依赖（规格第 1 节第 6 条） |
-| typescript 5.9.3、@types/node 22 | | 开发依赖 |
-| 复用来源 | pi-flow `~/Documents/Code/program/pi-flow`：运行时 `31f3f15`，流程层 `7006e7d` | 见偏离第 1 条 |
-
-## Pi 1.0.0 → 1.1.0 升级评估（10-10）
-
-- **变更记录**（1.0.1–1.1.0）：对 pi-forge 有影响的只有两处，都不需要改代码。
-  - 1.0.4 起 `--tools` 不再移除 MCP 工具（codemode 脚本仍能调用）。pi-forge 的子进程带 `--no-extensions`，内置 MCP 不加载（已读 1.1.0 源码 `core/resource-loader.js`：`noExtensions` 时只加载 `-e` 显式给出的扩展）；guard 的工具白名单也会拦下未授予的工具（第二层）。主会话（用户的交互 pi）上的 MCP 工具同样被 guard 白名单拦下。
-  - 1.1.0 的 `--tools` 支持 `+name`/`-name`；pi-forge 的工具名不以 `+`、`-` 开头，不受影响。
-- **扩展 API**：对比 1.0.0 与 1.1.0 的 `dist/core/extensions/types.d.ts`、`dist/index.d.ts`，只有新增：`tool_execution_end.durationMs`、`agent_settled.aborted`、`registerToolRenderer`、`ToolLoadout.getPromptGuidelines`、渲染上下文的 `durationMs`/`outputPad`。pi-forge 用到的 API（registerTool、registerCommand、tool_call、before_agent_start、setActiveTools、sendUserMessage、ui、RPC 事件与 usage）没有变化。
-- **实测**：真实 Pi 测试（`pi-subprocess`、`orchestrator-session`、`crash-recovery`、`orchestrator-p0`，共 11 个，fake LLM）在 1.0.0 与 1.1.0（临时目录安装，不动全局）上结果相同：10 通过、1 失败。失败的是 `pi-subprocess` 的"合并时全量测试失败退回"，两个版本一样，原因是 M4 起测试改在预检阶段失败、不再走到合并，测试本身过时，留到统一 e2e 修。
-- **结论**：可以升级到 1.1.0，不需要改代码。注意 1.0.3 把 Azure 提供方从 `azure-openai-responses` 改名为 `azure`，用 Azure 模型时要改 workflow.yaml 与角色设置里的模型名。
+| Node / git | 24.18.0 / 2.50.1 | 要求 ≥22 / ≥2.30；测试用原生 TS 类型剥离（只用可擦除语法） |
+| Pi | `@earendil-works/pi-coding-agent` 1.1.0 | 10-10 由 1.0.0 升级，扩展 API 只有新增；1.0.3 起 Azure 提供方名为 `azure` |
+| 运行时依赖 | typebox 1.3.27（Pi 提供，不打包）、minimatch 10.2.6、proper-lockfile 4.1.2、yaml 2.9.0 | 与 pi-flow 相同，不新增（规格第 1 节第 6 条） |
+| 复用来源 | pi-flow：运行时 `31f3f15`，流程层 `7006e7d` | 旧流程层放在 `legacy/` 作参考，不参与构建 |
+| 插件 | pi-codegraph 0.1.10（只读）、pi-web-access 0.35.0（需 `setActiveTools`）、pi-ask-user 0.2.1 | pi-rules 不能按角色挑规则，不用 |
 
 ## Pi API（已核实）
 
-**实测**＝用真实 pi 进程（探针在 `playground/probes/`，假模型在 `test/fixtures/fake-llm/`）；**源码**＝读 `.d.ts`、源码或官方文档。
+实测＝真实 pi 进程（假模型 `test/fixtures/fake-llm/`）；源码＝读 `.d.ts`、源码或文档。用到新 API 时先核实再补进来。
 
 | 能力 | 结论 | 核实 |
 |---|---|---|
-| 安装 | `pi install <npm:包 \| 本地路径>`，`-l` 写项目 `.pi/settings.json`（需信任项目）；本地路径不复制、不替你装依赖 | 源码、实测 |
-| 包清单 | `package.json` 的 `pi.extensions/skills/prompts`；扩展 .ts 由 jiti 加载，能解析包自己的 node_modules | 实测 |
-| 斜杠命令 | `registerCommand(name, {handler(args, ctx)})`，`args` 是原始字符串；`pi -p "/cmd"` 不调用模型 | 实测 |
-| 交互 UI | `ctx.ui.select/confirm/input/notify`；RPC 模式经 `extension_ui_request/response`；print 无 UI | 实测 |
-| 工具 | `registerTool({name, parameters, execute})`；`setActiveTools` 在 `session_start` 中生效 | 实测 |
-| 拦截工具调用 | `on('tool_call')` 返回 `{block, reason}`；**按扩展加载顺序执行，后面的看到前面改过的 input**，guard 必须最后加载；`event.input` 可原地修改（用于补 bash 超时） | 实测、源码 |
-| 追加系统提示 | `before_agent_start` 改 `systemPromptOptions.appendSystemPrompt` | 实测 |
-| 事件 | `session_start`、`before_agent_start`、`turn_end`、`message_end`（assistant 消息带 usage）、`agent_end`、`session_shutdown` | 源码、实测 |
-| 子进程 | `pi --mode json -p --session-dir <目录> [--fork <会话文件>] --no-extensions --no-skills --no-prompt-templates --no-context-files -e <扩展>… --model p/id --thinking <级别> --tools a,b --append-system-prompt <文件> -- "<提示>"`；**stdin 必须关闭**；`--fork` 复制旧对话为新会话，系统提示按本次参数重建 | 实测 |
-| 用量 | assistant `message_end.message.usage = {input, output, cacheRead, cacheWrite, cost}`，`input` 不含缓存；另有 `provider/model/stopReason/errorMessage` | 实测 |
-| 重试 | Pi 对限流、过载、5xx、网络错误自动重试 3 次；额度用完类不重试，错误在 `errorMessage` | 源码（pi-ai `retry.js`） |
-| bash | `timeout` 单位秒；超时对整个进程组 SIGKILL；`pi -p` 收到 SIGTERM 会结束自己跟踪的 bash 进程组 | 源码、实测 |
-| 思考级别 | `off/minimal/low/medium/high/xhigh/max`，按模型收窄（glm-5.3-flash 只支持 low/high/xhigh） | 实测 |
-| codemode | `-e builtin:codemode` 且 `--tools` 含 codemode；脚本里每个工具调用都经过 `tool_call`（guard 照常拦截计违规） | 实测 |
-| 配置目录 | `getAgentDir()` = `~/.pi/agent`（`PI_CODING_AGENT_DIR` 可改）；导出 `VERSION` | 源码 |
-| 工具图片结果 | `AgentToolResult.content` 支持 text/image 联合；图片为 `{ type: 'image', data: <base64>, mimeType }`，forge_read 已去掉临时断言 | 源码：`dist/core/extensions/types.d.ts`、`dist/core/tools/read.js:87-88`；真实 Pi + fake LLM 文本工具流程实测 |
-| 开始主会话讨论 | `sendUserMessage(text, { deliverAs: 'followUp' })`；交互模式用于入库/打回后续讨论，print 模式由下一条用户提示和每轮状态注入推进 | 文档：`docs/extensions.md`；源码：`dist/core/extensions/types.d.ts`；真实 Pi print + fake LLM 实测 |
-| 路径解析 | Unicode 空格归一、去 `@`、展开 `~`、`file://`；guard 按同样规则 | 源码 |
+| 包与命令 | `pi install <npm:包 \| 路径>`（`-l` 写项目 `.pi/settings.json`）；`package.json` 的 `pi.extensions/skills/prompts`，扩展由 jiti 加载；`registerCommand` 的 `args` 是原始字符串，`pi -p "/cmd"` 不调用模型 | 实测 |
+| 工具 | `registerTool({name, parameters, execute, prepareArguments})`，`prepareArguments` 在 schema 校验之前；`setActiveTools` 在 `session_start` 中生效；结果可含图片 | 实测、源码 |
+| 拦截 | `on('tool_call')` 返回 `{block, reason}`，按扩展加载顺序执行，guard 必须最后加载；`event.input` 可原地改 | 实测 |
+| 提示与事件 | `before_agent_start` 改 `appendSystemPrompt`；`message_end` 的 assistant usage = `{input（不含缓存）, output, cacheRead, cacheWrite, cost}` 与 `errorMessage`；`sendUserMessage(text, {deliverAs: 'followUp'})`；UI 在 RPC 模式经 `extension_ui_request` | 实测 |
+| 子进程 | `pi --mode rpc --session-dir … [--fork <会话>] --no-extensions --no-skills --no-prompt-templates --no-context-files --no-mcp -e … --model --thinking --tools --append-system-prompt`；提示经 stdin，`agent_settled` 后关 stdin 退出；`--no-mcp` 必须带（`--tools` 不过滤 MCP 工具） | 实测 |
+| 出错 | 限流、过载、5xx、网络错误自动重试 3 次，额度用完不重试；上下文超限自动压缩；启动报错 `No API key found for …`、`Model "x" not found. Use --list-models`（自定义模型名的 `… Using custom model id.` 只是提醒） | 源码 |
+| 工具行为 | bash `timeout` 单位秒，超时 SIGKILL 进程组，bash 以 detached 起新进程组；edit 的 `oldText` 必须唯一精确匹配；路径解析会归一 Unicode 空格、去 `@`、展开 `~` 与 `file://`（guard 同规则） | 源码、实测 |
+| 思考级别 | `off/minimal/low/medium/high/xhigh/max`，按模型收窄（glm-5.3-flash 只有 low/high/xhigh） | 实测 |
+| codemode | `-e builtin:codemode` 且 `--tools` 含 codemode；脚本里的工具调用照样经过 `tool_call` | 实测 |
 
-第三方插件（读源码核实）：pi-serena 0.9.20（20 个工具，文件参数 `relative_path`；`serena_rename_symbol` 等不分配给角色）；pi-codegraph 0.1.10（8 个工具，参数是符号）；pi-web-access 0.35.0（默认不激活，需 `setActiveTools`）；pi-rules 0.6.0（不能按角色挑规则，所以不用）；pi-subagents 0.74.0（对照实验用）。
+## 已知局限
 
-上表从 pi-flow `NOTES.md`（@ 31f3f15）原样搬来，只改了工具名前缀，都是在 Pi 0.99.2 / 1.0.0 上核实的。本机仍是 1.0.0，M0 的真实 pi 测试（`orchestrator-session`、`crash-recovery`、`pi-subprocess`）全部通过；用到新的 Pi API 时先查文档或源码再补进本表。
+- guard 看不到脚本内部（`bash x.sh`、`npm run`），兜底是提交时的 diff 检查与受保护路径；打码只认常见密钥形态。
+- 签收被打回后，旧的 stage-qa 轮次仍计入 `qa.max_rounds`，可 `/forge accept` 放行。
+- 契约追加检查有提交时、预检时两层，e2e 只覆盖提交那层；要删一层时先给预检补 e2e。
+- 共享构建环境不卸载任务删掉的依赖；测试留下的数据文件不再清理，靠 `.gitignore` 与审查。
+- 合并后回归测试与阶段门禁跑同一组命令：测试慢的项目每次合并多一次全量检查（后台运行，可用 `limits.post_merge_test: false` 关掉）。没有主会话的运行（`scripts/real-tasks`）里，交给主会话的决定没人处理，要用户直接处理。
+- 没接命令或没审阅的：变更请求的 `cancelled`（`StateStore.cancelChange`）；`scripts/forge-view.*` 只做过渲染冒烟；`scripts/ablation/` 是 M8 的消融工具，很多臂的机制已删。
 
-## 待确认与已知局限
+## 偏离规格
 
-- 继承自 pi-flow：serena 的 `prepareArguments` 在 `tool_call` 之前还是之后未核实；guard 管不到脚本文件内部（`bash x.sh`、`npm run`），兜底是提交时的 diff 检查；打码只认识常见密钥形态。
-- Pi 版本：M1 到 M8 保持 1.0.0。M8 结束、M9 开始前单独做一次升级评估（读 1.0.0 → 1.1.0 的变更记录、核对上面的 Pi API 表、跑全量测试，单独提交）；M9 的实验与原生 Pi 对照组都在升级后的版本上跑。（10-10 已完成评估并把全局升级到 1.1.0，见「Pi 1.0.0 → 1.1.0 升级评估」。）
-- M4 已接上资源隔离、bash 白名单、test-author 隔离工作区与 .at、真实预检、争议、验收测试单独合并与范围申请规则；e2e 按用户要求留到全部开发完统一运行（M4 到 M7 的 e2e 都是这样处理的，M9 之前统一跑一遍）。
-- M1 已接通 v3.2 的 schema、状态机、配置和运行时，删除旧 D0/D2/E 流程层。M2 已接上 P0 讨论、规格提交、人工审批与修订；M3 已接上 P1：architect 起草契约与计划、forge_propose_plan 校验、doc 预检、P1 闸门、批准后生成 S 阶段与 task 并进入 S0。真实预检、验收测试 task、审查与契约锁定检查、阶段验收分别由 M4/M5/M6 接入（均已完成，见偏离第 32、44–62 条）。主会话角色按用户决定沿用 orchestrator。
-- stage-qa 的 bash 是 full，现有 guard 拦不住 shell 重定向改源码，而规格第 14 节要求 stage-qa 不能写（临时目录除外）。M6 改为由隔离兜底：stage-qa 和阶段审查在集成分支 HEAD 的临时 detached worktree 里运行，没有任何流程从这个 worktree 提交，结束后删除。重定向和 write 工具仍按可写范围（空）拦截。M8.5 补上：命令参数引用主工作区路径一律拒绝（偏离 79），有 e2e 与单元测试。
-- M6 的 e2e（`test/e2e/stage-acceptance.test.ts`）只写了，没有运行。旧的 `test/e2e/gates.test.ts` 按模块生成 `T-NNN` 修复任务；现在改为按 task 生成 `.fx-n`，需要在统一 e2e 时更新。测试项目的 `PROJECT_YAML` 默认 `qa: false`，M6 的测试显式打开。
-- 阶段被打回（stage_reopened）后，再跑 stage-qa 与阶段审查时，旧的轮次仍计入 `qa.max_rounds` 和 `review.max_rounds`。M7 没有处理，留作已知局限：签收被打回后，用户可以用 `/forge accept` 放行。
-- M7 的 e2e（`change-request`、`fix`）只写了，没有运行。没有为 feature 和 adopt 写 e2e，它们由单元测试覆盖。提示词已按用户决定在 M8 补上 `modifies`、adopt 与 feature 的写法（见缓存提醒 10-10）。
-- 契约追加检查有两层（提交时、预检时）。e2e 只走得到提交那一层，预检那一层由单元测试 `test/unit/precheck.test.ts` 覆盖（M8.5 消融）。M9 之后如果只保留预检那一层：先给预检那一层补 e2e，再删提交时那一层，顺序不能反。
-- merge-fix 与 `.fx` 的 install 失败路径没有 e2e（用户确认先不补）：失败原因会写进 handoff，问题看得见。
-- 验收测试的隔离工作区按只读处理，用硬链接缓存。test-author 的 bash 只能跑验收命令，不会改依赖。剩下的风险是测试工具往依赖目录里写缓存：新建文件没问题，原地改已有文件会污染共享缓存。M9 期间遇到无法解释的依赖错误时，先怀疑这一点。
-- S0 完成标准第 5 条（test-author 的隔离工作区里 `install` 与 `acceptance_list` 能运行）程序没有在 S0 合并前检查，第一次派 `.at` 时才会暴露（偏离 85 缓解了最常见的原因）。
-- 变更请求的 `cancelled` 状态在 store 里有（`StateStore.cancelChange`），但没有接命令，也没有调用者（M8 文档阶段核对：仍然如此）。
-- 流程图按用户要求延后（含 drawio）：`docs/flow.md` 是 M8 subagent 写的 mermaid 草稿，未审阅，之后再整理。
-- 工作流视图（`scripts/forge-view.*`）按用户要求延后：M8 subagent 的改编已合入，只做过渲染冒烟（能打开、无脚本错误），界面与数据未审阅，之后再整理。
-- M8 文档阶段发现的小问题已修正：帮助文本补上 `change:<id>`，删掉不存在的 `/forge stop`，旧写法 `/forge-build "<描述>"` 改为 `--prd`，`templates/AGENTS.md` 改为 v3 的阶段与目录。
+### 基线与命名
+- 改名只改产品与命名空间（`pi-flow`→`pi-forge`、`.flow/`→`.forge/`、`flow_*`→`forge_*`、`/flow*`→`/forge*`）；领域名词 flow（流程实例）保留，如 `FlowFile`、集成分支 `flow/<id>/integration`。
+- 主会话角色叫 orchestrator，不用规格的 main（用户决定）。
+- `.npmrc` 设 `legacy-peer-deps=true`：锁文件里没有 Pi 的 peer 依赖。
+- `.forge` 不兼容旧 pi-flow 状态；迁移链 v1→v2（删 `.at`、争议）、v2→v3（删范围申请）。
 
-## 偏离记录
+### 规格与计划
+- `/forge-build` 不必带 `--prd`（用户决定）：默认扫描项目 `docs/` 下用户的文档入库到 `docs/spec/inputs/docs/`；有文档时主会话只问疑点，没有时详细访谈。
+- spec-lint 有错误整体拒绝；P0 必须人工批准。AC 编号 `REQ-001.AC1`；AC 只写用户能感知的行为，单条 REQ 超过 6 条 AC 只警告；占位词只认大写独立的 `TODO`、`TBD`、"待定"。
+- P1 由程序驱动 architect（不经主会话），返工接着上一个 task 的会话。`forge_propose_plan` 在 architect 的 worktree 上跑完整校验，闸门在集成分支上重跑。task 编号全流程连续，含此前流程与 `tests/acceptance/` 的目录名。
+- 批准 P1 时在主工作区应用命令草案 `docs/rules-draft/commands.yaml`，再生成 S 阶段与 task；规则由 S0 直接写。
+- 契约只能追加（`plan/contract-diff.ts`）：集合位置可新增键，数组（含 required、enum）不能变，新列须可空或有默认值；可追加可选参数；不限制只改本模块的契约。基线是任务 worktree 与集成分支的合并基点。空文件视为不存在（architect 清空即可）。术语表只追加。
 
-**M0（2026-10-09）**
+### S0 与构建环境
+- S0 的唯一 task 由 architect 做（bash full，worker 的工具）：建骨架、直接写 `rules/`（对它豁免受保护路径）、把共享类型与错误响应落成代码；S0 合入后 rules 生效。
+- Python 用 uv 的项目不共享 `.venv`（可编辑安装指向安装时的源码目录，共享会让各 worktree 测到旧代码）：每个 worktree 自己 `uv sync --frozen`，包从 uv 的全局缓存链接；guard 不让 pip 装包，加依赖用 `uv add`。`.venv/`、`__pycache__/`、`.pytest_cache/` 写进本地 exclude。
+- 每个 S 阶段开始时建立或刷新共享构建环境 `<项目>.worktrees/.env-shared/`，worktree 链接依赖目录，不再各自 install；只追加根 package.json 依赖时装进共享环境（`forge_add_dependency`），改版本等用私有副本（`forge_private_deps`）。端口段（41000–60000）与数据库按运行分配。没有共享环境时（S0 期间）各工作区自己 install，只读工作区按锁文件哈希缓存。
 
-1. 复用基线分两层（规格 v2/v3 第 1、16 节，DECISIONS-R1 第 1 条）：运行时文件取 pi-flow HEAD `31f3f15`，流程层取 `7006e7d`。M0 拷贝 `31f3f15` 的整个 `src/` 与 `test/`；`7006e7d` 的流程层（core 的 stages、revision、acceptance、final-review、requirements、gates，modes 的 plan、fix，tools 的 module-tools、orchestrator-tools 及其测试）与 `5100d6b^` 的 stage-review、state-machine 放在 `legacy/` 作参考，不参与构建。`5100d6b^` 目录写成 `legacy/5100d6b-parent/`（`^` 在 shell 中需要转义）。
-2. 改名只改产品与命名空间：`pi-flow` → `pi-forge`（包名、`refs/pi-forge/state` 与检查点 refs、`pi-forge.json`、git 身份、消息类型），`.flow/` → `.forge/`，`PI_FLOW_*` → `PI_FORGE_*`，工具名 `flow_*` → `forge_*`，命令 `/flow`、`/flow-*` → `/forge`、`/forge-*`，状态提交前缀 `forge-state:`，文件 `commands/flow.ts`、`flow-config.ts`、`flow-watch.ts`、`scripts/flow-view.*` 改成 forge。**领域名词 flow（一个流程实例）保留**：`FlowFile`、`flowId`、`.forge/flows/<id>/`、`active_flow`、事件与 run 的 `flow` 字段、实体名 `'flow'`、工具种类 `'flow'`、集成分支 `flow/<id>/integration`；TS 标识符（`runFlowCommand`、`FLOW_TOOLS`、`piFlowSubagent` 等）也不改，改编时按需更换。改名脚本按明确的正则替换，之后逐条核对残留。
-3. pi-flow 的包内容（agents、skills、rules、templates、prompts @ 31f3f15，已改名）放在 `test/fixtures/pi-flow-package/`，运行时测试经 `test/helpers/package.ts` 的 `PKG_CONTENT` 引用；pi-forge 自己的 `agents/`、`skills/`、`rules/`、`templates/workflow.yaml` 是 v3 内容，迁入的 config 还解析不了（M1 改）。为了让真实 pi 进程的测试也用夹具，`src/pi-adapter/extension.ts` 新增 `CONTENT_ROOT`（环境变量 `PI_FORGE_CONTENT_ROOT`，默认包根目录），角色提示、技能、模板、init 的来源都改从它读取；子进程扩展路径仍取包根目录。这是 M0 唯一的 `src/` 行为改动，M1 迁移完成后删除。（M1 已落实，见第 13、14 条。）
-4. M0 不 skip 测试（DECISIONS-R2 第 3 节）：拷贝的是 HEAD 的流程层，测试全部能过，留着保护改名。通知测试（`test/unit/state-recovery6.test.ts`）原来让两个通知进程追加同一个文件，负载高时内容交错、偶发失败；改为每个事件写单独的文件（只改测试）。
-5. `.npmrc` 设 `legacy-peer-deps=true`：pi-flow 的锁文件没有 Pi 的 peer 依赖（Pi 由宿主提供，扩展经 jiti 加载时解析到全局安装），npm 7 起默认会安装 peer 依赖，导致 `npm ci` 报锁文件不同步。
-6. 没有拷贝 pi-flow 的 `scripts/demo*`、`bench5-native.ts`、`measure-merge.ts`、`playground/`、`docs/`；`package.json` 去掉 `demo` 脚本与 `prompts` 清单（`prompts/stage-kickoff.md` 是 pi-flow 主会话的提示模板，只放进夹具）。`templates/AGENTS.md`、`templates/gitignore.append` 从 pi-flow 拷贝（`init` 要用，v3 没有提供）。
-7. 契约"只能追加"的判定规则（DECISIONS-R1 第 21 条，规格第 12.1 节）：新增 path、operation、响应状态码、可选的请求或响应字段、schema、错误码、`modules/*.md` 的函数小节、数据表、可空列算追加；删除或改名、改已有字段的类型、格式、默认值，给请求新增必填字段，改动任何 `required` 数组或 `enum`（包括新增取值），改已有错误码的 http 状态或含义，改已有列、新增非空且没有默认值的列，都算修改，要走变更请求。M5 实现时以规格第 12.1 节的表为准。（已被第 54 条细化）
+### 调度与运行
+- 两个池：实施 task 用 `max_parallel`，review、qa 用 `max_parallel_aux`。writes 只是调度优先级，重叠的也会并行（用户决定）。
+- worker 与 S0 的 architect 可写工作区内任何文件，只排除受保护路径与 `docs/spec/**`（用户决定）；没有范围申请。
+- 失败处理：`run_timeout` 计入 attempts，由程序按进展决定接着做、从头做或交给用户；同样的失败连续两次先换升级模型，再换兜底模型（`models.fallback`、`/forge-config fallback` 或表格最后一行，所有角色共用，用户决定 10-14），都试过仍一样就阻塞；没有升级模型时，失败达到次数直接用兜底模型。任务要用的模型被暂停时改用兜底模型继续，原模型恢复后换回。子进程没提交就结束时按错误原文分类（`engine/failure-class.ts`）：额度、限流、配置错误暂停这个模型、不计任务失败（额度与配置要手动恢复），运行环境出错直接 blocked，其余计一次失败、带提示重试。运行中原地打转或 guard 违规满额会结束本次运行并计一次失败。
+- 子进程结束后清理它留下的进程，跳过仍在运行的 run 的进程树（审查、修复常与原任务共用 worktree）。
+- 需要拿主意的事先交给主会话（用户决定，10-14）：程序或子进程造成的阻塞（审查轮数用尽、合并失败、反复失败、子进程提问）、S 阶段门禁用尽、变更请求的修订，都由 orchestrator 用 `forge_decide` 决定（retry、accept、approve、reject，或转交用户）；它转交的、以及同一 task 它已决定 2 次之后的阻塞才等用户。用户始终可以直接处理；规格与阶段签收仍只由用户批准。
+- 实施角色（bash full）的 bash 只按禁止列表拦（用户决定，10-14，列表写在 `guard.ts` 的 `IMPL_FORBIDDEN` 注释）：判断不了的（命令名、`sh -c`、`eval`、重定向目标含变量）放行，兜底是提交时的 diff 检查；sed -i、tee 只查写入位置。只读角色仍按允许列表。
+- 所有带 bash 的角色都可以联网（用户决定，10-14）：curl、wget 不限主机；实施角色的下载目标按写路径检查（不能写主工作区与受保护路径），只读角色不能把内容写进文件，stage-qa 在临时 worktree 里不另加限制；`git fetch`、`pull` 仍禁止（远程分支由引擎同步）。
+- 工具的可选参数里的占位值（''、`N/A`、null）当作没传；`bash_allow` 没在 commands 定义的命令只告警；guard 的变量代入也作用于命令替换；`git` 设 `core.quotePath=false`。
+- 任务说明带「允许的测试入口」「已交付的接口」两节；上游 handoff 只带上游最后一次 run 写的段。
 
-**M1（2026-10-09）**
+### 预检、审查与合并
+- 每个 task 不跑预检命令，合并时也不跑测试（用户决定，省时间）：预检只查契约只能追加。每次合并后在后台对集成分支跑一遍门禁命令（`limits.post_merge_test`，默认开，用户决定 10-14）：变红时同一提交重跑一次排除不稳定，再在上一次通过之后的合并里二分，给第一个变红的合并建 `.fx-n`（同一 task 最多 2 次，之后交给门禁）；阶段门禁等它跑完，并沿用同一棵代码树上通过的结果。fix 流程没有阶段门禁，合并时仍跑 typecheck、lint、test。
+- 没有 test-author（用户决定）：worker 自己写 `tests/acceptance/<T>/` 的验收测试。impl 一律审查，fix、doc、merge-fix 不审查；reviewer 读 diff，运行本 task 的单元测试与验收测试，检查每条 AC 都有带编号的测试且没被写弱。must 的出处只能是 `rule:`（须指向存在的规则条目）、`ac:`、`contract:`、`defect:`，否则降为 suggest；确认轮不能新增问题，按关闭条件的目的判断（修在别处、有对应测试也算解决）。
+- 合并：rebase；双方都只插入行的冲突由程序三方合并，合不了的交回正在合并的 worker（用户决定）；受保护文件冲突、主工作区有改动等阻塞先交给主会话；任务分支相对集成分支没有改动的阻塞为 `no_changes`，确认后视为完成；其他种类与主分支同步冲突走 merge-fix。之后只查冲突标记与 `merge_check`。同一棵代码树的同一条命令只验证一次。工具不存在导致的命令失败按跳过处理并提醒。
 
-8. 一次切换到 v3.2：删除 HEAD 的规划、需求讨论、独立验收、最终审查、修订与 fix 流程层，后续按 legacy 分别在 M2–M7 重建。`/forge-build` 只建流程、停在 P0，不启动主会话讨论。
-9. M1 临时预检集中在 `passthroughPrecheck()`，等待最新验收测试与软依赖、同步后直通 queued_merge；合并时仍执行全量验证。M4 替换，M4 验收必须确认直通代码和标记已删除。（已被第 47、48 条修订）
-10. bash allowlist 在 M4 前按 readonly 处理，保留 `bashAllow` 配置；**命令白名单尚未生效**，不能因此放行有副作用的命令。（已被第 41 条修订）
-11. 暂时保留 HEAD 的门禁失败修复任务机制，kind 改为 fix；两轮用尽进入 needs_human。M6 由 stage-qa 取代；M1 的 accept 只接状态机已有的人工例外路径，最终合入仍需用户签收。（已被第 59、60 条修订）
-12. 主会话角色沿用 orchestrator，不采用规格中的 main（用户决定）；规格中的 main 都指 orchestrator。范围授权来源和超时复核设置也使用 orchestrator，主分支名与 main_branch 保持原样。
-13. `.forge` 格式版本从 1 开始，无内置旧格式迁移；保留迁移框架、更新版本拒写与缺失迁移提示。不提供旧 pi-flow 流程兼容路径（修订 M0 第 3 条的临时夹具方案）。
-14. **已撤销（M2，见第 21 条）**：名字以 `-engineer` 结尾的角色按 worker 校验专属工具，保留按层的运行时测试夹具；仓库角色来自包根目录与项目覆盖目录，不再使用 CONTENT_ROOT。
-15. run_timeout 计入 attempts（规格第 8.1 节），保留超时复核和续跑上限；已有超时复核决定优先于重复失败看守，避免其提前截断续跑。unblock 默认保留计数，--reset 仅清零阻塞原因对应的计数。
-16. `testing.adjust_tests` 按模板保留，仅 impl/fix 可适配已有测试，新增与删除不放行；独立的 `tests/acceptance/**` 从适配白名单中排除。
-17. risk 枚举暂定为 low、normal、high；M1 仅校验形状，计划的语义检查与 DAG 推导留给 M3。
-18. `canAppendInterfaces` 保留，路径改为 `docs/contracts/**`，提交例外只认 `Facts.contract_additions`；M5 判定实现前传空数组，不能将 agent 的声明当成已核实的追加。（已被第 54 条修订）
-19. 模型升级读取 attempts、precheck_failures、merge_failures、review_rounds 的合计，不改写各独立计数；合并验证日志按 merge_failures 编号，避免旧 attempts 编号覆盖重试证据。
-20. intake 的输入导入与独立索引提交原语暂时保留，输入放进 `docs/spec/inputs/`；M2 改为规格流程。旧真实构建脚本移除，M9 再实现真实模型实验。
+### 阶段验收
+- 门禁命令与覆盖率 → stage-qa → 修复 → 重跑 → stage-qa 只确认一轮 → 签收；门禁通过时与最近一轮 qa 的 HEAD 都等于当前 HEAD 才签收。只依据持久化状态，崩溃后重入结果相同。
+- 门禁失败与覆盖率缺口都建 `.fx-n`，共用 2 轮；归属先看各 task 合入时实际改动的文件，再看 writes，兜底给本阶段最后合入的 impl。
+- stage-qa 在集成分支 HEAD 的临时 worktree 里运行，bash 参数不能引用主工作区路径。
+- 最后一个阶段批准时存交付汇报再 `--no-ff` 合入主分支；`/forge-status --metrics` 含速度、返工（含没提交就结束的 run 按类别计数）、成本、被拦下的操作。
 
-**M2（2026-10-09）**
+### 变更请求、fix 与小改动
+- 变更请求 drafting → proposed → approved/rejected，同时只能有一个；修订就绪后先由主会话审核（最多打回到第 3 轮），它可以转交用户；proposed 时就暂停被调整的 task，阶段门禁等待；architect 的说明带发起 task 的改动与 handoff；已开始的 task 用 `modifies` 新增后续 task。
+- fix 与小改动都是单阶段 `X1` 的轻流程，直接合入主分支，最后由 X1.qa 确认（最多两轮）；同一时间只能有一个，build 运行时拒绝。小改动（用户决定）：`/forge-change --from <yaml>` 或 `forge_change`，1–3 个 impl task，不走 P0/P1 批准；实现合入后程序强制 architect 的「更新架构图与契约」task。
 
-21. 删除按层测试角色，运行时测试改用 pi-forge 七角色重写；撤销第 14 条的 engineer 后缀兼容。旧断言的替代见下方“M2 删除按层角色”。
-22. `/forge-build` 的 `--prd` 必填，不支持无 PRD 的想法讨论；原件不解析，流程标题取 PRD 文件或目录名，原型可省略。
-23. forge_read 的 ref 白名单只认存在的本地主分支与 flow 的集成/任务分支，不接受 HEAD、SHA、revision 或状态引用，避免读到状态与检查点。
-24. 同一流程只允许一份 proposed 规格修订；多个审批对象必须明确 stage/amend，change 留给 M7，避免误批准或叠加未批准修订。（change 已由第 64 条实现）
-25. spec 增量页面按路由整页替换，权限按资源操作合并角色单元格；没有删除页面语法，空页面小节与无数据行的合法权限表表示没有变更。
-26. 删除的 REQ 编号不得复用，仍计入历史最大编号；额外拒绝不可解析的需求/AC/术语、空基线、删除标题带 AC、重复 feature 文件名或小节，避免静默猜测。
-27. intake 清单持久化为 `{ prd, prototype_path?, files }`，替换第 20 条的兼容投影；TypeBox 1.3.27 的 Memory.Clone 会剔除 `prototype` 键，故内部改名，公开 intake 接口仍为 `{ prd, prototype?, files }`。
-28. 输入入库保留原件字节、相对目录和可执行位；拒绝空目录、符号链接、敏感/状态路径，保留 500 文件/30 MiB 上限；forge_read 沿用 2000 行/50 KiB 完整行分页，超长单行明确提示。
-29. P0 的 spec-lint 错误整体拒绝且不落文件/事件；通过后独立索引提交，闸门重读集成分支并必须人工批准；P1 只留 M3 占位，不派发（已被 33 修订）。恢复 awaiting_gate 时由引擎重跑闸门。
-30. 修订先只保存提案与 AC/task 影响，批准才提交 feature；批准前重新 lint 并对比影响，变化时要求打回重提。日期回拨时不早于已有 feature 的日期，保持文件名叠加顺序；architect 变更请求留 M7。（已被第 64、67 条修订）
-31. AC 的全局编号统一为 `REQ-001.AC1`（规格第 7.1 节、acceptance-tests 技能的写法），task.ac、spec 的 diffAcs/acTexts、修订影响分析都用它，不做转换。规格文件/修订内容单份限 120000 字符，修订名最多 80 字且只含文字、数字、下划线、短横线。
-32. 验收测试 task（`.at`）的推导已实现（`deriveTasks` 的 `acctest` 开关），但 M3 不创建（`ACCTEST_TASKS_M4 = false`）：独立工作区、同步进 impl 预检和报告路径在 M4，现在创建会让 impl 的输入一直不就绪。M4 打开并补 e2e。（M4 第 3 步已打开，常量删除。）
-33. P1 由程序驱动：进入 P1、打回或闸门失败时引擎新建 architect 的 doc task（接着上一个 task 的会话，`fork_from_task`），不经主会话、不受 auto_dispatch 影响，直接派发（与 merge-fix 同路径）。返工原因存在 `flow.plan_rework`，写进新 task 的 handoff，派发后清除。
-34. task 编号全流程连续：architect 的 doc task 也占编号，plan.yaml 从下一个空号起（brief 写明起始号，冲突时校验给出建议编号）。不用临时编号再映射。
-35. `forge_propose_plan` 在 architect 的 worktree 上跑完整 P1 校验（契约结构、术语表只追加、计划），通过后保存 `plan-proposal.json`（含 plan 的 sha256、assumptions、extras、报告）。doc 预检要求提案存在且 plan.yaml 未再改；闸门在集成分支上重跑同样的校验。
-36. 术语表在 P1 只能追加：对比 `flow.spec.sha` 时的版本，已有术语的定义不能改、不能删。
-37. 契约锁定只记录 `flow.contracts_base`（批准 P1 时集成分支的提交）。实施阶段对契约只能追加的强制检查放在 M5（审查/契约检查）。（已被第 54、66 条修订）
-38. 批准 P1 时先在主工作区应用规则与命令草案（单独提交，包括 `acctest_workspace`），并同步更新运行中的配置，再生成 S 阶段与 task。P1 不算最后阶段，不提示合入主分支。
-39. 规则文件除按 scope 选择外，还按 task 的 `layers` 附上 `rules/<layer>.md`（存在时）。architect 写的规则草案按层命名，worker 就能拿到。
-40. 资源端口段在 41000–60000 内按 10 对齐，从随机位置开始找，登记前逐个端口探测能否监听。程序步骤（预检、门禁、合并验证）用带前缀的标签（`pc-`、`gate-`、`merge-`）代替 run id；条目的 pid 记分配它的引擎进程，回收条件是 run 已结束或该进程已不存在。
-41. bash 白名单：`bash_allow` 引用的命令拆成简单命令，`{files}` 占位及其后的词去掉，调用时逐词前缀匹配；其余按只读档位处理。"读其他提交"的拦截范围是：`git show`、`cat-file`、`archive`，`log` 的 `-p`/`-L` 等，`diff`/`blame`/`grep` 在 `--` 之前带版本参数。只读档位比较工作区改动要写成 `git diff -- <路径>`；reviewer 的 diff 按第 10.2 节附在提示里（M5）。
-42. 隔离工作区的 guard 由 `GuardContext.isolatedWorkspace` 打开（第 3 步对 acctest task 设置），不按角色名判断。
-43. 验收测试分支名用 `flow/<流程>/acc/<impl>`（规格写 `acc/<task>`），与任务分支同一命名空间，按流程清理；`.at` 与 `.at-n` 都写进原 impl 的目录和分支。
-44. test-author 提交时，task 的每条 AC 都要有以 `[REQ-xxx.ACn]` 开头的测试，否则拒绝（规格只说"统计覆盖率"，这里按"能用程序判断的不交给 LLM"直接检查）；覆盖情况存为 evidence `coverage.json`。越界改动由程序还原后拒绝（test-author 的 bash 不能用 git 还原）。
-45. 隔离工作区的基线提交包含导出文件与 codegen 产物，依赖目录写进 `.git/info/exclude`；缓存命中时用 Node 逐文件硬链接（macOS 的 cp 没有 -l）。准备失败时 task 转 blocked 交给用户，不反复重试。工作区目录名取首次派发的 run id，返工派发复用。
-46. 资源端口段长度取 `limits.port_block`（默认 10），已登记区间按重叠判断。
-47. 预检第 3 步（diff 越界、验收测试未改）沿用 forge_submit 时的状态机检查，预检不再重复；程序合入、内容与 acc 分支一致的本 task 测试文件不算 worker 的改动。"契约只能追加"留了 `contractAppendCheck` 接入点，M5 实现。逐任务审查在 M5 接入，M4 预检通过一律 `precheck_pass_skip`。
-48. 预检在后台运行（与合并一样被跟踪），同一 task 不并发；resume 后 checking 的 task 由下一次 pump 重新预检（第 8.3 节"丢弃结果重跑"）。计划派生的 impl 带 `verify: [typecheck, lint, test]`（已定义的），合并时据此跑全量。
-49. 争议依据的核对：`docs/spec/…`、`docs/contracts/…` 的文件存在（`:行号` 在范围内、`#标题` 能在文件中找到），或规格中存在的 AC 编号；实现代码不算。同一测试争议次数超过 `testing.max_disputes` 时 forge_dispute 直接转用户裁决，不再建 .at-n。
-50. 验收测试在合并验证时全量运行（加到 typecheck、lint、test、merge_check 之后），失败按输出里出现的 `tests/acceptance/<task>/` 目录归属：全在别的 task → 第 9.4 节；acctest 单独合并时全在本目录或认不出 → .fx-n，有目录外的 → integration_broken。认不出目录的普通 task 失败按原来的合并失败处理。
-51. 新 task 字段：`acctest_round`（.at-n 的来由）、`changed_tests`（report 时记录）、`waits_for`（第 9.4 节等待的 .at-n，由 foreign_tests_broken 写入、inputs_ready 清除）。.at-n、.fx-n 的 stage 取当前阶段，保证可调度。"最新验收测试"一律忽略已取消的轮次。
-52. impl 已 done、test-author 没改测试时提交被拒（没有可单独合并的内容），需要 forge_block 说明。验收测试 task 不参与批量合并。
-53. 范围申请（第 14 节）：硬限制在 `checkScope` 里直接拒绝；与已开工 task 重叠的 forge_request_scope 直接拒绝，forge_resolve_scope 批准时再查一次（申请后才开工的也拒绝）。`forge_service` 与范围申请的授予在 M1 配置里已限定为 worker、stage-qa / worker。
-54. 契约追加的结构化判定（第 12.1 节，`contract-diff.ts`）：只在集合位置允许新增键（路径表、operation、responses、properties、content、components/errors 根、tables、columns），其他位置新增都算修改；任何数组（含 required、enum）必须不变，因此新增 property 只可能是可选字段，请求与响应用同一条规则。新增列须 `nullable: true` 或带 `default`。已有错误码只比较 http 与 message。forge_submit 与预检用同一套规则（替换原来的按行删除检查），通过的契约改动作为 `contract_additions` 不受 writes 限制。修改已有契约的提示改为 forge_block（forge_change_request 在 M7）。
-55. 契约冲突（第 12.2 节）：rebase 冲突文件全部在 docs/contracts 时做三方合并（stage 1 祖先、2 集成分支、3 任务提交，已实测）；混有其他文件或合并不了时放弃，本模块的契约文件与根 openapi.yaml、data-model.yaml 的冲突走 merge-fix，merge-fix 可写自己 conflict_files 里的契约文件。
-56. 逐任务审查：`.rv` 用被审查 task 的 worktree（只读，不新建也不删除）；审查输入完整放进提示（`reviewBrief`），不走 handoff 通道（handoff 只保留末尾 6000 字）。`review.max_rounds` 接到状态机的 `limits.review_max_rounds`：第 k 轮仍有 must 走 review_changes，k 达到上限时由计数器转 blocked（review_exhausted），不单独用 review_exhausted 触发器。strong 审查受 `escalation.enabled` 约束用升级模型。结论存 evidence（review-input/report/confirm.json），suggest 由程序提交到集成分支 `docs/review/suggestions.md`。返工前已通过的审查不重审。测试夹具 `mkTask` 默认 `review: 'skip'`，避免旧用例多出审查派发。
-57. "合并队列选第一个合格的 task"在 M1 已实现（软依赖未完成的跳过）；由于软依赖在 inputs_ready 时已检查，实际不会出现队首不合格，保留作保护。
-58. 阶段级 task 的编号挂在阶段上：`S1.rv`、`S1.rv-2`（精简模式的阶段审查）、`S1.qa`、`S1.qa-2`（stage-qa）。规格只规定了 `T-xxx` 的后缀，所以 TaskId 的模式放宽到"阶段编号.rv/.qa"。`acctest_round.kind` 增加 `coverage`。
-59. 阶段验收的编排在 `stage-acceptance.ts`。流程是：精简模式先做阶段审查 → 门禁命令与覆盖率（`runImplementationChecks`，不转移阶段状态）→ stage-qa → 修复 → 重跑门禁与覆盖率 → stage-qa 只确认一轮 → 签收。stage-qa 运行期间阶段保持 `awaiting_gate`，state-store 允许 qa task 在这个状态下派发。修复期间阶段回到 `active`（触发器 gate_failed）。只有门禁通过时的 HEAD 和最近一轮 qa 的 HEAD 都等于当前集成分支 HEAD，才进入签收。各类轮数用尽或问题找不到负责的 task 时转 `needs_human`（触发器 gate_exhausted）。
-60. 覆盖率缺口生成的 `.at-n` 和门禁修复共用 `MAX_GATE_ROUNDS = 2`，记在 `gate_rounds` 里，command 为 `coverage`。覆盖率报告提交到集成分支的 `docs/qa/<阶段>.md`，阶段 evidence 里再存一份 `coverage.md`。只在计划里有的 S 阶段（`s_stages`）计算覆盖率。
-61. fix task 的归属（第 11.1 节）：文件归"writes 覆盖它、已 done 的 impl task 中编号最大的一个"，因为 task 没有时间戳。验收测试目录 `tests/acceptance/<T>/` 里的失败直接归 T，`writes` 用 T 的 writes，因为 worker 不能改测试。fork 的会话取该 impl 最近一个已 done 的 `.fx-n`，没有时取 impl 本身。stage-qa 和阶段审查生成的 fix 用标题里的"（S1.qa 第 k 轮）"识别轮次，不新增字段。
-62. stage-qa 与阶段审查复用 reviewer 的出处校验、降级和"确认轮不能新增问题"规则。结论存为 evidence：`qa-input.json`、`qa-report.json`、`qa-confirm.json`。它们没有自己的 worktree，派发时在集成分支 HEAD 建临时 detached worktree，结束后删除。`forge_service` 在没有 worktree 时直接拒绝，不再回退到主工作区。
-63. 精简模式跨阶段接着会话：impl 没有 `fork_from_task` 时，派发时 fork 上一阶段 impl 谱系里最后一个 worker task。会话大小和 `continue_session` 仍由 `forkSource` 检查。签收汇总与交付汇报在 `signoff.ts`（改编自 pi-flow finish-report）：`/forge report` 显示；最后一个阶段批准时把汇报存为阶段 evidence `delivery.md`，再 `--no-ff` 合入主分支。第 17 节的指标由 `/forge-status --metrics` 显示。
-64. 变更请求（第 12.3 节）存为 `changes/C-001.json`，状态依次为 drafting → proposed → approved/rejected。同一流程同时只能有一个未结束的变更请求，第二个直接拒绝，不排队。architect 在当前阶段的 doc task 里改计划，用 `forge_propose_plan` 提交。对已开始或已完成的 task 的修改，写成新 task 加 `modifies: T-xxx`（计划新增的字段，只在变更请求里允许），程序把它变成硬依赖原 task 的后续 task。批准时在一个事务里落地：新增、调整、取消 task，`.at-n`（kind `change`），以及 `stages_revised`。
-65. 变更请求在 proposed 时就暂停被它调整的 task，而不是等合并之后。有未结束的变更请求时，阶段门禁等待。architect 对契约的修改在用户批准前就合入集成分支。当前计划取自最近一个已批准变更请求的 `plan_text`，没有时取 `contracts_base` 上的 plan.yaml，所以被打回的修订不会污染基线。
-66. 契约只能追加的检查，基线改为任务 worktree 与集成分支的合并基点（`contractBaseOf`）：任务 forge_sync 之后，已批准变更请求对契约的修改不算 worker 的改动。
-67. 规格修订批准后，如果计划已批准且 AC 有变化，程序自动发起变更请求（source `amend:A-xxx`）。已有未结束的变更请求时只提示，不发起。
-68. fix 模式（第 13.4 节）由 `src/modes/fix.ts` 驱动，改编自 7006e7d。T-001 是 worker 的 impl，writes 为 `**`，不派 `.at`，不做审查，合并时跑全量直接进 main。之后派 X1.qa（stage-qa，只读），在阶段 active 时运行，和 S 阶段不同。must 生成 `.fx-n`，然后 X1.qa-2 只确认，最多两轮，之后转 needs_human，`/forge accept --note` 放行。修复日志写在 `.forge/fixes/<日期>-nnn.md`。`implementation_gate.qa: false` 时跳过确认。`fix_max_files` 只写进 handoff，程序不强制。
-69. feature 模式：增量规格文件名带"日期-000-"前缀，规格写的是 `<名字>.md`，加前缀是为了按文件名叠加的顺序稳定。修改过的权限行记在 `flow.spec.permission_changes`，在批准页单独列出。P1 计划只要求新增或变化的 AC 有归属，因为基线里的 AC 已经实现。main 上已有的契约从流程开始就锁定，只能追加。没有 `docs/contracts/` 时 `/forge-build --feature` 拒绝，并提示先运行 `/forge init --adopt`。
-70. `/forge init --adopt ["<说明>"] [--force]` 用一个 feature 流程，只有一个阶段 `ADOPT`。architect 的 doc task 只写 `docs/contracts/**` 和 `docs/arch/**`，只描述现有行为；契约结构检查通过后由用户批准，批准时 `--no-ff` 合入 main。`--force` 用于以后纳管更多模块，此时已有契约只能追加。`/forge-add` 只把需求交给主会话整理成 `forge_spec_amend`，不改状态。
-71. 按用户要求，`/forge-build` 不再必须带 `--prd`（规格第 13.2 节写的是必填）：不指定时扫描项目 `docs/` 下用户放的文档，跳过 pi-forge 维护的目录（spec、contracts、arch、plan、qa、review、research、rules-draft）、隐藏文件、敏感文件，入库到集成分支 `docs/spec/inputs/docs/` 并保持相对路径。feature 模式按 git blob 编号跳过主分支 `docs/spec/inputs/` 下已入库过的文档。有文档时主会话先读、只就疑点提问；没有文档时不记 intake，主会话按 grilling 详细访谈。`--prd`、`--prototype` 仍然可用，位置参数是流程名。
-72. 硬依赖自己 impl 的验收测试（impl 合入后才写，第 9.5 节单独合并）不算 impl 预检要等的"最新验收测试"（`awaitedAcctest`），否则 impl 与它互相等待。
-73. 第 12.2 节的契约结构化三方合并也用在预检前的同步（`syncTaskInputs`）上：预检先同步集成分支，契约追加的冲突在这里就出现，不再留到合并队列的 rebase。
-74. merge-fix 也走预检（此前停在 checking 无人处理）；合并队列加测试钩子 `beforeMerge`（取队首前调用），e2e 用它让几个任务都进队列再合并。
+### 删掉与没做的
+- 10-12 删除（用户决定）：feature、adopt、规格修订、精简模式、test-author 与 `.at`、争议、范围申请。原因：后续功能由 agent 读架构图与 rules 完成，不走重流程。旧 workflow.yaml 里已删的键与工具只告警。
+- 10-14 删除 researcher 角色（用户决定）：没有流程会派它，所有带 bash 的角色都已能联网。`web` 工具组（pi-web-access）留在模板里，默认不分配给任何角色，要用时在角色 tools 里加 `"@web"`。
+- 10-13 删除 pi-serena：扩展工具只能只读或联网，写文件只用内置 write/edit。
+- 10-13 评估「Stage 级共享工作区 + CAS」，不做：实验里 worktree 准备只要几秒、没有合并冲突，时间花在模型思考；共享工作区会让半成品互相干扰、失败算错人，bash 写入也无法纳入 CAS。
 
-**M8.5：评审修正（2026-10-10，见 `docs/ADVERSARIAL-REVIEW.md`）**
-
-75. 依赖准备统一为 `src/core/workspace.ts` 的 `prepareWorkspace`（F1）：所有会运行命令的工作区都先 install → codegen。只读工作区（门禁、阶段审查、批量合并临时树、验收测试隔离工作区）按"锁文件哈希 + install 命令"缓存并硬链接；可写工作区（任务 worktree、merge-fix、`.fx`、stage-qa——它有 full bash，可能原地改依赖目录）直接 install。所有工作区共用 `acctest_workspace.cache` 这一项配置（名字沿用）。没有清单与锁文件（S0 初期）或没有 install 命令时跳过。耗时记 `workspace_prepare` 事件，`--metrics` 汇总。
-76. 同一棵代码树只验证一次（F2，`src/core/verify-cache.ts`）：预检、合并验证、门禁通过的命令记下代码树 SHA、命令名、命令内容哈希和 evidence；三者都相同时沿用，不再运行，并写沿用记录 `merge-aN-reused.txt` / `gate-reused.txt` 指向被沿用的 evidence。工作区不干净时不记不用；P1 或变更请求改了命令，哈希不同即重跑。
-77. "任务在等谁"收成一处（F4，`src/core/waits.ts`）：dispatcher、state-store、合并队列、status-view 共用 `waitsOn`/`softDepsDone`/`awaitedAcctestDone`；`stalls` 找出环、等待已阻塞或已取消的任务。status-view 报停滞，doctor 按 `actionableStalls`（不含等待 pending 的情况）报错。
-78. 预检与合并后验证失败时，失败信息列出任务 writes 之外被改的文件，并提示用 `forge_request_scope`（F7 第 1 步，`src/core/scope-hint.ts`）。`tests/acceptance`、`docs/spec`、`docs/contracts` 不提示（不能申请）。F7 第 2 步（快用完时生成修复任务而不是阻塞）留到 M9 之后。
-79. stage-qa 也用隔离工作区规则（`isolatedWorkspace`）；隔离模式下 bash 的任何参数引用主工作区路径（带边界匹配）直接拒绝。补上了"已知局限"里 full bash 写主工作区绝对路径的缺口，e2e 断言写入被拦且文件不存在。
-80. 有 install 命令、但工作区里还没有依赖清单时，派发跳过 install，并在任务的 handoff（用户消息，不进系统提示前缀）里提示 worker：建好依赖清单后自己运行 install，再跑测试。
-81. 新增 `implementation_gate.test_author`（默认 true；M9 的 A1 臂设为 false）。false 时：P1 不派生 `.at`，impl 的 writes 加上自己的 `tests/acceptance/<T>/**`，状态机只对它和它的 fix 放开这个目录；任务说明（用户消息）加"由你编写验收测试"一节；覆盖缺口改建 `.fx-n`（writes 同 impl）；争议直接拒绝；破坏别人的验收测试按本 task 合并失败处理。
-82. 所有工具注册时挂 `prepareArguments`（Pi 1.1.0，在 schema 校验之前调用），把可选参数里的占位值（''、`N/A`、null 等）当作没传；子进程工具在 `callFlowTool` 里同样处理。原因：M9 冒烟中 gpt-6.1-sol 给 `forge_spec` 的 feature 参数填 `N/A`，build 流程连续拒绝 17 次。
-83. 契约检查把空文件（含 `/forge init` 留下的 `.gitkeep`）当作不存在，architect 不需要的文件清空即可（它没有删除能力）；计划校验接受 S0 task 在 writes 里写出 `_support/**`、`S0-smoke/**`（技能 plan-dag 这样要求），派生时去重。M9 冒烟里 architect 因这两处被卡死在 P1。
-84. 精简模式不做逐任务审查（`decideReview` 按流程的 plan_mode 关掉 per_task），与 workflow.yaml 注释"精简模式自动为 false"和第 7.6 节一致；此前只读配置，精简模式下仍派 `.rv`。M9 冒烟发现。
-85. test-author 隔离工作区默认还导出 `scripts/**` 与根目录 `tsconfig*.json`（规格第 9.2 节只列了规格、契约、验收目录与 include）。M9 冒烟里 S0 把验收运行器和 codegen 放在 `scripts/`，隔离工作区里 codegen 失败、`.at` 卡住；worker 改不了 `workflow.yaml` 的 include。S0 完成标准第 5 条（隔离工作区里 install 与 acceptance_list 能运行）程序仍未在 S0 检查，记入已知局限。
-86. 只读档位 bash 但有 write 工具的角色（architect）执行 `rm`、`mv`、`git rm`、`git mv` 时，拒绝信息改为给出做法：在新路径写入、把旧文件清空（配合偏离 83 的"空文件视为不存在"）。M9 冒烟里 architect 因无法改名契约文件连续阻塞。
-87. 调度与状态机的互斥都不作用于同一 impl 谱系里的验收测试 task 与实现 task（二者由争议与单独合并协调，`.at` 在隔离工作区里写）。M9 冒烟：S0 的 `.fx-1` 继承 `tests/acceptance/_support/**`，提出争议后等 `.at-2`，而 `.at-2` 被互斥挡住，两边互等；`waits.ts` 的停滞检查不含互斥，没有报出来（已知局限）。（修订：最初只改了调度器，状态机在 ready → in_progress 仍按互斥拒绝，第二次冒烟才暴露；现在两处共用 `dag.ts` 的 `sameLineageAcctest`。）
-88. spec-lint 的占位词规则只认大写、独立成词的 `TODO`、`TBD` 与"待定"（此前不区分大小写，把 `Todo`、`TodoCollection` 这类合法术语当成占位）。M9 冒烟：待办项目的基线 glossary 让 feature 流程的增量规格无法提交。
-89. 规划用的"已用 task 编号"包括此前各流程的 task 与主分支 `tests/acceptance/` 下的目录名（`usedTaskIds`）。验收测试目录全仓库共用；此前 feature 流程从 T-001 重新编号，会和旧流程写进同一个目录。M9 冒烟发现。
-90. 合并验证时失败的验收目录不属于本流程的任何 task（此前流程留下的测试被新需求打破）：给本 task 建一轮 `legacy` 的 `.at-n`，writes 加上旧目录，不等未开始的 `.at`、不要求覆盖 AC，由 test-author 按最新规格只改冲突的断言；`.at` 的提交检查、补丁与导出改为按 task 的 writes。找不到任何负责的 task 时按本 task 的合并验证失败处理（此前会尝试非法转移，task 卡在 merging、合并队列被占）。
-91. `git()` 封装统一设 `core.quotePath=false`（经环境变量注入），路径按 UTF-8 原样输出。此前中文文件名会被转义加引号，按行解析的 `ls-tree`/`diff --name-only` 读不到文件；M9 冒烟里 feature 规格叫"删除待办"，P1 预检按 ref 读规格时漏掉增量需求，architect 反复被拒。
-92. 争议裁决读 `changed_tests`：acctest 单独合并（`submit → checking`）此前不记录它，被当成"维持测试"，.fx 白干一轮。现在 submit 的 effect 记 true；缺失时 `resolveDisputes` 阻塞交给用户，不再静默判维持。改测试后 .fx 的 worktree 先合入集成分支（acc 分支合并后已删；测试目录内的旧版本冲突时以集成分支为准）再预检。
-93. merge-fix 的 T- 编号（合并冲突与阶段同步两处）统一走 `nextPlanTaskId(usedTaskIds(...))`；手写 `Number(id.slice(2))` 遇到 `.at`/`.fx-n`/`S1.rv` 得到 `T-NaN`。删掉无人使用的 `stages.nextTaskId`。
-94. 阶段修复 `.fx` 的 writes 追加原 impl 的非验收测试 glob（`tests/` 下、非 `tests/acceptance`），审查要求补回归测试时才写得进去；`test_author: false`（偏离 81）时 impl 自己的验收目录也随之保留。
-95. 阶段审查 / stage-qa 的 fix 用 `source_round: { task, round }` 关联轮次，`fixTasksOfRound` 不再靠标题里的中文标签（标题只展示）；不兼容旧状态里只有标题的 fix。
-96. 角色提示词与技能按 M9 A0 的返工教训改写（顾问意见部分采纳）：worker 加 `simplicity`、`receiving-feedback`（reviewer 加 `simplicity`，过度工程默认只作 suggest）；test-author、reviewer、architect 相关提示收紧。未采纳「黑盒试跑」（程序无此能力）；commands 在程序里全部可选，故只改提示为按项目实际配置。 simplicity 另吸收 ponytail（MIT）的"方案偷懒、改动完整"几条；`test_author: false` 时 worker 另带 `acceptance-tests`。
-97. 所有 pi 子进程（`pi-adapter/launcher.ts`）与 M9 两侧脚本加 `--no-mcp`：Pi 1.1.0 内置 MCP，`--tools` 白名单不过滤 MCP 工具，用户在 `~/.pi/agent/mcp.json` 配的服务器会绕过 guard 进入子进程，也会让 N 与 A 两组工具不一致。
-98. 偏离规格第 9 节：`implementation_gate.test_author` 未配置时按 plan_mode 决定（lean 关、standard 开），显式 true/false 照办；`config.testAuthor` 改为 `testAuthorFor(flow)`，模板里该项改成注释。M9 A0 证据：验收测试零次抓到实现缺陷，争议循环与 test-author 合计 60+ 分钟；外部评审建议；用户决定。P1 落地时 plan_mode 已知（取计划的 mode）。
-99. 任务说明（用户消息）新增 `## 允许的测试入口`（impl 或 for_task 的 test_interface）与 `## 本阶段及之前已交付的接口`（已 done 的 impl 的 api:/page: 产出 + 本 task 自己的 produces，最多 40 项）；给 worker、test-author、reviewer。此前提示词要求只在 test_interface 上验证，程序却从不渲染它。
-100. reviewer 的 `rule:` 出处必须指向项目里存在的 `rules/*.md`，`#` 后的条目（编号 R3/3 或文字）要在文件里出现，否则 must 降为 suggest 并写明原因（此前 `rule:skills/tdd#…` 被接受）。无读取器时仍只看前缀。
-101. 上游 handoff 只带上游最后一次 run（actor 为 `run:<id>`）写的段，跳过 dispatcher / engine / merge-queue 等程序段（过时的「依赖准备失败」把下游首条消息撑到 10–17KB）；没有 run 段时只丢程序段，无段落头的文本原样保留。
-102. 提示词按外部评审（reviewer2-fable）三处改：lean 不强制产物（S0 不建类型生成、客户端生成、契约检查、DOM 模拟，exit 最多 4 条 AC；commands 只配 test 与 serve，零依赖不配 typecheck 等；lean 只分 S0+S1，S1 超 40 条 AC 才拆）；测试标准统一为"关键逻辑写单元测试，AC 覆盖由验收测试负责"；must 的出处限为 `rule:rules/<层>.md#R<n>`、ac、contract、defect，单元测试写法问题只作 suggest，expected 只能要求已配置 commands 能验证的结果。
-103. 角色提示改为引用任务说明里的『允许的测试入口』『本阶段及之前已交付的接口』两节（程序侧另行渲染）；删去程序不提供的输入描述；test-author、reviewer 的 bash 说明与 guard 的 allowlist/readonly 档一致；worker、test-author、reviewer 与技能重复的段落各留一处。write-rules 规则编号统一 `R<n>`，每文件 ≤5 条规则、≤4 条清单，须可追溯到权限、界面规格、契约或安全底线。未采纳评审第 8 条（upstream handoff 裁剪，属程序）。
-104. `src/core/` 按模块拆成 10 个子目录（state、engine、workspace、spec、plan、verify、acceptance、stage、security、ops），只搬文件、只改 import 路径，不改逻辑。个别文件按依赖方向微调归属（config、paths、git、dag、waits 归 state；engine-lock、lineage 归 engine；shell 归 security）。更早条目里的旧路径对照见文末「src/core 路径对照（10-11 重组）」。
-105. M9 脚本判定"已交付"只认最后一个实施阶段（`S<n>`）的 `stage_status = done`；P0、P1 批准后阶段切换的瞬间也会短暂是 done，轮询碰巧读到时会提前进入变更阶段（e2e `m9-real-build` 间歇失败即此原因）。
-106. `src/core` 目录依赖改为无环分层（state → security/workspace → verify/insight → spec → acceptance → plan → stage → engine → ops），由 `test/unit/core-layers.test.ts` 约束；搬了 19 个文件（verify-runner、resources、services、forge-read 下沉到 workspace；cost 系与 forge-watch 进新目录 insight；adopt、feature-spec 进 plan；gates、release 进 stage；merge-queue、precheck、knowledge、notes 进 engine；engine-lock、notify 进 ops；stage-fix 进 acceptance），并抽出 5 处纯函数（去向见路径对照表末），函数体原样，没有参数注入。
-107. test_author 关闭时，合并验证（impl 与 fix 共用）里失败的验收目录不属于当前 task（别的 task 的 foreign、此前流程的 legacy）不再建 .at-n 也不再只按失败退回：`decideBrokenAcceptance` 把这些目录加进当前 task 的 writes（grantScope，程序批准）并在 handoff 写明约束，提交检查放开 writes 里的 `tests/acceptance/[_support/]T-n/**`；forge_dispute / forge_request_scope 的拒绝信息改为指向该机制。M9b A0 的 F-002/T-007.fx-1 即死于此：预检只跑 `acceptance -- <impl>` 看不到旧目录，合并验证全量失败后 test_author 关闭分支返回 null，task 以 merge_verify_fail 退回但无处可改；test_author 开启时行为不变（偏离 90）。
-108. 命令因「工具不存在」失败（退出码 127，或前 10 个非空行里有 sh/bash/zsh `not found`、pnpm `Command "x" not found`、npm `could not determine executable to run` 整行格式，且其前没有测试框架标记）按跳过处理：`workspace/verify-runner.ts` 的 `detectToolMissing`/`noteToolMissing`，接在阶段门禁、预检、合并验证（单个与批量）；evidence 与 note 事件写「工具缺失，已跳过：<命令>」，不计失败、不记为已通过；status-view 对每个 (流程, 命令) 报一次待处理项，建议删掉或装上。验收测试命令（`acceptance`、`acceptance_list`）不接入。依据：M9 A0 里 `redocly` 未安装使 S0、S1 门禁转 needs_human。
-109. lean 计划加程序校验（`plan/plan.ts` 的 `leanShapeErrors`）：S0 exit 涉及的 AC ≤ 4；S0 之后实施阶段数 ≤ max(1, ceil(S0 之后 exit 的 AC 总数 / 40))，AC 按 exit 里 REQ 的全部 AC 计。此前只靠提示词（偏离 102），M9 A0 的 lean 计划仍分了 S0、S1、S2。standard 不受影响。
-110. 偏离规格：plan_mode 为 lean 且 test_author 关闭时，所有 impl / fix 的验收测试写进共享目录 `tests/acceptance/suite/**`（`state/paths.ts` 的 `SHARED_ACCEPTANCE_GLOB`，名字避开 T-xxx），辅助函数只有 `suite/_helpers.js` 一份；`deriveTasks`、变更请求的 `taskPatch`、覆盖缺口的 `.fx-n` 都按 task 现有 writes 取这个目录。预检运行 `acceptance -- suite`（目录名取 `acceptanceDirOf`，不新增命令约定，仍是"`-- <目录名>`只跑 tests/acceptance/<目录名>/"，会连同此前所有 task 的场景一起跑）。`scanAcCoverage` 支持一个括号内多个 AC 编号（`[A][B]`、`[A, B]`、顿号等）。lean 但显式开启 test_author、standard 均不变；偏离 81、107 的按 task 目录分支保留。依据：m9b 实测（545 行原生 vs 5,418 行，验收测试 2,030 行、每个目录一份 helpers）与用户决定。
-111. 偏离规格：lean 计划里 impl 的 writes 不得含测试路径（`plan/plan.ts` 的 `isTestWrite`：tests/test/__tests__/specs/e2e 目录段，或 *.test.* / *_test.* / test-utils 之类文件名），除非该 task 写了 plan.yaml 的可选字段 `unit_tests: "<理由>"`（算法、并发、权限矩阵、复杂状态机等）；违反时 forge_propose_plan（以及变更请求的修订检查）报中文错误。standard 不受限制。依据：m9b 实测 GLM-5.3-Flash 不遵守提示词里的"只测关键节点"，用户决定改为程序约束。
-112. 偏离规格：lean 的契约只写接口清单（路径、方法、一句 summary、成功状态码、错误码），不要求 components schema 与请求/响应体 schema。核对结果：`parseContracts`、追加检查、符号目录、plan 校验对 schema 没有硬性要求（只要求每个 operation 有非空 responses），所以程序未改，只由提示词（design-contract、architect）约定，并加单元测试固定"无 schema 的契约通过"；data-model.yaml、errors/*.yaml 照旧。依据：m9b 实测约 2,500 行 OpenAPI YAML 对 545 行的项目过重；用户决定。
-113. AC 只写用户（或 API 调用方）能感知的业务行为；统一校验、规范化、错误结构等横切细则写进 requirements.md 的「通用约定」，由少数场景覆盖。只改提示词（spec-from-prd、grilling、orchestrator），spec-lint 加警告级 `ac-too-many`（单条 REQ 的 AC > 6，不阻断、无关键词拦截）。依据：m9b 实测（32 行 PRD 整理成 12 REQ、45 AC）与用户决定。
-114. 一个集成场景带多个 AC 编号对所有模式一致：standard / test-author 的 `checkAcctestSubmit` 与 lean、覆盖矩阵共用同一个 `scanAcCoverage`，核对后程序未改，补单元测试固定；提示词（test-author、acceptance-tests）改为优先写多 AC 场景。依据：m9b 实测与用户决定。
-115. 偏离规格第 14 节：impl / fix 不受计划 writes 限制，writes 只用于调度互斥与冲突分类（`state/paths.ts` 的 `opensWrites`、`openWriteAllowed`；guard、提交检查、未跟踪文件清理、合并冲突分类都按它）。仍不能改：验收测试（自己的验收目录除外）、规格、受保护路径；writes 没列测试路径时也不能新建测试代码（保留偏离 111）。`forge_request_scope` 对它们直接回答"不需要申请"，范围申请提示不再追加；merge-fix、test-author 等其他种类照旧。代价：测试运行留下的数据文件不再被清理，会随提交合入（靠 .gitignore 与审查）。依据：m9b STD 实测 T-007 只差在 `src/server/index.js` 注册路由两行，该文件在运行中的 T-004、T-006 的 writes 里，范围申请被硬拒，阻塞 3 次后流程失败；用户决定不再限制 worker 的可写范围。
-116. 用户决定：impl / fix 的合并文本冲突由正在合并的 worker 自己解决，不再另起 merge-fix 会话（`merge_conflict` 转移 `merging → in_progress`，与 `merge_verify_fail` 共用 `merge_failures`，达到上限转人工）；原因：merge-fix 是新会话，不了解原任务上下文。集成分支合入任务 worktree 并提交带标记的状态，`base_sha` 设为集成分支 HEAD，别的任务带入的文件不算该 worker 的改动；不设 `conflict_files`，写权限保持开放。仍交给用户：受保护文件、该任务不能写的文件（如别的任务的验收测试）、无冲突文件的 rebase 失败；doc 等其他 kind 与主分支同步冲突仍走 merge-fix。`awaiting_inputs` 的 `sync_conflict` 路径未改。
-117. 用户决定：每个 task 不再跑预检命令，也不在合并时跑 typecheck、lint、test、acceptance；原因：时间成本。预检只剩合入验收测试与契约追加检查；impl 一律审查（`per_task`、`skip_sizes`、`task.review: skip` 对它无效，lean 也逐任务审查；上一轮通过后返工要重新审查）；`.fx-n`（kind fix）不审查：审查任务编号 `T-001.fx-1.rv` 不符合任务编号规则，回归由阶段门禁与 stage-qa 确认轮核对，reviewer 的 bash 为 `allowlist: [test, acceptance]`，按任务说明运行本 task 改动的单元测试（有 `{files}` 就替换，没有就把文件追加在命令末尾）和本 task 自己的验收（`-- <task>`；lean 共享目录只跑本 task 新增或修改的场景 `-- suite/<文件>`，只改辅助文件时跑整个 `suite`），失败写成 `defect:` 出处的 must。合并只查冲突标记与 `merge_check`；全量 test / acceptance 在阶段门禁，回归按责任 task 建 `.fx-n`。代价：回归到阶段末才发现，审查者变成必经且要跑测试。fix 流程没有阶段门禁，合并时仍跑 typecheck、lint、test。acceptance 命令需支持 `-- suite/<文件>`。
-118. 用户决定：默认不再有 test-author，职责交给 reviewer；原因：m9 A0 里 test-author 在看不到实现时写错测试，造成争议返工。`testAuthorFor` 任何模式都为 false（只有 `implementation_gate.test_author: true` 才启用旧路径）；模板去掉 `test-author` 角色与 worker 的 `forge_dispute`；worker 一律自己写验收测试（standard 在 `tests/acceptance/<T>/`，lean 在共享 `suite`），`acceptance-tests` 技能始终带给 worker 和 reviewer。reviewer 的任务说明新增“审查本 task 的验收测试”一节：程序扫描每条 AC 有没有带编号的测试（缺失即 must，出处 `ac:<编号>`），diff 含 `tests/acceptance/**`，并核对 Given/When/Then、测试入口、断言是否被弱化。代价：测试不再对实现盲写。留着没删：acctest/争议的状态机与工具代码、`agents/test-author.md`（模板不再引用，显式配置 test-author 角色后仍可用）。
-119. 用户决定：S0 结束（S1 开始派发前）建立共享构建环境 `<项目>.worktrees/.env-shared/`：一次性 install、运行可选的 `env_up`；之后 worktree 把依赖目录符号链接过去，不再各自 install（`workspace/shared-env.ts`、`dep-files.ts`；`shared_env.{enabled,deps}`，commands 增 `env_up`、`env_down`、`add_dep`）。依赖清单相对共享环境：相同 → 链接；纯追加根目录 package.json 的依赖 → 在独占锁内装进共享环境再链接（worker 用 `forge_add_dependency`）；版本变化、overrides、其他生态 → 私有副本（`forge_private_deps`）。每次运行/评审的端口段与数据库沿用 `allocateResources`（`db_create`/`db_drop`），`withSharedEnv` 封装；子进程（含审查者）启动时另带 `FORGE_SHARED_ENV`。代价：共享依赖会被追加安装影响，且任务删除依赖不会从共享环境卸载；符号链接要写进本地 exclude，guard 在链接状态下禁止 worker 自己 install。每个 S 阶段开始时按集成分支刷新一次。
-
-## M1 删除、由 Mx 重建
-
-下列为删除的整个测试或单个用例，保留的运行时用例已迁移配置、角色与提交状态链。跨里程碑用例标出后续参与的里程碑；门禁、同步等机制另有 M1 运行时测试继续保护。
-
-**M2：规格与 P0**
-
-- `test/e2e/flow6.test.ts`：「第六轮全流程：带 PRD 与原型进来 → 就绪检查后提交需求说明（没有 AC 编号被退回）→ 主 agent 规划（缺项目规则被退回、用户打回一次）→ 底座先行、两个模块并行 → 验收不通过交回修复再复查 → 合入主分支」（亦涉及 M3/M6）。**M2 已重建：`p0-flow.test.ts` 的拒绝/打回/批准，`orchestrator-p0.test.ts` 的真实 Pi P0；契约与实施部分仍由 M3/M6 重建。**
-- `test/e2e/flow6.test.ts`：「没有 PRD 时退回讨论；规划闸门设为自动通过时提交模块清单后直接开工并应用规则草案；输入路径写错时不建流程」（亦涉及 M3/M6）。**M2 不再适用：PRD 必填且 P0 必须人工批准；路径错误由 commands.test.ts 覆盖，规划/规则部分留 M3/M6。**
-- `test/e2e/commands.test.ts`：「/forge-build：--direct 缺少描述报错；已有进行中的流程时拒绝并提示 /forge resume」。**M2 已重建：commands.test.ts 的必填/旧参数拒绝、输入错误不建流程与活动流程限制；--direct 不再适用。**
-- `test/e2e/orchestrator-session.test.ts`：「真实 pi：空仓库执行 /forge-build（没有 PRD），主 agent 逐轮问用户、自己查代码，用户确认后提交需求说明，检查通过直接进入规划」。**M2 不再适用：PRD 必填；等价提交链由 orchestrator-p0.test.ts 覆盖，P0 改为等待用户批准。**
-- `test/e2e/orchestrator-session.test.ts`：「真实 pi print：首次接收与新进程恢复都把集成分支 PRD 原文放进模型请求」。**M2 已重建：orchestrator-p0.test.ts 首次接收与打回后的新进程恢复；持久化清单注入提示、forge_read 原文进入模型请求。**
-
-**M3：契约与计划**
-
-- `test/e2e/commands.test.ts`：「renumber：临时编号映射到流程内新编号，依赖一起改写」。**M3 不再适用：计划直接用流程编号（偏离 34），冲突与建议编号由 `plan.test.ts` 覆盖。**
-- `test/e2e/rules-draft.test.ts`：「批准规划阶段（D2）时：规划时写的项目专属规则草案在无界面时自动应用」。**M3 已重建：`p1-flow.test.ts` 批准 P1 时应用规则与命令草案（含 acctest_workspace）并同步运行中的配置。**
-- `test/unit/prompt-assembler.test.ts`：「规划模块时附上实现者的模型（第六轮注入主会话）：强模型时模块可以大一些，否则要小一些」。**M3 已替换：worker 的模型写进 architect 的 brief，`p1-flow.test.ts` 断言。**
-
-**M4：输入同步与流水线**
-
-- `test/e2e/modules.test.ts`：「forge_sync：把其他模块已合入的代码合进自己的工作区；公共文件冲突时留下标记，解决后再调用一次完成；提交只算自己的改动」。
-- `test/e2e/modules.test.ts`：「merge_check：合并时和全量测试一起跑，失败退回实现者」。
-
-**M5：审查（阶段审查亦涉及 M6）**
-
-- `test/e2e/final-review.test.ts`：「最终代码审查：模块都验收后审查整个流程的改动；必须改交给负责的模块（接着原会话）修一轮，建议由用户挑选，之后执行闸门」。
-- `test/e2e/final-review.test.ts`：「最终代码审查默认关闭：模块验收通过后直接执行闸门；/forge review 提示怎么开启」。
-
-**M6：阶段验收与交付**
-
-- `test/e2e/modules.test.ts`：「验收两轮修复后仍不通过：转"需要你处理"，依赖它的模块继续等待；/forge accept 人工放行后开工」。
-- `test/e2e/modules.test.ts`：「实施阶段闸门的全量测试失败：按日志交给写过那个文件的模块修复（接着原会话）；修好后闸门通过」。
-- `test/e2e/modules.test.ts`：「要用户自己查看的检查项：规划时写的与验收者标为 manual 的条目，模块验收通过后列给用户与主会话；manual 不算未通过」。
-- `test/e2e/finish.test.ts`：「收尾：全部完成后状态栏显示"完成（待合入）"，主会话拿到收尾汇报，/forge report 可查看」。
-- `test/unit/prompt-assembler.test.ts`：「验收任务：逐条验收列出全部条目，复查只列没通过的条目与上次结论；结尾指明用哪个工具提交」。
-
-**M7：变更请求、规格修订与 fix 模式**
-
-- `test/e2e/modules.test.ts`：「/forge-add：只有一个未完成的模块时送到它（写进笔记与 handoff）；多个模块时记为修订请求交给主 agent」。
-- `test/e2e/modules.test.ts`：「/forge-add：运行中的模块收到插话（steer），并写进笔记」。
-- `test/e2e/replan.test.ts`：「执行中修订计划：/forge replan 交给主 agent，主 agent 直接提交修订，校验拒绝改动已开始的任务；用户批准后新增、调整依赖、取消；进行中的任务不受影响；打回后带着意见重做」。
-- `test/e2e/replan.test.ts`：「修订待批准期间，被点名调整或取消的任务暂停派发；打回后恢复」。
-- `test/e2e/fix.test.ts`：「/forge-fix：一个实现者定位并修复（回归测试）→ 合并时全量测试 → 直接合入主分支 → 独立验收 → 日志含成本」。
-- `test/e2e/fix.test.ts`：「fix 与 build 流程：流程运行中拒绝；等待审批时需确认；同时只允许一个修复」。
-- `test/e2e/fix.test.ts`：「成本汇总与 runs 记录一致；返工统计来自事件日志」。
-- `test/unit/revision.test.ts`：「修订校验：阶段不能早于当前或是设计阶段；调整依赖造成环、指向不存在的任务都被拒；只报告修订引入的错误」。
-- `test/unit/revision.test.ts`：「修订可以取消已阻塞的任务（依赖它的任务要一并调整），不能取消进行中的任务」。
-- `test/unit/revision.test.ts`：「调整依赖可以指向本次新增的任务，批准时改写为正式编号」。
-
-**M1 已替换或按规格删除**
-
-- `test/unit/migrations.test.ts`：「迁移 1 → 2（第六轮）：删除原型阶段；停在原型阶段的流程转到规划由主 agent 进行；designer、architect 未结束的任务取消；未结束的修订任务转为修订请求」；第一批删除，格式版本与迁移框架用例替代，不在后续重建。
-- `test/unit/migrations.test.ts`：「迁移 1 → 2：停在原型阶段进行中的流程进入规划」；第一批删除，格式版本与迁移框架用例替代，不在后续重建。
-- `test/e2e/orchestrator-tools.test.ts`：「forge_dispatch / forge_wait / forge_status」中的手动 dispatch 子路径；wait/status 保留，派发改为程序调用，规格第 13.1 节没有 forge_dispatch，不重建该工具。
-
-## M2 删除按层角色
-
-角色语义已删除，原有机制用例全部保留并重写；角色固定为 orchestrator、architect、worker、test-author、reviewer、stage-qa、researcher。
-
-| 失去意义的旧断言 | 替代覆盖 |
-|---|---|
-| engineer 后缀自动拥有 worker 工具 | config：只有真实 worker 可用，custom-worker/custom-engineer 与其他角色拒绝 |
-| 后端/前端角色自带不同范围，chaos/scout 别名 | guard、DAG、state-store、合并和同步：按 task writes 区分范围；七角色敏感读取、reviewer/stage-qa 只读工具配置 |
-| 实施角色默认 medium 升 strong，researcher cheap | 默认升级用 test-author，worker strong 无上一档；e2e 用局部 medium worker，researcher 精确断言 medium 与 unset |
-| 设计角色无插件，backend/shared 规则及 frontend 知识隔离 | test-author 无插件，worker 用 Serena/CodeGraph；code/research 知识隔离，global 与局部 code 规则选择 |
-| worker 申请角色范围外公共源码；已有测试适配越过后端范围 | task writes 与其他任务 shared 冲突的申请、无重叠自动授权；task writes 外既有单测适配，禁止新增/删除 |
-| database 规则默认缺失告警 | init-doctor 显式移除 rules/global.md，断言同级别告警与具体路径 |
-
-crash-driver 与恢复引擎统一读取仓库 agents/，删除绕过旧驱动器的项目 worker 提示覆盖；没有新增或保留按层角色。
+### 提示词与代码组织
+- worker 带 `simplicity`、`receiving-feedback`、`acceptance-tests`，reviewer 带 `simplicity`、`acceptance-tests`；单元测试写法与过度工程只作 suggest；规则编号 `R<n>`，每文件不超过 5 条。
+- `src/core/` 无环分层（state → security/workspace → verify/insight → spec → acceptance → plan → stage → engine → ops），`test/unit/core-layers.test.ts` 检查。测试分组见 `scripts/test-groups.ts`。
 
 ## 真实模型实验
 
-（M9 开始记录。对照数据见 pi-flow `NOTES.md` 与 `docs/EXPERIMENTS-4.md`：看板项目原生 Pi 17.6 分钟、隐藏测试 39/40。）
+- 对照（pi-flow）：看板项目原生 Pi 17.6 分钟、隐藏测试 39/40。M9（10-10、10-11）的教训已落实：test-author 零次抓到缺陷、争议循环 60 分钟以上 → 删 test-author；精简计划仍过重 → 删精简模式；范围申请硬拒导致失败 → 写入放开。
+- 迷你看板（10-12，`scripts/real-tasks --suite mini-boards`，GLM-5.3-flash）：4 次运行逐步拆掉 writes、契约、互斥的墙，run4 5/5 合入、门禁通过、22 分钟、$0.23，stage-qa 抓到 1 个真缺陷。
+- pi-forge 自身（10-13，`--suite pi-forge`，约 1.9 万行；worker GLM，审查与 QA gpt-6.1-sol）：big1 4/6 合入、31 分钟、$2.44（reviewer 占 $1.97），gpt 的 must 都是真漏洞，最慢的 worker 18.8 分钟里约 13 分钟是模型思考；big2（thinking low、并发 5）worker 5–26 分钟，7/12 完成时 $0.84，worktree 准备合计 5 秒，后因上游 502 未跑完。
+- 实验暴露并已修的程序问题：残留进程清理误杀同一 worktree 的下一个 run；guard 不代入命令替换里的变量；审查池按全部在途任务计数。
 
 ## 缓存提醒
 
-修改 `agents/`、`rules/`、`skills/` 会改变子进程系统提示的稳定前缀，提供商的提示缓存失效一次。改动时在此追加一行。
+修改 `agents/`、`rules/`、`skills/` 会改变子进程系统提示的稳定前缀，提示缓存失效一次。改动时在此追加一行。
 
-- 10-09（M0）：`agents/`、`rules/`、`skills/`、`templates/` 是用户提供的 v3 全文，M0 没有改动；运行时还没有使用它们。
-- 10-09（M1）：`agents/main.md` 改名为 `agents/orchestrator.md` 并同步 frontmatter；`skills/domain-modeling/SKILL.md`、`skills/change-request/SKILL.md` 将主会话用词改为 orchestrator。运行时开始使用包内角色与技能，稳定前缀改变，提示缓存会失效一次。
-- 10-10（M8）：`agents/architect.md` 增加 feature 模式、变更请求（完整计划与 `modifies`）、纳管（--adopt）三节；`skills/change-request/SKILL.md` 改为写完整计划、已开始的 task 用 `modifies`，删掉 N-001 编号；`agents/orchestrator.md` 增加 feature 模式的增量规格写法。architect 与 orchestrator 的提示缓存各失效一次。
-- 10-10（M8 后）：`agents/orchestrator.md` 的 P0 改为"有 docs/ 文档先读、只问疑点；没有文档详细访谈"；`skills/spec-from-prd/SKILL.md` 第一步加一句"没有文档时当作访谈提纲"。orchestrator 的提示缓存失效一次。
-- 10-11（M9 提示词调整）：新增 `skills/simplicity/`、`skills/receiving-feedback/`；改 `agents/worker.md`、`agents/test-author.md`、`agents/reviewer.md`、`agents/architect.md`，以及 `skills/tdd`、`acceptance-tests`、`code-review`、`plan-dag`、`design-contract`；`src/core/dispatcher.ts` 的技能映射给 worker 加两个技能、reviewer 加 simplicity。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
-- 10-11（评审三处修订，偏离 102–103）：改 `agents/worker.md`、`test-author.md`、`reviewer.md`、`architect.md`，`rules/global.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`receiving-feedback`、`code-review`、`plan-dag`、`design-contract`、`write-rules`。所有角色子进程系统提示的稳定前缀变化，提示缓存失效一次。
-- 10-11（lean 变轻，偏离 110–112）：改 `agents/worker.md`、`agents/architect.md`，以及 `skills/tdd`、`simplicity`、`acceptance-tests`、`plan-dag`、`design-contract`：写明 lean 的共享验收目录与多编号测试、不写单元测试（`unit_tests` 理由例外）、契约只写接口清单。所有子进程的提示缓存失效一次。
-- 10-11（AC 只写用户可感知行为，偏离 113–114）：改 `skills/spec-from-prd`（AC 规则、正反例、「通用约定」节）、`skills/grilling`、`agents/orchestrator.md`（P0 第 2 步后）、`agents/test-author.md`、`skills/acceptance-tests`（多 AC 集成场景）。orchestrator、test-author 的提示缓存失效一次。
-- 10-11（不限制 worker 可写范围，偏离 115）：改 `agents/worker.md`（开始、范围、禁止三处）、`rules/global.md` 第 2 条、`skills/plan-dag`（writes 一行）。worker、reviewer 等加载 global 规则的子进程，以及 architect 的提示缓存失效一次。
-- 10-11（合并冲突交回 worker，偏离 116）：改 `agents/worker.md`（合并冲突一行）。worker 的提示缓存失效一次。
-- 10-11（task 不跑预检命令，偏离 117）：改 `agents/worker.md`（提交后流程）、`agents/reviewer.md`（先运行本 task 的测试）、`skills/code-review/SKILL.md`、`skills/plan-dag/SKILL.md`、`skills/write-rules/SKILL.md`（acceptance 参数约定）。所有角色的提示缓存失效一次；reviewer 的工具权限也变了（bash 白名单）。
-- 10-11（去掉 test-author，偏离 118）：改 `agents/worker.md`（验收测试由自己写、去掉争议）、`agents/reviewer.md`（审查验收测试）、`agents/architect.md`、`skills/acceptance-tests`、`skills/receiving-feedback`、`skills/tdd`、`skills/design-contract`、`skills/spec-from-prd`、`skills/plan-dag`、`skills/write-rules`、`rules/global.md`（第 7 条）。reviewer 现在带 acceptance-tests 技能，worker 的技能集不再随模式变化。所有角色的提示缓存失效一次。
-- 10-11（共享构建环境，偏离 119）：改 `agents/worker.md`（依赖一行）、`agents/architect.md`（commands.yaml 的 install/env_up/db_create/db_drop 与 shared_env）、`skills/plan-dag`（S0 一行）。worker、architect 的提示缓存失效一次。
-
-## src/core 路径对照（10-11 重组）
-
-历史条目中的 `src/core/xxx.ts` 均指重组前的平铺路径，对照如下。
-
-| 旧路径 | 新路径 |
-|---|---|
-| `src/core/acceptance-flow.ts` | `src/core/acceptance/acceptance-flow.ts` |
-| `src/core/acctest.ts` | `src/core/acceptance/acctest.ts` |
-| `src/core/adopt.ts` | `src/core/plan/adopt.ts` |
-| `src/core/agents.ts` | `src/core/engine/agents.ts` |
-| `src/core/change-flow.ts` | `src/core/plan/change-flow.ts` |
-| `src/core/change-request.ts` | `src/core/plan/change-request.ts` |
-| `src/core/checkpoints.ts` | `src/core/state/checkpoints.ts` |
-| `src/core/codegraph.ts` | `src/core/ops/codegraph.ts` |
-| `src/core/config.ts` | `src/core/state/config.ts` |
-| `src/core/context-injector.ts` | `src/core/engine/context-injector.ts` |
-| `src/core/contract-check.ts` | `src/core/plan/contract-check.ts` |
-| `src/core/contract-diff.ts` | `src/core/plan/contract-diff.ts` |
-| `src/core/contract-merge.ts` | `src/core/plan/contract-merge.ts` |
-| `src/core/cost-control.ts` | `src/core/insight/cost-control.ts` |
-| `src/core/cost.ts` | `src/core/insight/cost.ts` |
-| `src/core/coverage.ts` | `src/core/acceptance/coverage.ts` |
-| `src/core/dag.ts` | `src/core/state/dag.ts` |
-| `src/core/dependencies.ts` | `src/core/workspace/dependencies.ts` |
-| `src/core/dispatcher.ts` | `src/core/engine/dispatcher.ts` |
-| `src/core/doctor.ts` | `src/core/ops/doctor.ts` |
-| `src/core/engine-lock.ts` | `src/core/ops/engine-lock.ts` |
-| `src/core/event-log.ts` | `src/core/state/event-log.ts` |
-| `src/core/feature-spec.ts` | `src/core/plan/feature-spec.ts` |
-| `src/core/forge-read.ts` | `src/core/workspace/forge-read.ts` |
-| `src/core/forge-watch.ts` | `src/core/insight/forge-watch.ts` |
-| `src/core/gates.ts` | `src/core/stage/gates.ts` |
-| `src/core/git.ts` | `src/core/state/git.ts` |
-| `src/core/guard.ts` | `src/core/security/guard.ts` |
-| `src/core/history.ts` | `src/core/ops/history.ts` |
-| `src/core/init.ts` | `src/core/ops/init.ts` |
-| `src/core/intake.ts` | `src/core/spec/intake.ts` |
-| `src/core/knowledge.ts` | `src/core/engine/knowledge.ts` |
-| `src/core/launcher.ts` | `src/core/engine/launcher.ts` |
-| `src/core/lineage.ts` | `src/core/engine/lineage.ts` |
-| `src/core/merge-queue.ts` | `src/core/engine/merge-queue.ts` |
-| `src/core/metrics.ts` | `src/core/engine/metrics.ts` |
-| `src/core/migrations.ts` | `src/core/state/migrations.ts` |
-| `src/core/model-pause.ts` | `src/core/engine/model-pause.ts` |
-| `src/core/notes.ts` | `src/core/engine/notes.ts` |
-| `src/core/notify.ts` | `src/core/ops/notify.ts` |
-| `src/core/paths.ts` | `src/core/state/paths.ts` |
-| `src/core/plan-flow.ts` | `src/core/plan/plan-flow.ts` |
-| `src/core/plan.ts` | `src/core/plan/plan.ts` |
-| `src/core/precheck.ts` | `src/core/engine/precheck.ts` |
-| `src/core/preflight.ts` | `src/core/spec/preflight.ts` |
-| `src/core/prompt-assembler.ts` | `src/core/engine/prompt-assembler.ts` |
-| `src/core/redact.ts` | `src/core/security/redact.ts` |
-| `src/core/release.ts` | `src/core/stage/release.ts` |
-| `src/core/resources.ts` | `src/core/workspace/resources.ts` |
-| `src/core/resume.ts` | `src/core/ops/resume.ts` |
-| `src/core/review-flow.ts` | `src/core/stage/review-flow.ts` |
-| `src/core/review.ts` | `src/core/stage/review.ts` |
-| `src/core/role-settings.ts` | `src/core/insight/role-settings.ts` |
-| `src/core/rules-draft.ts` | `src/core/plan/rules-draft.ts` |
-| `src/core/run-budget.ts` | `src/core/engine/run-budget.ts` |
-| `src/core/scheduler.ts` | `src/core/engine/scheduler.ts` |
-| `src/core/schemas.ts` | `src/core/state/schemas.ts` |
-| `src/core/scope-hint.ts` | `src/core/workspace/scope-hint.ts` |
-| `src/core/scope.ts` | `src/core/workspace/scope.ts` |
-| `src/core/services.ts` | `src/core/workspace/services.ts` |
-| `src/core/session-log.ts` | `src/core/engine/session-log.ts` |
-| `src/core/shell.ts` | `src/core/security/shell.ts` |
-| `src/core/signoff.ts` | `src/core/stage/signoff.ts` |
-| `src/core/spec-flow.ts` | `src/core/spec/spec-flow.ts` |
-| `src/core/spec.ts` | `src/core/spec/spec.ts` |
-| `src/core/stage-acceptance.ts` | `src/core/stage/stage-acceptance.ts` |
-| `src/core/stage-fix.ts` | `src/core/acceptance/stage-fix.ts` |
-| `src/core/stage-qa.ts` | `src/core/stage/stage-qa.ts` |
-| `src/core/stage-review.ts` | `src/core/stage/stage-review.ts` |
-| `src/core/stage-rounds.ts` | `src/core/stage/stage-rounds.ts` |
-| `src/core/stage-worktree.ts` | `src/core/workspace/stage-worktree.ts` |
-| `src/core/stages.ts` | `src/core/stage/stages.ts` |
-| `src/core/state-machine.ts` | `src/core/state/state-machine.ts` |
-| `src/core/state-store.ts` | `src/core/state/state-store.ts` |
-| `src/core/status-detail.ts` | `src/core/ops/status-detail.ts` |
-| `src/core/status-view.ts` | `src/core/ops/status-view.ts` |
-| `src/core/strays.ts` | `src/core/workspace/strays.ts` |
-| `src/core/subagent-runtime.ts` | `src/core/engine/subagent-runtime.ts` |
-| `src/core/test-adjust.ts` | `src/core/verify/test-adjust.ts` |
-| `src/core/timing.ts` | `src/core/engine/timing.ts` |
-| `src/core/tool-params.ts` | `src/core/security/tool-params.ts` |
-| `src/core/verify-cache.ts` | `src/core/verify/verify-cache.ts` |
-| `src/core/verify-runner.ts` | `src/core/workspace/verify-runner.ts` |
-| `src/core/waits.ts` | `src/core/state/waits.ts` |
-| `src/core/workspace.ts` | `src/core/workspace/workspace.ts` |
-| `src/core/worktree.ts` | `src/core/workspace/worktree.ts` |
-
-### 106 之后的调整（消除目录循环依赖）
-
-目录分层（下层不得 import 上层，`test/unit/core-layers.test.ts` 检查）：state → security、workspace → verify、insight → spec → acceptance → plan → stage → engine → ops。上表「新路径」列已更新为最终位置；另有以下拆分：
-
-| 原位置 | 新位置 |
-|---|---|
-| `failureSignature`（`workspace/verify-runner.ts`） | `src/core/state/failure-signature.ts` |
-| `roundOf`、`latestAcctest`、`awaitedAcctest`（`acceptance/acceptance-flow.ts`） | `src/core/state/acctest-lookup.ts` |
-| `failingFiles`（`stage/gates.ts`） | `src/core/workspace/scope-hint.ts` |
-| `dirtyFiles`（`engine/context-injector.ts`） | `src/core/state/git.ts` |
-| `approveSpecAmend`、`approvalTargets`、`ApprovalTarget`、`specStatus`（`spec/spec-flow.ts`） | `src/core/plan/spec-amend.ts`（新文件） |
+- 10-09 至 10-12：多次改动 agents 与 skills（改名 orchestrator、M9 提示词调整、写入放开、去掉 test-author、共享环境、删减功能、S0 由 architect 做、小改动），每次相关角色的缓存各失效一次。
+- 10-13：`agents/architect.md` 去掉 serena、`skills/plan-dag/SKILL.md` 改 writes 与 test_interface 两行；模板去掉 serena 工具组。architect、worker、reviewer、stage-qa 的缓存各失效一次。
+- 10-14：删除 `agents/researcher.md`，模板去掉 researcher 角色与 research 范围。其他角色的系统提示不变，缓存不受影响。
+- 10-14：`agents/orchestrator.md`（forge_decide）、`agents/reviewer.md` 与 `skills/code-review`（确认轮按目的判断）、`skills/write-rules`（uv 命令）；`forge_block` 与 `forge_change_request` 的工具描述也改了。所有子进程角色与主会话的缓存各失效一次。

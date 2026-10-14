@@ -15,17 +15,16 @@ test('按角色的工具组解析插件：项目级优先，未安装的报告�
     const agent = path.join(dir, 'agent');
     const pkg = (root: string, name: string) => { mkdirSync(path.join(root, name), { recursive: true }); writeFileSync(path.join(root, name, 'package.json'), '{}'); };
     const [projNm, agentNm] = packageRoots(proj, agent);
-    pkg(agentNm!, '@bacnh85/pi-serena');
-    pkg(projNm!, '@bacnh85/pi-serena');
     pkg(agentNm!, '@vndv/pi-codegraph');
+    pkg(projNm!, '@vndv/pi-codegraph');
     const config = parseConfig(TEST_YAML);
     const be = pluginExtensionsFor(config, 'worker', [projNm!, agentNm!]);
-    assert.deepEqual(be.paths.sort(), [path.join(projNm!, '@bacnh85/pi-serena'), path.join(agentNm!, '@vndv/pi-codegraph')].sort());
+    assert.deepEqual(be.paths, [path.join(projNm!, '@vndv/pi-codegraph')]);
     const rv = pluginExtensionsFor(config, 'architect', [projNm!, agentNm!]);
-    assert.deepEqual(rv.paths.sort(), ['builtin:codemode', path.join(projNm!, '@bacnh85/pi-serena'), path.join(agentNm!, '@vndv/pi-codegraph')].sort());
-    const rs = pluginExtensionsFor(config, 'researcher', [projNm!, agentNm!]);
-    assert.deepEqual(rs, { paths: [], missing: ['pi-web-access'] });
-    assert.deepEqual(pluginExtensionsFor(config, 'test-author', [projNm!, agentNm!]), { paths: [], missing: [] });
+    assert.deepEqual(rv.paths, ['builtin:codemode', path.join(projNm!, '@vndv/pi-codegraph')]);
+    const withWeb = parseConfig(TEST_YAML.replace('tools: [read, "@codegraph", forge_review_report', 'tools: [read, "@web", "@codegraph", forge_review_report'));
+    assert.deepEqual(pluginExtensionsFor(withWeb, 'reviewer', [projNm!, agentNm!]), { paths: [path.join(projNm!, '@vndv/pi-codegraph')], missing: ['pi-web-access'] });
+    assert.deepEqual(pluginExtensionsFor(config, 'stage-qa', [projNm!, agentNm!]), { paths: [path.join(projNm!, '@vndv/pi-codegraph')], missing: [] });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

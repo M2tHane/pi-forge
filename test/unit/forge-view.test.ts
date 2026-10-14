@@ -14,13 +14,11 @@ const SECRET = 'sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx';
 async function build() {
   const p = await setupProject({ stages: ['P0', 'P1'] });
   const { store, flowId } = p;
-  await store.setStages(flowId, [{ id: 'S1', goal: '做出登录', exit: ['登录可用'] }], 'standard');
+  await store.setStages(flowId, [{ id: 'S1', goal: '做出登录', exit: ['登录可用'] }]);
   await store.addTasks(flowId, [
     mkTask('T-001', { stage: 'S1', module: 'auth', ac: ['REQ-001.AC1'], review: 'auto' }),
-    mkTask('T-001.at', { stage: 'S1', kind: 'acctest', role: 'test-author', for_task: 'T-001', writes: ['test/acc/**'] }),
     mkTask('T-001.rv', { stage: 'S1', kind: 'review', role: 'reviewer', for_task: 'T-001', writes: [] }),
     mkTask('T-001.fx-1', { stage: 'S1', kind: 'fix', role: 'worker', for_task: 'T-001' }),
-    mkTask('S1.rv', { stage: 'S1', kind: 'review', role: 'reviewer', writes: [] }),
     mkTask('S1.qa', { stage: 'S1', kind: 'qa', role: 'stage-qa', writes: [] }),
   ], 'architect');
   await store.appendHandoff(flowId, 'T-001', `完成登录。临时密钥 ${SECRET} 不要提交。`, 'worker');
@@ -36,21 +34,21 @@ test('buildViewData：阶段、角色、派生任务、变更、度量都在，�
   try {
     const d = buildViewData(p.store, p.dir);
     assert.deepEqual(d.roles, [...ROLES]);
-    assert.equal(d.roles.length, 7);
+    assert.equal(d.roles.length, 5);
     const F = d.flows.find((f) => f.flow.id === p.flowId)!;
     assert.equal(F.kind, 'build');
     assert.deepEqual(F.stageRows.map((s) => s.id), ['P0', 'P1', 'S1']);
     const s1 = F.stageRows.find((s) => s.id === 'S1')!;
     assert.equal(s1.goal, '做出登录');
     assert.deepEqual(s1.exit, ['登录可用']);
-    assert.equal(s1.tasks, 7);
+    assert.equal(s1.tasks, 5);
     const byId = new Map(F.tasks.map((t) => [t.id, t]));
     assert.equal(byId.get('T-001')!.module, 'auth');
     assert.deepEqual(byId.get('T-001')!.ac, ['REQ-001.AC1']);
-    assert.equal(byId.get('T-001.at')!.for_task, 'T-001');
-    assert.equal(byId.get('T-001.at')!.kind, 'acctest');
+    assert.equal(byId.get('T-001.rv')!.for_task, 'T-001');
+    assert.equal(byId.get('T-001.rv')!.kind, 'review');
     assert.equal(byId.get('S1.qa')!.role, 'stage-qa');
-    // 用到的角色都在七个角色之内
+    // 用到的角色都在六个角色之内
     for (const t of F.tasks) assert.ok((d.roles as string[]).includes(t.role), t.role);
     assert.equal(d.runs[0]!.role, 'worker');
     assert.ok(F.metrics, '度量存在');

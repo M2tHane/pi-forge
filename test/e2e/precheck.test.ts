@@ -1,4 +1,4 @@
-// M4：真实预检（第 8.2 节）。同步、合入验收测试、带资源运行命令；假 agent 不参与这些程序步骤。
+// M4：真实预检（第 8.2 节）。同步输入、契约检查；假 agent 不参与这些程序步骤。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,6 @@ import { hashToken } from '../../src/core/state/state-machine.ts';
 import { createTaskWorktree, snapshot, worktreesRoot } from '../../src/core/workspace/worktree.ts';
 import { setupProject, type Project } from '../helpers/project.ts';
 import { commitToBranch, makeEngine } from '../helpers/engine.ts';
-import { accBranch } from '../../src/core/acceptance/acctest.ts';
 import { PROJECT_YAML } from '../helpers/project.ts';
 import { mkTask, soft } from '../helpers/tasks.ts';
 
@@ -27,7 +26,7 @@ async function submitted(p: Project, content: string, id = 'T-001') {
   await p.store.transitionTask(p.flowId, id, { to: 'awaiting_inputs', trigger: 'submit', actor: `run:r-${id}`, facts: { token: 'token', diff_files: [file] } });
   return wt;
 }
-// 偏离 117：预检不再运行命令，impl / fix 一律进入审查；默认审查者（test/helpers/engine.ts）直接通过
+// 预检不再运行命令，impl / fix 一律进入审查；默认审查者（test/helpers/engine.ts）直接通过
 const engineOf = (p: Project) => makeEngine(p, async (role) => { if (role !== 'reviewer') throw new Error('预检不派发子进程'); }).engine;
 const hasPrecheckEvidence = (p: Project, id = 'T-001') => p.store.readEvents().some((e) => e.task === id && e.reason === 'evidence' && e.actor === 'precheck');
 
@@ -78,26 +77,7 @@ test('预检不再运行 test：即使 test 命令会失败也进入审查，没
   } finally { p.cleanup(); }
 });
 
-test('预检合入最新验收测试（不运行 acceptance，偏离 117）；返工再提交时这些文件不算 worker 的改动', async () => {
-  // 收到 "-- T-001"，且验收测试已合入工作区时通过
-  const yaml = PROJECT_YAML.replace('acceptance: "true"', 'acceptance: "sh tests/run-acc.sh"');
-  const p = await setupProject({ yaml, tasks: [mkTask('T-001')], files: { 'tests/run-acc.sh': '[ "$2" = T-001 ] && test -f tests/acceptance/T-001/a.test.sh\n' } });
-  try {
-    p.git('branch', accBranch(p.flowId, 'T-001'), p.store.readFlow(p.flowId).integration_branch);
-    commitToBranch(p.dir, accBranch(p.flowId, 'T-001'), { 'tests/acceptance/T-001/a.test.sh': 'ok\n' }, '验收测试');
-    const wt = await submitted(p, 'ok');
-    await engineOf(p).precheck(p.flowId);
-    assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'in_review');
-    assert.equal(readFileSync(path.join(wt.path, 'tests/acceptance/T-001/a.test.sh'), 'utf8'), 'ok\n');
-    const { withoutMergedAcceptance } = await import('../../src/core/engine/precheck.ts');
-    assert.deepEqual(withoutMergedAcceptance(p.dir, p.flowId, p.store.readTask(p.flowId, 'T-001'), ['src/server/t-001/a.ts', 'tests/acceptance/T-001/a.test.sh']), ['src/server/t-001/a.ts']);
-    writeFileSync(path.join(wt.path, 'tests/acceptance/T-001/a.test.sh'), '改了\n');
-    snapshot(wt.path, '改测试');
-    assert.deepEqual(withoutMergedAcceptance(p.dir, p.flowId, p.store.readTask(p.flowId, 'T-001'), ['tests/acceptance/T-001/a.test.sh']), ['tests/acceptance/T-001/a.test.sh'], '改过的测试仍算越界');
-  } finally { p.cleanup(); }
-});
-
-test('预检不分配资源、不运行 test（偏离 117）：两个任务的预检都不会执行 test 命令', async () => {
+test('预检不分配资源、不运行 test：两个任务的预检都不会执行 test 命令', async () => {
   const yaml = PROJECT_YAML.replace(/  test: .*\n/, '  test: "echo $PORT $FORGE_DB_NAME $FORGE_TMP >> ../ports.log"\n');
   const p = await setupProject({ yaml, tasks: [mkTask('T-001'), mkTask('T-002')] });
   try {
@@ -111,15 +91,12 @@ test('预检不分配资源、不运行 test（偏离 117）：两个任务的�
   } finally { p.cleanup(); }
 });
 
-test('预检：最新验收测试与软依赖未完成时保持 awaiting_inputs', async () => {
-  for (const wait of ['acctest', 'soft']) {
-    const p = await setupProject({ tasks: [mkTask('T-001', { deps: wait === 'soft' ? [soft('T-002')] : [] }),
-      wait === 'soft' ? mkTask('T-002') : mkTask('T-001.at-2', { kind: 'acctest', role: 'test-author', scopes: ['acctest'], for_task: 'T-001', writes: [] })] });
-    try {
-      await submitted(p, 'ok');
-      await engineOf(p).precheck(p.flowId);
-      assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'awaiting_inputs');
-      assert.deepEqual(p.store.readMergeQueue().queue, []);
-    } finally { p.cleanup(); }
-  }
+test('预检：软依赖未完成时保持 awaiting_inputs', async () => {
+  const p = await setupProject({ tasks: [mkTask('T-001', { deps: [soft('T-002')] }), mkTask('T-002')] });
+  try {
+    await submitted(p, 'ok');
+    await engineOf(p).precheck(p.flowId);
+    assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'awaiting_inputs');
+    assert.deepEqual(p.store.readMergeQueue().queue, []);
+  } finally { p.cleanup(); }
 });

@@ -1,4 +1,4 @@
-// docs/M9-PLAN.md 第 4 节规则表：逐行正例、表外反例、放行上限与计数。
+// M9 用户模拟的规则表（scripts/m9/simulator.ts）：逐行正例、表外反例、放行上限与计数。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -89,7 +89,7 @@ test('P0 文字回复超过上限算卡住（防无限对话）', () => {
 // —— 行 3：闸门 ——
 
 test('规格审批、阶段签收：/forge-approve stage:<阶段>，计必经闸门', () => {
-  for (const [stage, mode] of [['P0', 'build'], ['S1', 'build'], ['S2', 'feature']] as const) {
+  for (const [stage, mode] of [['P0', 'build'], ['S1', 'build'], ['S2', 'build']] as const) {
     const r = step(snap({ flow: flow({ stage, mode, stageStatus: 'awaiting_human' }) }), initialState());
     const a = act(r.a);
     assert.equal(a.kind === 'prompt' && a.message, `/forge-approve stage:${stage}`);
@@ -230,7 +230,7 @@ test('同一阶段放行 2 次后又 needs_human 算卡住', () => {
 
 // —— 行 8：超时复核等主会话决定 → 不处理 ——
 
-test('超时复核、范围申请、普通进行中的 task：不处理（null）', () => {
+test('超时复核、合并队列、普通进行中的 task：不处理（null）', () => {
   const s = snap({ flow: flow({ stage: 'S1' }), tasks: [task('T-001', { status: 'in_progress' }), task('T-002', { status: 'ready' }), task('T-003', { status: 'checking' })] });
   assert.equal(decide(s, initialState()), null);
 });

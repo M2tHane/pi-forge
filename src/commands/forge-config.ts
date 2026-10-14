@@ -4,9 +4,9 @@
 import { THINKING_LEVELS, type ThinkingLevel } from '../core/state/schemas.ts';
 import type { FlowConfig } from '../core/state/config.ts';
 import {
-  loadRoleSettings, resolveRoleModel, saveRoleSettings, setEscalation, setRole, unsetRole, type RoleSetting,
+  loadRoleSettings, resolveRoleModel, saveRoleSettings, setEscalation, setFallback, setRole, unsetRole, type RoleSetting,
 } from '../core/insight/role-settings.ts';
-import { escalationModel } from '../core/insight/cost-control.ts';
+import { escalationModel, fallbackModel } from '../core/insight/cost-control.ts';
 import { splitArgs } from './args.ts';
 import type { RoleRow, TableModel } from './role-table.ts';
 
@@ -48,6 +48,7 @@ const USAGE = [
   '  /forge-config set <角色> <provider/model|default> [思考级别|default]',
   '  /forge-config unset <角色|all>        清除设置，回到 workflow.yaml 默认',
   '  /forge-config escalate <角色> <provider/model|default>   同一任务失败多次后改用的模型（default：workflow.yaml 或上一档）',
+  '  /forge-config fallback <provider/model|default>   兜底模型：原模型暂停（服务中断、额度用完）或换了升级模型仍失败时改用（default：workflow.yaml 的 models.fallback）',
   `思考级别：${THINKING_LEVELS.join('、')}`,
 ].join('\n');
 
@@ -55,6 +56,7 @@ const MENU_SET = '设置各角色的模型与思考级别';
 const MENU_SHOW = '查看当前设置';
 const MENU_CLEAR = '清除所有角色设置';
 const MENU_ESCALATE = '设置失败后升级用的模型';
+const MENU_FALLBACK = '设置兜底模型';
 const DONE = '完成';
 const USE_WORKFLOW = '使用 workflow.yaml 默认';
 const USE_DEFAULT = '使用默认';
@@ -72,6 +74,7 @@ export async function runFlowConfig(args: string, deps: FlowConfigDeps): Promise
     case 'set': return cmdSet(argv.slice(1), deps);
     case 'unset': return cmdUnset(argv.slice(1), deps);
     case 'escalate': return cmdEscalate(argv.slice(1), deps);
+    case 'fallback': return cmdFallback(argv.slice(1), deps);
     case 'help': case '-h': case '--help': return USAGE;
     default: throw new FlowConfigError(`未知子命令 ${sub}。\n${USAGE}`);
   }
@@ -84,7 +87,7 @@ function roles(deps: FlowConfigDeps): string[] {
 /** 角色做什么（菜单与 show 中显示，方便选模型） */
 const ROLE_PURPOSE: Record<string, string> = {
   orchestrator: '主会话：整理规格、和你对话', architect: '制定契约与计划', worker: '任务实现',
-  'test-author': '编写验收测试', reviewer: '代码审查', 'stage-qa': '阶段验收', researcher: '查资料',
+  reviewer: '代码审查', 'stage-qa': '阶段验收',
 };
 const roleLabel = (r: string) => (ROLE_PURPOSE[r] ? `${r}（${ROLE_PURPOSE[r]}）` : r);
 
@@ -114,9 +117,15 @@ function describeRole(deps: FlowConfigDeps, role: string): string {
   return `${modelText}${unavailable} · ${thinkingText}${esc ? ` · 失败后升级 ${esc}` : ''}`;
 }
 
+function describeFallback(deps: FlowConfigDeps): string {
+  const settings = loadRoleSettings(deps.settingsPath);
+  const m = fallbackModel(deps.config, settings);
+  return m ? `兜底模型：${m}（${settings.fallback_model ? '/forge-config' : 'workflow.yaml models.fallback'}）` : '兜底模型：未设置（模型暂停时只能等它恢复）';
+}
+
 function describeAll(deps: FlowConfigDeps): string {
   const lines = roles(deps).map((r) => `  ${roleLabel(r)}：${describeRole(deps, r)}`);
-  return [`角色模型设置（保存于 ${deps.settingsPath}，优先于 workflow.yaml）：`, ...lines].join('\n');
+  return [`角色模型设置（保存于 ${deps.settingsPath}，优先于 workflow.yaml）：`, ...lines, describeFallback(deps)].join('\n');
 }
 
 function describeModels(deps: FlowConfigDeps): string {
@@ -180,12 +189,31 @@ function cmdEscalate(argv: string[], deps: FlowConfigDeps): string {
   return `已保存：${role} → ${describeRole(deps, role)}`;
 }
 
+function cmdFallback(argv: string[], deps: FlowConfigDeps): string {
+  const [modelArg] = argv;
+  if (!modelArg || argv.length > 1) throw new FlowConfigError(USAGE);
+  let model: string | undefined;
+  if (modelArg !== 'default') {
+    const m = findModel(deps, modelArg);
+    if (!m) throw new FlowConfigError(`模型 ${modelArg} 不可用。执行 /forge-config models 查看可用模型`);
+    model = m.ref;
+  }
+  saveRoleSettings(deps.settingsPath, setFallback(loadRoleSettings(deps.settingsPath), model), deps.now?.());
+  return `已保存。${describeFallback(deps)}`;
+}
+
+/** 清除所有角色设置时保留兜底模型（它不属于某个角色） */
+const clearedRoles = (deps: FlowConfigDeps) => {
+  const fb = loadRoleSettings(deps.settingsPath).fallback_model;
+  return { version: 1 as const, roles: {}, ...(fb ? { fallback_model: fb } : {}) };
+};
+
 function cmdUnset(argv: string[], deps: FlowConfigDeps): string {
   const [role] = argv;
   if (!role || argv.length > 1) throw new FlowConfigError(USAGE);
   if (role === 'all') {
-    saveRoleSettings(deps.settingsPath, { version: 1, roles: {} }, deps.now?.());
-    return '已清除所有角色设置，全部回到 workflow.yaml 默认。';
+    saveRoleSettings(deps.settingsPath, clearedRoles(deps), deps.now?.());
+    return '已清除所有角色设置，全部回到 workflow.yaml 默认（兜底模型保留，用 /forge-config fallback default 清除）。';
   }
   if (!deps.config.roles[role]) throw new FlowConfigError(`角色 ${role} 不存在。可选角色：${roles(deps).join('、')}`);
   saveRoleSettings(deps.settingsPath, unsetRole(loadRoleSettings(deps.settingsPath), role), deps.now?.());
@@ -194,16 +222,23 @@ function cmdUnset(argv: string[], deps: FlowConfigDeps): string {
 
 async function interactive(deps: FlowConfigDeps, ui: UiPort): Promise<string> {
   for (;;) {
-    const choice = await ui.select('pi-forge 配置', [MENU_SET, MENU_ESCALATE, MENU_SHOW, MENU_CLEAR, DONE]);
+    const choice = await ui.select('pi-forge 配置', [MENU_SET, MENU_ESCALATE, MENU_FALLBACK, MENU_SHOW, MENU_CLEAR, DONE]);
     if (!choice || choice === DONE) return '已退出 /forge-config。';
     if (choice === MENU_SHOW) ui.notify(describeAll(deps), 'info');
     else if (choice === MENU_CLEAR) {
-      saveRoleSettings(deps.settingsPath, { version: 1, roles: {} }, deps.now?.());
+      saveRoleSettings(deps.settingsPath, clearedRoles(deps), deps.now?.());
       ui.notify('已清除所有角色设置。', 'info');
     } else if (choice === MENU_SET) {
       await editRoles(deps, ui);
     } else if (choice === MENU_ESCALATE) {
       await editEscalation(deps, ui);
+    } else if (choice === MENU_FALLBACK) {
+      const modelLabels = deps.models.map((m) => `${m.ref}  ${m.name}`);
+      const pick = await ui.select('兜底模型：原模型暂停或升级后仍失败时改用（所有角色共用）', [USE_WORKFLOW, ...modelLabels]);
+      if (!pick) continue;
+      const model = pick === USE_WORKFLOW ? undefined : deps.models[modelLabels.indexOf(pick)]?.ref;
+      saveRoleSettings(deps.settingsPath, setFallback(loadRoleSettings(deps.settingsPath), model), deps.now?.());
+      ui.notify(`已保存。${describeFallback(deps)}`, 'info');
     }
   }
 }
@@ -248,9 +283,22 @@ async function editRoles(deps: FlowConfigDeps, ui: UiPort): Promise<void> {
   }
 }
 
+/** 表格最后一行：兜底模型（角色名不会与真实角色重名） */
+const FALLBACK_ROW = '兜底模型';
+
 function tableRows(deps: FlowConfigDeps): RoleRow[] {
   const settings = loadRoleSettings(deps.settingsPath);
   const noSettings: ReturnType<typeof loadRoleSettings> = { version: 1, roles: {} };
+  const wfFallback = fallbackModel(deps.config, noSettings);
+  const fallback: RoleRow = {
+    role: FALLBACK_ROW, purpose: '所有角色共用：原模型暂停或升级后仍失败时改用', kind: 'fallback',
+    ...(settings.fallback_model ? { model: settings.fallback_model } : {}),
+    defaults: wfFallback ? { model: wfFallback } : {},
+  };
+  return [...roleRows(deps, settings, noSettings), fallback];
+}
+
+function roleRows(deps: FlowConfigDeps, settings: ReturnType<typeof loadRoleSettings>, noSettings: ReturnType<typeof loadRoleSettings>): RoleRow[] {
   return roles(deps).map((role) => {
     const wf = resolveRoleModel(deps.config, noSettings, role);
     const own = settings.roles[role] ?? {};
@@ -273,7 +321,13 @@ async function tableEdit(deps: FlowConfigDeps, ui: UiPort): Promise<string> {
   const edited = await ui.editTable!(tableRows(deps), deps.models.map((m) => ({ ref: m.ref, levels: m.levels })));
   if (!edited) return '已放弃修改。';
   // 先全部校验再写入，避免写一半
-  const values = edited.map((r) => {
+  const fbRow = edited.find((r) => r.kind === 'fallback');
+  let fallback: string | undefined;
+  if (fbRow?.model) {
+    fallback = findModel(deps, fbRow.model)?.ref;
+    if (!fallback) throw new FlowConfigError(`模型 ${fbRow.model} 不可用。执行 /forge-config models 查看可用模型`);
+  }
+  const values = edited.filter((r) => r.kind !== 'fallback').map((r) => {
     let escalate: string | undefined;
     if (r.escalate) {
       escalate = findModel(deps, r.escalate)?.ref;
@@ -286,6 +340,7 @@ async function tableEdit(deps: FlowConfigDeps, ui: UiPort): Promise<string> {
   });
   let settings = loadRoleSettings(deps.settingsPath);
   for (const v of values) settings = setEscalation(setRole(settings, v.role, v.setting), v.role, v.escalate);
+  if (fbRow) settings = setFallback(settings, fallback);
   saveRoleSettings(deps.settingsPath, settings, deps.now?.());
-  return `已保存各角色的模型、备用模型与思考强度。\n${describeAll(deps)}`;
+  return `已保存各角色的模型、升级模型、思考强度与兜底模型。\n${describeAll(deps)}`;
 }

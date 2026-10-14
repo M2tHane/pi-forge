@@ -23,7 +23,7 @@ test('/forge init：生成骨架、.gitignore、.forge 与初始提交；重复�
   try {
     writeFileSync(path.join(r.dir, '.gitignore'), 'node_modules/');
     const first = await initProject(r.dir, PKG);
-    for (const f of ['workflow.yaml', 'AGENTS.md', 'rules/global.md', 'docs/contracts/paths/.gitkeep', 'docs/contracts/components/.gitkeep', 'docs/contracts/errors/.gitkeep', 'docs/spec/.gitkeep', 'docs/arch/.gitkeep', 'docs/plan/.gitkeep', 'tests/acceptance/.gitkeep', 'docs/research/.gitkeep', '.forge/state.json']) {
+    for (const f of ['workflow.yaml', 'AGENTS.md', 'rules/global.md', 'docs/contracts/paths/.gitkeep', 'docs/contracts/components/.gitkeep', 'docs/contracts/errors/.gitkeep', 'docs/spec/.gitkeep', 'docs/arch/.gitkeep', 'docs/plan/.gitkeep', 'tests/acceptance/.gitkeep', '.forge/state.json']) {
       assert.ok(existsSync(path.join(r.dir, f)), f);
     }
     assert.ok(!existsSync(path.join(r.dir, 'docs/interfaces')), '不再生成 docs/interfaces/');
@@ -115,9 +115,14 @@ test('唯一允许的下一步：dispatch → wait → 报告阻塞；闸门等�
     s = nextStep(p.store, 2);
     assert.equal(s.tool, 'forge_wait');
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'x', facts: { reason: '需求有歧义' } });
+    // 程序或子进程造成的阻塞先交给主会话决定
+    s = nextStep(p.store, 2);
+    assert.equal(s.tool, 'forge_decide');
+    assert.equal(s.task, 'T-001');
+    await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'hand_to_user', actor: 'orchestrator', facts: { reason: '要用户决定' } });
     s = nextStep(p.store, 2);
     assert.equal(s.tool, 'none');
-    assert.match(s.next, /T-001（需求有歧义）.*\/forge unblock/);
+    assert.match(s.next, /T-001（需求有歧义\n主会话：要用户决定）.*\/forge unblock/s);
     assert.match(turnContext(p.store, 2), /^\[pi-forge 状态\][\s\S]*\[唯一允许的下一步\]/);
     await p.store.transitionStage(p.flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
     await p.store.transitionStage(p.flowId, { to: 'awaiting_human', trigger: 'gate_passed', actor: 'engine', needs_human: true });

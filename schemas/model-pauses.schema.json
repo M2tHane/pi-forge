@@ -28,7 +28,8 @@
           "kind": {
             "enum": [
               "quota",
-              "unavailable"
+              "unavailable",
+              "config"
             ]
           },
           "reason": {

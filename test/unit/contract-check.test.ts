@@ -96,7 +96,7 @@ test('从 git 引用与工作区读取契约文件', () => {
   } finally { r.cleanup(); }
 });
 
-test('空文件（含 /forge init 留下的 .gitkeep）视为不存在；其他多余文件的报错提示清空即可（偏离 83）', () => {
+test('空文件（含 /forge init 留下的 .gitkeep）视为不存在；其他多余文件的报错提示清空即可', () => {
   assert.deepEqual(check({ 'paths/.gitkeep': '', 'components/.gitkeep': '', 'errors/.gitkeep': '\n', 'errors/records.yaml': '  \n' }).errors, []);
   assert.match(messages(check({ 'paths/notes.txt': 'x' })), /不能有子目录或其他文件（不需要的文件把内容清空即可/);
 });

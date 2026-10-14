@@ -1,6 +1,6 @@
 // stage-qa（规格第 11 节第 3 步）：阶段门禁与覆盖率之后，由 stage-qa 在集成分支 HEAD 的临时 worktree 里实际运行、核对 exit。
 // 第 1 轮（S1.qa）出问题清单（forge_qa_report），之后各轮（S1.qa-2…）只确认上一轮的 must（forge_qa_confirm，规则同 reviewer）。
-// 这里是纯函数（编号、轮次、任务说明）与流程（创建 .qa、处理结论）。轮次处理与阶段审查共用 stage-rounds.ts。
+// 这里是纯函数（编号、轮次、任务说明）与流程（创建 .qa、处理结论）。轮次处理在 stage-rounds.ts。
 // 引擎的编排（什么时候创建、什么时候调用 resolveQa）由 dispatcher 的 advanceStage 负责。
 import type { FlowConfig } from '../state/config.ts';
 import type { ReviewFinding, TaskFile } from '../state/schemas.ts';
@@ -48,7 +48,7 @@ export function nextQaId(tasks: readonly Pick<TaskFile, 'id' | 'kind'>[], stage:
   return next === 1 ? `${stage}.qa` : `${stage}.qa-${next}`;
 }
 
-// —— 阶段上下文（stage-qa 与阶段审查共用） ——
+// —— 阶段上下文 ——
 
 export interface ExitReq { req: string; title: string; acs: { id: string; text: string; manual: boolean }[] }
 
@@ -67,7 +67,7 @@ export function readStageExit(root: string, store: StateStore, flowId: string, s
   let exit: ExitReq[] = (def?.exit ?? []).map((req) => ({ req, title: '（规格读取失败）', acs: [] }));
   try {
     const spec = readSpec(root, flow.integration_branch);
-    exit = exitReqsOf(effectiveSpec(spec.files, spec.features), def?.exit ?? []);
+    exit = exitReqsOf(effectiveSpec(spec.files), def?.exit ?? []);
   } catch { /* 规格读不到时只给 REQ 编号 */ }
   return { goal: def?.goal ?? stage, exit };
 }
@@ -178,10 +178,10 @@ export function resolveQa(root: string, store: StateStore, config: FlowConfig, f
 }
 
 /**
- * 阶段级任务（qa、阶段 .rv）派发时的 worktree：集成分支上、输入记录里的 head 处的 detached 临时 worktree（没有记录时用当前 HEAD）。
- * 任务 done 或 cancelled 后由 resolveQa / resolveStageReview（或 cleanupStageWorktrees）删除。
+ * 阶段级任务（qa）派发时的 worktree：集成分支上、输入记录里的 head 处的 detached 临时 worktree（没有记录时用当前 HEAD）。
+ * 任务 done 或 cancelled 后由 resolveQa（或 cleanupStageWorktrees）删除。
  */
 export function stageWorktreeFor(root: string, store: StateStore, flowId: string, task: Pick<TaskFile, 'id' | 'kind'>, integrationBranch: string): TaskWorktree {
-  const input = readReviewEvidence<ReviewInputFile>(store, flowId, task.id, task.kind === 'qa' ? QA_INPUT : 'review-input.json');
+  const input = readReviewEvidence<ReviewInputFile>(store, flowId, task.id, QA_INPUT);
   return createStageTempWorktree(root, flowId, task.id, integrationBranch, input?.head);
 }

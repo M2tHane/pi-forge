@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { acTexts, diffAcs, effectiveSpec, lintSpec, parseRequirements, UNTESTABLE_WORDS } from '../../src/core/spec/spec.ts';
-import type { SpecFiles, SpecFeature } from '../../src/core/spec/spec.ts';
+import { acTexts, effectiveSpec, lintSpec, parseRequirements, UNTESTABLE_WORDS } from '../../src/core/spec/spec.ts';
+import type { SpecFiles } from '../../src/core/spec/spec.ts';
 
 const requirement = (id = 'REQ-001', ac = '- AC1：Given 已登录 When 创建看板 Then 返回看板编号', priority = 'MVP'): string =>
   `### ${id} 创建看板 [${priority}]\n角色：管理员、成员\n${ac}`;
@@ -22,17 +22,14 @@ const baseline: SpecFiles = {
   permissions: `# 权限\n${matrix}`,
   glossary: '# 团队看板\n\n## 术语\n**管理员（Admin）**：\n管理团队的角色。\n_不要叫_：超级用户\n\n**成员（Member）**：\n团队内的普通用户。\n\n**看板（Board）**：\n一组按列排列的卡片。\n_不要叫_：面板、kanban',
 };
-function feature(reqs: string, screens = '', permissions = '| 资源 · 操作 | 管理员 |\n| --- | --- |'): SpecFeature {
-  return { name: '2026-01-01-01-change.md', content: `# 增量规格\n\n## 需求\n${reqs}\n\n## 页面\n${screens}\n\n## 权限\n${permissions}` };
-}
-function checkRule(base: SpecFiles, rule: string, exists: boolean, features: SpecFeature[] = [], warning = false): void {
-  const result = lintSpec(base, features);
+function checkRule(base: SpecFiles, rule: string, exists: boolean, warning = false): void {
+  const result = lintSpec(base);
   assert.equal((warning ? result.warnings : result.errors).some((issue) => issue.rule === rule), exists, JSON.stringify(result));
 }
 
 test('完整规格零错误、零警告；保留需求、页面、权限与术语的结构', () => {
   assert.deepEqual(lintSpec(baseline), { errors: [], warnings: [] });
-  const spec = effectiveSpec(baseline, []);
+  const spec = effectiveSpec(baseline);
   assert.equal(spec.reqs[0]!.title, '创建看板');
   assert.deepEqual(spec.reqs[0]!.roles, ['管理员', '成员']);
   assert.equal(spec.reqs[0]!.acs[0]!.given, '已登录');
@@ -60,28 +57,13 @@ test('空白、CRLF、半角冒号、GWT 大小写和多行 AC 可解析', () =>
 test('REQ 全局重复报错，编号不同通过', () => {
   checkRule({ ...baseline, requirements: `${requirement()}\n${requirement('REQ-002')}` }, 'req-duplicate', false);
   checkRule({ ...baseline, requirements: `${requirement()}\n${requirement()}` }, 'req-duplicate', true);
-  checkRule(baseline, 'req-duplicate', true, [feature(requirement())]);
-  checkRule(baseline, 'req-duplicate', true, [feature(requirement('REQ-002')), { ...feature(requirement('REQ-002')), name: 'later.md' }]);
 });
 
-test('修订和删除必须指向当前存在的 REQ；合法标记允许重复编号', () => {
-  for (const marker of ['修订', '删除']) {
-    const req = marker === '删除' ? '### REQ-001（删除）' : requirement('REQ-001（修订）');
-    checkRule(baseline, 'req-target', false, [feature(req)]);
-    checkRule(baseline, 'req-duplicate', false, [feature(req)]);
-    checkRule(baseline, 'req-target', true, [feature(req.replace('REQ-001', 'REQ-002'))]);
-  }
-});
-
-test('新增 REQ 连续时无警告，跳号只有警告；删除后不复用旧编号', () => {
-  checkRule(baseline, 'req-sequence', false, [feature(requirement('REQ-002'))], true);
-  const result = lintSpec(baseline, [feature(requirement('REQ-003'))]);
+test('新增 REQ 连续时无警告，跳号只有警告', () => {
+  checkRule({ ...baseline, requirements: `${requirement()}\n${requirement('REQ-002')}` }, 'req-sequence', false, true);
+  const result = lintSpec({ ...baseline, requirements: `${requirement()}\n${requirement('REQ-003')}` });
   assert.deepEqual(result.errors, []);
   assert.ok(result.warnings.some((item) => item.rule === 'req-sequence'));
-  const highBase = { ...baseline, requirements: `${requirement()}\n${requirement('REQ-002', '', 'NO')}` };
-  const amendments = [feature('### REQ-002（删除）'), { ...feature(requirement('REQ-003')), name: 'z.md' }];
-  checkRule(highBase, 'req-sequence', false, amendments, true);
-  checkRule(highBase, 'req-duplicate', true, [feature('### REQ-002（删除）'), { ...feature(requirement('REQ-002')), name: 'z.md' }]);
 });
 
 test('优先级仅允许 MVP、LATER、NO，缺失或其他值报错', () => {
@@ -89,8 +71,7 @@ test('优先级仅允许 MVP、LATER、NO，缺失或其他值报错', () => {
   checkRule({ ...baseline, requirements: requirement().replace('[MVP]', '[ MVP ]') }, 'priority', false);
   for (const priority of ['P0', 'mvp', '']) checkRule({ ...baseline, requirements: requirement('REQ-001', undefined, priority) }, 'priority', true);
   checkRule({ ...baseline, requirements: requirement().replace(' [MVP]', '') }, 'priority', true);
-  assert.deepEqual(parseRequirements('### REQ-001（删除）').issues, []);
-  assert.ok(parseRequirements('### REQ-001（删除） [P0]').issues.some((item) => item.rule === 'priority'));
+  assert.ok(parseRequirements('### REQ-001 创建看板 [P0]').issues.some((item) => item.rule === 'priority'));
 });
 
 test('MVP 必须有 AC，LATER 和 NO 可无 AC', () => {
@@ -173,7 +154,7 @@ test('权限表无法解析、列数不齐、空单元格、重复角色均报�
 
 test('权限可包含多个矩阵，转义竖线作为条件正文保留', () => {
   const permissions = `${matrix}\n\n| 资源 · 操作 | 管理员 |\n| --- | --- |\n| 看板 · 删除 | 所有者 \\| 团队负责人 |`;
-  const spec = effectiveSpec({ ...baseline, permissions }, []);
+  const spec = effectiveSpec({ ...baseline, permissions });
   assert.deepEqual(spec.issues, []);
   assert.equal(spec.permissions.at(-1)!.grants['管理员'], '所有者 | 团队负责人');
 });
@@ -183,7 +164,6 @@ test('权限角色必须匹配术语主名，英文名与废弃别名不作为�
   for (const role of ['访客', 'Admin', '超级用户']) checkRule({ ...baseline, permissions: matrix.replace('管理员', role) }, 'permissions-role', true);
   const glossary = `${baseline.glossary}\n\n**访客（Guest）**：\n受邀查看页面的人。`;
   assert.deepEqual(lintSpec({ ...baseline, glossary, permissions: matrix.replace('管理员', '访客') }).errors, []);
-  checkRule(baseline, 'permissions-role', true, [feature(requirement('REQ-002'), '', '| 资源 | 访客 |\n| 看板 · 查看 | ✓ |')]);
 });
 
 test('术语格式严格要求中文主名、英文名与定义', () => {
@@ -205,19 +185,13 @@ for (const file of ['requirements', 'screens', 'permissions', 'glossary'] as con
   });
 }
 
-test('Todo、TodoCollection、todo list 这类合法术语不是占位词（只认大写独立的 TODO/TBD，偏离 88）', () => {
+test('Todo、TodoCollection、todo list 这类合法术语不是占位词（只认大写独立的 TODO/TBD）', () => {
   for (const word of ['**待办（Todo）**：清单项。', 'TodoCollection', 'a todo list', 'TBDX', 'Stbd']) checkRule({ ...baseline, glossary: `${baseline.glossary}\n${word}` }, 'placeholder', false);
-});
-
-test('feature 中任意位置的占位词报错', () => {
-  const amendment = feature(requirement('REQ-002'));
-  checkRule(baseline, 'placeholder', false, [amendment]);
-  checkRule(baseline, 'placeholder', true, [{ ...amendment, content: `TODO\n${amendment.content}` }]);
 });
 
 for (const word of UNTESTABLE_WORDS) {
   test(`AC 中的 ${word} 只给警告，具体行为没有警告`, () => {
-    checkRule(baseline, 'ac-untestable', false, [], true);
+    checkRule(baseline, 'ac-untestable', false, true);
     const result = lintSpec({ ...baseline, requirements: requirement('REQ-001', `- AC1：Given 已登录 When 创建 Then ${word}返回编号`) });
     assert.deepEqual(result.errors, []);
     assert.ok(result.warnings.some((item) => item.rule === 'ac-untestable'));
@@ -232,84 +206,8 @@ test('单条 REQ 的 AC 超过 6 条只给警告 ac-too-many，6 条及以下没
   assert.ok(!lintSpec({ ...baseline, requirements: requirement('REQ-001', acs(6)) }).warnings.some((item) => item.rule === 'ac-too-many'));
 });
 
-test('feature 必须包含需求、页面、权限三节，重复章节报错', () => {
-  const amendment = feature(requirement('REQ-002'));
-  assert.deepEqual(lintSpec(baseline, [amendment]).errors, []);
-  for (const section of ['需求', '页面', '权限']) checkRule(baseline, 'feature-section', true, [{ ...amendment, content: amendment.content.replace(`## ${section}`, `# ${section}`) }]);
-  checkRule(baseline, 'feature-section', true, [{ ...amendment, content: `${amendment.content}\n## 需求\n${requirement('REQ-003')}` }]);
-});
-
-test('feature 按文件名排序整条修订、删除；不修改输入', () => {
-  const first = { ...feature(requirement('REQ-001（修订）', '- AC2（manual）：第一版显示编号')), name: 'a.md' };
-  const second = { ...feature(requirement('REQ-001(修订)', '- AC3（manual）：第二版显示编号')), name: 'b.md' };
-  const features = [second, first];
-  const original = structuredClone({ baseline, features });
-  const spec = effectiveSpec(baseline, features);
-  assert.deepEqual(spec.issues, []);
-  assert.deepEqual(spec.reqs[0]!.acs.map((ac) => ac.id), ['AC3']);
-  assert.equal(spec.reqs[0]!.file, 'docs/spec/features/b.md');
-  assert.equal(spec.reqs[0]!.line, 4);
-  assert.deepEqual({ baseline, features }, original);
-  const deletion = { ...feature('### REQ-001（删除）'), name: 'c.md' };
-  const deleted = effectiveSpec(baseline, [...features, deletion]);
-  assert.deepEqual(deleted.reqs, []);
-  assert.ok(deleted.issues.some((item) => item.rule === 'screen-req'));
-  checkRule(baseline, 'req-target', true, [deletion, { ...first, name: 'd.md' }]);
-});
-
-test('新增页面合并、已有路由整页替换；权限只替换指定资源的角色单元格', () => {
-  const amendment = feature(requirement('REQ-002'), `${screen('REQ-002')}\n${screen('REQ-002', '/archive')}`, '| 资源 · 操作 | 管理员 |\n| --- | --- |\n| 看板 · 创建 | ✗ |\n| 看板 · 删除 | ✓ |');
-  const spec = effectiveSpec(baseline, [amendment]);
-  assert.deepEqual(spec.issues, []);
-  assert.equal(spec.screens.length, 2);
-  assert.deepEqual(spec.screens[0]!.reqs, ['REQ-002']);
-  assert.equal(spec.permissions.length, 2);
-  assert.deepEqual(spec.permissions[0]!.grants, { 管理员: '✗', 成员: '仅本团队' });
-});
-
-test('后续新增需求可被页面引用；需求删除后引用应一起修订', () => {
-  const files = { ...baseline, requirements: `${requirement()}\n${requirement('REQ-002')}` };
-  const amendment = feature('### REQ-001（删除）', screen('REQ-002'));
-  assert.deepEqual(lintSpec(files, [amendment]).errors, []);
-  const forward = { ...feature('', screen('REQ-002')), name: 'a.md' };
-  const later = { ...feature(requirement('REQ-002')), name: 'b.md' };
-  assert.deepEqual(lintSpec(baseline, [later, forward]).errors, []);
-});
-
-test('feature 错误使用原始文件行号，重复文件名不能静默叠加', () => {
-  const amendment = feature(requirement('REQ-002', '- AC1：Given 条件 Then 结果'));
-  const error = lintSpec(baseline, [amendment]).errors.find((item) => item.rule === 'ac-gwt')!;
-  assert.equal(error.file, 'docs/spec/features/2026-01-01-01-change.md');
-  assert.equal(error.line, 6);
-  checkRule(baseline, 'feature-duplicate', true, [amendment, amendment]);
-});
-
-test('整条删除不能包含 AC', () => {
-  checkRule(baseline, 'req-delete', false, [feature('### REQ-001（删除）')]);
-  checkRule(baseline, 'req-delete', true, [feature('### REQ-001（删除）\n- AC1（manual）：删除内容')]);
-});
-
-test('diffAcs 精确区分新增、改文、删除与 manual 变化', () => {
-  const files = { ...baseline, requirements: requirement('REQ-001', '- AC1：Given 已登录 When 创建 Then 成功\n- AC2（manual）：显示新看板\n- AC3（manual）：人工确认') };
-  const before = effectiveSpec(files, []);
-  const after = effectiveSpec(files, [feature(requirement('REQ-001（修订）', '- AC1：Given 已登录 When 创建 Then 返回编号\n- AC3：Given 条件 When 操作 Then 结果\n- AC4（manual）：显示新布局'))]);
-  assert.deepEqual(diffAcs(before, after), { added: ['REQ-001.AC4'], changed: ['REQ-001.AC1', 'REQ-001.AC3'], removed: ['REQ-001.AC2'] });
-  assert.deepEqual(diffAcs(before, before), { added: [], changed: [], removed: [] });
-  const manualBefore = effectiveSpec(baseline, []);
-  const manualAfter = effectiveSpec(baseline, [feature(requirement('REQ-001（修订）', '- AC1（manual）：Given 已登录 When 创建看板 Then 返回看板编号'))]);
-  assert.deepEqual(diffAcs(manualBefore, manualAfter).changed, ['REQ-001.AC1']);
-  assert.deepEqual(diffAcs(before, effectiveSpec(files, [feature('### REQ-001（删除）')])).removed, ['REQ-001.AC1', 'REQ-001.AC2', 'REQ-001.AC3']);
-});
-
-test('diffAcs 忽略标题、角色、文件位置变动，新增 REQ 的 AC 使用全局编号', () => {
-  const before = effectiveSpec(baseline, []);
-  const after = effectiveSpec(baseline, [feature(requirement('REQ-001（修订）').replace('创建看板 [MVP]', '创建团队看板 [MVP]').replace('管理员、成员', '管理员'))]);
-  assert.deepEqual(diffAcs(before, after), { added: [], changed: [], removed: [] });
-  assert.deepEqual(diffAcs(before, effectiveSpec(baseline, [feature(requirement('REQ-002'))])).added, ['REQ-002.AC1']);
-});
-
 test('acTexts 返回指定生效 AC 原文，跳过缺失编号并去重', () => {
-  const spec = effectiveSpec(baseline, [feature(requirement('REQ-001（修订）', '- AC2（manual）：新看板出现在第一行'))]);
+  const spec = effectiveSpec({ ...baseline, requirements: requirement('REQ-001', '- AC2（manual）：新看板出现在第一行') });
   assert.deepEqual(acTexts(spec, ['REQ-001.AC2', 'REQ-001.AC1', 'REQ-999.AC1', 'REQ-001.AC2']), { 'REQ-001.AC2': '新看板出现在第一行' });
   assert.deepEqual(acTexts(spec, []), {});
 });

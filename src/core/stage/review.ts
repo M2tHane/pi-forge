@@ -15,10 +15,6 @@ export const GLOSSARY_MAX = 4_000;
 // —— 10.1 什么时候审查 ——
 
 export interface ReviewPolicy {
-  /** review.per_task：false 时不做逐任务审查（精简模式） */
-  perTask: boolean;
-  /** review.skip_sizes：size 在其中且没有追加契约的 task 不审查 */
-  skipSizes: readonly string[];
   /** escalation.critical_fanout：被这么多 task 硬依赖视为底座；0 关闭 */
   criticalFanout: number;
   /** review.max_rounds：审查轮数上限（第 1 轮出清单，之后各轮只确认） */
@@ -27,31 +23,23 @@ export interface ReviewPolicy {
 
 export function reviewPolicy(config: FlowConfig): ReviewPolicy {
   return {
-    perTask: config.raw.review?.per_task ?? true,
-    skipSizes: config.raw.review?.skip_sizes ?? ['S'],
     criticalFanout: escalationPolicy(config).criticalFanout,
     maxRounds: config.raw.review?.max_rounds ?? 2,
   };
 }
 
-/** 这些类型的 task 不做逐任务审查：fix（.fx-n，审查任务编号 T-001.fx-1.rv 不符合编号规则，回归由阶段门禁和 stage-qa 的确认轮核对）、doc/acctest 不是实施代码，review/qa 本身是审查 */
-const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'acctest', 'review', 'qa'];
-
-/** 偏离 117：预检不再运行命令，impl 必须审查——审查者读 diff 并运行本 task 自己的测试，不能被 per_task、skip_sizes、task.review 关掉 */
-const ALWAYS_REVIEW_KINDS: readonly string[] = ['impl'];
+/** 这些类型的 task 不做逐任务审查：fix（.fx-n，审查任务编号 T-001.fx-1.rv 不符合编号规则，回归由阶段门禁和 stage-qa 的确认轮核对）、doc 不是实施代码，review/qa 本身是审查 */
+const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'review', 'qa'];
 
 /**
- * 推导一个 task 的审查强度（第 10.1 节）。task.review 有值以它为准（per_task=false 与不审查的类型除外）；
- * 否则：底座（被 critical_fanout 个 task 硬依赖）、layers 含 auth、risk=high → strong；size 在 skip_sizes 且没有追加契约 → skip；其余 auto。
- * appendedContract：这个 task 的 diff 里有没有 docs/contracts/** 的改动，由调用方根据 diff 判断。
+ * 推导一个 impl task 的审查强度（第 10.1 节；预检不再运行命令，所以 impl 一律审查，审查者读 diff 并运行本 task 自己的测试，不能关掉）。
+ * task.review 写了 strong 以它为准；否则：底座（被 critical_fanout 个 task 硬依赖）、layers 含 auth、risk=high → strong；其余 auto。
  */
-export function reviewMode(task: Pick<TaskFile, 'id' | 'kind' | 'review' | 'risk' | 'size' | 'layers' | 'depends_on'>, tasks: readonly TaskFile[], policy: ReviewPolicy, appendedContract: boolean): ReviewMode {
-  const always = ALWAYS_REVIEW_KINDS.includes(task.kind);
-  if (NO_REVIEW_KINDS.includes(task.kind) || (!always && !policy.perTask)) return 'skip';
-  if (task.review && (task.review !== 'skip' || !always)) return task.review;
+export function reviewMode(task: Pick<TaskFile, 'id' | 'kind' | 'review' | 'risk' | 'size' | 'layers' | 'depends_on'>, tasks: readonly TaskFile[], policy: ReviewPolicy): ReviewMode {
+  if (NO_REVIEW_KINDS.includes(task.kind)) return 'skip';
+  if (task.review && task.review !== 'skip') return task.review;
   const fanout = hardFanout(task as TaskFile, tasks);
   if ((policy.criticalFanout > 0 && fanout >= policy.criticalFanout) || (task.layers ?? []).includes('auth') || task.risk === 'high') return 'strong';
-  if (!always && task.size && policy.skipSizes.includes(task.size) && !appendedContract) return 'skip';
   return 'auto';
 }
 
@@ -65,7 +53,7 @@ export const isValidMustBasis = (basis: string): boolean => MUST_BASIS.test(basi
 export type RuleReader = (rel: string) => string | null;
 
 /**
- * rule: 出处必须指向真实存在的规则文件（偏离 100）：rules/ 下的 .md，`#` 后的条目要在该文件里出现。
+ * rule: 出处必须指向真实存在的规则文件：rules/ 下的 .md，`#` 后的条目要在该文件里出现。
  * 条目可以是编号（R3、3、#3：匹配以该编号开头的行，如 `3.`、`R3 `、`- [ ] R3 `、`## R3`），也可以是文件里的一段文字。
  * 不是 rule: 开头的出处返回 null（别的前缀不在这里校验）；通过返回 null，否则返回不通过的原因。
  */
@@ -223,9 +211,9 @@ export interface ReviewBriefInput {
   diff: { text: string; truncated: boolean };
   /** 上一轮没有解决的 must；非空表示这是确认轮 */
   priorMust: readonly ReviewFinding[];
-  /** 审查者要运行的本 task 自己的测试（偏离 117）；不给表示不要求运行（阶段审查等） */
+  /** 审查者要运行的本 task 自己的测试；不给表示不要求运行（阶段审查等） */
   tests?: ReviewTestPlan;
-  /** worker 自己写的验收测试的 AC 覆盖扫描（偏离 118）；不给表示验收测试不是 worker 写的 */
+  /** worker 自己写的验收测试的 AC 覆盖扫描；不给表示验收测试不是 worker 写的 */
   acceptance?: AcceptanceAudit;
   /** diff 里是否含 tests/acceptance/**（worker 自己写验收测试时含，审查者要读） */
   withAcceptance?: boolean;
@@ -238,7 +226,7 @@ export function formatMust(m: ReviewFinding): string {
   return `- ${m.id}　出处：${m.basis}\n  位置：${m.files.join('、')}${m.location ? `（${m.location}）` : ''}\n  问题：${m.problem}\n  期望：${m.expected}`;
 }
 
-/** 任务说明里“先运行这些测试”一节（偏离 117）：失败即 must，出处写 defect: */
+/** 任务说明里“先运行这些测试”一节：失败即 must，出处写 defect: */
 function testsSection(tests: ReviewTestPlan, confirm: boolean): string {
   const cmds = tests.run.length
     ? tests.run.map((c) => `- ${c.name}：\`${c.shell}\``).join('\n')
@@ -250,7 +238,7 @@ function testsSection(tests: ReviewTestPlan, confirm: boolean): string {
   return `## 先运行本 task 自己的测试（预检不再运行命令；全量测试与全部验收测试在阶段门禁）\n${cmds}${skipped}\n\n${how}只运行上面列出的命令，不要运行别的测试命令。`;
 }
 
-/** 验收测试审查一节（偏离 118）：程序算出的 AC 覆盖 + 要核对的三件事 */
+/** 验收测试审查一节：程序算出的 AC 覆盖 + 要核对的三件事 */
 function acceptanceSection(a: AcceptanceAudit): string {
   const rows = a.rows.map((r) => `- ${r.ac}：${r.files.length ? r.files.join('、') : '**没有带该编号的测试**'}`).join('\n');
   return [

@@ -177,7 +177,7 @@ test('没有 must（只有 suggest 或出处不合格的 must）按 pass 处理�
   } finally { p.cleanup(); }
 });
 
-test('推导：impl 一律审查（S 也要，偏离 117）；risk=high 是 strong，审查者用升级模型；其余用普通模型', async () => {
+test('推导：impl 一律审查（S 也要）；risk=high 是 strong，审查者用升级模型；其余用普通模型', async () => {
   const p = await setupProject({
     yaml: YAML, files: FILES,
     tasks: [derived('T-001', { size: 'S' }), derived('T-002', { size: 'M', risk: 'high' }), derived('T-003', { size: 'M' })],
@@ -197,7 +197,7 @@ test('推导：impl 一律审查（S 也要，偏离 117）；risk=high 是 stro
   } finally { p.cleanup(); }
 });
 
-test('精简模式也逐任务审查（偏离 117 取代偏离 84 对 impl / fix 的约定）', async () => {
+test('精简模式也逐任务审查（impl 一律审查）', async () => {
   const p = await setupProject({ yaml: YAML, files: FILES, stages: ['S1'], tasks: [derived('T-002', { stage: 'S1', size: 'M', risk: 'high' })] });
   await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }], 'lean');
   const e = makeEngine(p, async (role, _nth, a) => {

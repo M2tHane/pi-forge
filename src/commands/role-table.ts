@@ -1,5 +1,5 @@
 // 来源：pi-flow src/commands/role-table.ts @ 31f3f15
-// /forge-config 的角色表格：每行一个角色，列为 角色、职责、模型、备用模型、思考强度。
+// /forge-config 的角色表格：每行一个角色，列为 角色、职责、模型、升级模型、思考强度；最后一行是兜底模型（所有角色共用，只有模型一列）。
 // 纯逻辑（状态、按键、渲染），不依赖 Pi；由 pi-adapter 用 ctx.ui.custom 承载。
 import type { ThinkingLevel } from '../core/state/schemas.ts';
 
@@ -12,13 +12,18 @@ export interface RoleRow {
   thinking?: ThinkingLevel;
   /** 不设置时实际生效的默认（来自 workflow.yaml）；没有则 undefined */
   defaults: { model?: string; escalate?: string; thinking?: string };
+  /** fallback：兜底模型那一行，只能改模型列 */
+  kind?: 'fallback';
 }
+
+/** 这一列在这一行能不能改：兜底模型行只有模型列 */
+const editable = (r: RoleRow, col: Column) => r.kind !== 'fallback' || col === 'model';
 
 export interface TableModel { ref: string; levels: ThinkingLevel[] }
 
 export type Column = 'model' | 'escalate' | 'thinking';
 const COLUMNS: Column[] = ['model', 'escalate', 'thinking'];
-const HEADERS = ['角色', '职责', '模型', '备用模型', '思考强度'];
+const HEADERS = ['角色', '职责', '模型', '升级模型', '思考强度'];
 
 export type KeyName = 'up' | 'down' | 'left' | 'right' | 'enter' | 'escape' | 'delete';
 
@@ -112,6 +117,7 @@ export class RoleTable {
 
   private openPicker(): void {
     const r = this.rows[this.row]!;
+    if (!editable(r, this.col)) return;
     const options = this.options(r, this.col);
     const cur = this.current(r, this.col);
     const at = cur === undefined ? 0 : options.findIndex((o) => o?.toLowerCase() === cur.toLowerCase());
@@ -119,6 +125,7 @@ export class RoleTable {
   }
 
   private set(r: RoleRow, col: Column, value: string | undefined): void {
+    if (!editable(r, col)) return;
     if (col === 'model') {
       r.model = value;
       // 新模型不支持当前思考级别时回到默认
@@ -152,6 +159,7 @@ export class RoleTable {
   }
 
   private cell(r: RoleRow, col: Column): string {
+    if (!editable(r, col)) return '—';
     const own = col === 'model' ? r.model : col === 'escalate' ? r.escalate : r.thinking;
     if (own) {
       const unavailable = col !== 'thinking' && !this.levelsOf(own) ? ' [不可用]' : '';
@@ -188,7 +196,7 @@ export class RoleTable {
     const cellsOf = [HEADERS, ...body];
     const rowParts = cellsOf.map((c, i) => parts(c, i - 1 === this.row, i === 0));
     const prefix = (i: number) => (i - 1 === this.row ? '→ ' : '  ');
-    const lines = [`${BOLD}pi-forge：各角色的模型与思考强度${RESET}`, '', ...rowParts.map((pp, i) => `${prefix(i)}${pp.join(sep)}`)];
+    const lines = [`${BOLD}pi-forge：各角色的模型、思考强度与兜底模型${RESET}`, '', ...rowParts.map((pp, i) => `${prefix(i)}${pp.join(sep)}`)];
     const FIRST = 2;                                  // 表头所在行号；数据行从 FIRST + 1 起
 
     const p = this.picker;

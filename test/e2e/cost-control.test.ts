@@ -14,8 +14,8 @@ import { commandEnv } from '../helpers/commands.ts';
 
 const MODELS = (yaml: string) => yaml
   .replace(/  test:      ".*"/, '  test:      "! grep -rqs FAIL src/server"')
-  // 偏离 117：合并只跑 merge_check，用它让 T-001 前两次提交的合并验证失败
-  .replace(/(  acceptance_list: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n')
+  // 合并只跑 merge_check，用它让 T-001 前两次提交的合并验证失败
+  .replace(/(  acceptance: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n')
   // 此用例显式把 worker 起始模型降为 medium，验证失败升级与关键底座机制。
   .replace('worker:            { model: strong', 'worker:            { model: medium')
   .replace(/models:[\s\S]*?\ntesting:/, 'models:\n  strong: "f/strong"\n  medium: "f/medium"\n  cheap:  "f/cheap"\ntesting:');

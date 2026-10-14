@@ -1,11 +1,10 @@
 // 来源：pi-flow src/core/dependencies.ts @ 31f3f15
-// 依赖检查：Pi 版本、角色用到的 Pi 插件、插件背后的程序（Serena、codegraph 命令行）。
+// 依赖检查：Pi 版本、角色用到的 Pi 插件、插件背后的程序（codegraph 命令行）。
 // 验证过的版本集中登记在这里；升级依赖并验证后只改这张表。
 // 插件版本不在验证范围时只提醒：pi-forge 按工具白名单启用工具，guard 对取不到路径的写操作一律阻断，
 // 所以插件改了工具名或参数名时，相关工具会失效，但不会放宽安全检查。
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 
@@ -31,12 +30,6 @@ export interface PluginSpec {
 
 export const PLUGINS: PluginSpec[] = [
   {
-    pkg: '@bacnh85/pi-serena', groups: ['serena_read', 'serena_edit'], tested: { min: '0.9.20', below: '0.10.0', label: '0.9.x（已验证 0.9.20）' },
-    install: 'pi install npm:@bacnh85/pi-serena',
-    links: ['https://www.npmjs.com/package/@bacnh85/pi-serena', 'https://github.com/bacnh85/pi-extensions/tree/main/pi-serena'],
-    purpose: '符号级读取与编辑',
-  },
-  {
     pkg: '@vndv/pi-codegraph', groups: ['codegraph'], tested: { min: '0.1.10', below: '0.2.0', label: '0.1.x（已验证 0.1.10）' },
     install: 'pi install npm:@vndv/pi-codegraph',
     links: ['https://www.npmjs.com/package/@vndv/pi-codegraph', 'https://github.com/vndv/pi-codegraph'],
@@ -46,7 +39,7 @@ export const PLUGINS: PluginSpec[] = [
     pkg: 'pi-web-access', groups: ['web'], tested: { min: '0.35.0', below: '0.36.0', label: '0.35.x（已验证 0.35.0）' },
     install: 'pi install npm:pi-web-access',
     links: ['https://www.npmjs.com/package/pi-web-access', 'https://github.com/nicobailon/pi-web-access'],
-    purpose: '联网搜索与抓取（researcher）',
+    purpose: '联网搜索与抓取',
   },
   {
     pkg: '@tian.zuo/pi-ask-user', groups: ['ask'], tested: { min: '0.2.1', below: '0.3.0', label: '0.2.x（已验证 0.2.1）' },
@@ -56,11 +49,6 @@ export const PLUGINS: PluginSpec[] = [
   },
 ];
 
-export const SERENA = {
-  tested: { min: '1.7.0', below: '2.0.0', label: '1.x（已验证 1.7.0）' } as Tested,
-  install: 'uv tool install serena-agent（需要先装 uv：https://docs.astral.sh/uv/）',
-  links: ['https://github.com/oraios/serena'],
-};
 export const CODEGRAPH_CLI = {
   tested: { min: '1.6.0', below: '2.0.0', label: '1.x（已验证 1.6.0）' } as Tested,
   install: 'npm i -g @colbymchenry/codegraph，然后在项目里执行 codegraph init -i',
@@ -100,15 +88,6 @@ export function installedPackage(pkg: string, roots: readonly string[]): { dir: 
   return null;
 }
 
-/** pi-serena 查找 Serena Python 的位置（与其 worker.ts 一致）：SERENA_PYTHON、uv tool dir 下的 serena-agent */
-export function serenaInstalled(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env['SERENA_PYTHON'] && existsSync(env['SERENA_PYTHON'])) return true;
-  const dirs: string[] = [];
-  try { dirs.push(execFileSync('uv', ['tool', 'dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000 }).trim()); } catch { /* 没有 uv */ }
-  dirs.push(path.join(homedir(), '.local', 'share', 'uv', 'tools'));
-  return dirs.some((d) => d && (existsSync(path.join(d, 'serena-agent', 'bin', 'python')) || existsSync(path.join(d, 'serena-agent', 'Scripts', 'python.exe'))));
-}
-
 /** 哪些角色用到了某个插件的工具组 */
 export function rolesUsing(config: FlowConfig, groups: readonly string[]): string[] {
   const tools = new Set(groups.flatMap((g) => config.raw.tool_groups[g] ?? []));
@@ -123,8 +102,8 @@ export interface DependencyDeps {
   piVersion?: string;
   /** Pi 包的安装位置（项目级优先）；不提供则不检查插件 */
   packageRoots?: string[];
-  /** 测试用：替换命令与 Serena 检测 */
-  probe?: { serena?: () => boolean; serenaVersion?: () => string | null; codegraphVersion?: () => string | null };
+  /** 测试用：替换命令检测 */
+  probe?: { codegraphVersion?: () => string | null };
 }
 
 export function checkDependencies(d: DependencyDeps): DependencyItem[] {
@@ -155,17 +134,6 @@ export function checkDependencies(d: DependencyDeps): DependencyItem[] {
       } else {
         push('ok', p.pkg, hit.version);
       }
-    }
-  }
-
-  if (config && rolesUsing(config, ['serena_read', 'serena_edit']).length) {
-    const ok = (d.probe?.serena ?? serenaInstalled)();
-    if (!ok) {
-      push('warn', 'Serena', `未找到（pi-serena 需要它）。安装：${SERENA.install}（${linkText(SERENA.links)}）`);
-    } else {
-      const v = (d.probe?.serenaVersion ?? (() => runVersion('serena', ['--version'])))();
-      if (v && !inRange(v, SERENA.tested)) push('warn', 'Serena', `${v} 未经验证（已验证 ${SERENA.tested.label}）`);
-      else push('ok', 'Serena', v ?? '已安装');
     }
   }
 

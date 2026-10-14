@@ -49,28 +49,20 @@ test('worker 改本模块已有契约：forge_submit 被拒并点出文件与位
   } finally { p.cleanup(); }
 });
 
-test('worker 改别的模块的契约文件：forge_submit 被拒；还原后提交成功', async () => {
+test('worker 追加别的模块的契约文件（不限本模块）：提交成功', async () => {
   const p = await setupProject({ yaml: PROJECT_YAML, files, tasks: [team()] });
   try {
-    const texts: string[] = [];
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
       await a.call('forge_claim');
       assert.ok((await a.call('write', { path: 'src/server/t-001/a.ts', content: 'x' })).ok);
-      // 即使只是追加，别的模块（datasource）的文件也不能动
       assert.ok((await a.call('write', { path: C('errors/datasource.yaml'), content: CONTRACTS['errors/datasource.yaml']! + 'DATASOURCE_GONE: { http: 410, message: 已删除 }\n' })).ok);
       await a.call('forge_note', { text: '完成' });
-      const bad = await a.call('forge_submit', { summary: '越界改契约' });
-      texts.push(bad.text);
-      assert.ok(!bad.ok);
-      assert.ok((await a.call('write', { path: C('errors/datasource.yaml'), content: CONTRACTS['errors/datasource.yaml']! })).ok);
-      const r = await a.call('forge_submit', { summary: '只改本模块代码' });
+      const r = await a.call('forge_submit', { summary: '追加别的模块的错误码' });
       assert.ok(r.ok, r.text);
     });
     await engine.next(p.flowId);
     await engine.idle();
     assert.deepEqual(errors, []);
-    assert.match(texts[0]!, /docs\/contracts\/errors\/datasource\.yaml/);
-    assert.match(texts[0]!, /team/);
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
   } finally { p.cleanup(); }
 });

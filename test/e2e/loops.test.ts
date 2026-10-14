@@ -31,7 +31,7 @@ test('同样的原因连续失败两次：第三次直接用升级模型（不�
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'blocked');
     assert.equal(t.attempts, 3);
-    assert.match(t.blocked_reason ?? '', /同样的原因连续失败 3 次（升级模型后仍然一样）/);
+    assert.match(t.blocked_reason ?? '', /同样的原因连续失败 3 次（换过升级模型，仍然一样）/);
     assert.ok(p.store.listRuns().find((r) => r.model === 'fake/big')?.escalated);
     assert.deepEqual(errors, []);
     // 因调度器的重复失败看守阻塞，--reset 不会清零 attempts；保留 worktree，清除重复原因标记。
@@ -41,9 +41,44 @@ test('同样的原因连续失败两次：第三次直接用升级模型（不�
   } finally { p.cleanup(); }
 });
 
+test('兜底模型：同样的原因连续失败，先换升级模型，再换兜底模型，都试过才交出去', async () => {
+  const settings = { version: 1 as const, roles: { ...ALL_FAKE.roles, 'worker': { model: 'fake/small', escalate_model: 'fake/big' } }, fallback_model: 'fake/fb' };
+  const p = await setupProject({ yaml: PROJECT_YAML.replace(/after_failures: \d+/, 'after_failures: 5').replace(/max_attempts: \d+/, 'max_attempts: 6'), tasks: [task1()] });
+  try {
+    const { engine, launcher, errors } = makeEngine(p, async (_role, _n, a) => {
+      assert.ok((await a.call('forge_claim')).ok);
+      throw new Error('同样的运行失败');
+    }, settings);
+    await engine.next(p.flowId);
+    await engine.idle();
+    assert.deepEqual(launcher.launched.map((s) => s.model), ['fake/small', 'fake/small', 'fake/big', 'fake/fb']);
+    const t = p.store.readTask(p.flowId, 'T-001');
+    assert.equal(t.status, 'blocked');
+    assert.match(t.blocked_reason ?? '', /连续失败 4 次（换过升级模型、兜底模型，仍然一样）/);
+    assert.ok(p.store.listRuns().find((r) => r.model === 'fake/fb')?.fallback);
+    assert.deepEqual(errors, []);
+  } finally { p.cleanup(); }
+});
+
+test('兜底模型：没有可升级的模型时，失败次数到了就用兜底模型代替升级', async () => {
+  const settings = { version: 1 as const, roles: { ...ALL_FAKE.roles, 'worker': { model: 'fake/small' } }, fallback_model: 'fake/fb' };
+  const p = await setupProject({ yaml: PROJECT_YAML.replace(/after_failures: \d+/, 'after_failures: 1').replace(/max_attempts: \d+/, 'max_attempts: 6'), tasks: [task1()] });
+  try {
+    let n = 0;
+    const { engine, launcher, errors } = makeEngine(p, async (_role, _n, a) => {
+      if (n++ === 0) { assert.ok((await a.call('forge_claim')).ok); throw new Error('第一次失败'); }
+      await submit(a, 'export const a = 1;\n');
+    }, settings);
+    await engine.next(p.flowId);
+    await engine.idle();
+    assert.deepEqual(launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'worker').map((s) => s.model).slice(0, 2), ['fake/small', 'fake/fb']);
+    assert.deepEqual(errors, []);
+  } finally { p.cleanup(); }
+});
+
 test('模块谱系预算：失败原因各不相同、失败次数也没用完，但模块累计运行次数超过 limits.module_runs 时交给用户；解除阻塞后重新计算', async () => {
-  // 提交的 FAIL 在合并时被 merge_check 拦下（偏离 117）：合并失败上限也放宽，只让谱系预算起作用
-  const yaml = PROJECT_YAML.replace(/(  acceptance_list: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n').replace(/max_merge_failures: \d+/, 'max_merge_failures: 10').replace(/max_precheck_failures: \d+/, 'max_precheck_failures: 10').replace(/max_attempts: \d+/, 'max_attempts: 10').replace(/(max_attempts: 10)/, '$1\n  module_runs: 3');
+  // 提交的 FAIL 在合并时被 merge_check 拦下：合并失败上限也放宽，只让谱系预算起作用
+  const yaml = PROJECT_YAML.replace(/(  acceptance: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n').replace(/max_merge_failures: \d+/, 'max_merge_failures: 10').replace(/max_precheck_failures: \d+/, 'max_precheck_failures: 10').replace(/max_attempts: \d+/, 'max_attempts: 10').replace(/(max_attempts: 10)/, '$1\n  module_runs: 3');
   const p = await setupProject({ yaml, tasks: [task1()] });
   try {
     assert.equal(p.config.limits.module_runs, 3);

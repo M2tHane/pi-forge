@@ -33,7 +33,7 @@ async function fixProject(yaml = YAML) {
   // 先让 build 流程不占用：本组测试只关心 fix 流程
   await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
   const base = p.git('rev-parse', 'HEAD');
-  const fix = await p.store.createFixFlow('登录失败', 'main', base);
+  const fix = await p.store.createLightFlow('fix', '登录失败', 'main', base);
   await p.store.saveFlowBrief(fix.id, '# 登录失败\n输入正确密码仍提示错误。');
   const calls: string[] = [];
   const ctx = {
@@ -203,13 +203,13 @@ test('完整路径：T-001 合入 → X1.qa 出 must → fix → X1.qa-2 只确�
     assert.equal(p.store.readFlow(fix.id).stage_status, 'needs_human', 'needs_human 时 fixStep 不推进');
 
     // 人工放行：写日志、流程结束
-    await assert.rejects(acceptFix(ctx, 'B-001', '不是修复'), /不是修复流程/);
+    await assert.rejects(acceptFix(ctx, 'B-001', '不是修复'), /不是修复或小改动流程/);
     const msg = await acceptFix(ctx, fix.id, '手工验证过了');
     assert.match(msg, /已放行/);
     const flow = p.store.readFlow(fix.id);
     assert.equal(flow.stage_status, 'done');
     assert.ok(isFinished(flow));
-    assert.equal(p.store.openFixFlow(), null);
+    assert.equal(p.store.openLightFlow(), null);
     const log = readFixLog(p.store, fix.id)!;
     for (const s of ['2026-03-04', '输入正确密码仍提示错误', sha.slice(0, 8), 'fix: 登录失败', '- src/login.ts', '- test/login.test.ts', '人工放行', '轮数：2；发现 must 1 条', '手工验证过了', '验收返修任务 1 个']) assert.ok(log.includes(s), s);
     assert.deepEqual(p.store.listFixLogs(), ['2026-03-04-001.md']);
@@ -292,16 +292,16 @@ test('/forge-fix：流程运行中拒绝；等待审批时无 UI 提示 --yes、
 
     const noUi = envOf(p);
     assert.match(await runFlowFix('登录失败', noUi.env), /--yes/);
-    assert.equal(p.store.openFixFlow(), null);
+    assert.equal(p.store.openLightFlow(), null);
 
     const cancel = envOf(p, { ui: { select: async () => '取消', notify: () => {} } });
     assert.equal(await runFlowFix('登录失败', cancel.env), '已取消。');
-    assert.equal(p.store.openFixFlow(), null);
+    assert.equal(p.store.openLightFlow(), null);
 
     writeFileSync(path.join(p.dir, 'bug.md'), '# 登录失败\n输入正确密码仍提示错误。\n');
     const go = envOf(p, { ui: { select: async () => '继续修复', notify: () => {} } });
     const out = await runFlowFix('--from bug.md', go.env);
-    const open = p.store.openFixFlow()!;
+    const open = p.store.openLightFlow()!;
     assert.deepEqual([open.mode, open.stage, open.title, open.integration_branch], ['fix', 'X1', '登录失败', 'main']);
     assert.match(p.store.readFlowBrief(open.id), /输入正确密码仍提示错误/);
     assert.deepEqual(go.pumped, [open.id]);

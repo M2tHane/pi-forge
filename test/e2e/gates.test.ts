@@ -15,7 +15,7 @@ test('动态实施闸门：只运行已配置命令，两轮 .fx-n 后 needs_hum
     .replace(/  auto: \[[^\n]*\]/, '  auto: [gate_test, not_configured]');
   const p = await setupProject({ yaml, tasks: [mkTask('T-001')] });
   try {
-    assert.deepEqual(stageDef(p.config, 'build', 'S3').gate.auto, ['gate_test']);
+    assert.deepEqual(stageDef(p.config, 'S3').gate.auto, ['gate_test']);
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
       assert.ok((await a.call('forge_claim')).ok);
       assert.ok((await a.call('write', { path: 'src/server/t-001/a.ts', content: `完成 ${a.env.task}` })).ok);
@@ -28,7 +28,7 @@ test('动态实施闸门：只运行已配置命令，两轮 .fx-n 后 needs_hum
     const flow = p.store.readFlow(p.flowId);
     assert.equal(flow.stage_status, 'needs_human');
     assert.equal(flow.gate_rounds?.length, 2);
-    // impl 一律审查（偏离 117），.fx-n 不审查
+    // impl 一律审查，.fx-n 不审查
     assert.deepEqual(p.store.listTasks(p.flowId).sort((a, b) => a.id.localeCompare(b.id)).map((t) => [t.id, t.kind, t.status, t.for_task ?? null]), [['T-001', 'impl', 'done', null], ['T-001.fx-1', 'fix', 'done', 'T-001'], ['T-001.fx-2', 'fix', 'done', 'T-001'], ['T-001.rv', 'review', 'done', 'T-001']]);
     assert.ok(p.store.readEvents().some((e) => e.trigger === 'gate_exhausted'));
     const env = commandEnv(p, engine);
@@ -43,7 +43,7 @@ test('动态实施闸门：只运行已配置命令，两轮 .fx-n 后 needs_hum
   } finally { p.cleanup(); }
 });
 
-test('偏离 117：回归不在合并时拦下，而是在阶段门禁的全量 test 里发现，并按责任 task 建 .fx-n；修好后门禁通过', async () => {
+test('回归不在合并时拦下，而是在阶段门禁的全量 test 里发现，并按责任 task 建 .fx-n；修好后门禁通过', async () => {
   // 全量 test：src/server 里出现 REGRESSION 就失败，并列出文件（门禁按输出里的文件找责任 task）
   const yaml = PROJECT_YAML.replace(/  test:      ".*"/, `  test:      "if grep -rqs REGRESSION src/server; then grep -rl REGRESSION src/server; exit 1; fi"`).replace(/^  coverage: true/m, '  coverage: false');
   const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: ['test'] }), mkTask('T-002', { verify: ['test'], writes: ['src/server/t-002/**'] })] });

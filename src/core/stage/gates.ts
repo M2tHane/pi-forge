@@ -6,7 +6,6 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 import { isSettled } from '../state/state-machine.ts';
-import { SHARED_ACCEPTANCE_DIR, writesSharedAcceptance } from '../state/paths.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { git } from '../state/git.ts';
 import { failingFiles } from '../workspace/scope-hint.ts';
@@ -16,10 +15,8 @@ import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { resourceOptions, withResources } from '../workspace/resources.ts';
 
 import type { StageDeps } from './stages.ts';
-import type { TaskFile } from '../state/schemas.ts';
-import { P1_STAGE, isArchitectStage, p1GateProblems } from '../plan/plan-flow.ts';
-import { adoptGateProblems } from '../plan/adopt.ts';
-import { featurePermissionSummary } from '../plan/feature-spec.ts';
+import { isLightFlow, type TaskFile } from '../state/schemas.ts';
+import { P1_STAGE, p1GateProblems } from '../plan/plan-flow.ts';
 import { headSha } from '../workspace/worktree.ts';
 import { recordVerified, reusableRuns, reuseText, treeOfCommit } from '../verify/verify-cache.ts';
 import { failingAcceptanceDirs } from '../acceptance/acceptance-flow.ts';
@@ -29,8 +26,8 @@ import { createCoverageRounds, stageCoverage, writeCoverageReport, type Coverage
 /** failed：失败的闸门命令与输出；引擎据此生成有限轮次的修复任务。 */
 export interface GateOutcome { stage: string; passed: boolean; needsHuman: boolean; reasons: string[]; failed?: { command: string; output: string } }
 
-export function stageDef(config: FlowConfig, mode: 'build' | 'feature', stage: string) {
-  const def = config.raw.modes[mode]?.stages.find((s) => s.id === stage);
+export function stageDef(config: FlowConfig, stage: string) {
+  const def = config.raw.modes.build?.stages.find((s) => s.id === stage);
   if (def) return def;
   const gate = config.raw.implementation_gate;
   return { id: stage, phase: 'implementation' as const, gate: {
@@ -42,25 +39,24 @@ export function stageDef(config: FlowConfig, mode: 'build' | 'feature', stage: s
 export async function runStageGate(root: string, store: StateStore, config: FlowConfig, flowId: string, timeoutMs?: number): Promise<GateOutcome> {
   const flow = store.readFlow(flowId);
   if (flow.stage_status !== 'awaiting_gate') throw new Error(`阶段 ${flow.stage} 不在 awaiting_gate 状态`);
-  if (flow.mode === 'fix') throw new Error('fix 流程不使用阶段闸门');
+  if (isLightFlow(flow)) throw new Error('修复与小改动流程不使用阶段闸门');
   if (flow.stage === 'P0') {
     const lint = specGateLint(root, flow);
     const reasons = lint.errors.map((i) => i.message);
     const passed = reasons.length === 0;
     await store.transitionStage(flowId, { to: passed ? 'awaiting_human' : 'active', trigger: passed ? 'gate_passed' : 'gate_failed', actor: 'gate', needs_human: true,
       ...(reasons.length ? { reason: reasons.join('\n') } : {}),
-      spec: { ...flow.spec, submitted: passed, errors: reasons, warnings: lint.warnings.map((i) => i.message),
-        ...(flow.mode === 'feature' ? { permission_changes: passed ? featurePermissionSummary(root, flow) : [] } : {}) } });
+      spec: { ...flow.spec, submitted: passed, errors: reasons, warnings: lint.warnings.map((i) => i.message) } });
     return { stage: 'P0', passed, needsHuman: true, reasons };
   }
-  if (isArchitectStage(flow.stage)) {
-    const reasons = flow.stage === P1_STAGE ? p1GateProblems(root, store, config, flowId) : adoptGateProblems(root, flow);
+  if (flow.stage === P1_STAGE) {
+    const reasons = p1GateProblems(root, store, config, flowId);
     const passed = reasons.length === 0;
     await store.transitionStage(flowId, { to: passed ? 'awaiting_human' : 'active', trigger: passed ? 'gate_passed' : 'gate_failed', actor: 'gate', needs_human: true,
       ...(reasons.length ? { reason: reasons.join('\n').slice(0, 4000) } : {}) });
     return { stage: flow.stage, passed, needsHuman: true, reasons };
   }
-  const def = stageDef(config, flow.mode, flow.stage);
+  const def = stageDef(config, flow.stage);
   const isLast = flow.stage === flow.stages.at(-1);
   const needsHuman = !!def.gate.human || isLast;
   const reasons: string[] = [];
@@ -103,13 +99,13 @@ export interface ImplementationChecks {
  */
 export async function runImplementationChecks(root: string, store: StateStore, config: FlowConfig, flowId: string, timeoutMs?: number): Promise<ImplementationChecks> {
   const flow = store.readFlow(flowId);
-  if (flow.mode === 'fix') throw new Error('fix 流程不使用阶段闸门');
-  const def = stageDef(config, flow.mode, flow.stage);
+  if (isLightFlow(flow)) throw new Error('修复与小改动流程不使用阶段闸门');
+  const def = stageDef(config, flow.stage);
   const reasons: string[] = [];
   let failed: ImplementationChecks['failed'];
   const startHead = headSha(root, flow.integration_branch);
 
-  // 同一棵代码树上、命令内容相同、已经通过的命令（通常是最后一次合并验证跑过的）沿用结果，并写沿用记录（偏离 76）
+  // 同一棵代码树上、命令内容相同、已经通过的命令（通常是最后一次合并验证跑过的）沿用结果，并写沿用记录
   const tree = treeOfCommit(root, startHead);
   const full = (def.gate.auto ?? []).map((name) => ({ name, shell: config.commands[name]!.replace('{files}', '').trim() }));
   const reused = reusableRuns(store.readEvents(), flowId, tree, full);
@@ -187,12 +183,6 @@ export function gateIssues(failed: { command: string; output: string }, tasks: r
     const impl = tasks.find((t) => t.id === dir && t.kind === 'impl');
     if (impl) issues.push({ files: [], text, owner: impl.id, writes: impl.writes });
   }
-  // lean 的共享验收目录（偏离 110）：失败归最后一个写它的 impl，可写范围用它自己的 writes
-  if (failed.output.includes(`tests/acceptance/${SHARED_ACCEPTANCE_DIR}/`)) {
-    const num = (id: string) => Number(/^T-(\d+)/.exec(id)?.[1] ?? 0);
-    const impl = tasks.filter((t) => t.kind === 'impl' && writesSharedAcceptance(t)).sort((a, b) => num(a.id) - num(b.id)).at(-1);
-    if (impl) issues.push({ files: [], text, owner: impl.id, writes: impl.writes });
-  }
   const files = failingFiles(failed.output, tracked).filter((f) => !f.startsWith('tests/acceptance/'));
   if (files.length) issues.push({ files, text });
   return issues;
@@ -216,14 +206,14 @@ export async function gateFailed(d: StageDeps, flowId: string, failed: { command
 }
 
 /**
- * 覆盖率缺口：为缺口所属的 impl 建补充测试轮次（.at-n），记一轮 command 为 coverage 的 gate_rounds（与门禁修复共用 MAX_GATE_ROUNDS）。
- * 已满轮次时返回空数组与原因；没有建成任何任务（负责 task 的验收测试还在进行、或缺口都无主）时不记轮次。
+ * 覆盖率缺口：为缺口所属的 impl 建补测 task（.fx-n），记一轮 command 为 coverage 的 gate_rounds（与门禁修复共用 MAX_GATE_ROUNDS）。
+ * 已满轮次时返回空数组与原因；没有建成任何任务（负责 task 的修复还在进行、或缺口都无主）时不记轮次。
  */
-export async function createCoverageGapRound(store: StateStore, flowId: string, gaps: readonly CoverageRow[], selfTest = false): Promise<{ tasks: string[]; unowned: CoverageRow[]; skipped: string[]; reason?: string }> {
+export async function createCoverageGapRound(store: StateStore, flowId: string, gaps: readonly CoverageRow[]): Promise<{ tasks: string[]; unowned: CoverageRow[]; skipped: string[]; reason?: string }> {
   const flow = store.readFlow(flowId);
   const rounds = (flow.gate_rounds ?? []).filter((r) => r.stage === flow.stage);
   if (rounds.length >= MAX_GATE_ROUNDS) return { tasks: [], unowned: [...gaps].filter((g) => !g.owner), skipped: [], reason: `覆盖率缺口补测 ${MAX_GATE_ROUNDS} 轮后仍未补齐` };
-  const r = await createCoverageRounds(store, flowId, gaps, 'engine', selfTest);
+  const r = await createCoverageRounds(store, flowId, gaps, 'engine');
   if (r.tasks.length) await store.addGateRound(flowId, { stage: flow.stage, command: 'coverage', tasks: r.tasks, at: new Date().toISOString() }, [], {});
   return r;
 }

@@ -47,7 +47,7 @@ test('真实 pi print：forge_read 读 PRD；不合格规格被拒，合格规�
     assert.equal(flow.stage_status, 'awaiting_human');
     const requests = readFileSync(LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'orch-p0');
     assert.equal(requests.length, 4);
-    assert.ok(['forge_read', 'forge_spec', 'forge_spec_amend'].every((t) => requests[0].tools.includes(t)));
+    assert.ok(['forge_read', 'forge_spec', 'forge_change'].every((t) => requests[0].tools.includes(t)));
     assert.ok(!requests[0].tools.includes('write') && !requests[0].tools.includes('bash'));
     const system = requests[0].system.join('\n');
     assert.match(system, /docs\/spec\/inputs\/prd\/prd.md/);

@@ -66,12 +66,12 @@ export const ARMS: Arm[] = [
     hypothesis: '前两臂各自都没有用例失败时，用它确认"契约只能追加"作为整体仍有测试保护',
     edits: [{ file: 'src/tools/subagent-tools.ts', find: '  const violations = canAppendInterfaces(t) ? contractViolationsAt(', replace: '  const violations = false && canAppendInterfaces(t) ? contractViolationsAt(' },
       { file: 'src/core/engine/precheck.ts', find: '  const contract = contractAppendCheck(root, t, store.readFlow(flowId).integration_branch);', replace: '  const contract = null;' }] },
-  { id: 'contract-merge-at-sync-off', kind: 'ablate', mechanism: '预检前同步时的契约结构化三方合并（偏离 73）',
+  { id: 'contract-merge-at-sync-off', kind: 'ablate', mechanism: '预检前同步时的契约结构化三方合并',
     hypothesis: '契约追加冲突改为交回 worker 解决；预期 contract-merge e2e 失败',
-    edits: [{ file: 'src/tools/module-tools.ts', find: '      if (!resolveContractConflicts(wt, conflicts, { integration: 3, task: 2 })) {', replace: '      if (true) {' }] },
+    edits: [{ file: 'src/tools/module-tools.ts', find: '      if (!resolveConflictsStructured(wt, conflicts, { integration: 3, task: 2 }, appendMergeAllowed(t))) {', replace: '      if (true) {' }] },
   { id: 'contract-merge-at-queue-off', kind: 'ablate', mechanism: '合并队列 rebase 时的契约结构化三方合并（第 12.2 节）',
     hypothesis: '同步已在预检前合并过契约，合并时只有"预检后集成分支又移动且契约冲突"才会走到；预期没有用例失败',
-    edits: [{ file: 'src/core/engine/merge-queue.ts', find: '    if (!resolveContractConflicts(wt, conflicts, { integration: 2, task: 3 })) return false;', replace: '    return false;' }] },
+    edits: [{ file: 'src/core/engine/merge-queue.ts', find: '    if (!resolveConflictsStructured(wt, conflicts, { integration: 2, task: 3 }, appendMergeAllowed(t))) return false;', replace: '    return false;' }] },
 
   // —— 预检、合并、门禁（同一棵树上的验证次数）——
   { id: 'sync-before-precheck-off', kind: 'ablate', mechanism: '预检前把集成分支同步进任务分支（第 8.1 节 inputs_ready）',
@@ -90,7 +90,7 @@ export const ARMS: Arm[] = [
     hypothesis: '纯性能机制；预期只有批量合并的专门用例失败',
     edits: [{ file: 'src/core/engine/merge-queue.ts', find: '    const limit = this.config.limits.merge_batch ?? 3;', replace: '    const limit = 1;' }] },
   { id: 'first-eligible-off', kind: 'ablate', mechanism: '合并队列选第一个合格的 task（第 8.1 节 merge_start）',
-    hypothesis: '软依赖在 inputs_ready 时已要求生产方 done，进队列的 task 都合格；预期没有 e2e 失败（偏离 57）',
+    hypothesis: '软依赖在 inputs_ready 时已要求生产方 done，进队列的 task 都合格；预期没有 e2e 失败',
     edits: [
       { file: 'src/core/engine/merge-queue.ts', find: '      const head = mq.queue.find((e) => e.flow === flowId && ', replace: '      const head = mq.queue.slice(0, 1).find((e) => e.flow === flowId && ' },
       { file: 'src/core/state/state-store.ts', find: '      const eligible = mq.queue.find((e) => {', replace: '      const eligible = mq.queue.slice(0, 1).find((e) => {' },
@@ -98,10 +98,10 @@ export const ARMS: Arm[] = [
   { id: 'foreign-break-routing-off', kind: 'ablate', mechanism: '别的 task 的验收测试被破坏时建 .at-n（第 9.4 节）',
     hypothesis: '不分流时计为当前 task 的合并失败；预期 disputes/acctest-merge 中 9.4 的用例失败',
     edits: [{ file: 'src/core/engine/merge-queue.ts', find: "    if (kind !== 'foreign') return null;", replace: '    if (true) return null;' }] },
-  { id: 'awaited-acctest-off', kind: 'ablate', mechanism: 'impl 预检不等硬依赖自己的验收测试（awaitedAcctest，偏离 72）',
+  { id: 'awaited-acctest-off', kind: 'ablate', mechanism: 'impl 预检不等硬依赖自己的验收测试（awaitedAcctest）',
     hypothesis: '去掉后 S0 的 impl 与它的 .at 互相等待；预期 S0 相关用例卡住或失败',
     edits: [{ file: 'src/core/acceptance/acceptance-flow.ts', find: "  return latest && !latest.depends_on.some((d) => d.type === 'hard' && d.task === impl) ? latest : undefined;", replace: '  return latest;' }] },
-  { id: 'merged-acceptance-filter-off', kind: 'ablate', mechanism: '提交 diff 排除程序合入的验收测试（偏离 47）',
+  { id: 'merged-acceptance-filter-off', kind: 'ablate', mechanism: '提交 diff 排除程序合入的验收测试',
     hypothesis: '预检合入 .at 后返工再提交时，worker 的 diff 含 tests/acceptance/** 被拒；预期返工类用例失败',
     edits: [{ file: 'src/tools/subagent-tools.ts', find: '  const diff = withoutMergedAcceptance(ctx.env.root, ctx.env.flow, t, changedFiles(t.worktree, t.base_sha));', replace: '  const diff = changedFiles(t.worktree, t.base_sha);' }] },
 
@@ -109,7 +109,7 @@ export const ARMS: Arm[] = [
   { id: 'must-basis-demotion-off', kind: 'ablate', mechanism: '没有出处的 must 降为 suggest（第 10.3 节）',
     hypothesis: '预期 review 单元与 e2e 中的降级用例失败',
     edits: [{ file: 'src/core/stage/review.ts', find: "    if (level === 'must' && !isValidMustBasis(basis)) {", replace: "    if (false && level === 'must' && !isValidMustBasis(basis)) {" }] },
-  { id: 'dispute-evidence-check-off', kind: 'ablate', mechanism: '争议依据必须引用存在的规格或契约位置（偏离 49）',
+  { id: 'dispute-evidence-check-off', kind: 'ablate', mechanism: '争议依据必须引用存在的规格或契约位置',
     hypothesis: '预期争议用例中"依据无效被拒"失败',
     edits: [{ file: 'src/tools/subagent-tools.ts', find: '      facts: { token: ctx.env.token, dispute_test: test, dispute_evidence: p.evidence, dispute_evidence_valid: ev.ok, reason: p.reason } });', replace: '      facts: { token: ctx.env.token, dispute_test: test, dispute_evidence: p.evidence, dispute_evidence_valid: true, reason: p.reason } });' }] },
   { id: 'gate-retry-guard-off', kind: 'ablate', mechanism: '门禁失败后没有任何 task 变化时不重跑（gateFailedWithoutChange）',
@@ -123,7 +123,7 @@ export const ARMS: Arm[] = [
     edits: [{ file: 'src/core/stage/gates.ts', find: '  const def = stageDef(config, flow.mode, flow.stage);\n  const isLast = flow.stage === flow.stages.at(-1);', replace: "  throw new Error('ABLATED: runStageGate 实施阶段分支');\n  const def = stageDef(config, flow.mode, flow.stage);\n  const isLast = flow.stage === flow.stages.at(-1);" }] },
 
   // —— M8.5 实现后的复测 ——
-  { id: 'verify-reuse-off', kind: 'ablate', mechanism: '同一棵代码树只验证一次（verify-cache，偏离 76）',
+  { id: 'verify-reuse-off', kind: 'ablate', mechanism: '同一棵代码树只验证一次（verify-cache）',
     hypothesis: '去掉后每处都重跑，行为不变；预期只有断言沿用记录（merge-aN-reused.txt、gate-reused.txt）与 verify-cache 单元的用例失败',
     edits: [{ file: 'src/core/verify/verify-cache.ts', find: '  const out = new Map<string, string>();\n  if (!tree) return out;', replace: '  const out = new Map<string, string>();\n  if (!tree || true) return out;' }] },
 

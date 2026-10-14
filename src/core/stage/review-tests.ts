@@ -1,13 +1,13 @@
-// 审查者要运行的、本 task 范围内的测试（偏离 117）：预检不再跑命令，由审查者读 diff 并运行本 task 自己的单元测试与验收测试；
+// 审查者要运行的、本 task 范围内的测试：预检不再跑命令，由审查者读 diff 并运行本 task 自己的单元测试与验收测试；
 // 全量 test 与全量 acceptance 留到阶段门禁。这里只做纯计算（选哪些命令、哪些文件），命令写进审查任务说明，审查者按说明运行。
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import { git, taskBaseOf } from '../state/git.ts';
-import { SHARED_ACCEPTANCE_DIR, acceptanceDirOf, matchesAny, writesOwnAcceptance } from '../state/paths.ts';
+import { acceptanceDirOf, matchesAny, writesOwnAcceptance } from '../state/paths.ts';
 import { TEST_GLOBS } from '../verify/test-adjust.ts';
-import { scanAcCoverage } from '../acceptance/acctest.ts';
+import { scanAcCoverage } from '../acceptance/coverage.ts';
 
 /** 选择依据：本 task 改动的单元测试文件，以及 lean 共享验收目录下本 task 新增或修改的场景文件（相对 tests/acceptance/，如 suite/a.test.js）；accFiles 为 undefined 表示按目录名运行 */
 export interface TestSelection {
@@ -50,18 +50,6 @@ export function reviewTestCommands(commands: Record<string, string>, accDir: str
   return { run, skipped };
 }
 
-/**
- * lean 共享验收目录：本 task 新增或修改的场景文件（以 _ 开头的辅助文件不算场景）。
- * 只改了辅助文件时影响所有场景，退回运行整个目录（-- suite）；什么都没改返回空数组（跳过）。
- */
-export function sharedSuiteSelection(changed: readonly string[], dir: string): string[] {
-  const prefix = `tests/acceptance/${dir}/`;
-  const inDir = changed.filter((f) => f.startsWith(prefix)).map((f) => f.slice('tests/acceptance/'.length));
-  const scenarios = inDir.filter((f) => !path.posix.basename(f).startsWith('_'));
-  if (scenarios.length) return scenarios;
-  return inDir.length ? [dir] : [];
-}
-
 /** 本 task 相对基线新增或修改的文件（已删除的不算）；基线算不出时返回空 */
 export function changedFilesOf(t: Pick<TaskFile, 'base_sha' | 'worktree'>, integrationBranch?: string): string[] {
   const base = taskBaseOf(t, integrationBranch);
@@ -75,17 +63,13 @@ export function changedFilesOf(t: Pick<TaskFile, 'base_sha' | 'worktree'>, integ
 export function reviewTestPlan(config: FlowConfig, t: TaskFile, integrationBranch?: string): ReviewTestPlan {
   const wt = t.worktree;
   if (!wt) return { run: [], skipped: [] };
-  const impl = t.for_task ?? t.id;
-  // lean 且 test_author 关闭：所有 task 共用 tests/acceptance/suite/，只跑本 task 新增或修改的场景文件
-  const shared = writesOwnAcceptance(t);
-  const accDir = shared ? acceptanceDirOf(t) : impl;
+  const accDir = acceptanceDirOf(t);
   const changed = changedFilesOf(t, integrationBranch);
   const testFiles = changed.filter((f) => !f.startsWith('tests/acceptance/') && matchesAny(f, TEST_GLOBS));
-  const accFiles = shared && accDir === SHARED_ACCEPTANCE_DIR ? sharedSuiteSelection(changed, accDir) : undefined;
-  return reviewTestCommands(config.commands, accDir, existsSync(path.join(wt, 'tests/acceptance', accDir)), { testFiles, accFiles });
+  return reviewTestCommands(config.commands, accDir, existsSync(path.join(wt, 'tests/acceptance', accDir)), { testFiles });
 }
 
-/** 偏离 118：worker 自己写的验收测试的 AC 覆盖（程序扫描，不交给 LLM 数）。给审查者核对：缺失的 AC 是阻塞问题 */
+/** worker 自己写的验收测试的 AC 覆盖（程序扫描，不交给 LLM 数）。给审查者核对：缺失的 AC 是阻塞问题 */
 export interface AcceptanceAudit {
   /** 本 task 的每条 AC（REQ-xxx.ACn）及带它编号的测试文件 */
   rows: { ac: string; files: string[] }[];

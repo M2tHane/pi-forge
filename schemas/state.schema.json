@@ -21,7 +21,7 @@
       "anyOf": [
         {
           "type": "string",
-          "pattern": "^[BFX]-[0-9]{3,}$"
+          "pattern": "^[BCFX]-[0-9]{3,}$"
         },
         {
           "type": "null"

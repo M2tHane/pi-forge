@@ -1,0 +1,10 @@
+{
+  "name": "mini-boards",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"tests/unit/**/*.test.ts\"",
+    "test:acceptance": "node tests/run-acceptance.mjs"
+  }
+}

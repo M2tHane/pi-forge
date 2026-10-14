@@ -3,7 +3,7 @@
 //   node scripts/real-build.ts --arm A0|A1 --prd <requirement.md> --change <change.md> --hidden <hidden.mjs>
 //        [--out <目录>] [--max-min 240] [--stuck-min 30] [--planner-model ..] [--planner-thinking medium]
 //        [--coder-model ..] [--coder-thinking high] [--main-model ..] [--ext <扩展>]... [--poll-sec 5] [--stop-after-gates N] [--plan-mode lean|standard]
-// 做的事（docs/M9-PLAN.md 第 2、4、5、6 节）：
+// 做的事（M9 实验方案，原 docs/M9-PLAN.md，已删除，见 git 历史）：
 //   建空仓库 → /forge init → 写实验配置（按角色设模型与思考级别、关闭升级、A1 关闭 test-author）→ 用 `pi --mode rpc` 拉起主会话
 //   → /forge-build --prd → 把 extension_ui_request 与 .forge/ 状态交给 simulator.ts 的规则表 → 交付后 /forge-build --feature --prd
 //   → 看门狗（卡住、上限）→ 在 main 上跑隐藏测试 → 留档（interventions.jsonl、rpc.jsonl、hidden-*.json、metrics-*.txt、summary.json）。
@@ -82,7 +82,7 @@ export function parseArgs(argv: string[]): Options {
 
 // —— 实验配置（第 2 节） ——
 
-export const PLANNER_ROLES = ['orchestrator', 'architect', 'reviewer', 'stage-qa', 'researcher'] as const;
+export const PLANNER_ROLES = ['orchestrator', 'architect', 'reviewer', 'stage-qa'] as const;
 export const CODER_ROLES = ['worker', 'test-author'] as const;
 
 /**
@@ -99,7 +99,7 @@ export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' |
   doc.setIn(['models', 'medium'], o.plannerModel);
   doc.setIn(['models', 'cheap'], o.coderModel);
   for (const r of PLANNER_ROLES) { doc.setIn(['roles', r, 'model'], 'planner'); doc.setIn(['roles', r, 'thinking'], o.plannerThinking); }
-  for (const r of CODER_ROLES) { if (!doc.hasIn(['roles', r])) continue; /* 模板不再定义 test-author（偏离 118） */ doc.setIn(['roles', r, 'model'], 'coder'); doc.setIn(['roles', r, 'thinking'], o.coderThinking); }
+  for (const r of CODER_ROLES) { if (!doc.hasIn(['roles', r])) continue; /* 模板不再定义 test-author */ doc.setIn(['roles', r, 'model'], 'coder'); doc.setIn(['roles', r, 'thinking'], o.coderThinking); }
   doc.setIn(['escalation', 'enabled'], false);
   if (o.arm === 'A1') doc.setIn(['implementation_gate', 'test_author'], false);
   if (o.planMode === 'standard') doc.setIn(['limits', 'lean_below_loc'], 1);
@@ -134,10 +134,8 @@ export function readSnapshot(store: StateStore, root: string, flowId: string | n
     },
     tasks: tasks.map((t) => ({
       id: t.id, status: t.status, blockedBy: t.blocked_by ?? null, blockedReason: t.blocked_reason, version: t.version,
-      ...(t.status === 'blocked' && t.blocked_by === 'dispute' ? { disputeTest: [...store.readHandoff(flowId, t.id).matchAll(/## 争议：([^\n]+)/g)].at(-1)?.[1] ?? null } : {}),
     })),
     otherApprovals: [
-      ...store.listAmends(flowId).filter((a) => a.status === 'proposed').map((a) => `amend:${a.id}`),
       ...pendingChanges(store, flowId).map((c) => `change:${c.id}`),
     ],
   };
@@ -439,8 +437,9 @@ export async function main(argv: string[]): Promise<number> {
     log('等待主会话就绪…');
     await sleep(1500);
     const buildPhase = (): Phase => ({ name: 'build', command: `/forge-build --prd ${JSON.stringify(o.prd)}`, flowId: null, startMs: 0, endMs: null, delivered: false, metricsText: null, hidden: null, tests: null, hiddenMeta: {} });
-    const changePhase = (): Phase => ({ name: 'change', command: `/forge-build --feature --prd ${JSON.stringify(o.change)}`, flowId: null, startMs: 0, endMs: null, delivered: false, metricsText: null, hidden: null, tests: null, hiddenMeta: {} });
-    const open = o.changeOnly ? store.listFlows().find((f) => store.readFlow(f).mode === 'feature' && !['done', 'aborted'].includes(store.readFlow(f).stage_status)) : undefined;
+    // 变更阶段原来依赖 feature 模式（已删除），脚本保留只为编译与历史记录
+    const changePhase = (): Phase => ({ name: 'change', command: `/forge-build --prd ${JSON.stringify(o.change)}`, flowId: null, startMs: 0, endMs: null, delivered: false, metricsText: null, hidden: null, tests: null, hiddenMeta: {} });
+    const open = o.changeOnly ? store.listFlows().find((f) => store.readFlow(f).mode === 'build' && !['done', 'aborted'].includes(store.readFlow(f).stage_status)) : undefined;
     if (o.changeOnly) {
       const c = changePhase();
       if (open) { c.flowId = open; c.command = '继续：按已确认的决定重新提交增量规格。'; }

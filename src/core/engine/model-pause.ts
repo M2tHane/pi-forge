@@ -52,7 +52,7 @@ export const UNAVAILABLE_MAX_MS = 60 * 60_000;
 /** 暂停时长；null 表示等用户手动恢复（额度用完且提供方没给恢复时间） */
 export function pauseDuration(u: Pick<Unavailable, 'kind' | 'retryAfterMs'>, strikes: number): number | null {
   if (u.retryAfterMs !== undefined) return Math.max(u.retryAfterMs, 60_000);
-  if (u.kind === 'quota') return null;
+  if (u.kind === 'quota' || u.kind === 'config') return null;
   return Math.min(UNAVAILABLE_BASE_MS * 2 ** Math.max(0, strikes - 1), UNAVAILABLE_MAX_MS);
 }
 
@@ -81,9 +81,10 @@ export async function recordPause(store: StateStore, input: { model: string; rol
     const strikes = cur ? (stillActive ? cur.strikes : cur.strikes + 1) : 1;
     const ms = stillActive && cur!.retry_after === undefined ? null : pauseDuration(u, strikes);
     const retryAfter = ms === null ? undefined : new Date(now.getTime() + ms).toISOString();
-    const keepQuota = stillActive && cur!.kind === 'quota';
+    // 要手动恢复的暂停（额度、配置）不被随后的"暂时不可用"覆盖
+    const keep = stillActive && cur!.kind !== 'unavailable';
     const next: ModelPause = {
-      model, kind: keepQuota ? 'quota' : u.kind, reason: keepQuota ? cur!.reason : u.reason, since: stillActive ? cur!.since : now.toISOString(),
+      model, kind: keep ? cur!.kind : u.kind, reason: keep ? cur!.reason : u.reason, since: stillActive ? cur!.since : now.toISOString(),
       ...(retryAfter ? { retry_after: stillActive && cur!.retry_after && cur!.retry_after > retryAfter ? cur!.retry_after : retryAfter } : {}),
       strikes,
       roles: [...new Set([...(cur?.roles ?? []), role])],
@@ -91,7 +92,7 @@ export async function recordPause(store: StateStore, input: { model: string; rol
     };
     if (i >= 0) f.pauses[i] = next; else f.pauses.push(next);
     return next;
-  }, { actor: 'dispatcher', flow, task, reason: `模型 ${model} ${u.kind === 'quota' ? '额度用完' : '暂时不可用'}，暂停派发`, data: { model_pause: model, kind: u.kind } });
+  }, { actor: 'dispatcher', flow, task, reason: `模型 ${model} ${KIND_LABEL[u.kind]}，暂停派发`, data: { model_pause: model, kind: u.kind } });
 }
 
 /** 解除暂停（用户恢复，或模型已成功响应）；返回被解除的记录 */
@@ -111,7 +112,7 @@ export function matchPausedModel(pauses: readonly ModelPause[], name: string): M
   return pauses.filter((p) => p.model.split('/').slice(1).join('/') === name);
 }
 
-const KIND_LABEL: Record<ModelPauseKind, string> = { quota: '额度用完', unavailable: '暂时不可用（限流、过载或服务连不上）' };
+const KIND_LABEL: Record<ModelPauseKind, string> = { quota: '额度用完', unavailable: '暂时不可用（限流、过载或服务连不上）', config: '配置有误（API key、模型名或权限）' };
 
 /** 给人看的一行说明 */
 export function describePause(p: ModelPause, now: Date): string {

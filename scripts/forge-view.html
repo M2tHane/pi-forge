@@ -229,7 +229,7 @@ const ST = {
 // 七个角色（第 14 节）：颜色用于任务、时间线和成本
 const ROLE = {
   orchestrator: ['主会话', '#8a63d2'], architect: ['架构师', '#2a78d6'], worker: ['实施者', '#1baf7a'], 'test-author': ['测试作者', '#d99a1c'],
-  reviewer: ['审查者', '#eb6834'], 'stage-qa': ['阶段验收', '#d0457a'], researcher: ['研究者', '#7d8590'],
+  reviewer: ['审查者', '#eb6834'], 'stage-qa': ['阶段验收', '#d0457a'],
 };
 const roleL = (r) => (ROLE[r] || [r])[0];
 const roleC = (r) => (ROLE[r] || [r, '#898781'])[1];
@@ -270,7 +270,7 @@ const TRIG = {
   run_interrupted: ['恢复', '会话中断，只计中断次数'],
   run_paused: ['程序', '模型额度用完或服务不可用：不计失败，暂停该模型'],
   run_timeout: ['程序', '运行超过时间预算被结束（计一次失败），等主会话复核'],
-  report: ['探查者', '只读探查（researcher）提交结论，直接完成'],
+  report: ['审查者', '审查或 stage-qa 提交结论，直接完成'],
   cancel: ['用户', '批准的变更请求取消未开始的任务'],
 };
 // 运行结果：标签是具体结果，颜色按大类（图例按大类显示）

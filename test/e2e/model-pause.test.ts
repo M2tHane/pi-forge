@@ -84,6 +84,32 @@ test('额度用完：任务不计失败、不转阻塞；这个模型不再派�
   } finally { p.cleanup(); }
 });
 
+test('兜底模型：原模型额度用完被暂停时，任务立即改用兜底模型继续并完成，不计失败', async () => {
+  const p = await setupProject({ yaml: YAML, tasks: [mkTask('T-001', { verify: [] })] });
+  const settings: RoleSettingsFile = { ...SETTINGS, fallback_model: 'f/fb' };
+  try {
+    // 只有一个实施任务：最近一次 worker 派发就是当前这次
+    const current = () => launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'worker').at(-1)!.model;
+    const { engine, launcher, errors } = makeEngine(p, async (role, _n, a) => {
+      if (role === 'worker' && current() === 'f/glm') throw new Error(QUOTA);
+      return implement(a, 'src/server/t-001/a.ts');
+    }, settings);
+    await engine.next(p.flowId);
+    await engine.idle();
+    await engine.pump(p.flowId);
+    await engine.idle();
+    assert.deepEqual(errors, []);
+    assert.equal(p.store.readModelPauses().pauses[0]?.model, 'f/glm');
+    const t1 = p.store.readTask(p.flowId, 'T-001');
+    assert.equal(t1.status, 'done', `${t1.status} ${t1.blocked_reason ?? ''}`);
+    assert.equal(t1.attempts, 0);
+    const fbRuns = p.store.listRuns().filter((r) => r.model === 'f/fb' && r.role === 'worker');
+    assert.ok(fbRuns.length >= 1 && fbRuns.every((r) => r.fallback));
+    assert.ok(p.store.readEvents().some((e) => /f\/glm 暂停中，改用兜底模型 f\/fb/.test(e.reason ?? '')));
+    assert.ok(launcher.launched.filter((s) => s.model === 'f/glm').length >= 1);
+  } finally { p.cleanup(); }
+});
+
 test('限流：模型暂停 5 分钟后自动恢复；恢复后又限流则退避加倍；成功后清除记录', async () => {
   // 子进程工具层用真实时钟校验租约：起点取当前时间，之后只往后拨
   const t0 = Date.now();
@@ -124,5 +150,39 @@ test('限流：模型暂停 5 分钟后自动恢复；恢复后又限流则退�
     t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done');
     assert.deepEqual(p.store.readModelPauses().pauses, [], '成功响应后清除记录');
+  } finally { p.cleanup(); }
+});
+
+test('失败分类：配置错误暂停模型、要手动恢复、不计失败；运行环境出错直接交给用户、不重试', async () => {
+  const p = await setupProject({ yaml: YAML, tasks: [
+    mkTask('T-001', { verify: [] }),
+    mkTask('T-002', { kind: 'doc', role: 'architect', scopes: ['plan'], writes: ['docs/arch/**'], verify: [] }),
+  ] });
+  try {
+    const { engine, launcher, errors } = makeEngine(p, async (role) => {
+      if (role === 'architect') throw new Error('ENOSPC: no space left on device, write');
+      throw new Error('401 Unauthorized: invalid_api_key');
+    }, SETTINGS);
+    await engine.next(p.flowId);
+    await engine.idle();
+    assert.deepEqual(errors, []);
+
+    const t1 = p.store.readTask(p.flowId, 'T-001');
+    assert.equal(t1.status, 'in_progress');
+    assert.equal(t1.attempts, 0, '配置错误不计任务失败');
+    const pause = p.store.readModelPauses().pauses[0]!;
+    assert.equal(pause.kind, 'config');
+    assert.equal(pause.retry_after, undefined, '不会自动恢复');
+    assert.equal(launcher.launched.filter((s) => s.model === 'f/glm').length, 1);
+    assert.match(actionsNeeded(p.store, p.config).find((x) => x.key.startsWith('model-pause:'))?.text ?? '', /f\/glm 配置有误/);
+
+    const t2 = p.store.readTask(p.flowId, 'T-002');
+    assert.equal(t2.status, 'blocked');
+    assert.equal(t2.attempts, 0);
+    assert.match(t2.blocked_reason ?? '', /运行环境出错.*ENOSPC/);
+    assert.equal(launcher.launched.filter((s) => s.model === 'f/arch').length, 1, '不重试');
+    const kinds = p.store.listRuns().map((r) => r.failure_kind).sort();
+    assert.deepEqual(kinds, ['environment', 'model_config']);
+    assert.deepEqual((await p.store.verifyIntegrity()).errors, []);
   } finally { p.cleanup(); }
 });

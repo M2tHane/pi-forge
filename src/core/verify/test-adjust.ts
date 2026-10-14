@@ -1,7 +1,6 @@
 // 来源：pi-flow src/core/test-adjust.ts @ 31f3f15
-// 适配已有测试（第四轮后续）：合并时跑全量测试，改了接口的模块会让别的模块已有的测试失败，
-// 而有权改那些测试的任务往往排在后面。实施类任务因此可以修改基线上已有的测试文件（不限角色可写范围），
-// 只能修改，不能新增或删除；改了哪些记在任务上与 handoff 里。
+// 适配已有测试：实施类任务可以改任何测试文件（不受 writes 限制）；这里只负责记录 writes 之外有哪些已有测试被修改过，
+// 记在任务上与 handoff 里，给审查者看。
 import type { FlowConfig } from '../state/config.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import { git } from '../state/git.ts';
@@ -14,12 +13,6 @@ export function testAdjustEnabled(config: FlowConfig, t: TaskFile): boolean {
   if (config.raw.testing?.adjust_tests === false) return false;
   if (!['impl', 'fix'].includes(t.kind)) return false;
   return config.role(t.role).writes.length > 0;
-}
-
-/** 基线上已有、在任务 writes 之外的测试文件 */
-export function adjustableTests(worktree: string, base: string, writes: readonly string[]): string[] {
-  return git(worktree, ['ls-tree', '-r', '--name-only', base]).split('\n')
-    .filter((f) => f && !f.startsWith('tests/acceptance/') && matchesAny(f, TEST_GLOBS) && !matchesAny(f, writes));
 }
 
 /** 相对基线只修改过（不是新增、删除）的 writes 之外的已有测试文件 */

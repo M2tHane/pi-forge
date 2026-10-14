@@ -5,12 +5,11 @@ import path from 'node:path';
 import { StateStore, handoffRel, evidenceRel } from '../src/core/state/state-store.ts';
 import { STAGE_TRANSITIONS, TRANSITIONS } from '../src/core/state/state-machine.ts';
 import { flowMetrics } from '../src/core/stage/signoff.ts';
-import { isAdoptFlow } from '../src/core/plan/adopt.ts';
 import { redactDeep, redactSecrets } from '../src/core/security/redact.ts';
 import type { FlowFile, TaskFile } from '../src/core/state/schemas.ts';
 
-/** 七个角色（规格第 14 节） */
-export const ROLES = ['orchestrator', 'architect', 'worker', 'test-author', 'reviewer', 'stage-qa', 'researcher'] as const;
+/** 六个角色（规格第 14 节；test-author 已删除） */
+export const ROLES = ['orchestrator', 'architect', 'worker', 'reviewer', 'stage-qa'] as const;
 
 const HANDOFF_TAIL = 3000;
 const EVIDENCE_TAIL = 1500;
@@ -19,7 +18,7 @@ const EVIDENCE_FILES = ['qa-report.json', 'review.json', 'precheck.log', 'verify
 const tail = (text: string, n: number) => (text.length > n ? text.slice(-n) : text);
 
 /** 流程类型：build、feature、fix 之外，含 ADOPT 阶段的是接管（adopt） */
-export const flowKind = (flow: FlowFile): string => (isAdoptFlow(flow) ? 'adopt' : flow.mode);
+export const flowKind = (flow: FlowFile): string => flow.mode;
 
 /** 阶段列表：P0、P1、S 阶段（带目标与出口）、其余阶段；每项带状态与闸门轮次 */
 function stageRows(flow: FlowFile, tasks: readonly TaskFile[]) {
@@ -56,7 +55,7 @@ export function buildViewData(store: StateStore, root: string, now = new Date())
     }
     // 变更请求里的完整计划文本很长，页面只看摘要与动作
     const changes = store.listChanges(id).map(({ plan_text: _p, ...c }) => c);
-    const amends = store.listAmends(id).map(({ content: _c, ...a }) => a);
+    const amends: unknown[] = []; // 规格修订已删除（M1 删减）
     let metrics: unknown = null;
     try { metrics = flowMetrics(store, id, now, root); } catch {
       try { metrics = flowMetrics(store, id, now); } catch { metrics = null; }

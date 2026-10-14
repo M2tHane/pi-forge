@@ -19,7 +19,7 @@ import { serviceCwd } from '../../src/tools/subagent-tools.ts';
 import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
 import { evidenceRel, taskRel } from '../../src/core/state/state-store.ts';
 
-const YAML = PROJECT_YAML.replace('acceptance_list: "true"', 'acceptance_list: "true"\n  serve:     "true"');
+const YAML = PROJECT_YAML.replace('acceptance: "true"', 'acceptance: "true"\n  serve:     "true"');
 const FILES = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));
 const must1 = { level: 'must' as const, basis: 'ac:REQ-001.AC1', files: ['src/server/t-001/a.ts'], location: 'a', problem: '没有返回看板编号', expected: '返回编号' };
 const badMust = { level: 'must' as const, basis: '我觉得不好', files: ['src/server/t-001/a.ts'], location: '', problem: '命名', expected: '改名' };
@@ -57,15 +57,15 @@ test('编号与轮次：S1.qa、S1.qa-2…（取消的轮次也占编号）；qa
   assert.equal(qaRounds(tasks, 'S1'), 2);
 });
 
-test('isStageLevelTask：qa 与没有 for_task 的阶段审查；逐任务审查不是', () => {
+test('isStageLevelTask：只有 qa；逐任务审查不是', () => {
   assert.equal(isStageLevelTask({ id: 'S1.qa', kind: 'qa' }), true);
-  assert.equal(isStageLevelTask({ id: 'S1.rv-2', kind: 'review' }), true);
+  assert.equal(isStageLevelTask({ id: 'S1.qa-2', kind: 'qa' }), true);
   assert.equal(isStageLevelTask({ id: 'T-001.rv', kind: 'review', for_task: 'T-001' }), false);
   assert.equal(isStageLevelTask({ id: 'T-001', kind: 'impl' }), false);
 });
 
 test('exitReqsOf 与 buildQaBrief：第一轮给目标、AC 原文、矩阵、统计、服务；确认轮只给 must 清单', () => {
-  const spec = effectiveSpec({ requirements: P0_SPEC.requirements, screens: P0_SPEC.screens, permissions: P0_SPEC.permissions, glossary: P0_SPEC.glossary }, []);
+  const spec = effectiveSpec({ requirements: P0_SPEC.requirements, screens: P0_SPEC.screens, permissions: P0_SPEC.permissions, glossary: P0_SPEC.glossary });
   const exit = exitReqsOf(spec, ['REQ-001', 'REQ-404']);
   assert.equal(exit[0]!.acs[0]!.id, 'REQ-001.AC1');
   assert.deepEqual(exit[1], { req: 'REQ-404', title: '（规格里找不到）', acs: [] });

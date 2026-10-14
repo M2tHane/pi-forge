@@ -41,6 +41,10 @@
         }
       }
     },
+    "fallback_model": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/\\S+$"
+    },
     "updated_at": {
       "type": "string"
     }

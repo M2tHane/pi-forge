@@ -1,5 +1,5 @@
-// 阶段级审查（lean 的 .rv）与 stage-qa（.qa）共用的"轮次处理"：读取最新一轮的结论，决定通过、生成 fix task、等待修复、或轮数用尽。
-// 纯业务逻辑，不依赖 Pi；状态只经 StateStore 写入。两者的差别只在 evidence 文件名、轮数上限和 fix 来源，由 RoundSpec 描述。
+// stage-qa（.qa）的"轮次处理"：读取最新一轮的结论，决定通过、生成 fix task、等待修复、或轮数用尽。
+// 纯业务逻辑，不依赖 Pi；状态只经 StateStore 写入。evidence 文件名、轮数上限和 fix 来源由 RoundSpec 描述（fix 模式的复现确认也用它）。
 import type { TaskFile, ReviewFinding } from '../state/schemas.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { ReviewConfirmFile, ReviewInputFile, ReviewReportFile } from './review-flow.ts';
@@ -9,7 +9,7 @@ import { createStageFixTasks, type StageFixSource } from '../acceptance/stage-fi
 import { cleanupStageWorktrees } from '../workspace/stage-worktree.ts';
 
 /**
- * resolve 的返回值（resolveQa 与 resolveStageReview 相同）：
+ * resolve 的返回值（resolveQa）：
  * - none：这个阶段还没有这类 task，调用 createXxx 创建第一轮；
  * - running：最新一轮还没结束（含 ready、in_progress、等待 token 等），什么都不用做；
  * - blocked：最新一轮被 forge_block，或已结束但没留下结论；reason 给用户，阶段转 needs_human；
@@ -29,7 +29,7 @@ export type StageRoundOutcome =
   | { kind: 'exhausted'; reason: string };
 
 export interface RoundSpec {
-  source: Extract<StageFixSource, 'qa' | 'review'>;
+  source: Extract<StageFixSource, 'qa'>;
   /** 本阶段这一类 task（按轮次升序，不含已取消的） */
   rounds: (tasks: readonly TaskFile[], stage: string) => TaskFile[];
   roundOf: (id: string) => number;

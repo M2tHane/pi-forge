@@ -1,4 +1,4 @@
-// 依赖清单与锁文件的纯函数（偏离 119）：共享构建环境据此判断一个 worktree 的依赖清单相对共享环境是"相同、纯追加还是有改动"。
+// 依赖清单与锁文件的纯函数：共享构建环境据此判断一个 worktree 的依赖清单相对共享环境是"相同、纯追加还是有改动"。
 // 从 workspace.ts 搬出了 LOCKFILES、MANIFESTS、lockHash、hasManifest（workspace.ts 仍然 re-export，调用方不变）。
 import { createHash } from 'node:crypto';
 import path from 'node:path';

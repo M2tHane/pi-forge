@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseConfig } from '../../src/core/state/config.ts';
-import { acctestCacheRoot, cacheKey, hasManifest, prepareWorkspace } from '../../src/core/workspace/workspace.ts';
+import { depsCacheRoot, cacheKey, hasManifest, prepareWorkspace } from '../../src/core/workspace/workspace.ts';
 import { workspaceStats } from '../../src/core/stage/signoff.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 
@@ -32,7 +32,7 @@ function configWith(commands: Record<string, string>) {
   const c = parseConfig(TEST_YAML);
   for (const k of ['install', 'codegen']) delete c.raw.commands[k];
   Object.assign(c.raw.commands, commands);
-  c.raw.acctest_workspace = { cache: ['node_modules'] };
+  c.raw.shared_env = { deps: ['node_modules'] };
   return c;
 }
 
@@ -74,9 +74,9 @@ test('readonly：第二次命中缓存（依赖文件与缓存是同一个 inode
     const r2 = await prepareWorkspace(p.root, config, ws2, { mode: 'readonly' });
     assert.deepEqual([r2.ok, r2.cached], [true, true]);
     assert.equal(readFileSync(log, 'utf8'), 'install\ncodegen\ncodegen\n');
-    const entries = readdirSync(acctestCacheRoot(p.root)).filter((n) => !n.includes('.tmp-'));
+    const entries = readdirSync(depsCacheRoot(p.root)).filter((n) => !n.includes('.tmp-'));
     assert.equal(entries.length, 1);
-    const cachedFile = path.join(acctestCacheRoot(p.root), entries[0]!, 'node_modules/dep/index.js');
+    const cachedFile = path.join(depsCacheRoot(p.root), entries[0]!, 'node_modules/dep/index.js');
     assert.equal(statSync(path.join(ws2, 'node_modules/dep/index.js')).ino, statSync(cachedFile).ino, '硬链接');
     assert.equal(statSync(path.join(p.ws, 'node_modules/dep/index.js')).ino, statSync(cachedFile).ino);
   } finally { p.cleanup(); }
@@ -106,7 +106,7 @@ test('没有锁文件（只有清单）：readonly 每次都 install，不写缓
     const r1 = await prepareWorkspace(p.root, config, p.ws, { mode: 'readonly' });
     const r2 = await prepareWorkspace(p.root, config, p.fresh(), { mode: 'readonly' });
     assert.deepEqual([r1.ok, r1.cached, r2.ok, r2.cached], [true, undefined, true, undefined]);
-    assert.ok(!existsSync(acctestCacheRoot(p.root)));
+    assert.ok(!existsSync(depsCacheRoot(p.root)));
   } finally { p.cleanup(); }
 });
 
@@ -117,13 +117,13 @@ test('writable：每次都运行 install，不产生缓存，也不用缓存', a
     const config = configWith({ install: `echo install >> ${log} && mkdir -p node_modules && echo x > node_modules/f` });
     // 先用 readonly 造出缓存，writable 也不能用它
     await prepareWorkspace(p.root, config, p.ws, { mode: 'readonly' });
-    const cacheBefore = readdirSync(acctestCacheRoot(p.root));
+    const cacheBefore = readdirSync(depsCacheRoot(p.root));
     const w1 = p.fresh();
     const r1 = await prepareWorkspace(p.root, config, w1, { mode: 'writable' });
     const r2 = await prepareWorkspace(p.root, config, p.fresh(), { mode: 'writable' });
     assert.deepEqual([r1.ok, r1.cached, r2.ok, r2.cached], [true, undefined, true, undefined]);
     assert.equal(readFileSync(log, 'utf8'), 'install\ninstall\ninstall\n');
-    assert.deepEqual(readdirSync(acctestCacheRoot(p.root)), cacheBefore, '没有新增缓存');
+    assert.deepEqual(readdirSync(depsCacheRoot(p.root)), cacheBefore, '没有新增缓存');
     assert.equal(statSync(path.join(w1, 'node_modules/f')).nlink, 1, '不是硬链接');
   } finally { p.cleanup(); }
 });

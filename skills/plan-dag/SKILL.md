@@ -12,15 +12,13 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 
 ## 阶段
 
-- **S0 骨架**（固定，只能有 1 个 task）：启动脚本、数据库连接与初始迁移、测试运行命令、tests/acceptance/_support/ 的登录与请求助手、一条最薄的端到端链路（桩实现也可以）。
+- **S0 骨架**（固定，只能有 1 个 task，由 architect 自己做，不是 worker）：按 docs/arch/overview.md 建项目骨架、依赖清单与锁文件并安装依赖；搭好 docker、数据库等环境，让命令草案里的命令真的能跑；把共享类型、错误码常量、统一错误响应结构落成代码；直接写 rules/；写 tests/acceptance/_support/ 公共工具和冒烟测试 tests/acceptance/S0-smoke/（含一条最薄的端到端链路，桩实现也可以）。
   **不建**类型生成、客户端生成、契约检查、DOM 模拟；exit 涉及的 AC 最多 4 条，选一两条最核心的 REQ。
   所有命令都要遵守程序注入的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP，以便并行运行。
-  只有显式开启 `test_author: true`（默认关闭）且 acceptance_list 要在隔离工作区里运行时，需要额外导出的子包清单与可缓存的依赖目录，写进 commands.yaml 的 `acctest_workspace: { include, cache }`。
-  S0 交付共享构建环境的输入：依赖清单与锁文件（之后基本不再改）、能一条命令建库删库的脚本；commands.yaml 里写好 install，需要数据库服务器时写 env_up、db_create、db_drop。
-  S0 的 worker 自己写 tests/acceptance/_support/ 公共工具和一个冒烟测试 tests/acceptance/S0-smoke/（唯一例外）；S0 exit 的 AC 测试由 worker 自己写，reviewer 审查。
+  S0 交付共享构建环境的输入：完整的依赖清单与锁文件（之后基本不再改）、能一条命令建库删库的脚本。
+  worker 的 task 从 S1 开始，每个 task 可以同时涉及前端和后端。
 - **S1…Sn**：每个阶段交付一组用户能感知、能演示的能力。按依赖排序：被依赖的业务（团队、权限）在前。
-  标准模式阶段数通常是 2 到 5 个；阶段越多，阶段之间的串行屏障越多。
-  **lean 模式只分 S0 + S1 两个阶段**，S1 的 AC 超过 40 条才拆成 S1、S2：每多一个阶段，就多一次阶段审查、修复、复审与签收（实测 S0 的这一段 19 分钟，S1 13 分钟）。
+  阶段数通常是 2 到 5 个；阶段越多，阶段之间的串行屏障越多。
 - 每条 MVP REQ 恰好出现在一个阶段的 exit 中。
 - 每条本阶段 AC 都要能用本阶段或之前交付的入口准备数据、执行动作、观察结果。需要后续接口时，调整阶段归属或合并紧耦合的切片，不留隐含的反向依赖。
 - 不适用的工程产物（代码生成、类型检查、lint、e2e）不要列进 S0，也不配进 commands；不让 worker 为凑命令而自建工具。零第三方依赖的项目，前端交互写进 manual_checks。
@@ -31,7 +29,6 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 - **例外**：size 为 L 且是真实的 REST 边界时，可以拆成 `api` 和 `ui` 两个 task，ui 对 api 的接口用 `~` 软依赖，前端对着生成的 mock 开发。
 - **粒度跟 worker 的模型走**（任务说明里列出了模型）：强模型一个 task 可以是一整块业务（10 到 30 个文件）；弱模型一次会话能做完（1 到 8 个文件）。
   每个 task 都有固定开销（重新读上下文、预检、审查、合并），拆得越细越慢。
-- **规模小**（size_estimate.loc 低于任务说明给出的阈值）：选 `mode: lean`，每个阶段一个 task。
 - **铺垫性重构、大范围机械改动**（改名、改共享类型）：单独成 task，排在依赖它的 task 前面。
 
 ## 每个 task 的字段
@@ -39,17 +36,16 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 | 字段 | 写什么 |
 |---|---|
 | `ac` | 负责的 AC 编号（不含 manual）。每条 MVP AC 恰好分给一个 task |
-| `writes` | 计划的改动范围：具体目录（前端、后端、迁移、单元测试都包括）。用于调度：重叠的 task 不同时运行，所以不同 task 尽量不重叠。worker 不受它限制，需要时可以改范围外的文件（验收测试、规格除外），但是否写测试路径决定能否新建测试代码 |
+| `writes` | 计划的改动范围：具体目录（前端、后端、迁移、单元测试都包括）。用于调度优先级：重叠的 task 尽量错开运行（没别的可派时也会并行），所以不同 task 尽量不重叠。worker 不受它限制，需要时可以改范围外的文件（验收测试、规格除外），但是否写测试路径决定能否新建测试代码 |
 | `shared` | 几个 task 都要追加的公共文件（路由注册、菜单、i18n 文案）。登记后不算互斥 |
 | `produces` | 本 task 实现的契约符号：`api:POST /api/x`、`table:x`、`error:X`、`fn:m#name`、`page:/x`、`lib:name` |
 | `requires` | 本 task 用到的、别的 task 产出的符号。只需要契约就能开工的加 `~` 前缀（软依赖：并行开工，预检和合并都排在生产方之后） |
-| `test_interface` | 允许的测试入口（任务说明里渲染成『允许的测试入口』一节）：`HTTP /api/datasources*`、`page /datasources`、`fn:m#name` |
+| `test_interface` | 允许的测试入口（任务说明里渲染成『允许的测试入口』一节）：`HTTP /api/datasources*`、`page /datasources`、`fn:m#name`。入口需要搭环境或构造数据时（已有的测试 helper、夹具、启动方式），在这里多写一条指路，省得 worker 在大代码库里自己摸索 |
 | `size` | S、M、L，决定时间预算 |
 | `layers` | 涉及的层，决定注入哪些 rules/<layer>.md |
 | `module` | 所属模块，决定 worker 能追加哪个契约文件（paths/<模块>.yaml、errors/<模块>.yaml） |
 | `risk` | 涉及权限、计费、删除数据时写 high（审查用强模型） |
 | `review` | 一般不写，由程序推导；只在需要覆盖推导结果时写 skip、auto 或 strong |
-| `unit_tests` | 仅 lean：默认不写。lean 的 writes 不得含测试路径（tests/unit/**、tests/e2e/**、test/**、*.test.* 等；验收测试由程序统一放进共享目录 tests/acceptance/suite/），违反会被 forge_propose_plan 拒绝。只有该 task 含算法、并发、权限矩阵、复杂状态机等复杂逻辑时，写 `unit_tests: "<是哪类复杂逻辑>"`，才能在 writes 里列单元测试路径 |
 | `manual_checks` | 需要用户打开应用确认的内容（来自 AC 的 manual 条目与界面效果） |
 
 ## 尽早并行

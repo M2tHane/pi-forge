@@ -37,7 +37,7 @@ test('failureSignature：耗时、行号、临时路径不同时签名相同；�
   assert.notEqual(a, c);
 });
 
-test('detectToolMissing（偏离 108）：明确的工具层报错格式', () => {
+test('detectToolMissing：明确的工具层报错格式', () => {
   const tool = (code: number, out: string) => detectToolMissing(code, out)?.tool ?? null;
   // 证据：pnpm exec 找不到 redocly
   assert.equal(tool(1, ' ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "redocly" not found\n'), 'redocly');

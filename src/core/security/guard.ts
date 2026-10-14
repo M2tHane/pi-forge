@@ -28,14 +28,14 @@ export interface GuardContext {
   mainRoot: string;
   /** 任务 writes（merge-fix 为冲突文件列表）；与角色 writes 同时生效 */
   writes?: string[];
-  /** impl / fix（偏离 115）：writes 只是计划的改动范围，验收测试、规格之外的文件都可以改（state/paths.ts 的 openWriteAllowed） */
+  /** S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时，rules/** 不再算受保护路径（.forge、.git、workflow.yaml、.pi 不变） */
+  rulesWritable?: true;
+  /** impl / fix：writes 只用于调度互斥与合并冲突归属，docs/spec/ 与受保护路径之外的文件都可以改（state/paths.ts 的 openWriteAllowed） */
   openWrites?: boolean;
-  /** 运行中追加批准的可写范围（第六轮 D3，任务的 scope_grants）：经程序或主会话批准，不受角色 writes 限制 */
-  granted?: readonly string[];
   /** 实现类任务（第五轮）：可以在契约文档（docs/contracts/）里追加（只能新增，提交时由程序检查），不受任务可写范围限制 */
   interfaceAdditions?: boolean;
-  /** 可以修改的已有测试文件（testing.adjust_tests，第四轮后续）：基线上已有、writes 之外；新增删除由 forge_submit 拒绝 */
-  adjustableTests?: readonly string[];
+  /** merge-fix：冲突文件里不在角色可写范围内、但仍要能改的文件（测试、契约） */
+  extraWritable?: readonly string[];
   /** 本 run 的临时目录（项目与 worktree 之外）：可以 cd、写入、删除、移动 */
   scratchDir?: string;
   /** 给 orchestrator 的指引中填入的 ready 任务 */
@@ -48,10 +48,7 @@ export interface GuardContext {
   homeDir?: string;
 }
 
-/**
- * 扩展工具（serena 等）中被视为路径的参数名。
- * 待 M0 核实 serena 真实参数名后补全；写工具取不到路径时按"无法校验即阻断"处理。
- */
+/** 扩展工具（codegraph 等）中被视为路径的参数名 */
 export const DEFAULT_PATH_KEYS = ['path', 'paths', 'relative_path', 'file', 'files', 'file_path', 'filepath', 'filename', 'dir', 'directory', 'target'];
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -59,10 +56,21 @@ const DEV_FILES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty'
 const OUTPUT_OPS = new Set(['>', '>>', '>|', '&>', '&>>', '<>', '>&']);
 const INPUT_OPS = new Set(['<', '<>', '<&']);
 
+/**
+ * 实施类角色（bash: full）的 bash 按禁止列表检查，列表之外的一律放行；写进工作区里的东西由提交时的 diff 检查兜底。禁止的是：
+ *  1. 写到工作区之外：重定向、下载、tee、sed -i、rm/mv/cp 的目标在主工作区或受保护路径（rm/mv/cp 另限于临时目录与本任务可改的文件）；
+ *  2. 删除或移动位置无法确定的文件（参数含变量、经 xargs 传入）；
+ *  3. 切到工作区之外（cd）；
+ *  4. 读敏感文件、打印环境变量；
+ *  5. 改写 git 历史与引用、推送、拉取、切换分支、改 git 配置（GIT_IMPL_FORBIDDEN 与 checkGitImpl）；
+ *  6. 后台运行或脱离超时管理（&、setsid、disown）；
+ *  7. 依赖目录链接到共享构建环境时直接安装依赖；用 uv 管理的 Python 项目里用 pip 装包（依赖不会记进 pyproject.toml 与 uv.lock）；
+ *  8. 打开桌面应用或浏览器窗口；
+ *  9. 远程连接、提权（下表）。
+ * 判断不了的（命令名含变量、sh -c 或 eval 的内容含变量、重定向目标含变量）不在列表里，放行。
+ */
 const IMPL_FORBIDDEN: Record<string, string> = {
-  tee: '请用 write/edit 工具写文件',
-  wget: '只有 researcher 可以联网；访问本机服务用 curl http://localhost:<端口>/...', ssh: '禁止远程连接', scp: '禁止远程连接', sftp: '禁止远程连接',
-  eval: 'eval 无法校验，请直接写出命令', popd: '不支持 popd',
+  ssh: '禁止远程连接', scp: '禁止远程连接', sftp: '禁止远程连接', sudo: '禁止提权', su: '禁止提权', doas: '禁止提权',
   setsid: '新会话中的进程不受超时管理，请前台运行；要一直运行的服务用 forge_service', disown: '后台进程不受超时管理，请前台运行；要一直运行的服务用 forge_service',
 };
 /**
@@ -97,6 +105,16 @@ const GUI_FILE = /(spawn\w*|exec\w*)\(\s*['"`]electron['"`]|require\(\s*['"]elec
 const RUNNERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 const PM_CHANGES = new Set(['install', 'i', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'ci', 'dedupe', 'prune', 'link', 'unlink', 'sync']);
 /** 会改依赖目录的包管理器命令（npm install、pnpm add、yarn remove、pip install、uv add 等）；只认简单写法 */
+/** pip install、python -m pip install、uv pip install（含 pip3、uv pip sync） */
+export function pipInstall(words: readonly string[]): boolean {
+  const w = words.map((x) => path.basename(x));
+  const at = (i: number) => w[i] ?? '';
+  if (/^pip3?(\.\d+)?$/.test(at(0))) return at(1) === 'install';
+  if (/^python3?(\.\d+)?$/.test(at(0)) && at(1) === '-m' && /^pip3?$/.test(at(2))) return at(3) === 'install';
+  if (at(0) === 'uv' && at(1) === 'pip') return at(2) === 'install' || at(2) === 'sync';
+  return false;
+}
+
 export function changesDeps(words: readonly string[]): boolean {
   const bin = path.basename(words[0] ?? '');
   const sub = words.slice(1).find((w) => !w.startsWith('-'));
@@ -148,29 +166,60 @@ function scriptLine(words: readonly string[]): string {
 }
 
 /**
- * curl 只访问本机时放行（验收者要调用自己启动的服务；角色提示里写了用 curl，旧规则却一律拦下，ZCode 实测因此违规到上限）。
- * 不能写文件、不能走代理、不能读配置文件；返回 null 表示放行，否则返回拒绝原因。
+ * curl、wget 会写到哪些本地文件（所有角色都可以联网，只管写文件）。纯函数。
+ * 返回写入的目标（选项的值）；dirs 为下载目录（curl -O 或 wget 不指定 -O 时写进当前目录，值为 '.'）。
+ * 值为 - 或 /dev/null 的不算写文件。
  */
-const CURL_DENY_FLAGS = new Set(['-o', '--output', '-O', '--remote-name', '--remote-name-all', '-T', '--upload-file', '-K', '--config', '-x', '--proxy', '--output-dir', '-c', '--cookie-jar', '-D', '--dump-header']);
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0']);
-export function localCurlDenied(args: readonly string[]): string | null {
-  let urls = 0;
+const CURL_WRITE_LONG = new Set(['--output', '--dump-header', '--cookie-jar', '--trace', '--trace-ascii', '--libcurl', '--stderr']);
+const CURL_DIR_LONG = new Set(['--output-dir']);
+const CURL_REMOTE_NAME = new Set(['--remote-name', '--remote-name-all']);
+/** curl 带参数的短选项：簇里遇到它，后面的字符（或下一个参数）是它的值 */
+const CURL_ARG_SHORT = new Set([...'AbcCdDeEFHKmoPQrTtuUwxXyYz']);
+const CURL_WRITE_SHORT = new Set([...'oDc']);
+const WGET_WRITE_LONG = new Set(['--output-document', '--output-file', '--append-output']);
+const WGET_DIR_LONG = new Set(['--directory-prefix']);
+const WGET_ARG_SHORT = new Set([...'OoaPeiBtTwQUlARDIX']);
+const WGET_WRITE_SHORT = new Set([...'Ooa']);
+const NOT_A_FILE = (v: string) => v === '-' || DEV_FILES.has(v);
+
+export function downloadTargets(name: 'curl' | 'wget', args: readonly string[]): { files: string[]; dirs: string[] } {
+  const curl = name === 'curl';
+  const [writeLong, dirLong, argShort, writeShort] = curl
+    ? [CURL_WRITE_LONG, CURL_DIR_LONG, CURL_ARG_SHORT, CURL_WRITE_SHORT]
+    : [WGET_WRITE_LONG, WGET_DIR_LONG, WGET_ARG_SHORT, WGET_WRITE_SHORT];
+  const files: string[] = [];
+  const dirs: string[] = [];
+  let remoteName = false;
+  let document = false;
+  let dirSet = false;
+  let spider = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
-    const flag = a.startsWith('--') ? a.split('=')[0]! : a;
-    if (CURL_DENY_FLAGS.has(flag) || (/^-[a-zA-Z]+$/.test(a) && /[oOTKxcD]/.test(a.slice(1)))) {
-      const value = a.includes('=') ? a.split('=').slice(1).join('=') : args[i + 1];
-      if ((flag === '-o' || flag === '--output' || flag === '-D' || flag === '--dump-header') && value === '/dev/null') { if (!a.includes('=')) i++; continue; }
-      return `curl 不能使用 ${a}（不能写文件、走代理或读配置）`;
+    if (a === '--') break;
+    if (a.startsWith('--')) {
+      const [flag, inline] = a.includes('=') ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a, undefined];
+      if (CURL_REMOTE_NAME.has(flag!) && curl) { remoteName = true; continue; }
+      if (flag === '--spider' && !curl) { spider = true; continue; }
+      if (writeLong.has(flag!) || dirLong.has(flag!)) {
+        const v = inline ?? args[++i] ?? '';
+        if (dirLong.has(flag!)) { dirs.push(v); dirSet = true; } else if (!NOT_A_FILE(v)) files.push(v);
+        if (flag === '--output-document') document = true;
+      }
+      continue;
     }
-    if (a.startsWith('-')) continue;
-    let host: string;
-    try { host = new URL(/^[a-z]+:\/\//i.test(a) ? a : `http://${a}`).hostname; } catch { continue; }
-    if (!/^[a-z]+:\/\//i.test(a) && !/^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|\/|$)/.test(a)) continue;
-    urls++;
-    if (!LOCAL_HOSTS.has(host) && host !== '::1') return `curl 只能访问本机（localhost、127.0.0.1），不能访问 ${host}；只有 researcher 可以联网。需要外部资料的写进 handoff，由主 agent 安排`;
+    if (!a.startsWith('-') || a === '-') continue;
+    for (let j = 1; j < a.length; j++) {
+      const ch = a[j]!;
+      if (curl && ch === 'O') { remoteName = true; continue; }
+      if (!argShort.has(ch)) continue;
+      const v = j + 1 < a.length ? a.slice(j + 1) : args[++i] ?? '';
+      if (ch === 'P' && !curl) { dirs.push(v); dirSet = true; }
+      else if (writeShort.has(ch)) { if (!NOT_A_FILE(v)) files.push(v); if (ch === 'O') document = true; }
+      break;
+    }
   }
-  return urls ? null : 'curl 只能访问本机地址（http://localhost:<端口>/...），请写出完整的 URL';
+  if (curl ? remoteName && !dirSet : !document && !spider && !dirSet) dirs.push('.');
+  return { files, dirs };
 }
 
 /** 实施类角色可以对临时目录与任务 writes 内的文件使用的文件操作 */
@@ -187,7 +236,7 @@ const GIT_READONLY = new Set([
 const GIT_IMPL_FORBIDDEN: Record<string, string> = {
   rebase: '改写历史', 'filter-branch': '改写历史', 'filter-repo': '改写历史', 'update-ref': '改写引用', replace: '改写历史',
   switch: '切换分支', worktree: '操作 worktree', clean: '删除未跟踪文件', push: '推送由引擎在合并时完成',
-  fetch: '联网', pull: '联网', remote: '修改远程配置', reflog: '改写 reflog', tag: '修改共享标签',
+  fetch: '远程分支由引擎同步', pull: '远程分支由引擎同步', remote: '修改远程配置', reflog: '改写 reflog', tag: '修改共享标签',
 };
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
 const WRAPPERS = new Set(['sudo', 'env', 'nohup', 'time', 'command', 'builtin', 'exec', 'nice', 'timeout', 'stdbuf', 'xargs']);
@@ -214,6 +263,12 @@ class Evaluator {
     this.scratch = ctx.scratchDir ? realpathDeep(path.resolve(ctx.scratchDir)) : null;
   }
 
+  /** 受保护路径判断（不区分大小写）；rulesWritable 时 rules/** 除外 */
+  isProtectedRel(rel: string): boolean {
+    if (!isProtectedNocase(rel)) return false;
+    return !(this.ctx.rulesWritable && matchesAny(rel.toLowerCase(), ['rules/**']));
+  }
+
   get isOrchestrator() { return this.role.name === 'orchestrator'; }
 
   /** 命令文本里出现主工作区绝对路径（后面是路径分隔、引号、空白或结尾，不误伤 <项目>.worktrees/ 下的工作区）；与工作区相同时为 null */
@@ -235,11 +290,8 @@ class Evaluator {
         : '你是调度者，不能直接修改代码。任务由程序派发给对应 subagent，用 forge_wait 等待结果。';
     }
     if (this.isReadonlyRole) return `你是只读角色（${this.role.name}），不能修改任何文件；结论请写进 forge_note 并 forge_submit。`;
-    if (this.ctx.openWrites) return '验收测试（tests/acceptance/，自己的验收目录除外）与规格（docs/spec/）不能改；计划没给本任务列测试路径时也不新建测试代码。确需改动时用 forge_block 说明原因。';
-    // 第六轮 D1：拒绝时给出可行的做法
-    return this.role.tools.has('forge_request_scope')
-      ? `你是 ${this.role.name}，只能修改本任务 writes 内的文件；确实必须改的，用 forge_request_scope(paths, reason) 申请追加范围（不与其他任务冲突的立即批准），不要换一种方式再试。`
-      : `你是 ${this.role.name}，只能修改本任务 writes 内的文件；确需越界时调用 forge_block 说明原因，不要换一种方式再试。`;
+    if (this.ctx.openWrites) return '实现与修复任务可以改工作区内任何文件，只有受保护路径（.forge/、.git/、workflow.yaml、rules/、.pi/）与规格（docs/spec/）不能改。确需改动时用 forge_block 说明原因。';
+    return `你是 ${this.role.name}，只能修改本任务 writes 内的文件；确需越界时调用 forge_block 说明原因，不要换一种方式再试。`;
   }
 
   /** 与 Pi 的 resolveToCwd 一致：Unicode 空格、去掉 @ 前缀、~、file://；再解析符号链接。 */
@@ -266,10 +318,9 @@ class Evaluator {
     return this.ctx.writes ?? this.role.writes;
   }
 
-  /** 在本任务可写范围内（不含 granted 等例外） */
+  /** 在本任务可写范围内（不含契约追加、merge-fix 的额外文件等例外） */
   inWrites(rel: string): boolean {
-    const writes = this.effectiveWrites();
-    return (this.ctx.openWrites ? openWriteAllowed(rel, writes) : matchesAny(rel, writes)) && matchesAny(rel, this.role.writes);
+    return (this.ctx.openWrites ? openWriteAllowed(rel) : matchesAny(rel, this.effectiveWrites())) && matchesAny(rel, this.role.writes);
   }
 
   checkWrite(rawPath: string, tool: string, cwd?: string): GuardDecision {
@@ -279,14 +330,13 @@ class Evaluator {
     if (a.area === 'outside') return deny('write_paths', `只能写当前 worktree 内的文件，${a.abs} 在其外。${this.hint()}`);
     const writes = this.effectiveWrites();
     const inTask = this.inWrites(a.rel)
-      || matchesAny(a.rel, this.ctx.granted ?? [])
       || (!!this.ctx.interfaceAdditions && matchesAny(a.rel.toLowerCase(), [INTERFACES_PATH]))
-      || (this.ctx.adjustableTests?.includes(a.rel) ?? false);
+      || (this.ctx.extraWritable?.includes(a.rel) ?? false);
     if (!inTask) {
       if (this.ctx.openWrites) return deny('write_paths', `${a.rel} 不能改，${tool} 被阻断。${this.hint()}`);
       return deny('write_paths', `${a.rel} 不在本任务可写范围内（${writes.join(', ') || '无'}）。${tool} 被阻断。${this.hint()}`);
     }
-    if (isProtectedNocase(a.rel)) {
+    if (this.isProtectedRel(a.rel)) {
       return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读（${protectedGlobs().join('、')}）。`);
     }
     return ok;
@@ -302,9 +352,9 @@ class Evaluator {
   checkIsolatedPath(text: string, cwd = this.ctx.cwd): GuardDecision {
     if (!text || /^[a-z][a-z0-9+.-]*:\/\//i.test(text) && !text.startsWith('file://')) return ok;
     const pathLike = text.startsWith('/') || text.startsWith('~') || text.startsWith('file://') || /(^|\/)\.\.(\/|$)/.test(text) || /(^|\/)\.forge(\/|$)/.test(text);
-    if (!pathLike) return ok;
+    if (!pathLike || DEV_FILES.has(text) || /^\/dev\/fd\/\d+$/.test(text)) return ok;
     const a = this.classify(this.resolveToolPath(text, cwd));
-    if (a.area !== 'workspace' && a.area !== 'scratch') return deny('read_paths', `隔离工作区之外的路径不能访问：${text}。验收测试只依据规格、契约与工作区内的文件编写。`);
+    if (a.area !== 'workspace' && a.area !== 'scratch') return deny('read_paths', `隔离工作区之外的路径不能访问：${text}。只在当前工作区与临时目录里工作。`);
     if (a.area === 'workspace' && /(^|\/)\.forge(\/|$)/.test(a.rel)) return deny('read_paths', `不能访问 .forge/：${text}`);
     return ok;
   }
@@ -398,7 +448,8 @@ class BashChecker {
     // 同一条命令中先用字面量赋值的变量（例如 D=/tmp/x; cp a $D/b），在校验时代入；其余变量仍按无法校验处理
     const vars = new Map<string, string>();
     for (const raw of parsed.commands) {
-      const cmd = raw.nested ? raw : substituteVars(raw, vars);
+      // 命令替换里的命令（nested）也能看到外层已赋值的变量：ID=$(curl $B/boards ...)
+      const cmd = substituteVars(raw, vars);
       if (!cmd.nested && !cmd.words.length) {
         for (const a of cmd.assignments) {
           const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(a.text);
@@ -422,12 +473,18 @@ class BashChecker {
     for (;;) {
       const name = words[0];
       if (!name) return { decision: ok };
-      if (name.dynamic || name.glob) return { decision: deny('bash', `命令名 ${name.text} 含变量或通配，无法校验，已阻断`) };
+      if (name.dynamic || name.glob) {
+        if (this.readonly) return { decision: deny('bash', `命令名 ${name.text} 含变量或通配，无法校验，已阻断`) };
+        // 实施角色：不在禁止列表里，只查参数里的敏感文件
+        for (const w of words.slice(1)) { const s = this.sensitiveWord(w, cwd); if (!s.allow) return { decision: s }; }
+        return { decision: ok };
+      }
       const base = path.basename(name.text);
       if (!WRAPPERS.has(base)) break;
       if (this.readonly && !['xargs', 'command', 'time'].includes(base)) {
         return { decision: deny('bash', `只读角色不能使用 ${base}。${this.ev.hint()}`) };
       }
+      if (base === 'sudo') return { decision: deny('bash', `禁止使用 sudo：${IMPL_FORBIDDEN['sudo']}。`) };
       if (base === 'xargs') viaXargs = true;
       const rest = stripWrapper(base, words.slice(1));
       if (!rest.length && base === 'env') return { decision: deny('sensitive', '禁止打印环境变量（可能含密钥）。') };
@@ -441,7 +498,8 @@ class BashChecker {
       const ci = args.findIndex((w) => /^-[a-z]*c[a-z]*$/.test(w.text));
       if (ci >= 0) {
         const inner = args[ci + 1];
-        if (!inner || inner.dynamic) return { decision: deny('bash', `${name} -c 的内容含变量，无法校验`) };
+        if (!inner) return { decision: this.readonly ? deny('bash', `${name} -c 缺少内容`) : ok };
+        if (inner.dynamic) return { decision: this.readonly ? deny('bash', `${name} -c 的内容含变量，无法校验`) : ok };
         return { decision: this.check(inner.text, cwd, depth + 1) };
       }
       if (this.readonly) return { decision: deny('bash', `只读角色不能执行脚本。${this.ev.hint()}`) };
@@ -458,7 +516,7 @@ class BashChecker {
     }
 
     // 隔离工作区：参数里的路径不能越出工作区，也不能碰 .forge/（第 9.2 节第 5 条）；
-    // 内联脚本（node -e、python -c 等）里写死主工作区的绝对路径同样拦下（偏离 79）
+    // 内联脚本（node -e、python -c 等）里写死主工作区的绝对路径同样拦下
     if (this.ev.ctx.isolatedWorkspace) {
       const mainRef = this.ev.mainPathPattern();
       if (mainRef) for (const w of words) {
@@ -481,21 +539,36 @@ class BashChecker {
 
     // 4. 实施类角色的 bash 约束；rm、mv、cp、rmdir 只能作用于临时目录与本任务 writes 内的文件
     if (FILE_OPS.has(name)) {
-      if (viaXargs) return { decision: deny('bash', `${name} 的参数来自标准输入（xargs），无法校验，已阻断。`) };
+      if (viaXargs) return { decision: deny('bash', `${name} 的参数来自标准输入（xargs），删除或移动的位置无法确定，已阻断。改用 find <目录> ... -exec ${name} {} +。`) };
       return { decision: this.checkFileOps(name, args, cwd) };
     }
-    if (name === 'curl') {
-      const why = localCurlDenied(args.map((w) => w.text));
-      return { decision: why ? deny('bash', `${why}。`) : ok };
+    // 联网不限；stage-qa 在用完即删的临时 worktree 里，curl、wget 不另加限制。实施角色下载写到哪里，与重定向同样检查
+    if (name === 'curl' || name === 'wget') {
+      if (this.ev.ctx.isolatedWorkspace) return { decision: ok };
+      return { decision: this.checkDownload(name, args, cwd) };
     }
     if (changesDeps(texts) && linkedDeps(this.ev.ctx.mainRoot, this.ev.ctx.config, this.ev.ws).length) {
       return { decision: deny('bash', '依赖目录是共享构建环境的链接，在这里安装、升级或删除依赖会影响别的任务。缺依赖用 forge_add_dependency(name, version?)；要升级、删除或改动已有依赖的版本，先改好依赖清单再调用 forge_private_deps，之后就可以直接用包管理器了。') };
     }
-    if (name in IMPL_FORBIDDEN) return { decision: deny('bash', `禁止使用 ${name}：${IMPL_FORBIDDEN[name]}。`) };
-    if ((name === 'sed' || name === 'gsed') && args.some((w) => /^-[^-]*i/.test(w.text) || w.text.startsWith('--in-place'))) {
-      return { decision: deny('bash', '禁止 sed -i 原地修改，请用 edit 工具。') };
+    if (pipInstall(texts) && existsSync(path.join(this.ev.ws, 'uv.lock'))) {
+      return { decision: deny('bash', '这是用 uv 管理的项目：pip 装的包不会记进 pyproject.toml 与 uv.lock，别的任务和合并后都没有它。加依赖用 uv add <包>（开发依赖 uv add --dev <包>）。') };
     }
-    if (name === 'perl' && args.some((w) => /^-[^-]*i/.test(w.text))) return { decision: deny('bash', '禁止 perl -i 原地修改，请用 edit 工具。') };
+    if (name in IMPL_FORBIDDEN) return { decision: deny('bash', `禁止使用 ${name}：${IMPL_FORBIDDEN[name]}。`) };
+    // 会写文件的 tee、sed -i、perl -i：参数里的路径不能在主工作区或受保护路径（脚本表达式当作工作区内的路径，自然放行）
+    const inPlace = ((name === 'sed' || name === 'gsed') && args.some((w) => /^-[^-]*i/.test(w.text) || w.text.startsWith('--in-place')))
+      || (name === 'perl' && args.some((w) => /^-[^-]*i/.test(w.text)));
+    if (name === 'tee' || inPlace) {
+      for (const w of args) {
+        if (w.dynamic || w.glob || w.text.startsWith('-')) continue;
+        const d = this.checkOutputPath(w.tilde ? path.join(this.ev.home, w.text.slice(1)) : w.text, cwd);
+        if (!d.allow) return { decision: d };
+      }
+      return { decision: ok };
+    }
+    if (name === 'eval') {
+      if (args.some((w) => w.dynamic)) return { decision: ok };
+      return { decision: this.check(args.map((w) => w.text).join(' '), cwd, depth + 1) };
+    }
     if (name === 'git') return { decision: this.checkGitImpl(args) };
     if (name === 'find') {
       const f = this.checkFind(args, cwd, depth);
@@ -514,15 +587,39 @@ class BashChecker {
         if (r.op !== '<>') continue;
       }
       if (!OUTPUT_OPS.has(r.op)) continue;
-      if (t.dynamic || t.glob) return deny('bash', `重定向目标 ${t.text} 含变量或通配，无法校验，已阻断`);
+      if (t.dynamic || t.glob) {
+        if (this.readonly) return deny('bash', `重定向目标 ${t.text} 含变量或通配，无法校验，已阻断`);
+        continue;
+      }
       const target = t.tilde ? path.join(this.ev.home, t.text.slice(1)) : t.text;
       if (DEV_FILES.has(target) || /^\/dev\/fd\/\d+$/.test(target)) continue;
       if (this.readonly) return deny('bash', `只读角色不能重定向输出到文件（${t.text}）。${this.ev.hint()}`);
-      const a = this.ev.classify(realpathDeep(path.resolve(cwd, target)));
-      if (a.area === 'main') return deny('bash', `不能写主工作区（${a.rel}）。${this.ev.hint()}`);
-      if (a.area === 'workspace' && isProtectedNocase(a.rel)) {
-        return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读。`);
-      }
+      const d = this.checkOutputPath(target, cwd);
+      if (!d.allow) return d;
+    }
+    return ok;
+  }
+
+  /** 实施角色写到某个路径：不能写主工作区与受保护路径（重定向、下载共用） */
+  private checkOutputPath(target: string, cwd: string): GuardDecision {
+    const a = this.ev.classify(realpathDeep(path.resolve(cwd, target)));
+    if (a.area === 'main') return deny('bash', `不能写主工作区（${a.rel}）。${this.ev.hint()}`);
+    if (a.area === 'workspace' && this.ev.isProtectedRel(a.rel)) return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读。`);
+    return ok;
+  }
+
+  /** curl、wget：只读角色不能写文件（输出到标准输出或 /dev/null）；实施角色的下载目标按写路径检查 */
+  private checkDownload(name: 'curl' | 'wget', args: readonly Word[], cwd: string): GuardDecision {
+    if (this.readonly && args.some((w) => w.dynamic && /^-/.test(w.text))) return deny('bash', `${name} 的选项含变量，无法确定会不会写文件，已阻断。`);
+    const t = downloadTargets(name, args.map((w) => w.text));
+    const outs = [...t.files, ...t.dirs.map((d) => path.join(d, 'x'))];
+    if (this.readonly && outs.length) {
+      return deny('bash', `只读角色的 ${name} 不能把内容写进文件（${[...t.files, ...t.dirs].join('、')}）：去掉 -o/-O，或输出到标准输出、/dev/null${name === 'wget' ? '（wget -qO- <URL>）' : ''}。`);
+    }
+    for (const o of outs) {
+      if (/\$|`/.test(o)) continue;
+      const d = this.checkOutputPath(o.startsWith('~') ? path.join(this.ev.home, o.slice(1)) : o, cwd);
+      if (!d.allow) return d;
     }
     return ok;
   }
@@ -534,18 +631,20 @@ class BashChecker {
     const checked = name === 'cp' ? targets.slice(-1) : targets;
     const scratchHint = this.ev.scratch ? `临时文件请放在临时目录 ${this.ev.scratch}。` : '';
     for (const w of checked) {
-      if (w.dynamic || w.glob) return deny('bash', `${name} 的参数 ${w.text} 含变量或通配，无法校验，已阻断。`);
+      if (w.dynamic) return deny('bash', `${name} 的参数 ${w.text} 含变量，删除或移动的位置无法确定，已阻断。请写出具体路径。`);
+      // 通配（rm -rf dist/*、rm build/*.o）按模式本身判断位置与可改范围；会匹配隐藏文件的（.*）可能删到 .git，拦下
+      if (w.glob && /(^|\/)\.[*?[]/.test(w.text)) return deny('bash', `${name} 的通配 ${w.text} 会匹配隐藏文件（包括 .git），已阻断。请写出具体路径。`);
       const a = this.ev.classify(realpathDeep(path.resolve(cwd, w.tilde ? path.join(this.ev.home, w.text.slice(1)) : w.text)));
       if (a.area === 'scratch') continue;
       if (a.area !== 'workspace') return deny('bash', `${name} 只能作用于临时目录或本任务 writes 内的文件，${w.text} 不在其中。${scratchHint}`);
       const writes = this.ev.effectiveWrites();
       // 未被 git 跟踪的文件（之前运行留下的临时文件）可以删除：删除它们不会改动仓库内容
       if ((name === 'rm' || name === 'rmdir') && a.rel !== '.' && untracked(this.ev.ws, a.rel)) continue;
-      if (!this.ev.inWrites(a.rel) && !matchesAny(a.rel, this.ev.ctx.granted ?? [])) {
+      if (!this.ev.inWrites(a.rel)) {
         if (this.ev.ctx.openWrites) return deny('bash', `${name} 不能作用于 ${a.rel}。${this.ev.hint()}`);
         return deny('bash', `${name} 只能作用于本任务 writes 内的文件（${writes.join(', ') || '无'}），${a.rel} 不在其中。${scratchHint}`);
       }
-      if (isProtectedNocase(a.rel)) return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读。`);
+      if (this.ev.isProtectedRel(a.rel)) return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读。`);
     }
     return ok;
   }
@@ -566,10 +665,11 @@ class BashChecker {
 
   private checkReadonly(name: string, args: Word[]): GuardDecision {
     const no = (why: string) => deny('bash', `只读角色不能执行该命令（${why}）。${this.ev.hint()}`);
-    // 有 write 工具的只读档位角色（architect）要删除或改名 writes 内的文件：给出可行的做法（偏离 86）
+    // 有 write 工具的只读档位角色（architect）要删除或改名 writes 内的文件：给出可行的做法
     if ((name === 'rm' || name === 'mv' || name === 'git' && ['rm', 'mv'].includes(args.find((w) => !w.text.startsWith('-'))?.text ?? '')) && this.ev.canWriteFiles()) {
       return deny('bash', `只读档位不能执行 ${name === 'git' ? 'git rm / git mv' : name}。要删除或改名 writes 内的文件：用 write 在新路径写入内容，把不要的旧文件内容清空（写入空字符串）。空文件在契约检查与提交时视为不存在。`);
     }
+    if (name === 'curl' || name === 'wget') return this.checkDownload(name, args, this.ev.ctx.cwd);
     if (!READONLY_COMMANDS.has(name)) return no(name);
     const flags = args.map((w) => w.text);
     const positional = flags.filter((f) => !f.startsWith('-'));
@@ -641,7 +741,7 @@ class BashChecker {
         const t = args[k + 1];
         if (!t) continue;
         const area = this.ev.classify(realpathDeep(path.resolve(cwd, t.text)));
-        if (t.dynamic || area.area === 'main' || (area.area === 'workspace' && isProtectedNocase(area.rel))) {
+        if (t.dynamic || area.area === 'main' || (area.area === 'workspace' && this.ev.isProtectedRel(area.rel))) {
           return deny('bash', `find ${a} 的目标不允许：${t.text}`);
         }
       }

@@ -94,8 +94,8 @@ test('非交互：set / show / unset / models', async () => {
     const deps = { ui: null, models, config, settingsPath };
     assert.match(await runFlowConfig('set worker WorkBuddy/GLM-5.3-flash medium', deps), /worker.*workbuddy\/glm-5\.3-flash.*medium/);
     assert.deepEqual(loadRoleSettings(settingsPath).roles['worker'], { model: 'workbuddy/glm-5.3-flash', thinking: 'medium' });
-    await runFlowConfig('set researcher default low', deps);
-    assert.deepEqual(loadRoleSettings(settingsPath).roles['researcher'], { thinking: 'low' });
+    await runFlowConfig('set reviewer default low', deps);
+    assert.deepEqual(loadRoleSettings(settingsPath).roles['reviewer'], { thinking: 'low' });
     const shown = await runFlowConfig('show', deps);
     assert.match(shown, /worker（任务实现）：.*workbuddy\/glm-5\.3-flash.*medium.*\/forge-config/);
     assert.match(shown, /stage-qa.*workbuddy\/glm-5\.3-flash.*workflow\.yaml/);
@@ -105,6 +105,23 @@ test('非交互：set / show / unset / models', async () => {
     assert.equal(loadRoleSettings(settingsPath).roles['worker'], undefined);
     await runFlowConfig('unset all', deps);
     assert.deepEqual(loadRoleSettings(settingsPath).roles, {});
+  } finally { cleanup(); }
+});
+
+test('兜底模型：fallback 设置与清除；show 显示；unset all 保留兜底模型', async () => {
+  const { settingsPath, cleanup } = env();
+  try {
+    const deps = { ui: null, models, config, settingsPath };
+    assert.match(await runFlowConfig('show', deps), /兜底模型：未设置/);
+    assert.match(await runFlowConfig('fallback OpenAI-Codex/GPT-5.5', deps), /兜底模型：openai-codex\/gpt-5\.5（\/forge-config）/);
+    assert.equal(loadRoleSettings(settingsPath).fallback_model, 'openai-codex/gpt-5.5');
+    await runFlowConfig('set worker local/tiny off', deps);
+    await runFlowConfig('unset all', deps);
+    assert.deepEqual(loadRoleSettings(settingsPath).roles, {});
+    assert.equal(loadRoleSettings(settingsPath).fallback_model, 'openai-codex/gpt-5.5');
+    await assert.rejects(runFlowConfig('fallback nope/x', deps), /不可用/);
+    await runFlowConfig('fallback default', deps);
+    assert.equal(loadRoleSettings(settingsPath).fallback_model, undefined);
   } finally { cleanup(); }
 });
 

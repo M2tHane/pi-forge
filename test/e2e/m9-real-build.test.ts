@@ -70,9 +70,9 @@ test('applyExperimentConfig：角色模型与思考级别、关闭升级；A1 �
   const a0 = parseDocument(applyExperimentConfig(tpl, o)).toJS() as { models: Record<string, string>; roles: Record<string, { model: string; thinking: string }>; escalation: { enabled: boolean }; implementation_gate: Record<string, unknown> };
   assert.equal(a0.models['planner'], 'magpie/codex/gpt-6.1-sol');
   assert.equal(a0.models['coder'], 'magpie/zcode/GLM-5.3-Flash');
-  for (const r of ['orchestrator', 'architect', 'reviewer', 'stage-qa', 'researcher']) assert.deepEqual([a0.roles[r]!.model, a0.roles[r]!.thinking], ['planner', 'medium'], r);
+  for (const r of ['orchestrator', 'architect', 'reviewer', 'stage-qa']) assert.deepEqual([a0.roles[r]!.model, a0.roles[r]!.thinking], ['planner', 'medium'], r);
   assert.deepEqual([a0.roles['worker']!.model, a0.roles['worker']!.thinking], ['coder', 'high']);
-  assert.equal(a0.roles['test-author'], undefined, '模板不再定义 test-author（偏离 118）');
+  assert.equal(a0.roles['test-author'], undefined, '模板不再定义 test-author');
   assert.equal(a0.escalation.enabled, false);
   assert.equal(a0.implementation_gate['test_author'], undefined);
   const a1 = parseDocument(applyExperimentConfig(tpl, { ...o, arm: 'A1' })).toJS() as { implementation_gate: { test_author?: boolean } };

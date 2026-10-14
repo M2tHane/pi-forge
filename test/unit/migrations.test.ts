@@ -1,7 +1,9 @@
 // 来源：pi-flow test/unit/migrations.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { StateStore } from '../../src/core/state/state-store.ts';
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { StateStore, taskRel } from '../../src/core/state/state-store.ts';
 import type { Migration } from '../../src/core/state/migrations.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import { mkTask } from '../helpers/tasks.ts';
@@ -53,4 +55,28 @@ test('迁移：任何写入前自动迁移；更新版本写入的拒绝；缺�
     await assert.rejects(v1.migrate(), /更新版本的 pi-forge/);
     await assert.rejects(v1.transitionTask(flow, 'T-002', { to: 'ready', trigger: 'schedule', actor: 'scheduler' }), /更新版本的 pi-forge/);
   } finally { cleanup(); }
+});
+
+test('迁移 2 → 3：去掉 task 的 scope_request 与 scope_grants，其余字段不变', async () => {
+  const repo = tmpRepo();
+  try {
+    const old = await StateStore.init(repo.dir, { now, git: false, schemaVersion: 2 });
+    const flow = await old.createFlow({ mode: 'build', title: '流程', stages: ['E'], base_sha: null });
+    await old.addTasks(flow.id, [mkTask('T-001', { stage: 'E', title: '保留' })], 'architect');
+    const file = path.join(repo.dir, '.forge', taskRel(flow.id, 'T-001'));
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    raw['scope_request'] = { paths: ['src/a.ts'], reason: '旧申请', conflicts: ['x'], run: 'r1', at: '2026-01-01T00:00:00.000Z' };
+    raw['scope_grants'] = [{ paths: ['src/b.ts'], reason: '旧批准', by: 'program', at: '2026-01-01T00:00:00.000Z' }];
+    writeFileSync(file, JSON.stringify(raw, null, 2));
+    const latest = new StateStore(repo.dir, { now, git: false });
+    const done = await latest.migrate();
+    assert.equal(done.length, 1);
+    assert.match(done[0]!, /格式 2 → 3：/);
+    const t = latest.readTask(flow.id, 'T-001') as Record<string, unknown>;
+    assert.equal(t['title'], '保留');
+    assert.equal('scope_request' in t, false);
+    assert.equal('scope_grants' in t, false);
+    assert.equal(latest.readState().schema_version, 3);
+    assert.deepEqual(await latest.migrate(), []);
+  } finally { repo.cleanup(); }
 });

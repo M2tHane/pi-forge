@@ -10,11 +10,11 @@ import { mkTask, hard } from '../helpers/tasks.ts';
 
 test('phase：模板显式配置；缺省按阶段 id 推断；顺序倒退报错', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
-  assert.equal(phaseOfStage(c, 'build', 'P0'), 'spec');
-  assert.equal(phaseOfStage(c, 'build', 'P1'), 'plan');
-  assert.equal(phaseOfStage(c, 'feature', 'S0'), 'implementation');
+  assert.equal(phaseOfStage(c, 'P0'), 'spec');
+  assert.equal(phaseOfStage(c, 'P1'), 'plan');
+  assert.equal(phaseOfStage(c, 'S0'), 'implementation');
   const noPhase = parseConfig(REAL_TEMPLATE_YAML.replace(/phase: \w+,\s*/g, ''));
-  assert.equal(phaseOfStage(noPhase, 'build', 'S0'), 'implementation');
+  assert.equal(phaseOfStage(noPhase, 'S0'), 'implementation');
   assert.throws(() => parseConfig(REAL_TEMPLATE_YAML.replace(/(id: P0, name: spec,\s*phase:) spec/g, '$1 implementation')),
     (e: unknown) => e instanceof ConfigError && /phase plan 不能排在 implementation 之后/.test(e.message));
 });
@@ -48,7 +48,12 @@ test('/forge status 精简视图：阶段条、进度、正在进行、需要你
 
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'run:r-1', facts: { reason: '用 PostgreSQL 还是 SQLite？' } });
     out = renderStatus(p.store, p.config);
-    assert.match(out, /^需要你处理：\n- T-001「用户服务」有问题要问你：用 PostgreSQL 还是 SQLite？\n  → \/forge answer T-001/);
+    // 子进程的提问先交给主会话；用户也可以直接回答
+    assert.match(out, /^需要你处理：无\n主会话处理中（forge_decide）：\n- T-001「用户服务」有问题要问你：用 PostgreSQL 还是 SQLite？\n  → 也可以直接 \/forge answer T-001/);
+    assert.match(out, /有任务等主会话决定/);
+    await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'hand_to_user', actor: 'orchestrator', facts: { reason: '要用户选' } });
+    out = renderStatus(p.store, p.config);
+    assert.match(out, /^需要你处理：\n- T-001「用户服务」有问题要问你：用 PostgreSQL 还是 SQLite？ 主会话：要用户选\n  → \/forge answer T-001/);
     assert.match(out, /阻塞：T-001/);
 
     await p.store.transitionStage(p.flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
@@ -91,30 +96,32 @@ test('状态栏一行：流程、高层阶段、进度、进行中的任务、�
       patch: { worktree: '/w', branch: 'b', base_sha: 'abc', lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('t'), acquired_at: '2026-10-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' } } });
     assert.equal(statusLine(p.store, p.config), 'pi-forge B-001 实施 · 0/3 · 1 个任务进行中');
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'run:r-1', facts: { token: 't', reason: '需要决定' } });
+    assert.match(statusLine(p.store, p.config)!, /主会话处理 1 项$/);
+    await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'hand_to_user', actor: 'orchestrator', facts: { reason: '要用户决定' } });
     assert.match(statusLine(p.store, p.config)!, /需要你处理 1 项$/);
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
     assert.equal(statusLine(p.store, p.config), null);
   } finally { p.cleanup(); }
 });
 
-test('需要你处理：停滞按引擎的等待规则（偏离 72）报告——fix 的 impl 不等硬依赖它的 .at，即使 .at 已阻塞', async () => {
-  const at = mkTask('T-001.at', { kind: 'acctest', role: 'test-author', for_task: 'T-001', deps: [hard('T-001')] });
+test('需要你处理：停滞按引擎的等待规则报告——fix 不等硬依赖原 impl 的别的 task，即使它已阻塞', async () => {
+  const at = mkTask('T-002', { deps: [hard('T-001')] });
   const p = await setupProject({ tasks: [mkTask('T-001'), at, mkTask('T-001.fx-1', { kind: 'fix', for_task: 'T-001' })] });
   const force = (id: string, patch: Record<string, unknown>) => p.store.transaction((tx) => { tx.putTask(p.flowId, { ...tx.readTask(p.flowId, id), ...patch } as never); tx.event({ flow: p.flowId, task: id, actor: 't', type: 'note', reason: 'test' }); });
   try {
     await force('T-001', { status: 'done' });
-    await force('T-001.at', { status: 'blocked', blocked_by: 'agent', blocked_reason: '测试写不出来' });
+    await force('T-002', { status: 'blocked', blocked_by: 'agent', blocked_reason: '测试写不出来' });
     await force('T-001.fx-1', { status: 'awaiting_inputs' });
     const waits = () => actionsNeeded(p.store, p.config).filter((a) => /在等/.test(a.text));
-    assert.deepEqual(waits(), [], 'T-001.at 硬依赖 T-001：不是 fx-1 等的对象，不该报"在等它"');
+    assert.deepEqual(waits(), [], 'T-002 硬依赖 T-001：不是 fx-1 等的对象，不该报"在等它"');
     await force('T-001', { status: 'in_progress' });
     assert.deepEqual(waits(), [], 'T-001 没 done 时也一样');
     // 软依赖已阻塞才是真的在等：要报，并给出 unblock 命令
-    await force('T-001.fx-1', { depends_on: [{ task: 'T-001.at', type: 'soft' }] });
+    await force('T-001.fx-1', { depends_on: [{ task: 'T-002', type: 'soft' }] });
     const w = waits();
     assert.equal(w.length, 1);
-    assert.match(w[0]!.text, /T-001\.fx-1 在等 T-001\.at，但 T-001\.at 已阻塞：测试写不出来/);
-    assert.equal(w[0]!.command, '/forge unblock T-001.at');
+    assert.match(w[0]!.text, /T-001\.fx-1 在等 T-002，但 T-002 已阻塞：测试写不出来/);
+    assert.equal(w[0]!.command, '/forge unblock T-002');
   } finally { p.cleanup(); }
 });
 

@@ -70,7 +70,7 @@ test('会话留档：run 记录会话目录；/forge run 显示工具调用摘�
     await engine.next(p.flowId);
     await engine.idle();
     const runs = p.store.listRuns();
-    assert.equal(runs.length, 2, 'worker 与 reviewer（impl 一律审查，偏离 117）');
+    assert.equal(runs.length, 2, 'worker 与 reviewer（impl 一律审查）');
     for (const r of runs) assert.equal(r.session_dir, sessionDirOf(p.dir, r.run_id));
 
     // 假子进程不写会话文件：这里按 Pi 的会话格式写一份，模拟真实 pi 的留档

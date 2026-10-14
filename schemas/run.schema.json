@@ -177,6 +177,17 @@
         }
       ]
     },
+    "failure_kind": {
+      "enum": [
+        "model_quota",
+        "model_unavailable",
+        "model_config",
+        "context_overflow",
+        "environment",
+        "no_submit",
+        "crash"
+      ]
+    },
     "token_hash": {
       "type": "string",
       "minLength": 64,
@@ -209,6 +220,9 @@
       ]
     },
     "escalated": {
+      "type": "boolean"
+    },
+    "fallback": {
       "type": "boolean"
     },
     "turns": {

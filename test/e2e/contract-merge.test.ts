@@ -38,6 +38,6 @@ test('根 openapi.yaml 的 paths 并行追加：预检前同步集成分支时�
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
     const merged = parse(p.git('show', `${integ}:docs/contracts/openapi.yaml`));
     assert.deepEqual(Object.keys(merged.paths), ['/api/a', '/api/t2', '/api/t1']);
-    assert.ok(p.store.readEvents().some((e) => e.type === 'note' && /契约文件冲突已结构化合并/.test(e.reason ?? '')));
+    assert.ok(p.store.readEvents().some((e) => e.type === 'note' && /冲突文件已结构化合并/.test(e.reason ?? '')));
   } finally { p.cleanup(); }
 });

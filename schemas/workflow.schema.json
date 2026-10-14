@@ -69,9 +69,8 @@
           "minimum": 1,
           "default": 2
         },
-        "lean_below_loc": {
-          "type": "integer",
-          "minimum": 1
+        "post_merge_test": {
+          "type": "boolean"
         },
         "port_block": {
           "type": "integer",
@@ -90,6 +89,10 @@
           "minimum": 1
         },
         "fix_max_files": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "change_max_tasks": {
           "type": "integer",
           "minimum": 1
         },
@@ -224,75 +227,6 @@
                       },
                       "qa": {
                         "type": "boolean"
-                      },
-                      "test_author": {
-                        "type": "boolean"
-                      }
-                    },
-                    "additionalProperties": false
-                  }
-                },
-                "additionalProperties": false
-              },
-              "minItems": 1
-            }
-          },
-          "additionalProperties": false
-        },
-        "feature": {
-          "type": "object",
-          "required": [
-            "stages"
-          ],
-          "properties": {
-            "stages": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "required": [
-                  "id",
-                  "name",
-                  "gate"
-                ],
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "name": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "phase": {
-                    "enum": [
-                      "spec",
-                      "plan",
-                      "implementation"
-                    ]
-                  },
-                  "gate": {
-                    "type": "object",
-                    "properties": {
-                      "human": {
-                        "type": "boolean"
-                      },
-                      "auto": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      },
-                      "all_tasks_done": {
-                        "type": "boolean"
-                      },
-                      "coverage": {
-                        "type": "boolean"
-                      },
-                      "qa": {
-                        "type": "boolean"
-                      },
-                      "test_author": {
-                        "type": "boolean"
                       }
                     },
                     "additionalProperties": false
@@ -328,9 +262,6 @@
         },
         "qa": {
           "type": "boolean"
-        },
-        "test_author": {
-          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -341,26 +272,6 @@
         "type": "string",
         "minLength": 1
       }
-    },
-    "acctest_workspace": {
-      "type": "object",
-      "properties": {
-        "include": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "cache": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      },
-      "additionalProperties": false
     },
     "shared_env": {
       "type": "object",
@@ -520,10 +431,6 @@
       "properties": {
         "adjust_tests": {
           "type": "boolean"
-        },
-        "max_disputes": {
-          "type": "integer",
-          "minimum": 0
         }
       },
       "additionalProperties": false
@@ -550,22 +457,9 @@
     "review": {
       "type": "object",
       "properties": {
-        "per_task": {
-          "type": "boolean"
-        },
         "max_rounds": {
           "type": "integer",
           "minimum": 1
-        },
-        "skip_sizes": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ]
-          }
         }
       },
       "additionalProperties": false

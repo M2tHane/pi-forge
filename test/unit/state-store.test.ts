@@ -158,14 +158,33 @@ test('程序可推导的 facts 不采信调用方', async () => {
   } finally { cleanup(); }
 });
 
-test('互斥任务不能同时进行；并发上限生效', async () => {
+test('writes 重叠的任务可以同时进行（重叠只影响调度顺序）', async () => {
   const { store, cleanup } = await setup();
   try {
     const flow = await flowWithTasks(store);
     await toInProgress(store, flow.id, 'T-001');
-    // T-003 的 writes 落在 T-001 的 writes 内
-    await assert.rejects(toInProgress(store, flow.id, 'T-003', 'r-3', 't3'), /互斥.*T-001/);
+    // T-003 的 writes 落在 T-001 的 writes 内，状态机不再拒绝
+    await toInProgress(store, flow.id, 'T-003', 'r-3', 't3');
+    assert.equal(store.readTask(flow.id, 'T-003').status, 'in_progress');
   } finally { cleanup(); }
+});
+
+test('两个池分别限流：实施池满了，审查任务仍能派发', async () => {
+  const repo = tmpRepo();
+  writeFileSync(path.join(repo.dir, 'README.md'), 'x');
+  repo.git('add', '.');
+  repo.git('commit', '-q', '-m', 'init');
+  const store = await StateStore.init(repo.dir, { now, limits: { max_parallel: 2, max_parallel_aux: 1 } });
+  try {
+    const flow = await store.createFlow({ mode: 'build', title: '池', stages: ['S3'], base_sha: 'abc' });
+    const rv = (id: string, forTask: string) => mkTask(id, { kind: 'review', role: 'reviewer', scopes: ['review'], writes: [], for_task: forTask });
+    await store.addTasks(flow.id, [mkTask('T-001'), mkTask('T-002'), mkTask('T-003'), rv('T-001.rv', 'T-001'), rv('T-002.rv', 'T-002')], 'architect');
+    await toInProgress(store, flow.id, 'T-001', 'r-1', 't1');
+    await toInProgress(store, flow.id, 'T-002', 'r-2', 't2');
+    await assert.rejects(toInProgress(store, flow.id, 'T-003', 'r-3', 't3'), /并发已达上限 2/);
+    await toInProgress(store, flow.id, 'T-001.rv', 'r-4', 't4');
+    await assert.rejects(toInProgress(store, flow.id, 'T-002.rv', 'r-5', 't5'), /并发已达上限 1/);
+  } finally { repo.cleanup(); }
 });
 
 test('同一时间只有一个 merging，且按队列顺序', async () => {
@@ -297,7 +316,29 @@ test('同一时间只允许一个进行中的流程', async () => {
   const { store, cleanup } = await setup();
   try {
     await store.createFlow({ mode: 'build', title: 'a', stages: ['S0'], base_sha: null });
-    await assert.rejects(store.createFlow({ mode: 'feature', title: 'b', stages: ['F0'], base_sha: null }), /进行中.*\/forge-resume/);
+    await assert.rejects(store.createFlow({ mode: 'build', title: 'b', stages: ['F0'], base_sha: null }), /进行中.*\/forge-resume/);
+  } finally { cleanup(); }
+});
+
+test('轻流程：createLightFlow 生成 X-/C- 编号，不占活动指针，fix 与 change 互斥，结束后可再开', async () => {
+  const { store, cleanup } = await setup();
+  try {
+    const c = await store.createLightFlow('change', '加导出', 'main', 'abc');
+    assert.deepEqual([c.id, c.mode, c.stage, c.stages, c.stage_status], ['C-001', 'change', 'X1', ['X1'], 'active']);
+    assert.equal(store.readState().active_flow, null);
+    assert.equal(store.openLightFlow()?.id, 'C-001');
+    await assert.rejects(store.createLightFlow('fix', '修', 'main', 'abc'), /已有进行中的小改动 C-001/);
+    await assert.rejects(store.createLightFlow('change', '再来', 'main', 'abc'), /已有进行中的小改动 C-001/);
+    // 轻流程不影响 build 流程的创建
+    const b = await store.createFlow({ mode: 'build', title: 'b', stages: ['S0'], base_sha: null });
+    assert.equal(b.id, 'B-002');
+    assert.equal(store.readState().active_flow, 'B-002');
+    await store.transitionStage('C-001', { to: 'aborted', trigger: 'abort', actor: 'human' });
+    assert.equal(store.readState().active_flow, 'B-002', '中止轻流程不清活动指针');
+    assert.equal(store.openLightFlow(), null);
+    const f = await store.createLightFlow('fix', '修', 'main', 'abc');
+    assert.equal(f.id, 'X-003');
+    await assert.rejects(store.createLightFlow('change', '再来', 'main', 'abc'), /已有进行中的修复 X-003/);
   } finally { cleanup(); }
 });
 

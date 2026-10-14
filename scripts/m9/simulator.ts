@@ -6,7 +6,7 @@
 /** 计数类别：p0_question（P0 问题数）、gate（必经闸门）、extra:<类别>（额外介入，每类单独一列） */
 export type Category = 'p0_question' | 'gate' | `extra:${string}`;
 
-export const EXTRA_CATEGORIES = ['plan_not_lean', 'dispute', 'blocked_question', 'blocked_reset', 'needs_human', 'late_question'] as const;
+export const EXTRA_CATEGORIES = ['plan_not_lean', 'dispute', 'blocked_question', 'blocked_reset', 'blocked_accept', 'needs_human', 'change_request', 'late_question'] as const;
 
 /** 放行上限（第 4 节）：同一 task 放行 3 次后又停住算卡住；同一阶段放行 2 次后又 needs_human 算卡住 */
 export const MAX_TASK_RELEASES = 3;
@@ -44,6 +44,8 @@ export interface FlowSnap {
   specSubmitted: boolean;
   /** P1 等待批准时计划的 mode（读 docs/plan/plan.yaml）；读不到为 null */
   planMode: string | null;
+  /** needs_human 交给主会话决定（还没转交用户）：用户这时不处理 */
+  delegated?: boolean;
 }
 
 export interface TaskSnap {
@@ -52,6 +54,8 @@ export interface TaskSnap {
   blockedBy: string | null;
   blockedReason: string | null;
   version: number;
+  /** 'orchestrator'：先由主会话决定，用户这时不处理 */
+  blockedOwner?: string | null;
   /** 争议的测试标识（handoff 里最后一个"## 争议：<测试>"） */
   disputeTest?: string | null;
 }
@@ -94,7 +98,7 @@ export interface Snapshot {
   lastAssistantText?: string;
   flow: FlowSnap | null;
   tasks: TaskSnap[];
-  /** 等待批准的规格修订、变更请求（"amend:<id>"、"change:<id>"）；规则表没有，出现即算卡住 */
+  /** 主会话转交用户、等待批准的变更请求（"change:<id>"）；用户批准。其他对象规则表没有，出现即算卡住 */
   otherApprovals?: string[];
 }
 
@@ -214,7 +218,7 @@ function decideNeedsHuman(s: Snapshot, state: SimState, flow: FlowSnap): Action 
 }
 
 function decideBlocked(s: Snapshot, state: SimState, flow: FlowSnap): Action | null {
-  const blocked = s.tasks.filter((t) => t.status === 'blocked').sort((a, b) => a.id.localeCompare(b.id));
+  const blocked = s.tasks.filter((t) => t.status === 'blocked' && t.blockedOwner !== 'orchestrator').sort((a, b) => a.id.localeCompare(b.id));
   for (const t of blocked) {
     const key = `blocked:${flow.id}:${t.id}:v${t.version}`;
     const guard = repeatGuard(state, key, s.nowMs);
@@ -231,6 +235,9 @@ function decideBlocked(s: Snapshot, state: SimState, flow: FlowSnap): Action | n
       // 方案修订 2：程序停下的 task（违规上限、同样的失败连续出现、谱系预算、工作区准备失败），用户的正常做法是直接放行
       case 'dispatcher':
         return { kind: 'prompt', message: `/forge unblock ${t.id}`, key, category: 'extra:blocked_reset', counts: true, note: why, release: rk };
+      // 审查轮数用尽、合并时没有改动：主会话转交过来的，用户按现状接受
+      case 'review_exhausted': case 'no_changes':
+        return { kind: 'prompt', message: `/forge accept ${t.id} --note "${ACCEPT_NOTE}"`, key, category: 'extra:blocked_accept', counts: true, note: why, release: rk };
       case 'dispute': {
         const test = t.disputeTest ?? '';
         const dk = `${flow.id}:${t.id}:${test}`;
@@ -250,9 +257,17 @@ export function decide(s: Snapshot, state: SimState): Action | null {
   if (s.ui) return decideUi(s, s.ui);
   const flow = s.flow;
   if (!flow || flow.stageStatus === 'done' || flow.stageStatus === 'aborted') return null;
-  if (s.otherApprovals?.length) return stuck(`other:${s.otherApprovals.join(',')}`, 'out_of_table', `规则表没有这些等待批准的对象：${s.otherApprovals.join('、')}`);
+  if (s.otherApprovals?.length) {
+    const other = s.otherApprovals.filter((x) => !x.startsWith('change:'));
+    if (other.length) return stuck(`other:${other.join(',')}`, 'out_of_table', `规则表没有这些等待批准的对象：${other.join('、')}`);
+    const target = s.otherApprovals[0]!;
+    const key = `approve:${flow.id}:${target}`;
+    const guard = repeatGuard(state, key, s.nowMs);
+    if (guard === 'repeat') return stuck(key, 'repeat', `${target} 的批准命令发出 ${MAX_REPEATS} 次后仍在等待批准`);
+    if (guard === 'ok') return { kind: 'prompt', message: `/forge-approve ${target}`, key, category: 'extra:change_request', counts: true, note: `${target} 由主会话转交用户批准` };
+  }
   if (flow.stageStatus === 'awaiting_human') return decideGate(s, state, flow);
-  if (flow.stageStatus === 'needs_human') return decideNeedsHuman(s, state, flow);
+  if (flow.stageStatus === 'needs_human' && !flow.delegated) return decideNeedsHuman(s, state, flow);
   const blockedAction = decideBlocked(s, state, flow);
   if (blockedAction) return blockedAction;
   // P0 用文字提问：主会话一轮结束，流程还在 P0，规格还没提交

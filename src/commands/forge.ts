@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
 import { renderCostView, renderDetail, renderMetricsView } from '../core/ops/status-detail.ts';
 import { deliveryReport, sStageIds, stageSignoff } from '../core/stage/signoff.ts';
 import { renderStatus, visibleFlows } from '../core/ops/status-view.ts';
-import { applyDrafts, formatDrafts, listDrafts, type Draft } from '../core/plan/rules-draft.ts';
+import { applyDrafts, formatDrafts, listDrafts, replaceCommands, type Draft } from '../core/plan/rules-draft.ts';
 import { findSessionFile, formatRunDetail, summarizeSession } from '../core/engine/session-log.ts';
 import { budgetState, formatBudget } from '../core/insight/cost-control.ts';
 import { KnowledgeError, acceptCandidate, formatKnowledgeList, markPromoted, promoteToDraft, retireEntries, searchKnowledge } from '../core/engine/knowledge.ts';
@@ -684,7 +684,7 @@ function allDrafts(root: string, h: EngineHandle, flowId: string | null): Draft[
 
 async function applyAndReport(env: CommandEnv, h: EngineHandle, flowId: string | null, drafts: Draft[]): Promise<string> {
   const r = applyDrafts(env.root, drafts, flowId ?? '知识库');
-  if (r.commands) Object.assign(h.config.raw.commands, r.commands);
+  if (r.commands) replaceCommands(h.config.raw.commands, r.commands);
   const promoted = await markPromoted(h.store, drafts.map((d) => d.file));
   return `已应用：${r.applied.join('、')}，并已提交。之后派发的任务使用新的规则${r.commands ? '与命令' : ''}（子进程提示的稳定前缀变化，模型服务的提示缓存会失效一次）。${promoted.length ? `\n知识 ${promoted.join('、')} 已成为规则，不再作为知识注入。` : ''}`;
 }

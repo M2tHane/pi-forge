@@ -37,8 +37,8 @@ test('命令草案：不是合法 YAML、合并后缺 test、校验不通过都�
     assert.match(draft('commands: [a, b').join(), /不是合法 YAML/);
     assert.match(draft('commands:\n  lint: ""\n').join(), /lint 的命令必须是非空字符串/);
     assert.deepEqual(draft('commands:\n  test: "npm test"\n  serve: "npm run dev"\n'), []);
-    // 模板里有 test 时，草案不写 test 也行；把 test 置空不行
-    assert.deepEqual(draft('commands:\n  lint: "eslint ."\n'), []);
+    // 草案是完整的命令表：不写 test 就没有 test；把 test 置空也不行
+    assert.match(draft('commands:\n  lint: "eslint ."\n').join(), /缺少 test 命令/);
     assert.match(draft('commands:\n  test: " "\n').join(), /test 的命令必须是非空字符串/);
   } finally { r.cleanup(); }
 });

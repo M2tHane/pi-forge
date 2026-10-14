@@ -19,7 +19,7 @@ const DRAFTS = {
   'docs/rules-draft/commands.yaml': 'commands:\n  test: "npm test"\n  typecheck: "npx tsc --noEmit"\ngui_commands: ["npm run dev:desktop"]\n',
 };
 
-test('列出并应用草案：规则替换与新增、命令修改保留注释、提交、运行中的配置同步更新', async () => {
+test('列出并应用草案：规则替换与新增、命令表按草案替换（草案里没有的去掉）且保留注释、提交、运行中的配置同步更新', async () => {
   const p = await setupProject({ yaml: '# 应用命令草案时保留此注释\n' + TEMPLATE_YAML });
   try {
     const { engine } = makeEngine(p, async () => {});
@@ -28,6 +28,7 @@ test('列出并应用草案：规则替换与新增、命令修改保留注释�
     assert.deepEqual(drafts.map((d) => [d.file, d.target]), [
       ['docs/rules-draft/backend.md', 'rules/backend.md'], ['docs/rules-draft/commands.yaml', 'workflow.yaml'], ['docs/rules-draft/prisma.md', 'rules/prisma.md']]);
     assert.match(drafts[1]!.summary, /test："pnpm test" → "npm test"/);
+    assert.match(drafts[1]!.summary, /去掉 install、lint、e2e、acceptance、contract_lint、codegen/);
     assert.match(drafts[1]!.summary, /agent 不能运行（会打开界面）："npm run dev:desktop"/);
     assert.match(drafts[2]!.summary, /新文件/);
     const e = commandEnv(p, engine);
@@ -40,7 +41,8 @@ test('列出并应用草案：规则替换与新增、命令修改保留注释�
     const wf = readFileSync(path.join(p.dir, 'workflow.yaml'), 'utf8');
     assert.match(wf, /test: "?npm test"?/);
     assert.match(wf, /应用命令草案时保留此注释/, '保留注释');
-    assert.match(wf, /lint: +"pnpm lint"/, '未改的命令不动');
+    assert.doesNotMatch(wf, /^\s+lint:/m, '草案里没有的命令去掉');
+    assert.equal(p.config.commands['lint'], undefined, '运行中的配置也去掉');
     assert.deepEqual(parseConfig(wf).raw.gui_commands, ['npm run dev:desktop'], '会打开界面的命令写进 gui_commands');
     assert.equal(p.config.commands['test'], 'npm test', '运行中的引擎配置同步更新');
     assert.match(p.git('log', '-1', '--format=%s'), /pi-forge: 应用 B-001 的规则与命令草案/);

@@ -7,7 +7,7 @@ import { mkTask } from '../helpers/tasks.ts';
 import { flowDecide, statusText } from '../../src/tools/orchestrator-tools.ts';
 import { nextStep } from '../../src/core/engine/context-injector.ts';
 import { actionsNeeded } from '../../src/core/ops/status-view.ts';
-import { pendingDecisions } from '../../src/core/engine/decisions.ts';
+import { decisionKeys, pendingDecisions } from '../../src/core/engine/decisions.ts';
 
 test('子进程提问：先交给主会话；主会话 retry 回答后任务接着做完；转交用户后只有用户能处理', async () => {
   const p = await setupProject({ tasks: [mkTask('T-001', { verify: [] }), mkTask('T-002', { verify: [], writes: ['src/server/t-002/**'] })] });
@@ -29,6 +29,7 @@ test('子进程提问：先交给主会话；主会话 retry 回答后任务接�
       assert.deepEqual([t.status, t.blocked_by, t.blocked_owner], ['blocked', 'agent', 'orchestrator']);
     }
     assert.deepEqual(pendingDecisions(p.store, p.flowId).map((d) => [d.id, d.options]), [['T-001', ['retry', 'user']], ['T-002', ['retry', 'user']]]);
+    assert.deepEqual(decisionKeys(p.store, [p.flowId]), [`${p.flowId}:task:T-001`, `${p.flowId}:task:T-002`]);
     assert.match(statusText(p.store, engine, p.flowId), /等你决定（forge_decide）[\s\S]*T-001[\s\S]*PostgreSQL/);
     assert.doesNotMatch(statusText(p.store, engine, p.flowId), /阻塞，需要用户处理/);
     assert.equal(nextStep(p.store, 2, 0, p.config).tool, 'forge_decide');

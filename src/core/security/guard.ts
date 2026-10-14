@@ -337,7 +337,7 @@ class Evaluator {
       return deny('write_paths', `${a.rel} 不在本任务可写范围内（${writes.join(', ') || '无'}）。${tool} 被阻断。${this.hint()}`);
     }
     if (this.isProtectedRel(a.rel)) {
-      return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读（${protectedGlobs().join('、')}）。`);
+      return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读（${protectedGlobs().filter((g) => !(this.ctx.rulesWritable && g === 'rules/**')).join('、')}）。`);
     }
     return ok;
   }

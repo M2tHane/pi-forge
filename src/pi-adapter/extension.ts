@@ -30,6 +30,7 @@ import { runFlowCommand, runFlowBuild, runFlowFix, runFlowChange, FLOW_USAGE, ty
 import { flowChange, flowChangeRequestMain, flowDecide, flowSpec, ChangeParams, DecideParams, SpecParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
 import { PiLauncher } from './launcher.ts';
 import { lastFailureKind, notices, snapshotOf, statusLine, visibleFlows } from '../core/ops/status-view.ts';
+import { decisionKeys, wakeMessage } from '../core/engine/decisions.ts';
 import { packageRoots, pluginExtensionsFor } from './plugins.ts';
 import { installMemory } from './memory.ts';
 import { redactToolResult } from './redact-hook.ts';
@@ -98,6 +99,8 @@ interface RootSession {
   deactivate: (() => Promise<string>) | null;
   /** 调度模式下的状态栏（只在终端界面设置）；null 表示不显示 */
   status: ((text: string | undefined) => void) | null;
+  /** 调度模式下给主会话发消息，让它开始一轮（有界面时才有）；null 表示不发 */
+  wake: ((text: string) => void) | null;
 }
 const sessions = new Map<string, RootSession>();
 
@@ -128,7 +131,7 @@ function recordOrchestratorUsage(s: RootSession, message: Record<string, unknown
 function session(root: string): RootSession {
   let s = sessions.get(root);
   if (!s) {
-    s = { handle: null, orchestrator: false, driftBefore: null, notify: () => {}, saved: null, deactivate: null, status: null };
+    s = { handle: null, orchestrator: false, driftBefore: null, notify: () => {}, saved: null, deactivate: null, status: null, wake: null };
     sessions.set(root, s);
   }
   return s;
@@ -163,6 +166,7 @@ export function engineFor(root: string): EngineHandle {
   process.once('exit', () => engine.killAll());
   // 主动通知只在进入新阶段、出现需要你处理的事、任务首次失败重试时出现
   let prev = snapshotOf(store, config);
+  let prevDecisions = new Set(decisionKeys(store, visibleFlows(store).map((f) => f.id)));
   const check = () => {
     try {
       if (s.orchestrator && s.status) s.status(statusLine(store, config) ?? undefined);
@@ -170,6 +174,11 @@ export function engineFor(root: string): EngineHandle {
       for (const n of notices(prev, next, (f, t) => lastFailureKind(store, f, t))) s.notify(n, n.includes('需要你处理') ? 'warning' : 'info');
       runNotify(config, root, notifyEvents(prev, next));
       prev = next;
+      // 交给主会话的决定：主会话这一轮已经结束时，不叫醒它就会一直等到用户说话
+      const decisions = decisionKeys(store, visibleFlows(store).map((f) => f.id));
+      const wake = wakeMessage(prevDecisions, decisions);
+      prevDecisions = new Set(decisions);
+      if (wake && s.orchestrator && s.wake) s.wake(wake);
       // 没有进行中的流程与修复时自动退出调度模式
       if (s.orchestrator && s.deactivate && !visibleFlows(store).length) void s.deactivate().then((m) => s.notify(m));
     } catch { /* 通知失败不影响流程 */ }
@@ -201,6 +210,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       s.orchestrator = false;
       s.status?.(undefined);
       s.status = null;
+      s.wake = null;
       const saved = s.saved;
       s.saved = null;
       if (!saved) return '已退出调度模式。';
@@ -244,6 +254,8 @@ export default function piFlow(pi: ExtensionAPI): void {
         const registered = new Set(pi.getAllTools().map((t) => t.name));
         pi.setActiveTools(config.activeTools('orchestrator').filter((t) => registered.has(t)));
         await applyOrchestratorModel(ctx, config);
+        // 主会话正忙时排在这一轮之后（Pi 1.0.0 sendUserMessage 总会触发一轮）
+        if (ctx.hasUI) s.wake = (text) => pi.sendUserMessage(text, { deliverAs: 'followUp' });
         // 实时进度：只在终端界面显示状态栏，随引擎状态变化（节流）刷新，退出调度模式时清除
         if (ctx.mode === 'tui') {
           s.status = (text) => ctx.ui.setStatus('pi-forge', text);

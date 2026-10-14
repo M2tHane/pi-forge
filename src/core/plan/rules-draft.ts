@@ -56,6 +56,19 @@ function parseCommands(text: string, file: string): { commands: Record<string, s
   return { commands: out, gui: (g as string[]).map((x) => x.trim()), sharedEnv: (se as SharedEnvDraft | undefined) ?? null };
 }
 
+/** 命令草案是完整的命令表：草案里没有的命令（例如模板默认的 typecheck、lint）一并去掉，不留下项目里跑不了的命令 */
+function setCommands(doc: ReturnType<typeof parseDocument>, commands: Record<string, string>): void {
+  const node = doc.get('commands', true);
+  if (isMap(node)) for (const k of Object.keys(node.toJSON() as Record<string, unknown>)) if (!(k in commands)) doc.deleteIn(['commands', k]);
+  for (const [k, v] of Object.entries(commands)) doc.setIn(['commands', k], v);
+}
+
+/** 运行中的配置换成新的命令表（同样去掉草案里没有的） */
+export function replaceCommands(target: Record<string, string>, next: Record<string, string>): void {
+  for (const k of Object.keys(target)) if (!(k in next)) delete target[k];
+  Object.assign(target, next);
+}
+
 const currentWorkflow = (root: string) => (parseYaml(readFileSync(path.join(root, 'workflow.yaml'), 'utf8')) ?? {}) as { commands?: Record<string, string>; gui_commands?: string[]; shared_env?: SharedEnvDraft };
 
 /** 列出某个 git 引用（通常是集成分支）上的草案，并与主工作区现状比较 */
@@ -71,6 +84,8 @@ export function listDrafts(root: string, ref: string): Draft[] {
       const wf = currentWorkflow(root);
       const cur = wf.commands ?? {};
       const changes = Object.entries(next.commands).filter(([k, v]) => cur[k] !== v).map(([k, v]) => `${k}：${cur[k] ? `"${cur[k]}" → ` : '新增 '}"${v}"`);
+      const removed = Object.keys(cur).filter((k) => !(k in next.commands));
+      if (removed.length) changes.push(`去掉 ${removed.join('、')}`);
       const gui = next.gui.filter((c) => !(wf.gui_commands ?? []).includes(c));
       if (gui.length) changes.push(`agent 不能运行（会打开界面）：${gui.map((c) => `"${c}"`).join('、')}`);
       if (next.sharedEnv && JSON.stringify(next.sharedEnv) !== JSON.stringify(wf.shared_env ?? null)) {
@@ -100,7 +115,7 @@ export function commandsDraftProblems(root: string, ref: string): string[] {
     let draft: ReturnType<typeof parseCommands>;
     try { draft = parseCommands(git(root, ['show', `${ref}:${file}`]), file); } catch (e) { out.push((e as Error).message); continue; }
     const doc = parseDocument(readFileSync(path.join(root, 'workflow.yaml'), 'utf8'));
-    for (const [k, v] of Object.entries(draft.commands)) doc.setIn(['commands', k], v);
+    setCommands(doc, draft.commands);
     if (draft.sharedEnv) doc.set('shared_env', draft.sharedEnv);
     const merged = (doc.toJS() as { commands?: Record<string, string> }).commands ?? {};
     if (!merged['test']?.trim()) out.push(`${file} 缺少 test 命令（合并时要跑全量测试）`);
@@ -121,7 +136,7 @@ export function applyDrafts(root: string, drafts: Draft[], flowId: string): { ap
     const node = doc.get('commands', true);
     if (!isMap(node)) throw new Error('workflow.yaml 缺少 commands 映射');
     const draft = parseCommands(d.content, d.file);
-    for (const [k, v] of Object.entries(draft.commands)) doc.setIn(['commands', k], v);
+    setCommands(doc, draft.commands);
     // gui_commands 只增不减：草案里列出的会打开界面的命令加进去
     const gui = [...new Set([...((doc.toJS() as { gui_commands?: string[] }).gui_commands ?? []), ...draft.gui])];
     if (gui.length) doc.set('gui_commands', gui);

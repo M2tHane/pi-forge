@@ -12,7 +12,7 @@ import { checkPlan, deriveTasks, formatPlanReport, nextPlanTaskId, parsePlan, PL
 import { acTexts, effectiveSpec, glossaryTerms, type SpecFiles } from '../spec/spec.ts';
 import { SPEC_PATHS } from '../spec/spec-flow.ts';
 import { isSettled } from '../state/state-machine.ts';
-import { applyDrafts, commandsDraftProblems, formatDrafts, listDrafts } from './rules-draft.ts';
+import { applyDrafts, commandsDraftProblems, formatDrafts, listDrafts, replaceCommands } from './rules-draft.ts';
 
 export const P1_STAGE = 'P1';
 /** 由程序派发 architect 的阶段：P1 契约与计划 */
@@ -208,7 +208,7 @@ export async function materializePlan(root: string, store: StateStore, config: F
   const tasks = deriveTasks(r.plan, r.check.deps, { worker: config.role('worker').scopes }, { verify: ['typecheck', 'lint', 'test'].filter((c) => config.commands[c]?.trim()) });
   const drafts = listDrafts(root, flow.integration_branch);
   const applied = applyDrafts(root, drafts, flowId);
-  if (applied.commands) Object.assign(config.raw.commands, applied.commands);
+  if (applied.commands) replaceCommands(config.raw.commands, applied.commands);
   if (applied.sharedEnv) config.raw.shared_env = applied.sharedEnv;
   const contractsBase = git(root, ['rev-parse', `refs/heads/${flow.integration_branch}`]).trim();
   await store.materializePlan(flowId, { stages: r.plan.stages, tasks, notes: initialNotes(tasks, r.spec), contractsBase });

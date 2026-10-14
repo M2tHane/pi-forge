@@ -85,6 +85,17 @@ export function pendingDecisions(store: StateStore, flowId: string): PendingDeci
   return out;
 }
 
+/** 各流程待决定事项的标识；事项处理掉就消失，同一任务再次阻塞时又是新出现的 */
+export const decisionKeys = (store: StateStore, flowIds: readonly string[]): string[] =>
+  flowIds.flatMap((f) => pendingDecisions(store, f).map((p) => `${f}:${p.kind}:${p.id}`));
+
+/** 新出现待决定事项时发给主会话的消息（主会话空闲时没有别的东西会让它开始一轮）；没有新事项返回 null */
+export function wakeMessage(before: ReadonlySet<string>, now: readonly string[]): string | null {
+  const fresh = now.filter((k) => !before.has(k)).map((k) => k.split(':').slice(2).join(':'));
+  if (!fresh.length) return null;
+  return `[pi-forge] 有新的事项等你决定：${fresh.join('、')}。用 forge_status 看材料，再用 forge_decide 处理；已经处理过的忽略。`;
+}
+
 /** 写给主会话的做法 */
 export const DECISION_GUIDE = '用 forge_decide(target, decision, note) 决定。先看材料，能自己判断的自己决定（note 写清楚理由或给子进程的意见）；需求取舍、要看界面效果、要用户的账号或环境、主工作区里用户自己的改动，这些转交用户。';
 

@@ -1,6 +1,6 @@
 // 来源：pi-flow scripts/real-build.ts @ 31f3f15 的改编（旧脚本用 pi -p 一轮一轮跑；这里重写为 RPC 模式的 M9 实验驱动）。
 // 用法：
-//   node scripts/real-build.ts --arm A0|A1 --prd <requirement.md> --change <change.md> --hidden <hidden.mjs>
+//   node scripts/real-build.ts --arm A0|A1 --prd <requirement.md> [--change <change.md>] [--hidden <hidden.mjs>]
 //        [--out <目录>] [--max-min 240] [--stuck-min 30] [--planner-model ..] [--planner-thinking medium]
 //        [--coder-model ..] [--coder-thinking high] [--main-model ..] [--ext <扩展>]... [--poll-sec 5] [--stop-after-gates N] [--plan-mode lean|standard]
 // 做的事（M9 实验方案，原 docs/M9-PLAN.md，已删除，见 git 历史）：
@@ -15,6 +15,7 @@ import path from 'node:path';
 import { parseDocument, parse as parseYaml } from 'yaml';
 import { loadConfig } from '../src/core/state/config.ts';
 import { pendingChanges } from '../src/core/plan/change-flow.ts';
+import { changeDelegated, stageDelegated } from '../src/core/engine/decisions.ts';
 import { activePauses } from '../src/core/engine/model-pause.ts';
 import { renderDetail } from '../src/core/ops/status-detail.ts';
 import { flowMetrics, renderMetrics } from '../src/core/stage/signoff.ts';
@@ -38,7 +39,8 @@ export const EXPECTED_PI_VERSION = '1.1.0';
 export interface Options {
   arm: 'A0' | 'A1';
   prd: string;
-  change: string;
+  /** 交付后再跑的变更需求；不给就只跑新建 */
+  change: string | null;
   hidden: string | null;
   out: string | null;
   maxMin: number;
@@ -63,8 +65,9 @@ export function parseArgs(argv: string[]): Options {
   if (arm !== 'A0' && arm !== 'A1') throw new Error('--arm 必须是 A0 或 A1（N 组用 scripts/m9/native.ts）');
   const need = (k: string) => { const v = get(k); if (!v) throw new Error(`缺少 ${k}`); return path.resolve(v); };
   const plannerModel = get('--planner-model') ?? 'magpie/codex/gpt-6.1-sol';
+  if (argv.includes('--change-only') && !get('--change')) throw new Error('--change-only 需要 --change');
   return {
-    arm, prd: need('--prd'), change: need('--change'),
+    arm, prd: need('--prd'), change: get('--change') ? path.resolve(get('--change')!) : null,
     hidden: get('--hidden') ? path.resolve(get('--hidden')!) : null,
     out: get('--out') ? path.resolve(get('--out')!) : null,
     maxMin: Number(get('--max-min') ?? 240), stuckMin: Number(get('--stuck-min') ?? 30),
@@ -131,12 +134,14 @@ export function readSnapshot(store: StateStore, root: string, flowId: string | n
     flow: {
       id: flow.id, mode: flow.mode, stage: flow.stage, stageStatus: flow.stage_status, version: flow.version,
       specSubmitted: flow.spec?.submitted === true, planMode: gate ? planModeOf(root, flow.integration_branch) : null,
+      delegated: stageDelegated(store, flow),
     },
     tasks: tasks.map((t) => ({
-      id: t.id, status: t.status, blockedBy: t.blocked_by ?? null, blockedReason: t.blocked_reason, version: t.version,
+      id: t.id, status: t.status, blockedBy: t.blocked_by ?? null, blockedReason: t.blocked_reason, version: t.version, blockedOwner: t.blocked_owner ?? null,
     })),
     otherApprovals: [
-      ...pendingChanges(store, flowId).map((c) => `change:${c.id}`),
+      // 还没转交用户的由主会话处理
+      ...pendingChanges(store, flowId).filter((c) => !changeDelegated(c)).map((c) => `change:${c.id}`),
     ],
   };
 }
@@ -179,7 +184,7 @@ export async function main(argv: string[]): Promise<number> {
   const o = parseArgs(argv);
   const piVersion = execFileSync('pi', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   if (!piVersion.includes(EXPECTED_PI_VERSION)) throw new Error(`Pi 版本必须是 ${EXPECTED_PI_VERSION}（当前 ${piVersion}）；方案第 2 节要求开跑前断言。`);
-  for (const f of [o.prd, o.change]) if (!existsSync(f)) throw new Error(`找不到文件 ${f}`);
+  for (const f of [o.prd, ...(o.change ? [o.change] : [])]) if (!existsSync(f)) throw new Error(`找不到文件 ${f}`);
   if (o.hidden && !existsSync(o.hidden)) throw new Error(`找不到 hidden.mjs：${o.hidden}`);
   const sha = gitTry(ROOT, ['rev-parse', 'HEAD']);
   const dirty = gitTry(ROOT, ['status', '--porcelain', '--', 'src', 'agents', 'rules', 'skills', 'templates', 'scripts']);
@@ -438,7 +443,7 @@ export async function main(argv: string[]): Promise<number> {
     await sleep(1500);
     const buildPhase = (): Phase => ({ name: 'build', command: `/forge-build --prd ${JSON.stringify(o.prd)}`, flowId: null, startMs: 0, endMs: null, delivered: false, metricsText: null, hidden: null, tests: null, hiddenMeta: {} });
     // 变更阶段原来依赖 feature 模式（已删除），脚本保留只为编译与历史记录
-    const changePhase = (): Phase => ({ name: 'change', command: `/forge-build --prd ${JSON.stringify(o.change)}`, flowId: null, startMs: 0, endMs: null, delivered: false, metricsText: null, hidden: null, tests: null, hiddenMeta: {} });
+    const changePhase = (): Phase => ({ name: 'change', command: `/forge-build --prd ${JSON.stringify(o.change ?? '')}`, flowId: null, startMs: 0, endMs: null, delivered: false, metricsText: null, hidden: null, tests: null, hiddenMeta: {} });
     const open = o.changeOnly ? store.listFlows().find((f) => store.readFlow(f).mode === 'build' && !['done', 'aborted'].includes(store.readFlow(f).stage_status)) : undefined;
     if (o.changeOnly) {
       const c = changePhase();
@@ -451,6 +456,8 @@ export async function main(argv: string[]): Promise<number> {
     if (b.delivered && !interrupted) {
       log('新建已交付');
       await score(b);
+    }
+    if (b.delivered && !interrupted && o.change) {
       await sleep(3000);
       const c = changePhase();
       await drive(c);

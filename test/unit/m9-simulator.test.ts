@@ -184,8 +184,8 @@ test('程序停下的 task（dispatcher）→ /forge unblock，计为 blocked_re
   assert.equal(a.category, 'extra:blocked_reset');
 });
 
-test('表外的阻塞原因（review_exhausted、integration_broken）→ 卡住', () => {
-  for (const by of ['review_exhausted', 'integration_broken', null]) {
+test('表外的阻塞原因（integration_broken）→ 卡住', () => {
+  for (const by of ['integration_broken', null]) {
     const a = stuckOf(decide(snap({ flow: flow({ stage: 'S1' }), tasks: [task('T-004', { status: 'blocked', blockedBy: by })] }), initialState()));
     assert.equal(a.failure, 'out_of_table');
   }
@@ -237,10 +237,21 @@ test('超时复核、合并队列、普通进行中的 task：不处理（null�
 
 // —— 表外 ——
 
-test('表外：等待批准的规格修订 / 变更请求 → 卡住', () => {
-  const a = stuckOf(decide(snap({ flow: flow({ stage: 'S1' }), otherApprovals: ['change:C-001'] }), initialState()));
-  assert.equal(a.failure, 'out_of_table');
-  assert.match(a.reason, /change:C-001/);
+test('主会话转交用户的变更请求 → 用户批准；其他等待批准的对象 → 卡住', () => {
+  const a = act(decide(snap({ flow: flow({ stage: 'S1' }), otherApprovals: ['change:C-001'] }), initialState()));
+  assert.deepEqual([a.kind === 'prompt' && a.message, a.category], ['/forge-approve change:C-001', 'extra:change_request']);
+  const st = stuckOf(decide(snap({ flow: flow({ stage: 'S1' }), otherApprovals: ['amend:A-1'] }), initialState()));
+  assert.equal(st.failure, 'out_of_table');
+});
+
+test('主会话负责的阻塞与 needs_human：用户不抢着处理（null）；转交用户后才处理', () => {
+  const owned = snap({ flow: flow({ stage: 'S1' }), tasks: [task('T-001', { status: 'blocked', blockedBy: 'agent', blockedOwner: 'orchestrator' })] });
+  assert.equal(decide(owned, initialState()), null);
+  assert.equal(decide(snap({ flow: flow({ stage: 'S1', stageStatus: 'needs_human', delegated: true }) }), initialState()), null);
+  for (const blockedBy of ['review_exhausted', 'no_changes']) {
+    const a = act(decide(snap({ flow: flow({ stage: 'S1' }), tasks: [task('T-001', { status: 'blocked', blockedBy })] }), initialState()));
+    assert.deepEqual([a.kind === 'prompt' && a.message.startsWith('/forge accept T-001 --note'), a.category], [true, 'extra:blocked_accept']);
+  }
 });
 
 test('表外：不认识的 select、confirm 对话框 → 卡住', () => {

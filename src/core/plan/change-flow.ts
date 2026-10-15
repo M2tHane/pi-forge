@@ -274,5 +274,6 @@ export function approvalTargets(store: StateStore, flowId: string, includeNeedsH
 export function specStatus(store: StateStore, flowId: string): string {
   const f = store.readFlow(flowId);
   const spec = f.spec;
-  return [...(f.stage === 'P0' || spec ? [`规格：${spec?.submitted ? '已提交' : '尚未提交'}；spec-lint：${spec ? spec.errors.length ? '未通过' : '通过' : '尚未检查'}`, ...(spec?.errors ?? []).map((s) => `- ${s}`), ...(spec?.warnings ?? []).map((s) => `警告：${s}`), ...(spec?.feedback ? [`反馈：${spec.feedback}`] : [])] : []), ...approvalTargets(store, flowId).map((a) => `等待批准：${a.object}`)].join('\n');
+  // 规格的检查结果只在 P0 有用；之后每次 forge_wait 都带上全部警告会撑大主会话（stock 实验：57 条警告约 4500 字 × 52 次）
+  return [...(f.stage === 'P0' ? [`规格：${spec?.submitted ? '已提交' : '尚未提交'}；spec-lint：${spec ? spec.errors.length ? '未通过' : '通过' : '尚未检查'}`, ...(spec?.errors ?? []).map((s) => `- ${s}`), ...(spec?.warnings ?? []).map((s) => `警告：${s}`), ...(spec?.feedback ? [`反馈：${spec.feedback}`] : [])] : []), ...approvalTargets(store, flowId).map((a) => `等待批准：${a.object}`)].join('\n');
 }

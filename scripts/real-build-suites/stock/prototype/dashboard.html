@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>看板 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html" class="on">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>看板</h1>
+      <div class="cards">
+        <div class="card"><small>启用的商品</small><strong>128</strong></div>
+        <div class="card"><small>启用的仓库</small><strong>3</strong></div>
+        <div class="card warn"><small>低于安全库存</small><strong>7</strong><a href="stock.html">去看看 →</a></div>
+        <div class="card"><small>未完成采购单</small><strong>4</strong></div>
+        <div class="card"><small>未完成销售单</small><strong>9</strong></div>
+        <div class="card"><small>库存金额</small><strong>¥ 86,320.50</strong></div>
+      </div>
+      <h2>低于安全库存的商品</h2>
+      <table><tr><th>SKU</th><th>名称</th><th>库存合计</th><th>安全库存</th></tr>
+        <tr><td>A-1001</td><td>A4 打印纸</td><td class="num">12</td><td class="num">50</td></tr>
+        <tr><td>B-2003</td><td>中性笔（黑）</td><td class="num">30</td><td class="num">100</td></tr></table>
+      <p class="note">第一期没有报表接口时，看板只显示“你好，张三”和导航；第三期接上 /api/reports/dashboard 与 /api/stock/summary?low=true。</p>
+    </main>
+  </div>
+</body></html>

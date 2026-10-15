@@ -34,6 +34,7 @@ export async function flowSpec(root: string, store: StateStore, config: FlowConf
   const given = Object.fromEntries(Object.entries(p).filter(([, v]) => v)) as Partial<Record<'requirements' | 'screens' | 'permissions' | 'glossary', string>>;
   if (!Object.keys(given).length) throw new FlowToolError('至少提交一份规格；第一次提交要给出 requirements、permissions、glossary（screens 没有界面的项目可以不交）。');
   const r = await submitSpec(root, store, id, given);
+  if (r.missing.length) return { text: `已保存 ${Object.keys(given).join('、')}，还差 ${r.missing.join('、')}：再调用 forge_spec 交剩下的（可以一份一份交），交齐后程序检查并提交。`, details: { missing: r.missing } };
   const reused = r.reused.length ? `（${r.reused.join('、')} 沿用上一次提交）` : '';
   if (!r.ok) throw new FlowToolError(`spec-lint 未通过，未写入集成分支${reused}：\n${r.lint.errors.map((e) => `- ${e.message}`).join('\n')}\n只需重交要改的那几份，没交的沿用这次提交的内容。`);
   const gate = await runStageGate(root, store, config, id);
@@ -215,8 +216,8 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
     if (p.task_id) return now.get(p.task_id) !== before.get(p.task_id);
     for (const [id, s] of now) {
       if (s === before.get(id)) continue;
-      // impl 一律有审查任务，.rv 的新建与完成由程序驱动，不单独唤醒（结论体现在被审查任务的状态上；审查者 blocked 时被审查任务也会 blocked）
-      if (/\.rv(-\d+)?$/.test(id)) continue;
+      // impl 一律有审查任务，.rv 的新建与完成由程序驱动，不单独唤醒（结论体现在被审查任务的状态上）；审查者 blocked 时只有 .rv 阻塞，要唤醒
+      if (/\.rv(-\d+)?$/.test(id) && s !== 'blocked') continue;
       if (!before.has(id) || s === 'done' || s === 'blocked' || s === 'cancelled') return true;
       if (s === 'ready' && !engine.autoDispatch) return true;
     }
@@ -242,5 +243,8 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
   const newReviews = tasks.filter(awaitingReview).filter((t) => !beforeReview.has(`${t.id}:${t.timeouts ?? 0}`)).map((t) => `- ${t.id}：运行超时，等你复核`);
   const changes = changed.length ? `变化：\n${changed.map((id) => `- ${desc(id)}`).join('\n')}` : '';
   const head = [newReviews.join('\n'), changes].filter(Boolean).join('\n') || (woke ? '没有任务状态变化。' : '等待超时，没有值得报告的变化。');
-  return { text: `${head}\n\n${statusText(store, engine, flowId)}`, details: { changed } };
+  // 等待超时又没有变化：只给两行概况，完整状态上一次已经给过（stock 实验：52 次 forge_wait 返回合计 27 万字，留在主会话里每次请求都要付费）
+  const status = statusText(store, engine, flowId);
+  if (!woke && !changed.length && !newReviews.length) return { text: `${head}\n${status.split('\n').slice(0, 2).join('\n')}\n（完整状态：forge_status）`, details: { changed } };
+  return { text: `${head}\n\n${status}`, details: { changed } };
 }

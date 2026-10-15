@@ -157,7 +157,7 @@ const brief1 =(m: ReviewFinding) => `${m.id} ${m.problem.replace(/\s+/g, ' ').sl
  * - 还没有审查 task（刚预检通过，或崩溃恢复）：创建 .rv 或 .rv-n；
  * - 最新的审查 task done：没有未解决的 must → review_pass（→ queued_merge）；有 → review_changes（→ in_progress，must 清单写进 handoff，
  *   worker 接着原会话改）；review_rounds 达到 review.max_rounds 时状态机自动转 blocked（blocked_by = review_exhausted，用户可 /forge accept）；
- * - 审查者 forge_block：原 task 一并 blocked。
+ * - 审查者 forge_block：只有审查 task 阻塞，原 task 留在 in_review 等它（原来一并阻塞：club run-02 主会话对两者各 retry 一次，worker 与 reviewer 在同一个 worktree 里同时运行）。
  * 轮数的计法：第 k 轮审查（.rv 是第 1 轮，.rv-k 是第 k 轮）结束时仍有 must，则 review_rounds = k；k < max_rounds 打回，k = max_rounds 用尽。
  */
 export async function resolveReviews(root: string, store: StateStore, config: FlowConfig, flowId: string): Promise<string[]> {
@@ -172,11 +172,6 @@ export async function resolveReviews(root: string, store: StateStore, config: Fl
     if (!latest || (latest.status === 'done' && reviewResolved(store, flowId, t.id, latest.id))) {
       const mode = decideReview(store, config, flowId, t);
       await createReviewTask(root, store, config, flowId, t, mode === 'skip' ? 'auto' : mode);
-      out.push(t.id);
-      continue;
-    }
-    if (latest.status === 'blocked') {
-      await store.transitionTask(flowId, t.id, { to: 'blocked', trigger: 'block', actor: 'engine', facts: { reason: `审查者 ${latest.id} 无法继续：${latest.blocked_reason ?? '（未写原因）'}` } });
       out.push(t.id);
       continue;
     }

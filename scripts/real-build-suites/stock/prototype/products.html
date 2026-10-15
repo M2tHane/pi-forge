@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>商品 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html" class="on">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>商品</h1>
+      <div class="bar"><input placeholder="搜索 SKU 或名称"><select><option>全部分类</option><option>办公用品</option><option>　└ 纸张</option></select>
+        <select><option>全部状态</option><option>启用</option><option>停用</option></select><span class="grow"></span><button>导出 CSV</button><button class="primary">新建商品</button></div>
+      <table><tr><th>SKU</th><th>名称</th><th>分类</th><th>单位</th><th>售价</th><th>参考进价</th><th>安全库存</th><th>状态</th><th></th></tr>
+        <tr><td>A-1001</td><td>A4 打印纸</td><td>纸张</td><td>包</td><td class="num">25.00</td><td class="num">18.50</td><td class="num">50</td><td>启用</td><td><a>编辑</a> <a>停用</a> <a class="danger">删除</a></td></tr>
+        <tr class="off"><td>A-0999</td><td>旧款复印纸</td><td>纸张</td><td>包</td><td class="num">20.00</td><td class="num">15.00</td><td class="num">0</td><td>停用</td><td><a>编辑</a> <a>启用</a> <a class="danger">删除</a></td></tr></table>
+      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有商品，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
+      <div class="dialog"><h2>新建商品 / 编辑商品（弹窗）</h2>
+        <label>SKU <input value="a-1002"><em class="err">SKU 已存在</em></label>
+        <label>名称 <input></label>
+        <label>分类 <select><option>（无）</option><option>办公用品</option><option>　└ 纸张</option></select></label>
+        <label>单位 <input value="个"></label>
+        <label>售价（元） <input value="25.00"></label><label>参考进价（元） <input value="0.00"></label>
+        <label>安全库存 <input value="0"></label><label><input type="checkbox" checked> 启用</label>
+        <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      <p class="note">删除被单据或库存引用的商品时，API 返回 409，页面弹出提示并建议改为停用。只读用户看不到“新建、编辑、停用、删除”。</p>
+    </main>
+  </div>
+</body></html>

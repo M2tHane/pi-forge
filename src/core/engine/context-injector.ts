@@ -6,6 +6,7 @@ import { budgetState } from '../insight/cost-control.ts';
 import type { ModelPause, TaskFile } from '../state/schemas.ts';
 import { REVIEW_GUIDE, awaitingReview } from './run-budget.ts';
 import { DECISION_GUIDE, pendingDecisions } from './decisions.ts';
+import { pendingRejection } from '../stage/gates.ts';
 
 export interface NextStep { summary: string; next: string; tool: 'forge_spec' | 'forge_wait' | 'forge_resolve_timeout' | 'forge_decide' | 'none'; task?: string }
 export type PausedOf = (flowId: string, t: TaskFile) => ModelPause | null;
@@ -41,6 +42,8 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
   const blocked = tasks.filter((t) => t.status === 'blocked' && t.blocked_owner !== 'orchestrator');
   if (blocked.length) return { summary, next: `向用户报告阻塞：${blocked.map((t) => `${t.id}（${t.blocked_reason ?? ''}）`).join('；')}；请其 /forge unblock <任务>。`, tool: 'none' };
   if (tasks.some((t) => ['pending', 'ready'].includes(t.status))) return { summary, next: '任务由程序自动派发；关闭自动派发时请用户执行 /forge next。', tool: 'forge_wait' };
+  const rejected = pendingRejection(store, flowId, flow.stage);
+  if (rejected !== null) return { summary, next: `用户打回了阶段 ${flow.stage}：${rejected}\n用 forge_change_request 把要改的内容加进本阶段（程序在有新的任务变化之前不会重新提交门禁）；需要用户澄清的先问用户。`, tool: 'none' };
   return { summary, next: '等待程序阶段检查或用户指示。', tool: 'none' };
 }
 export function turnContext(store: StateStore, maxParallel: number, activeRunCount = 0, config?: FlowConfig, paused?: PausedOf): string {

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>调拨 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html" class="on">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>调拨</h1>
+      <div class="bar"><span class="grow"></span><button class="primary">新建调拨单</button></div>
+      <table><tr><th>单号</th><th>调出</th><th>调入</th><th>商品数</th><th>状态</th><th></th></tr>
+        <tr><td>TR000002</td><td>MAIN</td><td>EAST</td><td class="num">2</td><td><span class="tag">草稿</span></td><td><a>编辑</a> <a>执行</a> <a>取消</a> <a class="danger">删除</a></td></tr>
+        <tr><td>TR000001</td><td>MAIN</td><td>EAST</td><td class="num">1</td><td><span class="tag ok">已完成</span></td><td></td></tr></table>
+      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有调拨单，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
+      <div class="dialog"><h2>新建调拨单（弹窗）</h2><label>调出仓库 <select><option>MAIN 总仓</option></select></label><label>调入仓库 <select><option>EAST 东区仓</option></select></label>
+        <table><tr><th>商品</th><th>数量</th><th>调出仓库现有</th></tr><tr><td><input value="A-1001"></td><td><input value="5"></td><td class="num">10</td></tr></table>
+        <label>备注 <input></label><div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+
+    </main>
+  </div>
+</body></html>

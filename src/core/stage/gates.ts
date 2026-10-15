@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 import { isSettled } from '../state/state-machine.ts';
 import type { StateStore } from '../state/state-store.ts';
+import type { FlowEvent } from '../state/schemas.ts';
 import { git } from '../state/git.ts';
 import { failingFiles } from '../workspace/scope-hint.ts';
 import { worktreesRoot, removeWorktree } from '../workspace/worktree.ts';
@@ -155,12 +156,22 @@ export async function runImplementationChecks(root: string, store: StateStore, c
 }
 
 /** 本阶段最近一次闸门失败之后，是否还没有任何任务状态变化（避免对同样的结果反复跑闸门） */
-export function gateFailedWithoutChange(store: StateStore, flowId: string, stage: string): boolean {
+/**
+ * 最近一次门禁失败或用户打回之后，本阶段还没有任何任务状态变化：返回那次事件，否则 null。
+ * 用户打回也算：task 都已完成时引擎会立刻重新提交门禁，打回就白费了（stock 实验：打回 6 秒后又回到等签收，主会话来不及提变更请求）。
+ */
+function stopWithoutChange(store: StateStore, flowId: string, stage: string): FlowEvent | null {
   const events = store.readEvents().filter((e) => e.flow === flowId);
-  const lastFail = [...events].reverse().find((e) => e.type === 'gate_result' && e.to === 'active' && e.data?.['stage'] === stage);
-  if (!lastFail) return false;
+  const last = [...events].reverse().find((e) => e.to === 'active' && e.data?.['stage'] === stage && (e.type === 'gate_result' || e.trigger === 'reject'));
+  if (!last) return null;
   const stageTasks = new Set(store.listTasks(flowId).filter((t) => t.stage === stage).map((t) => t.id));
-  return !events.some((e) => e.seq > lastFail.seq && e.type === 'transition' && e.task && stageTasks.has(e.task));
+  return events.some((e) => e.seq > last.seq && e.type === 'transition' && e.task && stageTasks.has(e.task)) ? null : last;
+}
+export const gateFailedWithoutChange = (store: StateStore, flowId: string, stage: string): boolean => !!stopWithoutChange(store, flowId, stage);
+/** 用户打回了本阶段、还没有新的任务变化时返回打回意见 */
+export function pendingRejection(store: StateStore, flowId: string, stage: string): string | null {
+  const e = stopWithoutChange(store, flowId, stage);
+  return e?.trigger === 'reject' ? e.reason ?? '' : null;
 }
 
 // M6 由 stage-qa 取代：暂时保留 HEAD 的有限门禁修复。

@@ -62,7 +62,7 @@ export async function rejectStage(d: StageDeps, flowId: string, feedback: string
     await d.store.setPlanRework(flowId, `用户打回：${feedback}`, 'human');
     return `已打回阶段 ${flow.stage}，程序将派 architect 按意见返工。`;
   }
-  return `已打回阶段 ${flow.stage}，意见已记录。`;
+  return `已打回阶段 ${flow.stage}，意见已交给主会话：它用变更请求把修改加进本阶段，修改合入后重新验收（在那之前程序不会重新提交门禁）。`;
 }
 
 export async function unblockTask(d: StageDeps, flowId: string, taskId: string, answer?: string, reset = false): Promise<string> {

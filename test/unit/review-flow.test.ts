@@ -9,6 +9,7 @@ import { P0_SPEC } from '../helpers/spec.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { readReviewEvidence, REVIEW_CONFIRM, REVIEW_INPUT, REVIEW_REPORT, SUGGESTIONS_PATH, type ReviewInputFile } from '../../src/core/stage/review-flow.ts';
 import type { RoleSettingsFile } from '../../src/core/state/schemas.ts';
+import { pendingDecisions } from '../../src/core/engine/decisions.ts';
 
 // 全量测试命令改为恒通过：本组用例关心的是审查而不是预检
 const YAML = PROJECT_YAML.replace(/test: +"test -f[^\n]*/, 'test:      "true"');
@@ -228,7 +229,7 @@ test('精简模式也逐任务审查（impl 一律审查）', async () => {
   } finally { p.cleanup(); }
 });
 
-test('审查者调用 forge_block：原 task 一并阻塞，等用户处理', async () => {
+test('审查者调用 forge_block：只有审查 task 阻塞，原 task 留在审查中，只有一件事等决定', async () => {
   const p = await setupProject({ yaml: YAML, files: FILES, tasks: [mkTask('T-001', { review: 'auto' })] });
   const e = makeEngine(p, async (role, _nth, a) => {
     if (role === 'worker') return implement(a, 't-001', 'export const a = 1;\n');
@@ -237,8 +238,10 @@ test('审查者调用 forge_block：原 task 一并阻塞，等用户处理', as
   }, SETTINGS);
   try {
     await drive(p, e);
-    const t = p.store.readTask(p.flowId, 'T-001');
-    assert.equal(t.status, 'blocked');
-    assert.match(t.blocked_reason ?? '', /T-001\.rv 无法继续：REQ-001\.AC1 无法用合理的代码满足/);
+    assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'in_review');
+    const rv = p.store.readTask(p.flowId, 'T-001.rv');
+    assert.equal(rv.status, 'blocked');
+    assert.match(rv.blocked_reason ?? '', /REQ-001\.AC1 无法用合理的代码满足/);
+    assert.deepEqual(pendingDecisions(p.store, p.flowId).map((d) => d.id), ['T-001.rv']);
   } finally { p.cleanup(); }
 });

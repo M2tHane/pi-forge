@@ -295,7 +295,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交规格：requirements、screens、permissions、glossary（没有界面的项目可以不交 screens）。spec-lint 拒绝或用户打回后，只重交要改的那几份，没交的沿用上一次提交。通过后等待用户批准。',
+      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交规格：requirements、screens、permissions、glossary（没有界面的项目可以不交 screens）。内容长时可以分几次调用、每次交一两份，交齐后程序检查并提交。spec-lint 拒绝或用户打回后，只重交要改的那几份，没交的沿用上一次提交。通过后等待用户批准。',
       parameters: SpecParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
@@ -318,6 +318,8 @@ export default function piFlow(pi: ExtensionAPI): void {
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
         const r = await flowChangeRequestMain(ctx.cwd, h.store, h.config, checked(ChangeRequestParams, p, 'forge_change_request'));
+        // 起草修订的 architect task 立刻派出去，不等下一次别的任务结束（stock 实验：等了十几分钟）
+        await h.engine.pump(activeFlowId(h.store));
         return toolResult(r.text, r.details);
       },
     }));

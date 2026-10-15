@@ -109,7 +109,8 @@ export function diffPlanRevision(oldPlan: CurrentPlan, newPlan: PlanFile, tasks:
     const old = oldTasks.get(t.id);
     const l = live.get(t.id);
     if (old) {
-      if (t.modifies) errors.push(`${t.id} 是计划里已有的 task，不能加 modifies；修改 task 要用新的编号`);
+      // 上一次修订新增的修改 task 本来就带 modifies，原样保留不算新加（stock 实验：第二次变更请求因此被拒）
+      if (t.modifies && t.modifies !== old.modifies) errors.push(`${t.id} 是计划里已有的 task，不能加 modifies；修改 task 要用新的编号`);
       if (!l) { errors.push(`${t.id} 在计划里，但流程里没有这个 task`); continue; }
       if (l.status === 'cancelled') { errors.push(`${t.id} 已被取消，不能继续出现在计划里（要重新做请新增 task）`); continue; }
       const fields = changedFields(old, t);

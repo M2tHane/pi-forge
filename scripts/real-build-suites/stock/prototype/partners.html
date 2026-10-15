@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>往来单位 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html" class="on">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>往来单位</h1>
+      <div class="bar"><div class="tabs"><a class="on">全部</a><a>供应商</a><a>客户</a></div><span class="grow"></span><button class="primary">新建</button></div>
+      <table><tr><th>名称</th><th>类型</th><th>联系人</th><th>电话</th><th></th></tr>
+        <tr><td>晨光文具批发</td><td>供应商</td><td>李经理</td><td>021-5555 1234</td><td><a>编辑</a> <a class="danger">删除</a></td></tr>
+        <tr><td>城东小学</td><td>客户</td><td>王老师</td><td>138 0000 0000</td><td><a>编辑</a> <a class="danger">删除</a></td></tr>
+        <tr><td>联华商贸</td><td>供应商、客户</td><td></td><td></td><td><a>编辑</a> <a class="danger">删除</a></td></tr></table>
+      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有往来单位，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
+      <div class="dialog"><h2>新建往来单位（弹窗）</h2><label>名称 <input></label>
+        <label>类型 <select><option value="supplier">供应商</option><option value="customer">客户</option><option value="both">供应商和客户</option></select></label>
+        <label>联系人 <input></label><label>电话 <input></label><div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+
+    </main>
+  </div>
+</body></html>

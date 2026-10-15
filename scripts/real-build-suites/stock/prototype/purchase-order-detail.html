@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>采购单 PO000004 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>采购单 PO000004</h1>
+      <div class="bar"><span class="tag">草稿</span><span class="grow"></span><button>删除</button><button>取消单据</button><button class="primary">确认</button></div>
+      <div class="form2"><label>供应商 <select><option>晨光文具批发</option></select></label><label>入库仓库 <select><option>MAIN 总仓</option></select></label>
+        <label>备注 <input></label><p>创建：10-15 09:00 · 入库：—</p></div>
+      <table><tr><th>商品</th><th>数量</th><th>进价（元）</th><th>小计</th><th></th></tr>
+        <tr><td><input value="A-1001 A4 打印纸"></td><td><input value="100"></td><td><input value="18.50"></td><td class="num">1,850.00</td><td><a class="danger">移除</a></td></tr>
+        <tr><td colspan="5"><a>+ 添加一行</a></td></tr>
+        <tr><td colspan="3" class="num">合计</td><td class="num"><b>1,850.00</b></td><td></td></tr></table>
+      <div class="bar"><span class="grow"></span><button class="primary">保存草稿</button></div>
+      <h2>不同状态下的按钮</h2>
+      <table><tr><th>状态</th><th>可编辑</th><th>按钮</th></tr><tr><td>草稿</td><td>是</td><td>保存草稿、确认、取消单据、删除</td></tr>
+        <tr><td>已确认</td><td>否</td><td>入库（销售单：出库）、取消单据</td></tr><tr><td>已入库 / 已出库 / 已取消</td><td>否</td><td>无</td></tr></table>
+      <p class="note">销售单详情相同：“供应商”换成“客户”，“入库仓库”换成“出库仓库”，“进价”换成“售价”，“入库”换成“出库”。出库时库存不足，API 返回 409，页面显示 message（说明哪个商品差多少）。每个操作前弹确认框。</p>
+    </main>
+  </div>
+</body></html>

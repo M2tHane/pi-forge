@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>用户管理 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html" class="on">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>用户管理</h1>
+      <div class="bar"><span class="grow"></span><button class="primary">新建用户</button></div>
+      <table><tr><th>用户名</th><th>角色</th><th>状态</th><th></th></tr>
+        <tr><td>admin</td><td>管理员</td><td>启用</td><td><a>改密码</a>（自己：不能删除、停用、降级）</td></tr>
+        <tr><td>zhangsan</td><td>仓管员</td><td>启用</td><td><a>编辑</a> <a>改密码</a> <a>停用</a> <a class="danger">删除</a></td></tr>
+        <tr class="off"><td>boss</td><td>只读</td><td>停用</td><td><a>编辑</a> <a>启用</a> <a class="danger">删除</a></td></tr></table>
+      <div class="dialog"><h2>新建用户（弹窗）</h2><label>用户名 <input placeholder="小写字母、数字、下划线"></label><label>初始密码 <input type="password"></label>
+        <label>角色 <select><option value="clerk">仓管员</option><option value="viewer">只读</option><option value="admin">管理员</option></select></label>
+        <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      <p class="note">只有 admin 在导航里看到“用户”；其他角色直接打开 /users 显示“没有权限”。</p>
+    </main>
+  </div>
+</body></html>

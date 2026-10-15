@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>商品分类 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html" class="on">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>商品分类</h1>
+      <div class="cols"><div>
+        <ul class="tree"><li>办公用品 <a>添加下级</a> <a>改名</a> <a class="danger">删除</a>
+          <ul><li>纸张 <a>添加下级</a> <a>改名</a> <a class="danger">删除</a></li><li>书写工具 <a>添加下级</a> <a>改名</a> <a class="danger">删除</a></li></ul></li>
+          <li>清洁用品 <a>添加下级</a> <a>改名</a> <a class="danger">删除</a></li></ul>
+        <button class="primary">新建顶级分类</button></div>
+      <div class="dialog"><h2>移动分类</h2><label>名称 <input value="纸张"></label><label>上级 <select><option>（无，顶级）</option><option>办公用品</option></select></label>
+        <em class="err">不能把分类移到它自己的下级</em><div class="bar"><span class="grow"></span><button class="primary">保存</button></div></div></div>
+      <p class="note">点分类名在右侧编辑。有下级或有商品的分类删除时提示“请先移走下级分类和商品”。</p>
+    </main>
+  </div>
+</body></html>

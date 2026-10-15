@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>库存 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html" class="on">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>库存</h1>
+      <div class="tabs"><a class="on">库存查询</a><a>库存流水</a><a>盘点</a></div>
+      <h2>库存查询</h2>
+      <div class="bar"><select><option>全部仓库</option><option>MAIN 总仓</option></select><label><input type="checkbox"> 只看低于安全库存</label><span class="grow"></span><button>导出 CSV</button></div>
+      <table><tr><th>SKU</th><th>名称</th><th>MAIN</th><th>EAST</th><th>合计</th><th>安全库存</th></tr>
+        <tr class="low"><td>A-1001</td><td>A4 打印纸</td><td class="num">10</td><td class="num">2</td><td class="num">12</td><td class="num">50 ⚠</td></tr>
+        <tr><td>C-3001</td><td>抹布</td><td class="num">200</td><td class="num">0</td><td class="num">200</td><td class="num">20</td></tr></table>
+      <h2>库存流水</h2>
+      <div class="bar"><input placeholder="商品 SKU"><select><option>全部仓库</option></select></div>
+      <table><tr><th>时间</th><th>商品</th><th>仓库</th><th>变化</th><th>原因</th><th>单据</th></tr>
+        <tr><td>10-15 09:12</td><td>A-1001</td><td>MAIN</td><td class="num">+100</td><td>采购入库</td><td><a href="purchase-order-detail.html">PO000003</a></td></tr>
+        <tr><td>10-15 10:40</td><td>A-1001</td><td>MAIN</td><td class="num">-90</td><td>销售出库</td><td><a>SO000007</a></td></tr>
+        <tr><td>10-15 11:05</td><td>A-1001</td><td>MAIN</td><td class="num">-5</td><td>调出</td><td><a>TR000002</a></td></tr></table>
+      <h2>盘点</h2>
+      <div class="dialog"><label>仓库 <select><option>MAIN 总仓</option></select></label><label>商品 <input placeholder="输入 SKU 选择"></label>
+        <p>当前账面：<b>10</b></p><label>盘点实数 <input value="8"></label><label>备注 <input value="破损 2 包"></label>
+        <p>差异：<b class="danger">-2</b></p><div class="bar"><span class="grow"></span><button class="primary">提交盘点</button></div></div>
+      <table><tr><th>时间</th><th>仓库</th><th>商品</th><th>账面</th><th>实数</th><th>差异</th><th>备注</th></tr>
+        <tr><td>10-14 17:00</td><td>MAIN</td><td>A-1001</td><td class="num">10</td><td class="num">8</td><td class="num">-2</td><td>破损 2 包</td></tr></table>
+
+    </main>
+  </div>
+</body></html>

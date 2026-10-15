@@ -107,6 +107,11 @@ test('修改 task（modifies）：对进行中或已完成的原 task 是 follow
   assert.match(errs(diff((p) => { p.tasks.push(pt('T-010', 'S1', { modifies: 'T-004' })); p.tasks = p.tasks.filter((t) => t.id !== 'T-004'); })), /不能同时从计划里删除/);
   assert.match(errs(diff((p) => { p.tasks.push(pt('T-010', 'S0', { modifies: 'T-004' })); })), /阶段 S0 在当前阶段/);
   assert.match(errs(diff((p) => { p.tasks.find((t) => t.id === 'T-003')!.modifies = 'T-004'; })), /已有的 task，不能加 modifies/);
+  // 上一次修订加的修改 task（T-006 modifies T-004）原样留在计划里，这次再加一个新的
+  const old2 = oldPlan([...OLD.tasks, pt('T-006', 'S1', { modifies: 'T-004' })]);
+  const r2 = diffPlanRevision(old2, next(old2, (p) => { p.tasks.push(pt('T-010', 'S1', { modifies: 'T-006' })); }), [...TASKS(), live('T-006', 'done')], flowAt('S1'), {});
+  assert.deepEqual(r2.errors, []);
+  assert.deepEqual(kinds(r2), ['followup:T-010']);
 });
 
 test('阶段：当前阶段之后可以新增、调整、删除；已完成与当前阶段的目标不能改；当前阶段的 exit 只能追加', () => {

@@ -34,9 +34,13 @@ test('P0 不合格规格不写集成分支（保存为草稿）；只重交改�
     const state = p.store.readState();
     const flow = p.store.readFlow(p.flowId);
     const sha = p.git('rev-parse', ref);
-    await assert.rejects(flowSpec(p.dir, p.store, p.config, { requirements: P0_SPEC.requirements }), /还没有提交过 permissions、glossary/);
-    assert.deepEqual(p.store.readState(), state);
-    await assert.rejects(flowSpec(p.dir, p.store, p.config, { ...P0_SPEC, requirements: P0_SPEC.requirements.replace('[MVP]', '') }), /spec-lint 未通过[\s\S]*\[MVP\]、\[LATER\] 或 \[NO\][\s\S]*只需重交/);
+    // 分次交：先只交 requirements，存为草稿、提示还差的；状态不变、集成分支不动
+    assert.match((await flowSpec(p.dir, p.store, p.config, { requirements: P0_SPEC.requirements.replace('[MVP]', '') })).text, /已保存 requirements，还差 permissions、glossary/);
+    assert.equal(p.store.readState().active_flow, state.active_flow);
+    assert.equal(p.store.readFlow(p.flowId).stage_status, 'active');
+    assert.equal(p.git('rev-parse', ref), sha);
+    // 交齐剩下的（requirements 沿用刚才的草稿，里面缺了优先级）：spec-lint 不通过
+    await assert.rejects(flowSpec(p.dir, p.store, p.config, { screens: P0_SPEC.screens, permissions: P0_SPEC.permissions, glossary: P0_SPEC.glossary }), /spec-lint 未通过[\s\S]*\[MVP\]、\[LATER\] 或 \[NO\][\s\S]*只需重交/);
     assert.match(p.store.readEvents().at(-1)!.reason ?? '', /未通过 spec-lint/);
     assert.deepEqual(p.store.readFlow(p.flowId), flow);
     assert.equal(p.git('rev-parse', ref), sha);

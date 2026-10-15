@@ -30,12 +30,12 @@ export function specGateLint(root: string, flow: FlowFile): LintResult {
 /** 上一次提交的四份规格（不论 spec-lint 是否通过）；重新提交时没交的文件沿用这里 */
 export const specDraftRel = (flowId: string, name: string) => `flows/${flowId}/spec-draft/${name}.md`;
 
-export interface SubmitResult { ok: boolean; sha: string | null; lint: LintResult; reused: string[] }
+export interface SubmitResult { ok: boolean; sha: string | null; lint: LintResult; reused: string[]; missing: string[] }
 
 /**
  * 提交规格：这次没交的文件沿用上一次提交，没有上一次时取集成分支上的规格（用户打回后），
  * 这样 spec-lint 指出一处问题时只需重交改动的那份，不必重新生成四份。
- * spec-lint 不通过时不写集成分支，只保存这次的四份，返回 ok: false。
+ * 还没交齐时只保存这次交的几份（missing 列出还差的）；spec-lint 不通过时不写集成分支，只保存这次的四份，返回 ok: false。
  */
 export async function submitSpec(root: string, store: StateStore, flowId: string, input: Partial<SpecFiles>): Promise<SubmitResult> {
   return store.transaction((tx) => {
@@ -52,12 +52,17 @@ export async function submitSpec(root: string, store: StateStore, flowId: string
       if (prev === null) { if (!OPTIONAL_SPECS.includes(name)) missing.push(name); } else reused.push(name);
       return [name, prev ?? ''];
     })) as unknown as SpecFiles;
-    if (missing.length) throw new SpecFlowError(`还没有提交过 ${missing.join('、')}：第一次提交要给出 requirements、permissions、glossary（screens 没有界面的项目可以不交）。`);
+    // 还没交齐：先存这次交的草稿，等剩下的。四份一次交可能超出模型单次输出的上限（stock 实验：截断两次才交上）
+    if (missing.length) {
+      for (const name of SPEC_PATHS) if (input[name]) tx.putText(specDraftRel(flowId, name), files[name]);
+      tx.event({ flow: flowId, actor: 'orchestrator', type: 'note', reason: `规格草稿已保存，还差 ${missing.join('、')}`, data: { missing } });
+      return { ok: false, sha: null, lint: { errors: [], warnings: [] }, reused, missing };
+    }
     for (const name of SPEC_PATHS) tx.putText(specDraftRel(flowId, name), files[name]);
     const lint = lintSpec(files);
     if (lint.errors.length) {
       tx.event({ flow: flowId, actor: 'orchestrator', type: 'note', reason: `规格未通过 spec-lint（${lint.errors.length} 处），未写入集成分支`, data: { errors: lint.errors.length, reused } });
-      return { ok: false, sha: null, lint, reused };
+      return { ok: false, sha: null, lint, reused, missing };
     }
     const errors = planStageTransition(flow.stage_status, 'awaiting_gate', 'submit_gate', { actor: 'orchestrator' });
     if (errors.length) throw new SpecFlowError(errors.join('；'));
@@ -65,6 +70,6 @@ export async function submitSpec(root: string, store: StateStore, flowId: string
     tx.putFlow({ ...flow, stage_status: 'awaiting_gate', spec: { submitted: true, errors: [], warnings: lint.warnings.map((i) => i.message), ...(sha ? { sha } : {}) } });
     tx.event({ flow: flowId, actor: 'orchestrator', type: 'note', reason: '四份规格已提交，spec-lint 通过', data: { sha, warnings: lint.warnings, reused } });
     tx.event({ flow: flowId, actor: 'orchestrator', type: 'transition', from: 'active', to: 'awaiting_gate', trigger: 'submit_gate', data: { entity: 'stage', stage: 'P0' } });
-    return { ok: true, sha, lint, reused };
+    return { ok: true, sha, lint, reused, missing };
   });
 }

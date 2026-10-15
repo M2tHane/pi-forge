@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>采购单 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html" class="on">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>采购单</h1>
+      <div class="bar"><select><option>全部状态</option><option>草稿</option><option>已确认</option><option>已入库</option><option>已取消</option></select><select><option>全部供应商</option></select><span class="grow"></span><button class="primary">新建采购单</button></div>
+      <table><tr><th>单号</th><th>供应商</th><th>仓库</th><th>金额</th><th>状态</th><th>创建时间</th></tr>
+        <tr><td><a href="purchase-order-detail.html">PO000004</a></td><td>晨光文具批发</td><td>MAIN</td><td class="num">1,850.00</td><td><span class="tag">草稿</span></td><td>10-15 09:00</td></tr>
+        <tr><td><a href="purchase-order-detail.html">PO000003</a></td><td>联华商贸</td><td>MAIN</td><td class="num">2,500.00</td><td><span class="tag ok">已入库</span></td><td>10-14 15:20</td></tr></table>
+      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有采购单，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
+      <p class="note">列表按单号倒序。点单号进入详情页 /purchase-orders/:id。</p>
+    </main>
+  </div>
+</body></html>

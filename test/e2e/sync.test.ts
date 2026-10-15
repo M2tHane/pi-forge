@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/sync.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第二轮 F 验收：阶段边界把主分支同步进集成分支；冲突按规则生成 merge-fix 或交给用户；最终合入主分支不再冲突。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

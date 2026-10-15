@@ -11,7 +11,8 @@ const check = (patch: Record<string, string | null> = {}) => {
   for (const [k, v] of Object.entries(patch)) { if (v === null) delete files[k]; else files[k] = v; }
   return parseContracts(files);
 };
-const messages = (r: ReturnType<typeof check>) => r.errors.map((e) => `${e.file}: ${e.message}`).join('\n');
+/** 错误与提醒一起看：除了不是合法的 YAML，格式问题都只提醒 */
+const messages = (r: ReturnType<typeof check>) => [...r.errors, ...r.warnings].map((e) => `${e.file}: ${e.message}`).join('\n');
 
 test('合格的契约零错误，符号目录包含接口、表、错误码与跨模块函数', () => {
   const r = check();
@@ -24,17 +25,21 @@ test('合格的契约零错误，符号目录包含接口、表、错误码与�
   assert.deepEqual([...r.catalog.fns.keys()], ['team#currentTeam']);
 });
 
-test('YAML 语法错误与缺少根文件', () => {
-  assert.match(messages(check({ 'paths/team.yaml': '/api/teams:\n  get: [unclosed' })), /paths\/team\.yaml: 不是合法的 YAML/);
+test('只有不是合法的 YAML 算错误；缺少根文件、版本不对只提醒', () => {
+  assert.match(check({ 'paths/team.yaml': '/api/teams:\n  get: [unclosed' }).errors.map((e) => `${e.file}: ${e.message}`).join(), /paths\/team\.yaml: 不是合法的 YAML/);
+  const patches: Record<string, string | null>[] = [{ 'openapi.yaml': null }, { 'errors/Bad_Mod.yaml': 'NAME: { http: 1 }\n' }, { 'data-model.yaml': 'models: {}\n' }, { 'paths/notes.txt': 'x' }];
+  for (const patch of patches) assert.deepEqual(check(patch).errors, [], JSON.stringify(patch));
   assert.match(messages(check({ 'openapi.yaml': null })), /缺少根文件 openapi\.yaml/);
   assert.match(messages(check({ 'openapi.yaml': CONTRACTS['openapi.yaml']!.replace('openapi: 3.1.0', 'swagger: "2.0"') })), /openapi: 3\.1\.0/);
 });
 
-test('根文件 paths 只能写指向 paths/<模块>.yaml 的 $ref', () => {
+test('根文件 paths 建议写指向 paths/<模块>.yaml 的 $ref；直接写的 path item 也算接口', () => {
   const inline = CONTRACTS['openapi.yaml']!.replace("    $ref: './paths/team.yaml#/~1api~1teams'", '    get: { responses: { "200": { description: ok } } }');
-  assert.match(messages(check({ 'openapi.yaml': inline })), /\/api\/teams 只能写一条 \$ref/);
+  const r = check({ 'openapi.yaml': inline });
+  assert.match(messages(r), /\/api\/teams 建议只写一条 \$ref/);
+  assert.ok(r.catalog.apis.has('GET /api/teams'));
   const other = CONTRACTS['openapi.yaml']!.replace('./paths/team.yaml', './components/datasource.yaml');
-  assert.match(messages(check({ 'openapi.yaml': other })), /\/api\/teams 只能写一条 \$ref/);
+  assert.match(messages(check({ 'openapi.yaml': other })), /\/api\/teams 建议只写一条 \$ref/);
 });
 
 test('$ref 指向不存在的文件、找不到的位置、或 docs/contracts 之外都报错', () => {

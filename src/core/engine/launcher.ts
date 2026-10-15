@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/launcher.ts @ 31f3f15
 // 子进程启动接口：dispatcher 组装 SubagentSpec，pi-adapter 用 pi 命令行实现，测试用 fake-subagent 实现。
 import type { ThinkingLevel } from '../state/schemas.ts';
 import type { RunMetrics } from './metrics.ts';

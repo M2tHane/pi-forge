@@ -1,4 +1,4 @@
-// 改编自 pi-flow test/e2e/orchestrator-session.test.ts @ 31f3f15：真实 Pi + fake LLM 的 P0 验收。
+// 真实 Pi + fake LLM 的 P0 验收。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -50,11 +50,11 @@ test('真实 pi print：forge_read 读 PRD；不合格规格被拒，合格规�
     assert.ok(['forge_read', 'forge_spec', 'forge_change'].every((t) => requests[0].tools.includes(t)));
     assert.ok(!requests[0].tools.includes('write') && !requests[0].tools.includes('bash'));
     const system = requests[0].system.join('\n');
-    assert.match(system, /docs\/spec\/inputs\/prd\/prd.md/);
+    assert.match(JSON.stringify(requests[0].status), /docs\/spec\/inputs\/prd\/prd.md/);
     assert.match(system, /## 第二步：写四份文件/); // spec-from-prd 全文
     assert.match(system, /## 按轮提问/); // grilling 全文
     assert.match(JSON.stringify(requests[1].last), /PRD 原文.*团队维护看板/);
-    assert.match(JSON.stringify(requests[2].last), /spec-lint 未通过.*Given/);
+    assert.match(JSON.stringify(requests[2].last), /spec-lint 未通过.*\[MVP\]、\[LATER\] 或 \[NO\]/);
     assert.match(JSON.stringify(requests[3].last), /等待用户 \/forge-approve/);
     assert.match(p.git('show', `${flow.integration_branch}:docs/spec/inputs/prd/prd.md`), /名称要唯一/);
     for (const file of ['requirements', 'screens', 'permissions', 'glossary']) assert.ok(p.git('show', `${flow.integration_branch}:docs/spec/${file}.md`));
@@ -66,7 +66,7 @@ test('真实 pi print：forge_read 读 PRD；不合格规格被拒，合格规�
     store = new StateStore(p.dir);
     assert.deepEqual([store.readFlow(id).stage, store.readFlow(id).stage_status], ['P1', 'active']);
     const resumed = readFileSync(LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'orch-p0').slice(previousCount);
-    assert.match(resumed[0].system.join('\n'), /增加唯一性说明[\s\S]*docs\/spec\/inputs\/prd\/prd.md/);
+    assert.match(JSON.stringify(resumed[0].status), /增加唯一性说明[\s\S]*docs\/spec\/inputs\/prd\/prd.md/);
     assert.match(JSON.stringify(resumed[1].last), /PRD 原文/);
     // 进入 P1 后程序建了 architect 的 doc task（P1 的流程见 p1-flow）
     assert.deepEqual(store.listTasks(id).map((t) => [t.id, t.kind, t.role, t.stage]), [['T-001', 'doc', 'architect', 'P1']]);

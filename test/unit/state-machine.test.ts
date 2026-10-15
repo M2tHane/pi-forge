@@ -1,4 +1,3 @@
-// 来源：pi-flow test/unit/state-machine.test.ts @ 31f3f15；按 M1 批复重写。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -14,7 +13,7 @@ const lease = { run_id: 'r-1', role: 'worker', token_hash: hashToken(TOKEN), acq
 const facts = (over: Partial<Facts> = {}): Facts => ({
   now: NOW, limits: { max_attempts: 3, max_parallel: 2, max_parallel_aux: 3, max_precheck_failures: 2, max_merge_failures: 2, review_max_rounds: 2 },
   actor: 'engine', stage_active: true, status_of: new Map(), running_count: 0, conflicting_running: [], queue_head: true,
-  token: TOKEN, handoff_written: true, diff_files: ['src/server/t-001/a.ts'], reason: '测试失败',
+  token: TOKEN, diff_files: ['src/server/t-001/a.ts'], reason: '测试失败',
   soft_deps_done: true, inputs_synced: true, structured_report: true,
   ...over,
 });
@@ -33,7 +32,7 @@ interface Case {
 const cases: Case[] = [
   { from: 'pending', to: 'ready', trigger: 'schedule', task: { depends_on: [hard('T-002')] }, facts: { status_of: new Map([['T-002', 'done']]) }, reject: { stage_active: false } },
   { from: 'ready', to: 'in_progress', trigger: 'dispatch', reject: { running_count: 2 } },
-  ...(['impl', 'fix', 'doc', 'merge-fix'] as const).map((kind): Case => ({ from: 'in_progress', to: 'awaiting_inputs', trigger: 'submit', task: { kind }, reject: { handoff_written: false }, rejectTask: { kind: 'review' } })),
+  ...(['impl', 'fix', 'doc', 'merge-fix'] as const).map((kind): Case => ({ from: 'in_progress', to: 'awaiting_inputs', trigger: 'submit', task: { kind }, reject: { diff_files: [] }, rejectTask: { kind: 'review' } })),
   { from: 'awaiting_inputs', to: 'checking', trigger: 'inputs_ready', reject: { actor: 'orchestrator' } },
   { from: 'awaiting_inputs', to: 'in_progress', trigger: 'sync_conflict', facts: { conflict_files: ['src/a.ts'] }, reject: { conflict_files: [] } },
   { from: 'checking', to: 'in_progress', trigger: 'precheck_fail', facts: { precheck_ok: false }, reject: { precheck_ok: true }, rejectTask: { kind: 'review' } },
@@ -53,7 +52,7 @@ const cases: Case[] = [
   { from: 'blocked', to: 'blocked', trigger: 'hand_to_user', task: { blocked_by: 'dispatcher', blocked_owner: 'orchestrator' }, facts: { actor: 'orchestrator' }, reject: { actor: 'human' }, rejectTask: { blocked_owner: undefined } },
   { from: 'blocked', to: 'in_progress', trigger: 'unblock', facts: { actor: 'human' }, reject: { actor: 'engine' }, rejectTask: { worktree: null, branch: null } },
   { from: 'blocked', to: 'ready', trigger: 'unblock', task: { worktree: null, branch: null }, facts: { actor: 'human' }, reject: { actor: 'orchestrator' }, rejectTask: { branch: 'started' } },
-  ...(['review', 'qa'] as const).map((kind): Case => ({ from: 'in_progress', to: 'done', trigger: 'report', task: { kind }, facts: { diff_files: [] }, reject: { structured_report: false }, rejectTask: { kind: 'impl' } })),
+  ...(['review', 'qa'] as const).map((kind): Case => ({ from: 'in_progress', to: 'done', trigger: 'report', task: { kind }, facts: { diff_files: [] }, reject: { structured_report: false }, rejectTask: { kind: 'merge-fix' } })),
   { from: 'ready', to: 'blocked', trigger: 'block', facts: { actor: 'dispatcher' }, reject: { actor: 'orchestrator' } },
   ...(['in_progress', 'awaiting_inputs', 'checking', 'in_review', 'queued_merge', 'merging'] as const).map((from): Case => ({ from, to: 'blocked', trigger: 'block', reject: { reason: '' } })),
   ...(['run_failed', 'run_interrupted', 'run_paused', 'run_timeout'] as const).map((trigger): Case => ({ from: 'in_progress', to: 'in_progress', trigger, task: trigger === 'run_timeout' ? { timeout_review: { run: 'r-1', at: NOW.toISOString(), minutes: 30 } } : {}, reject: { reason: '' }, rejectTask: { lease: null } })),
@@ -159,7 +158,8 @@ test('submit：鉴权、范围、公共文件、已有测试调整、契约追�
   for (const path of ['.forge/state.json', 'workflow.yaml', '.git/config', '.pi/x']) bad(planTransition(s0, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
   for (const path of ['tests/acceptance/_support/a.ts', 'tests/acceptance/S0-smoke/a.ts']) {
     ok(planTransition({ ...t, stage: 'S0' }, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
-    bad(planTransition({ ...t, stage: 'S0', kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
+    // doc 任务按 writes（这里是 **），验收测试也能改
+    ok(planTransition({ ...t, stage: 'S0', kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
   }
   const narrow = task('in_progress', { shared: ['src/routes.ts'] });
   // impl / fix 不受 writes 限制（包括单元测试与任何 task 的验收测试）；规格仍越界；其他种类照旧
@@ -181,7 +181,10 @@ test('输入、审查和合并的独立事实必须满足', () => {
   for (const key of ['rebase_ok', 'post_verify_ok', 'fast_forwarded'] as const) bad(planTransition(task('merging'), 'done', 'merge_done', facts({ rebase_ok: true, post_verify_ok: true, fast_forwarded: true, [key]: false })));
   const a = task('in_progress', { kind: 'review' });
   bad(planTransition(a, 'done', 'report', facts({ diff_files: ['x'] })));
-  bad(planTransition(a, 'done', 'report', facts({ diff_files: [], handoff_written: false })));
+  // 没有改动的 impl、fix、doc 可以直接完成；merge-fix 没有改动说明冲突没解决，不行
+  for (const kind of ['impl', 'fix', 'doc'] as const) ok(planTransition(task('in_progress', { kind }), 'done', 'report', facts({ diff_files: [] })));
+  bad(planTransition(task('in_progress', { kind: 'merge-fix' }), 'done', 'report', facts({ diff_files: [] })));
+  bad(planTransition(task('in_progress', { kind: 'impl' }), 'done', 'report', facts({ diff_files: ['src/a.ts'] })));
 });
 
 const counts = (t: TaskFile) => [t.attempts, t.precheck_failures ?? 0, t.review_rounds ?? 0, t.merge_failures ?? 0];
@@ -276,7 +279,7 @@ test('阶段状态 × 触发 × 目标穷举，只允许阶段清单内的组合
   }
 });
 
-test('submit：impl 与它的 fix 可以改任何 task 的验收测试，doc 任务不能', () => {
+test('submit：impl 与它的 fix 可以改任何 task 的验收测试，doc 任务按 writes', () => {
   const f = facts();
   const own = task('in_progress', { writes: ['src/**', 'tests/acceptance/T-001/**'] });
   ok(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: ['src/a.ts', 'tests/acceptance/T-001/a.test.ts', 'tests/acceptance/T-001/sub/b.test.ts'] }));
@@ -286,8 +289,9 @@ test('submit：impl 与它的 fix 可以改任何 task 的验收测试，doc 任
   }
   // 规格仍不能改
   bad(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/spec/requirements.md'] }));
-  // doc 任务不放开
-  bad(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
+  // doc 任务不放开 writes，writes 里的验收测试可以改
+  ok(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
+  bad(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-002/a.test.ts'] }));
 });
 
 test('merge_conflict：impl / fix 的合并冲突交回 worker，与 merge_verify_fail 共用 merge_failures，达到上限转 blocked', () => {

@@ -1,5 +1,4 @@
 <!doctype html>
-<!-- 来源：pi-flow scripts/flow-view.html @ 31f3f15（改名） -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -226,7 +225,7 @@ const ST = {
   merging: { l: '合并中', c: 'var(--s-verify)', icon: '●' }, done: { l: '已完成', c: 'var(--good)', icon: '✓' },
   blocked: { l: '阻塞', c: 'var(--critical)', icon: '⛔' }, cancelled: { l: '已取消', c: 'var(--idle)', icon: '✕' },
 };
-// 七个角色（第 14 节）：颜色用于任务、时间线和成本
+// 七个角色：颜色用于任务、时间线和成本
 const ROLE = {
   orchestrator: ['主会话', '#8a63d2'], architect: ['架构师', '#2a78d6'], worker: ['实施者', '#1baf7a'], 'test-author': ['测试作者', '#d99a1c'],
   reviewer: ['审查者', '#eb6834'], 'stage-qa': ['阶段验收', '#d0457a'],
@@ -698,7 +697,7 @@ function renderStages(F) {
     D.stageTransitions.map((r) => `<tr><td>${r.from.map((s) => esc(STAGE_ST[s] ?? s)).join('、')}</td><td>${esc(r.trigger)}${r.humanOnly ? ' <span class="hint">仅用户</span>' : ''}</td><td>${esc(STAGE_ST[r.to] ?? r.to)}</td></tr>`).join('');
 }
 
-// —— 度量（第 17 节） ——
+// —— 度量 ——
 const fm = (v, unit = '') => v == null ? '—' : v + unit;
 function renderMetrics(F) {
   const m = F.metrics;

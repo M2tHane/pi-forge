@@ -1,4 +1,4 @@
-// 改编自 pi-flow 7006e7d src/modes/fix.ts（规格第 13.4 节）：fix 模式。
+// fix 模式。
 // 一个 worker 定位并修复（加回归测试）→ 合并队列跑全量测试后直接合入主分支 → 独立 stage-qa 在主分支 HEAD 的临时 worktree 复现确认 →
 // 修复日志。每一步由程序推进，不建 DAG、不跑阶段门禁；stage-qa 发现 must 时交回 worker 的会话修复（最多 2 轮），仍不过转"需要你处理"。
 // 流程只有一个阶段 X1。X1 的状态：active（修复、合并、复现确认都在这里）→ done；轮数用尽或任务阻塞时 needs_human，由 /forge accept 放行。

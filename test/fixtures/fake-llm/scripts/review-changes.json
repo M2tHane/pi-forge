@@ -1,0 +1,12 @@
+{ "variants": [
+  { "match": "确认轮", "steps": [
+    { "tool_calls": [ { "name": "forge_review_confirm", "arguments": { "items": [ { "id": "R-1", "resolved": true } ] } } ] },
+    { "text": "确认已解决" }
+  ] },
+  { "match": "", "steps": [
+    { "tool_calls": [ { "name": "forge_review_report", "arguments": { "verdict": "changes", "issues": [
+      { "level": "must", "basis": "defect:a 的值是字符串 FAIL", "file": "src/server/t-001/a.ts", "location": "a", "problem": "a 不应是 FAIL", "expected": "改成数字 1" }
+    ] } } ] },
+    { "text": "要求修改" }
+  ] }
+] }

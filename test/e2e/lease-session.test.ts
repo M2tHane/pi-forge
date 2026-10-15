@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/lease-session.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第二轮 D + E 验收：租约心跳续租；子进程会话留档的查看与按保留期清理。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

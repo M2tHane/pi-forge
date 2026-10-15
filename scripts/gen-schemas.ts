@@ -1,4 +1,3 @@
-// 来源：pi-flow scripts/gen-schemas.ts @ 31f3f15
 // 从 src/core/state/schemas.ts 生成 schemas/*.schema.json，供外部工具与文档使用。
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';

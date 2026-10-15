@@ -55,27 +55,5 @@ test('worker 自己提交 src 与验收测试，审查任务说明带着 AC 覆�
   } finally { p.cleanup(); }
 });
 
-test('覆盖缺口建 .fx-n（补齐 AC 编号的验收测试，writes 含自己的验收目录）；补齐后阶段通过', async () => {
-  const p = await project();
-  const e = engineEnv(p, async (_role, _n, a) => {
-    await a.call('forge_claim');
-    const id = a.env.task;
-    if (id === 'T-001') return submitWork(a, '只写了 AC1 的测试', { 'src/server/t-001/a.ts': 'ok\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST });
-    assert.equal(id, 'T-001.fx-1');
-    assert.match(p.store.readHandoff(p.flowId, id), /补齐验收测试[\s\S]*REQ-001\.AC2/);
-    return submitWork(a, '补上 AC2', { 'tests/acceptance/T-001/b.test.ts': AC2_TEST });
-  });
-  try {
-    await drive(e, p.flowId, 30);
-    assert.deepEqual(e.errors, []);
-    const fx = p.store.readTask(p.flowId, 'T-001.fx-1');
-    assert.deepEqual([fx.kind, fx.status, fx.title, fx.for_task], ['fix', 'done', '补齐 AC 编号的验收测试', 'T-001']);
-    assert.ok(fx.writes.includes('tests/acceptance/T-001/**'));
-    assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
-    const integ = p.store.readFlow(p.flowId).integration_branch;
-    assert.match(p.git('show', `${integ}:docs/qa/S1.md`), /缺口：无/);
-  } finally { p.cleanup(); }
-});
-
 // 合并不再运行 acceptance，原来“合并验证时旧流程的验收目录失败 → 加进 writes 退回 worker”的两个用例随之删除；
 // 旧流程验收目录被破坏的情形现在由阶段门禁（全量 acceptance）发现。

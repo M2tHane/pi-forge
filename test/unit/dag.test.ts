@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/unit/dag.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateDag, computeReady, dagStats, mutexPairs, conflictsWith, remainingPath, type DagCatalog,
@@ -45,9 +44,9 @@ test('检出引用不存在的依赖与重复 id', () => {
   assert.ok(r.errors.some((e) => e.includes('重复')));
 });
 
-test('检出缺 reason 的硬依赖', () => {
+test('硬依赖可以不写 reason', () => {
   const r = validateDag([mkTask('T-001'), mkTask('T-002', { deps: [{ task: 'T-001', type: 'hard' }] })], catalog);
-  assert.ok(r.errors.some((e) => e.includes('reason')));
+  assert.ok(!r.errors.some((e) => e.includes('reason')));
 });
 
 test('检出非法角色、scope、命令与越出 scope 的 writes', () => {

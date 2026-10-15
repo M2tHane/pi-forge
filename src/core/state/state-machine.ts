@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/state-machine.ts @ 31f3f15；按 M1 转移表与批复改编。
 // 纯函数：只根据程序推导的 facts 判断，不做 IO，也不修改入参。
 import { createHash } from 'node:crypto';
 import type { Lease, StageStatus, TaskFile, TaskStatus } from './schemas.ts';
@@ -41,10 +40,6 @@ export interface Facts {
   merging_other?: string | null;
   /** 是否是队列里第一个合格任务，保留原字段名供运行时集成 */
   queue_head?: boolean;
-  /** 本次运行是否已写 handoff */
-  handoff_written?: boolean;
-  /** 本任务 handoff 的全文（程序读出；用于"更新架构图与契约"任务认「无需更新」的说明） */
-  handoff_text?: string;
   /** 所有软依赖生产方是否 done；缺省由 status_of 推导 */
   soft_deps_done?: boolean;
   /** 集成分支与验收测试是否已成功同步进任务分支 */
@@ -108,21 +103,9 @@ const humanOrDelegate = (t: TaskFile, f: Facts) =>
 const countDecision = (t: TaskFile, f: Facts) => { if (f.actor === 'orchestrator') t.decisions = (t.decisions ?? 0) + 1; };
 /** 小改动（change）流程结束前由程序建的"更新架构图与契约"任务：X1 阶段的 doc 任务（轻流程只有它是 doc） */
 export const isDocsUpdateTask = (t: Pick<TaskFile, 'kind' | 'stage'>) => t.kind === 'doc' && t.stage === 'X1';
-/** 该任务的 diff 必须触及的文档路径 */
-export const DOCS_UPDATE_PATHS = ['docs/arch/**', 'docs/contracts/**'] as const;
-/**
- * handoff 里是否有 agent 写的「无需更新：原因」。只认非 engine 写入的段落（程序写的交接说明里提到这句话不算）。
- * handoff 的段落格式见 StateStore.appendHandoff：`## <时间> <actor>`。
- */
-export function docsUpdateWaived(handoff: string): boolean {
-  const parts = handoff.split(/^## (\S+) (\S+)[ \t]*$/m);
-  // split 带捕获组：[前言, ts, actor, 正文, ts, actor, 正文, …]
-  for (let i = 1; i + 2 < parts.length; i += 3) {
-    if (parts[i + 1] !== 'engine' && /无需更新\s*[:：]\s*\S/.test(parts[i + 2] ?? '')) return true;
-  }
-  return false;
-}
 const workerKind = (t: TaskFile) => ['impl', 'fix', 'doc', 'merge-fix'].includes(t.kind);
+/** 没有改动也可以提交、直接视为完成的任务（要做的已在集成分支上，或文档无需更新）；merge-fix 没有改动说明冲突没解决 */
+export const canFinishWithoutChanges = (t: Pick<TaskFile, 'kind'>) => ['impl', 'fix', 'doc'].includes(t.kind);
 const pipelineOnly = (t: TaskFile) => need(workerKind(t), '只有实现、修复、文档或合并修复任务可以走此流水线');
 const mergeOnly = pipelineOnly;
 const softDone = (t: TaskFile, f: Facts) => f.soft_deps_done ?? t.depends_on.filter((d) => d.type === 'soft').every((d) => f.status_of?.get(d.task) === 'done');
@@ -143,21 +126,11 @@ function submitErrors(t: TaskFile, f: Facts): string[] {
   const errors = leaseValid(t.lease, f, '提交被拒');
   const diff = f.diff_files;
   if (!diff) errors.push('缺少 worktree diff');
-  else if (!diff.length) errors.push(isDocsUpdateTask(t)
-    ? 'worktree 没有改动：请把 docs/arch/overview.md 与 docs/contracts/ 改到与代码一致；确认不需要更新时先用 forge_note 写「无需更新：原因」再提交'
-    : 'worktree 没有改动，无可提交内容');
+  else if (!diff.length) errors.push('worktree 没有改动，无可提交内容');
   else {
-    if (isDocsUpdateTask(t) && !diff.some((p) => matchesAny(p, DOCS_UPDATE_PATHS)) && !docsUpdateWaived(f.handoff_text ?? '')) {
-      errors.push('更新架构图与契约：改动里没有 docs/arch/** 或 docs/contracts/** 的文件。请把架构图与契约改到与代码一致；确认不需要更新时先用 forge_note 写「无需更新：原因」再提交');
-    }
     // S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时放行（其余受保护路径不变）
     const protectedFiles = diff.filter((p) => isProtectedFor(p, t.writes));
     if (protectedFiles.length) errors.push(`diff 含受保护路径：${protectedFiles.join('、')}`);
-    // impl / fix 可以改任何验收测试；doc、merge-fix 不能碰验收测试
-    if (workerKind(t) && !opensWrites(t)) {
-      const forbidden = diff.filter((p) => matchesAny(p, ['tests/acceptance/**']));
-      if (forbidden.length) errors.push(`不能修改验收测试：${forbidden.join('、')}`);
-    }
     const allowed = [...t.writes, ...(t.shared ?? [])];
     const adjusted = new Set(f.test_adjustments ?? []);
     const additions = new Set(canAppendInterfaces(t) ? f.contract_additions ?? [] : []);
@@ -168,7 +141,6 @@ function submitErrors(t: TaskFile, f: Facts): string[] {
     if (outside.length) errors.push(`diff 越出任务 writes：${outside.join('、')}`);
     if (f.interface_rewrites?.length) errors.push(`契约只能追加，不能修改或删除已有内容：${f.interface_rewrites.join('、')}`);
   }
-  errors.push(...need(f.handoff_written, '尚未写 handoff，请先调用 forge_note'));
   return errors;
 }
 function submitted(t: TaskFile, f: Facts): void {
@@ -329,10 +301,9 @@ export const TRANSITIONS: readonly Rule[] = [
   {
     from: ['in_progress'], to: 'done', trigger: 'report',
     check: (t, f) => [
-      ...leaseValid(t.lease, f, '提交被拒'), ...need(['review', 'qa'].includes(t.kind) || isDocsUpdateTask(t), '只有 review、qa 可以直接提交结论'),
-      ...need(!isDocsUpdateTask(t) || docsUpdateWaived(f.handoff_text ?? ''), '更新架构图与契约任务没有改动时，必须先用 forge_note 写「无需更新：原因」'),
-      ...need(!!f.diff_files && f.diff_files.length === 0, '只读任务不得有改动，且必须提供 diff'),
-      ...need(f.handoff_written, '尚未写 handoff，请先调用 forge_note'), ...need(f.structured_report, '缺少结构化结论'),
+      ...leaseValid(t.lease, f, '提交被拒'), ...need(['review', 'qa'].includes(t.kind) || canFinishWithoutChanges(t), '只有 review、qa 与没有改动的实现、修复、文档任务可以直接完成'),
+      ...need(!!f.diff_files && f.diff_files.length === 0, '直接完成的任务不得有改动，且必须提供 diff'),
+      ...need(f.structured_report, '缺少结构化结论'),
     ], effect: (t) => {
       t.impl_run = t.lease!.run_id; t.lease = null; t.worktree = null;
     },

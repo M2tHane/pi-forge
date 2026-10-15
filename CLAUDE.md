@@ -1,35 +1,50 @@
 # pi-forge 项目说明（给 Claude Code）
 
-## 需求与记录
-- 规格见 `docs/BUILD_PROMPT.md`（不要修改它）。所有偏离规格的决定、已核实的 Pi API、已验证的版本号、真实模型实验的结论，都记在 `NOTES.md`。新增偏离时，在"偏离规格"对应主题下改写或追加（1 到 3 行，只写现状与原因，细节看代码和测试）；被取代的内容直接删掉，历史看 git。代码注释与测试不引用 NOTES 的条目，原因直接写在注释里。
-- 复用来源是 pi-flow（`~/Documents/Code/program/pi-flow`。运行时文件取 HEAD `31f3f15`，流程层取 `7006e7d`（第 1、16 节））。拷贝或改编的文件，在文件头注明来源。pi-flow 的 `NOTES.md` 和 `docs/EXPERIMENTS-4.md` 记录了为什么这样设计，改动运行时之前先读。
-- 按里程碑推进：每个里程碑开始前给出计划；完成后汇报（做了什么、偏离、待确认项、下一步），**等用户确认再继续**。用户明确要求连续完成时除外。
-- Pi 的 API 先查文档或源码再用，不凭记忆。Pi 安装在 `$(npm root -g)/@earendil-works/pi-coding-agent`。
+pi-forge 是 Pi 的多 agent 开发工作流插件：用户只负责讨论需求和最后验收，中间的契约、拆分、实现、审查、合并都交给流程。
 
-## 结构（与 pi-flow 相同）
-- `src/core/`：业务逻辑，不依赖 Pi，按模块分子目录。**分层：下层不得 import 上层，目录图无环**（`test/unit/core-layers.test.ts` 检查，新增目录先登记层号）。自下而上：
-  - `state/`（1）：`.forge/` 状态层。`state-store.ts` 是 `.forge/` 唯一的读写入口；`state-machine.ts` 是转移表（不在表中的转移一律拒绝）；另有 schemas、event-log、migrations、checkpoints、config、paths、git、dag、waits，以及底层纯函数（failure-signature、acctest-lookup）。
-  - `security/`（2）：guard（命令与路径校验）、shell 解析、redact、工具参数。
-  - `workspace/`（2）：worktree、阶段 worktree、工作区合并、越界检测、依赖准备、命令运行（verify-runner）、资源分配、服务、forge-read。
-  - `verify/`（3）：验证缓存、测试调整。
-  - `insight/`（3）：成本、预算与升级、角色模型设置、停滞检测（forge-watch）。
-  - `spec/`（4）：规格解析与检查、规格流程、需求接入、预检。
-  - `acceptance/`（5）：验收测试（acctest）、验收流程、覆盖率、阶段修复（stage-fix）。
-  - `plan/`（6）：契约与计划：计划流程、契约检查/差异/合并、规则草稿、变更请求、feature 规格、纳管（adopt）、规格修订批准。
-  - `stage/`（7）：阶段：审查、阶段审查/QA/验收/轮次、阶段定义、闸门（gates）、签收、合入主分支（release）。
-  - `engine/`（8）：引擎。`dispatcher.ts` 是引擎；调度、子进程运行时、提示组装、上下文注入、合并队列、预检、知识库与笔记、谱系、指标。
-  - `ops/`（9）：运维与查看（斜杠命令入口）：init、resume、doctor、状态视图、engine-lock、notify、history、codegraph。
-- `src/tools/`：`forge_*` 工具的业务实现；`src/commands/`：斜杠命令的业务实现；`src/modes/`：阶段计划与 fix 流程。
+## 设计原则（改任何东西之前先对照）
+1. **默认放权。** agent 在项目里可以读、写、执行任何东西。guard 只拦禁止列表：`.forge/`、`.git/`、`workflow.yaml`、密钥、项目目录之外的路径，以及 `guard.ts` 的 `IMPL_FORBIDDEN`。
+2. **加约束要有事故。** 新增任何拦截、闸门、必填项、"校验不过就拒绝"之前，先写出它防住了哪一次真实运行里发生过的事。说不出就不加。能提醒就不拦；能事后检查，就不事前拦。
+3. **程序只做必须由程序做的事：**状态转移、调度、合并、计数与超时，以及执行 install、test、acceptance、serve。怎么写代码、跑哪些检查，由 agent 自己决定；程序给的是参考信息（`commands.yaml`、`rules/`、项目知识），不是约束。
+4. **碰壁先问墙该不该存在。** 真实运行里 agent 被拦、卡住、反复失败时，先判断是不是约束本身错了。删约束优先于加绕过它的新机制。
+5. **能删就不加。** 解决问题优先删代码、删步骤。汇报里写明这次净增减了多少行。
+6. **状态只由程序写。** `.forge/` 只经 `state-store.ts` 写；agent 只能通过 `forge_*` 工具提交申请。
+
+## 真实模型实验（花钱，只在用户明确要求时跑）
+- **开跑前写清楚：**假设、配置（各角色的模型与思考强度）、指标、隐藏测试。驱动脚本是 `scripts/real-build.ts`（全流程）与 `scripts/real-tasks/`（跳过主会话），实验输入放在 `scripts/real-build-suites/`。
+- **跑的过程中不改代码。** 发现程序问题先记下来，跑完再修。除非用户叫停或基础设施故障，跑完为止。
+- **结论只从跑完的数据得出。** 跑了一半的，只汇报看到了什么，不下效率或效果的结论。结论写进 `NOTES.md` 的"真实模型实验"。
+
+## 记录
+- **现状以代码与 `NOTES.md` 为准。** 最初的规格 `docs/BUILD_PROMPT.md` 已删除（见 git 历史），不要去找它。
+- **设计决定写进 NOTES。** 新的决定写到"偏离规格"对应主题下，改写或追加 1 到 3 行，只写现状与原因；被取代的直接删掉，历史看 git。已核实的 Pi API、验证过的版本号也记在 NOTES。
+- **代码注释与测试不引用 NOTES 的条目**，原因直接写在注释里。
+- **Pi API。** 先查文档或源码再用，不凭记忆；Pi 安装在 `$(npm root -g)/@earendil-works/pi-coding-agent`，文档在其 `docs/`。
+
+## 结构
+- `src/core/`：业务逻辑，不依赖 Pi。**下层不得 import 上层**（`test/unit/core-layers.test.ts` 检查，新增目录先登记层号）。自下而上：
+  - `state/`（1）：`state-store.ts` 是 `.forge/` 唯一的读写入口；`state-machine.ts` 是转移表；`config.ts` 读 workflow.yaml，`project-commands.ts` 读 commands.yaml。
+  - `security/`、`workspace/`（2）
+  - `verify/`、`insight/`（3）
+  - `spec/`（4）
+  - `acceptance/`（5）
+  - `plan/`（6）
+  - `stage/`（7）
+  - `engine/`（8）：`dispatcher.ts` 是引擎
+  - `ops/`（9）：斜杠命令背后的运维与查看
+- `src/tools/`：`forge_*` 工具；`src/commands/`：斜杠命令；`src/modes/`：fix 与小改动流程。
 - `src/pi-adapter/`：**唯一**可以调用 Pi API 的目录。
 - `agents/`、`rules/`、`skills/`、`templates/`：角色提示、规则、技能、项目模板。
+- 生成的项目里：`workflow.yaml` 是流程配置（用户的，agent 只读）；`commands.yaml` 是项目命令（architect 与 worker 维护）。
 - `schemas/*.json` 由 `npm run gen:schemas` 从 `src/core/state/schemas.ts` 生成。
 
-## 约定
-- 状态只能由程序写；agent 只通过 `forge_*` 工具提交申请。约束靠移除能力和程序校验，不靠提示词。
-- 能用程序判断的不交给 LLM。新增的检查（spec-lint、契约检查、DAG 推导、覆盖率）都是纯函数，并且都有单元测试。
-- 测试不得依赖真实 LLM：单元测试、`test/fixtures/fake-subagent`、`test/fixtures/fake-llm`。真实模型只在 M9 和 `scripts/real-build.ts` 中使用。
-- 改动后运行 `npm run typecheck` 与 `npm test`。改动过程中随手跑 `npm run test:fast`（纯函数单元测试，1 秒；后面加测试文件路径就只跑这些文件）；`test:slow` 是用到 git 的单元测试，`test:e2e` 是 e2e（`scripts/test-groups.ts` 按文件内容分组）。
-- 只用可擦除的 TypeScript 语法（不用参数属性、enum、namespace）。
+## 测试
+- **测试不依赖真实 LLM：**用单元测试、`test/fixtures/fake-subagent`、`test/fixtures/fake-llm`。
+- **改动过程中**跑 `npm run typecheck` 和 `npm run test:fast`（纯函数，1 秒；后面加文件路径就只跑这些文件）。**改完**再跑 `npm run test:slow`（用到 git 的单元测试）。
+- **e2e**（`npm run test:e2e`，约 25 分钟）只跑这次改到的文件；全量 e2e 在用户要求时、或一大块改动收尾时跑。汇报里写明哪些没跑。
+
+## 代码约定
+- 只用可擦除的 TypeScript 语法：不用参数属性、enum、namespace。
 - 标识符和文件名用英文；面向用户的提示、错误信息和文档用中文。用户界面只显示高层阶段（规格 → 契约与计划 → 实施 → 交付），细节放在 `--detail`。
-- 修改 `agents/`、`rules/`、`skills/` 会让子进程系统提示的稳定前缀发生变化，导致提示缓存失效。要在 `NOTES.md` 的"缓存提醒"中记一笔，并在汇报中提醒用户。
+- 改 `agents/`、`rules/`、`skills/` 会让子进程系统提示的稳定前缀变化，提示缓存失效一次。要在 `NOTES.md` 的"缓存提醒"里记一笔，并在汇报中提醒用户。
 - 不读取、不打印任何密钥。

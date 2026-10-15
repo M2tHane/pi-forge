@@ -1,4 +1,3 @@
-// 来源：pi-flow src/pi-adapter/subagent.ts @ 31f3f15
 // 子进程中的 pi-forge 扩展：由 dispatcher 用 -e 最后加载（guard 必须最后执行）。
 // 只在 PI_FORGE_* 环境变量齐全时生效：注册本角色可用的 forge_* 工具、收窄启用的工具、拦截所有工具调用。
 import path from 'node:path';
@@ -29,7 +28,8 @@ export function applyBashTimeout(input: Record<string, unknown>, maxS: number): 
 export default function piFlowSubagent(pi: ExtensionAPI): void {
   const env = runEnvFrom(process.env);
   if (!env) return;
-  const config = loadConfig(path.join(env.root, 'workflow.yaml'));
+  // 项目命令以本 worktree 里的 commands.yaml 为准（集成分支的最新版，或本任务刚改过的）
+  const config = loadConfig(path.join(env.root, 'workflow.yaml'), process.cwd());
   const store = new StateStore(env.root, { limits: config.limits });
   const rt = new SubagentRuntime(env, store, config);
   const allowed = new Set(rt.activeTools());
@@ -68,9 +68,12 @@ export default function piFlowSubagent(pi: ExtensionAPI): void {
     }
   });
 
+  // guard 放行但带提醒的调用：提醒追加到这次的工具结果后面
+  const gateNotes = new Map<string, string>();
   pi.on('tool_call', async (event, ctx) => {
     const g = await rt.gate({ toolName: event.toolName, input: event.input }, ctx.cwd);
     if (!g.block) {
+      if (g.note) gateNotes.set(event.toolCallId, g.note);
       // bash 命令一律有超时（秒）：挂起的测试、没关的服务器不会把整个任务卡住（Pi 1.0.0：event.input 可原地修改）
       if (event.toolName === 'bash') applyBashTimeout(event.input as Record<string, unknown>, bashTimeoutS(config));
       return;
@@ -88,13 +91,16 @@ export default function piFlowSubagent(pi: ExtensionAPI): void {
     if (red) {
       await store.recordEvent({ flow: env.flow, task: env.task, actor: `run:${env.run}`, type: 'note', reason: `${event.toolName} 的结果中有 ${red.count} 处疑似密钥，已打码`, data: { run: env.run, tool: event.toolName } }).catch(() => {});
     }
-    const changed = red ? { content, ...(structuredContent !== undefined ? { structuredContent } : {}) } : undefined;
+    const gateNote = gateNotes.get(event.toolCallId);
+    gateNotes.delete(event.toolCallId);
+    const withNotes = (notes: string[]) => ({ content: [...content, ...notes.map((n) => ({ type: 'text' as const, text: `\n\n${n}` }))], ...(structuredContent !== undefined ? { structuredContent } : {}) });
+    const changed = gateNote ? withNotes([gateNote]) : red ? { content, ...(structuredContent !== undefined ? { structuredContent } : {}) } : undefined;
     if (event.toolName !== 'bash' || event.parentToolCallId) return changed;
     const sc = structuredContent as { output?: unknown } | undefined;
     const output = typeof sc?.output === 'string' ? sc.output : content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
     const c = await rt.afterToolResult('bash', event.input, event.isError, output);
     if (!c.note) return changed;
     if (c.terminate) setTimeout(() => ctx.shutdown(), 0);
-    return { content: [...content, { type: 'text' as const, text: `\n\n${c.note}` }], ...(structuredContent !== undefined ? { structuredContent } : {}) };
+    return withNotes([...(gateNote ? [gateNote] : []), c.note]);
   });
 }

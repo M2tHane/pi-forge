@@ -7,9 +7,9 @@ import {
   type Action, type FlowSnap, type SimState, type Snapshot, type TaskSnap,
 } from '../../scripts/m9/simulator.ts';
 
-const flow = (o: Partial<FlowSnap> = {}): FlowSnap => ({ id: 'B-001', mode: 'build', stage: 'P0', stageStatus: 'active', version: 1, specSubmitted: false, planMode: null, ...o });
+const flow = (o: Partial<FlowSnap> = {}): FlowSnap => ({ id: 'B-001', mode: 'build', stage: 'P0', stageStatus: 'active', version: 1, specSubmitted: false, ...o });
 const task = (id: string, o: Partial<TaskSnap> = {}): TaskSnap => ({ id, status: 'in_progress', blockedBy: null, blockedReason: null, version: 1, ...o });
-const snap = (o: Partial<Snapshot> = {}): Snapshot => ({ nowMs: 1_000_000, requireLean: true, turnEnded: false, flow: flow(), tasks: [], ...o });
+const snap = (o: Partial<Snapshot> = {}): Snapshot => ({ nowMs: 1_000_000, turnEnded: false, flow: flow(), tasks: [], ...o });
 const act = (a: Action | null) => { assert.ok(a && a.kind !== 'stuck', JSON.stringify(a)); return a as Exclude<Action, { kind: 'stuck' }>; };
 const stuckOf = (a: Action | null) => { assert.ok(a && a.kind === 'stuck', JSON.stringify(a)); return a as Extract<Action, { kind: 'stuck' }>; };
 const step = (s: Snapshot, st: SimState): { a: Action | null; st: SimState } => { const a = decide(s, st); return { a, st: a ? apply(st, a, s.nowMs) : st }; };
@@ -107,27 +107,9 @@ test('交付确认：select 选"确认合入并结束流程"，不重复计闸�
   assert.equal(r.st.counts.gate, 0);
 });
 
-test('P1 计划是精简模式 → 批准', () => {
-  const a = act(decide(snap({ flow: flow({ stage: 'P1', stageStatus: 'awaiting_human', planMode: 'lean' }) }), initialState()));
+test('P1 等待批准 → 批准', () => {
+  const a = act(decide(snap({ flow: flow({ stage: 'P1', stageStatus: 'awaiting_human' }) }), initialState()));
   assert.equal(a.kind === 'prompt' && a.message, '/forge-approve stage:P1');
-  assert.equal(a.category, 'gate');
-});
-
-test('P1 计划不是精简模式 → 驳回一次，意见写明，计额外介入 plan_not_lean', () => {
-  const s = snap({ flow: flow({ stage: 'P1', stageStatus: 'awaiting_human', planMode: 'standard' }) });
-  const r = step(s, initialState());
-  const a = act(r.a);
-  assert.equal(a.kind === 'prompt' && a.message, '/forge-reject stage:P1 "规模低于阈值，按精简模式重做计划"');
-  assert.equal(a.category, 'extra:plan_not_lean');
-  assert.equal(r.st.counts.extra['plan_not_lean'], 1);
-  // 第二次仍不是精简模式（流程版本变了，是新的一次闸门）→ 流程失败
-  const s2 = snap({ flow: flow({ stage: 'P1', stageStatus: 'awaiting_human', planMode: 'standard', version: 5 }) });
-  assert.equal(stuckOf(decide(s2, r.st)).failure, 'plan_not_lean');
-});
-
-test('P1 的 mode 读不到 → 卡住；A0/A1 之外（requireLean=false）不检查', () => {
-  assert.equal(stuckOf(decide(snap({ flow: flow({ stage: 'P1', stageStatus: 'awaiting_human', planMode: null }) }), initialState())).failure, 'out_of_table');
-  const a = act(decide(snap({ requireLean: false, flow: flow({ stage: 'P1', stageStatus: 'awaiting_human', planMode: 'standard' }) }), initialState()));
   assert.equal(a.category, 'gate');
 });
 

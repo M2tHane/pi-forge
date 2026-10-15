@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/migrations.ts @ 31f3f15
 // .forge/ 格式迁移（第六轮 7.1）：state.json 的 schema_version 记录格式版本。旧版本在第一次写入时（或恢复时显式）
 // 按版本链迁移流程、任务与提案文件，迁移与事件在同一个事务里提交，结果照常过 schema 校验。
 // 每一步是纯函数：输入旧 JSON，返回新 JSON（不改就原样返回）。

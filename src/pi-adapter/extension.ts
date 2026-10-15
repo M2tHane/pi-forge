@@ -1,4 +1,3 @@
-// 来源：pi-flow src/pi-adapter/extension.ts @ 31f3f15
 // pi-forge 的 Pi 扩展入口。所有 Pi API 调用集中在 src/pi-adapter/，业务逻辑在 src/core、src/commands、src/tools。
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -160,6 +159,8 @@ export function engineFor(root: string): EngineHandle {
     onError: (e) => s.notify(`pi-forge 程序步骤出错：${(e as Error).message}`, 'warning'),
   });
   s.handle = { store, engine, config };
+  // 项目命令以进行中流程的集成分支为准（主工作区的 commands.yaml 要到交付时才更新）
+  for (const f of visibleFlows(store)) engine.syncCommands(f.id);
   // 任何命令启动引擎都要检查租约：卡住的子进程（例如挂起的测试命令）到期会被结束，不只在 /forge-resume 时
   engine.startLeaseWatch();
   // 进程退出时（没有经过 session_shutdown 的情况）也结束子进程，避免留下无人管理的 subagent
@@ -294,7 +295,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交 requirements、screens、permissions、glossary 四份完整规格。spec-lint 拒绝时修正重提；通过后等待用户批准。',
+      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交规格：requirements、screens、permissions、glossary（没有界面的项目可以不交 screens）。spec-lint 拒绝或用户打回后，只重交要改的那几份，没交的沿用上一次提交。通过后等待用户批准。',
       parameters: SpecParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
@@ -402,7 +403,9 @@ export default function piFlow(pi: ExtensionAPI): void {
     }
   });
 
-  // 调度模式：每轮注入状态与唯一允许的下一步，并记录轮开始时主工作区的改动
+  // 调度模式：系统提示只追加稳定的角色提示与技能；每轮的状态与唯一允许的下一步作为一条上下文消息放在对话末尾。
+  // 状态写进系统提示时每轮都变，不能表示中途改系统提示的模型服务会收到整份新前缀，提示缓存每轮失效（Pi 1.1 extensions.md）。
+  // 同时记录轮开始时主工作区的改动
   pi.on('before_agent_start', (event, ctx) => {
     const s = sessions.get(ctx.cwd);
     if (!s?.orchestrator || !s.handle) return;
@@ -412,11 +415,13 @@ export default function piFlow(pi: ExtensionAPI): void {
     const flow = flowId ? store.readFlow(flowId) : null;
     const skills = flow?.stage === 'P0'
       ? ['spec-from-prd', 'grilling'].map((name) => readFileSync(path.join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'), 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim()).join('\n\n') : '';
-    const injected = `${agentPrompt(ctx.cwd, 'orchestrator')}\n\n${skills}\n\n${turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t))}`;
-    event.systemPromptOptions.appendSystemPrompt = `${event.systemPromptOptions.appendSystemPrompt ?? ''}\n\n${injected}`.trim();
+    const stable = `${agentPrompt(ctx.cwd, 'orchestrator')}${skills ? `\n\n${skills}` : ''}`;
+    event.systemPromptOptions.appendSystemPrompt = `${event.systemPromptOptions.appendSystemPrompt ?? ''}\n\n${stable}`.trim();
+    const status = turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t));
+    return { message: { customType: 'pi-forge-status', content: status, display: false } };
   });
 
-  // 主工作区在本轮期间出现 .forge/ 之外的新改动：视为越权（第 20 节第 6 条）
+  // 主工作区在本轮期间出现 .forge/ 之外的新改动：视为越权
   // 主会话（orchestrator）的用量记入 runs（role=orchestrator，每个流程一条），成本统计与预算都能看到（第三轮后续 5）
   pi.on('message_end', async (event, ctx) => {
     const s = sessions.get(ctx.cwd);
@@ -435,7 +440,7 @@ export default function piFlow(pi: ExtensionAPI): void {
     report(ctx, `pi-forge：本轮期间主工作区出现了未经派发的改动（${drift.slice(0, 5).join('、')}${drift.length > 5 ? ' 等' : ''}），已记录为越权。如果是你本人修改的，可以忽略。`, 'warning');
   });
 
-  // 调度模式下的 guard：orchestrator 只能读（read_paths 内），只能用 forge_* 调度工具，不能写
+  // 调度模式下的 guard：orchestrator 只能读，只能用 forge_* 调度工具，不能写
   pi.on('tool_call', async (event, ctx) => {
     const s = sessions.get(ctx.cwd);
     if (!s?.handle || !s.orchestrator) return;

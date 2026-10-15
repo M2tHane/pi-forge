@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/preflight.ts @ 31f3f15
 // 前置条件检查：git、node、仓库、workflow.yaml、规则文件、角色模型；Pi 版本、插件与其背后的程序（dependencies.ts）。
 import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';

@@ -1,11 +1,10 @@
-// 来源：pi-flow src/core/stages.ts @ 31f3f15（M1 改编）
 // 流程与阶段控制；P0/P1 的产物与计划在 M2/M3 接入。
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
 import { ensureIntegrationBranch } from '../workspace/worktree.ts';
-import { mergeToMain } from './release.ts';
+import { mergeToMain, publishSkeleton } from './release.ts';
 import { materializePlan, P1_STAGE, isArchitectStage } from '../plan/plan-flow.ts';
 import { deliveryReport } from './signoff.ts';
 
@@ -23,7 +22,7 @@ export async function startFlow(d: StageDeps, description: string): Promise<Flow
   return flow;
 }
 
-/** 最后阶段先以 --no-ff 合入主分支，成功后才批准。 */
+/** S0 与最后阶段先以 --no-ff 合入主分支，成功后才批准（S0 合入后集成分支移到合入后的提交）。 */
 export async function approveStage(d: StageDeps, flowId: string, note?: string): Promise<string> {
   let flow = d.store.readFlow(flowId);
   if (flow.stage_status !== 'awaiting_human') throw new Error(`阶段 ${flow.stage} 当前是 ${flow.stage_status}，没有等待批准的闸门。`);
@@ -32,6 +31,10 @@ export async function approveStage(d: StageDeps, flowId: string, note?: string):
   if (flow.stage === P1_STAGE) {
     lines.push(...await materializePlan(d.root, d.store, d.config, flowId));
     flow = d.store.readFlow(flowId);
+  }
+  if (flow.stage === 'S0' && flow.stage !== flow.stages.at(-1)) {
+    const sha = await publishSkeleton(d.root, d.store, d.config, flowId);
+    lines.push(`骨架已合入 ${d.config.raw.main_branch}（${sha.slice(0, 8)}），之后的阶段在集成分支 ${flow.integration_branch} 上从这里继续。`);
   }
   if (flow.stage === flow.stages.at(-1)) {
     // 先把交付汇报存为阶段证据（失败不阻止合入），再合入

@@ -1,20 +1,17 @@
-// 改编自 pi-flow test/e2e/knowledge.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第二轮 B + C 验收：上游 handoff 传给下游；项目级知识库的写入、注入、候选、废弃、提升为规则与完整性。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
-import { commitToBranch, makeEngine } from '../helpers/engine.ts';
+import { makeEngine } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
-import { acceptCandidate, retireEntries, promoteToDraft, markPromoted, selectKnowledge } from '../../src/core/engine/knowledge.ts';
+import { acceptCandidate, proposeCandidate, retireEntries, promoteToDraft, markPromoted, selectKnowledge } from '../../src/core/engine/knowledge.ts';
 import { applyDrafts, listDrafts } from '../../src/core/plan/rules-draft.ts';
 import { renderStatus } from '../../src/core/ops/status-view.ts';
 
-// 有 FAIL 的代码只有和集成分支上的 src/server/later.ts 放在一起才失败：审查能过，合并后验证才拦下
-// 合并只跑 merge_check，用它拦下
-const YAML = `${PROJECT_YAML.replace(/(  acceptance: .*\n)/, '$1  merge_check: "! { grep -rqs FAIL src/server && test -e src/server/later.ts; }"\n')}
+const YAML = `${PROJECT_YAML}
 knowledge:
   auto_candidates: true
 `;
@@ -28,7 +25,7 @@ async function implement(a: FakeAgent, file: string, note: string, content = 'x\
   assert.ok(r.ok, r.text);
 }
 
-test('知识库：agent 提交的知识注入后续同 scope 任务的提示，下游看到上游 handoff；合并后验证失败生成候选，确认后才注入；可废弃、可提升为规则；完整性校验覆盖', async () => {
+test('知识库：agent 提交的知识注入后续同 scope 任务的提示，下游看到上游 handoff；程序提炼的候选确认后才注入；可废弃、可提升为规则；完整性校验覆盖', async () => {
   const p = await setupProject({ yaml: YAML, tasks: [
     mkTask('T-001', { verify: ['test'] }),
     mkTask('T-002', { verify: [], deps: [{ task: 'T-001', type: 'hard', reason: '需要订单模型' }] }),
@@ -47,17 +44,11 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
           const w = await a.call('write', { path: path.join(p.dir, '.forge/knowledge.json'), content: '{}' });
           assert.ok(!w.ok, w.text);
         }
-        // 第一次的代码让合并时的 merge_check 失败
-        return implement(a, 'src/server/t-001/a.ts', `订单模型已建好（第 ${nth} 次）`, nth === 1 ? 'FAIL\n' : 'x\n');
+        return implement(a, 'src/server/t-001/a.ts', `订单模型已建好（第 ${nth} 次）`);
       }
       if (a.env.task === 'T-002') return implement(a, 'src/server/t-002/a.ts', '完成');
       return implement(a, 'docs/arch/t-003.md', '完成');
-    }, settings, { beforeMerge: async () => {
-      // 第一次合并前，别处的改动先进了集成分支
-      if (!p.git('ls-tree', '--name-only', p.store.readFlow(p.flowId).integration_branch, 'src/server/later.ts')) {
-        commitToBranch(p.dir, p.store.readFlow(p.flowId).integration_branch, { 'src/server/later.ts': 'later\n' }, '他人改动');
-      }
-    } });
+    }, settings);
     await engine.next(p.flowId);
     await engine.idle();
     await engine.next(p.flowId);
@@ -71,17 +62,16 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
     assert.match(sys('T-002'), new RegExp(`K-001 \\[约定\\]（code） ${LESSON}`));
     assert.ok(!sys('T-003').includes(LESSON));
     // 下游看到上游 handoff
-    assert.match(specOf('T-002').prompt, /## 上游任务的 handoff[\s\S]*T-001「任务 T-001」（硬依赖，已完成）[\s\S]*订单模型已建好（第 2 次）/);
+    assert.match(specOf('T-002').prompt, /## 上游任务的 handoff[\s\S]*T-001「任务 T-001」（硬依赖，已完成）[\s\S]*订单模型已建好（第 1 次）/);
     assert.ok(!specOf('T-003').prompt.includes('上游任务的 handoff'));
 
-    // 合并后验证失败生成候选：未确认前不注入
-    const k = p.store.readKnowledge();
-    const cand = k.entries.find((e) => e.status === 'candidate')!;
-    assert.equal(cand.source.kind, 'merge');
-    assert.match(cand.content, /T-001「任务 T-001」合并后验证失败：合并后验证失败（[^）]*merge_check 退出码 1）/);
-    assert.ok(!sys('T-002').includes('合并后验证失败'));
-    assert.match(renderStatus(p.store, p.config), /1 条知识候选待确认/);
+    // 程序提炼的候选（轻流程合并后验证失败时生成）：未确认前不注入
     const t2 = p.store.readTask(p.flowId, 'T-002');
+    const cand = (await proposeCandidate(p.store, p.config, p.store.readTask(p.flowId, 'T-001'), p.flowId, '合并后验证失败（test 退出码 1）'))!;
+    assert.equal(cand.source.kind, 'merge');
+    assert.match(cand.content, /T-001「任务 T-001」合并后验证失败：合并后验证失败（test 退出码 1）/);
+    assert.deepEqual(selectKnowledge(p.store.readKnowledge(), t2).map((e) => e.content), [LESSON]);
+    assert.match(renderStatus(p.store, p.config), /1 条知识候选待确认/);
     await acceptCandidate(p.store, cand.id, '订单金额必须校验为正整数（分）');
     assert.deepEqual(selectKnowledge(p.store.readKnowledge(), t2).map((e) => e.content), [LESSON, '订单金额必须校验为正整数（分）']);
     assert.doesNotMatch(renderStatus(p.store, p.config), /知识候选/);

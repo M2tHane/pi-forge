@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/orchestrator-tools.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // orchestrator 工具：forge_wait 返回精简摘要，forge_status 列出待处理事项；派发由程序执行。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

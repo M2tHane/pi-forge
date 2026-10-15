@@ -1,4 +1,3 @@
-// 来源：pi-flow test/helpers/flow5.ts @ 31f3f15
 // 第五、六轮新流程的测试夹具：真实模板（命令换成本地可跑的）、各角色的假模型、命令环境。
 import path from 'node:path';
 import type { Project } from './project.ts';

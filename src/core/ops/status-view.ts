@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/status-view.ts @ 31f3f15（M1 改编）
 // 用户界面只显示规格、契约与计划、实施、交付；内部状态保留在 --detail。
 import { actionableStalls } from '../state/waits.ts';
 import { pendingChanges } from '../plan/change-flow.ts';

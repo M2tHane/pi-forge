@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/schemas.ts @ 31f3f15
 // .forge/ 下所有持久化结构的唯一定义（schema-first）。
 // 类型由 schema 派生；schemas/*.json 由 scripts/gen-schemas.ts 从这里生成。
 import { Type, type Static, type TSchema } from 'typebox';
@@ -7,7 +6,7 @@ import { Value } from 'typebox/value';
 const Nullable = <T extends TSchema>(t: T) => Type.Union([t, Type.Null()]);
 const IsoTime = Type.String({ minLength: 1 });
 const FlowId = Type.String({ pattern: '^[BCFX]-[0-9]{3,}$' });
-/** T-003、T-003.rv、T-003.rv-2、T-003.fx-1；阶段验收挂在阶段上：S1.qa、S1.qa-2（第 11 节） */
+/** T-003、T-003.rv、T-003.rv-2、T-003.fx-1；阶段验收挂在阶段上：S1.qa、S1.qa-2 */
 const TaskId = Type.String({ pattern: '^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$' });
 
 export const TASK_STATUSES = [
@@ -166,7 +165,9 @@ export const TaskFile = Type.Object({
   layers: Type.Optional(StringList),
   produces: Type.Optional(StringList),
   requires: Type.Optional(StringList),
+  /** 旧字段，不再使用（worker 自己写验收测试，不再限定测试入口） */
   test_interface: Type.Optional(StringList),
+  /** 审查 task 的强度（strong 用升级模型）；impl 上写了以它为准，计划里不能写 */
   review: Type.Optional(TaskReview),
   risk: Type.Optional(TaskRisk),
   /** 派生任务所属的原任务 */
@@ -354,7 +355,8 @@ export const WorkflowFile = Type.Object({
   version: Type.Literal(1),
   project: Type.String({ minLength: 1 }),
   main_branch: Type.String({ minLength: 1 }),
-  commands: Type.Record(Type.String(), Type.String({ minLength: 1 })),
+  /** 旧写法：项目命令现在写在仓库根目录的 commands.yaml；这里的只在没有 commands.yaml 时使用 */
+  commands: Type.Optional(Type.Record(Type.String(), Type.String({ minLength: 1 }))),
   limits: Type.Object({
     max_parallel: PosInt,
     max_parallel_aux: Type.Optional(PosInt),
@@ -365,7 +367,8 @@ export const WorkflowFile = Type.Object({
     post_merge_test: Type.Optional(Type.Boolean()),
     port_block: Type.Optional(PosInt),
     lease_minutes: PosInt,
-    max_violations_per_run: PosInt,
+    /** 旧配置：已不再使用（被拦下的操作只记账，不因次数结束运行） */
+    max_violations_per_run: Type.Optional(PosInt),
     max_task_files: PosInt,
     fix_max_files: PosInt,
     /** /forge-change 与 forge_change 的迷你计划最多几个 task，默认 3 */
@@ -386,10 +389,6 @@ export const WorkflowFile = Type.Object({
     run_grace_minutes: Type.Optional(PosInt),
     /** 同一任务超时后可以接着做的次数，默认 2；再超时转 blocked 交给用户 */
     max_continuations: Type.Optional(Type.Integer({ minimum: 0 })),
-    /** 一个模块连同它派生的任务（合并冲突、验收修复、审查修复、闸门修复）最多运行的次数，默认 8（第六轮 B4） */
-    module_runs: Type.Optional(PosInt),
-    /** 一个模块连同派生任务累计运行的分钟数上限，默认是该模块单次运行预算的 4 倍（第六轮 B4） */
-    module_minutes: Type.Optional(PosInt),
     /** 流程不在等你、也没有任何运行，却这么多分钟没有任何状态变化时提醒你（第六轮 B6），默认 20 */
     stall_minutes: Type.Optional(PosInt),
     /** 运行超时后的复核：auto 由程序按进展决定（默认），orchestrator 交给主会话（第六轮 C1） */
@@ -423,6 +422,7 @@ export const WorkflowFile = Type.Object({
     tools: Type.Array(Type.String({ minLength: 1 })),
     bash: Type.Optional(Type.Enum(['full', 'readonly', 'allowlist'])),
     bash_allow: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    /** 旧配置：已不再使用（读取不限范围，只拦敏感文件） */
     read_paths: Type.Optional(Type.Array(Type.String())),
     writes: Type.Optional(Type.Array(Type.String())),
     env: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -463,29 +463,25 @@ export type WorkflowFile = Static<typeof WorkflowFile>;
 
 // —— plan.yaml：只校验形状；符号、DAG、覆盖率与阶段顺序由 M3 校验 ——
 
+/** 计划：只有 id、stage、title 是必填的；列表字段缺省为空，没见过的字段由 parsePlan 忽略 */
 export const PlanFile = Type.Object({
-  size_estimate: Type.Object({
-    loc: Type.Integer({ minimum: 0 }),
-    modules: Type.Integer({ minimum: 0 }),
-  }, { additionalProperties: false }),
   stages: Type.Array(PlanStage, { minItems: 1 }),
   tasks: Type.Array(Type.Object({
     id: TaskId,
     stage: Type.String({ minLength: 1 }),
-    module: Type.String({ minLength: 1 }),
+    module: Type.Optional(Type.String({ minLength: 1 })),
     title: Type.String({ minLength: 1 }),
-    size: TaskSize,
+    size: Type.Optional(TaskSize),
     layers: StringList,
     ac: StringList,
     writes: StringList,
     shared: Type.Optional(StringList),
     produces: StringList,
     requires: StringList,
-    test_interface: StringList,
     manual_checks: Type.Optional(ManualChecks),
-    review: Type.Optional(TaskReview),
+    /** high：涉及权限与鉴权、金额计算、不可恢复的批量数据操作（审查用强模型）；审查强度由程序推导，计划里不写 */
     risk: Type.Optional(TaskRisk),
-    /** 只在变更请求的修订里使用：这是对已开始或已完成的 task 的修改 task，程序让它硬依赖原 task（第 12.3 节） */
+    /** 只在变更请求的修订里使用：这是对已开始或已完成的 task 的修改 task，程序让它硬依赖原 task */
     modifies: Type.Optional(Type.String({ pattern: '^T-\\d{3,}$' })),
   }, { additionalProperties: false }), { minItems: 1 }),
 }, { additionalProperties: false });
@@ -629,7 +625,7 @@ export const PlanProposalFile = Type.Object({
 }, { additionalProperties: false });
 export type PlanProposalFile = Static<typeof PlanProposalFile>;
 
-// —— 变更请求（.forge/flows/<流程>/changes/C-001.json，第 12.3 节）：architect 起草修订，用户批准后在一个事务里落地 ——
+// —— 变更请求（.forge/flows/<流程>/changes/C-001.json）：architect 起草修订，用户批准后在一个事务里落地 ——
 
 export const CHANGE_STATUSES = ['drafting', 'proposed', 'approved', 'rejected', 'cancelled'] as const;
 export type ChangeStatus = (typeof CHANGE_STATUSES)[number];

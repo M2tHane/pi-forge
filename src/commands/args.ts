@@ -1,4 +1,3 @@
-// 来源：pi-flow src/commands/args.ts @ 31f3f15
 // 斜杠命令参数解析：Pi 把命令后的原始字符串交给 handler，这里按 shell 风格拆分（支持引号与反斜杠转义）。
 export function splitArgs(input: string): string[] {
   const out: string[] = [];

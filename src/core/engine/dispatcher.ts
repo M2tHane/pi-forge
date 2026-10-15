@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/dispatcher.ts @ 31f3f15
 // 引擎：派发（建 worktree、颁发 token、取得租约、组装提示、拉起子进程）与程序步骤（推进阶段、验收、合并、重新派发）。
 // 调度与推进全部由代码决定；LLM 只通过 forge_* 工具提交申请。
 import { randomBytes } from 'node:crypto';
@@ -33,7 +32,6 @@ import { classifyRunFailure } from './failure-class.ts';
 import { PostMergeTester } from './post-merge-test.ts';
 import type { ModelPause } from '../state/schemas.ts';
 import { autoTimeoutDecision, awaitingReview, graceMinutes, measureProgress, runBudgetMinutes, wrapUpMessage } from './run-budget.ts';
-import { lineageExceeded } from './lineage.ts';
 import { stallOf, stuckTasks } from '../insight/forge-watch.ts';
 import { stopAllServices } from '../workspace/services.ts';
 import { docPrecheck, ensureArchitectTask, isArchitectStage, P1_STAGE } from '../plan/plan-flow.ts';
@@ -42,7 +40,6 @@ import { pausedByChange } from '../plan/change-request.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions } from '../workspace/resources.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { readSharedEnv, sharedEnvDir, syncSharedEnv } from '../workspace/shared-env.ts';
-import { runPrecheck } from './precheck.ts';
 import { waitsOn } from '../state/waits.ts';
 import { REVIEW_INPUT, decideReview, readReviewEvidence, resolveReviews, reviewWorktreeOf, type ReviewInputFile } from '../stage/review-flow.ts';
 import { QA_INPUT, stageWorktreeFor } from '../stage/stage-qa.ts';
@@ -52,7 +49,7 @@ import { DEFAULT_CHECKPOINT_MINUTES, createCheckpoint, dropCheckpoint, listCheck
 
 const tasksHas = (store: StateStore, flowId: string, id: string) => { try { store.readTask(flowId, id); return true; } catch { return false; } };
 /**
- * 等待输入（第 8.1 节 awaiting_inputs → checking）：软依赖的生产方都已 done 时，把集成分支同步进任务分支；
+ * 等待输入（awaiting_inputs → checking）：软依赖的生产方都已 done 时，把集成分支同步进任务分支；
  * 有冲突时交回 worker（sync_conflict）。返回进入 checking 的 task。
  */
 export async function advanceInputs(store: StateStore, flowId: string): Promise<string[]> {
@@ -79,7 +76,7 @@ export async function advanceInputs(store: StateStore, flowId: string): Promise<
  */
 export const MAX_FORK_BYTES = 400_000;
 
-/** 派发前的检查把任务交给了用户（同样的失败重复出现、模块谱系超出预算）：next 与 pump 静默跳过 */
+/** 派发前的检查把任务交给了用户（同样的失败重复出现）：next 与 pump 静默跳过 */
 export class HandedToUser extends Error {
   constructor(message: string) {
     super(message);
@@ -153,6 +150,21 @@ export class Engine {
       async (flowId) => { await this.promote(flowId); this.notify(); await this.pump(flowId); }, (e) => (this.d.onError ?? (() => {}))(e));
   }
 
+  /** 上次读 commands.yaml 出的错（同一个错误只报一次） */
+  private commandsError: string | null = null;
+
+  /**
+   * 项目命令换成流程集成分支上的 commands.yaml（合入即生效）。引擎启动、每次合入后调用；P1 批准时 materializePlan 也会换。
+   * 文件写坏时保留原来的命令并报一次错。
+   */
+  syncCommands(flowId: string): void {
+    try {
+      const err = this.d.config.syncCommands(this.d.root, this.d.store.readFlow(flowId).integration_branch);
+      if (err && err !== this.commandsError) this.d.onError?.(new Error(`commands.yaml 读不了，继续用原来的命令：${err}`));
+      this.commandsError = err;
+    } catch (e) { this.d.onError?.(e as Error); }
+  }
+
   /** 合并后回归测试是否在运行（状态显示用） */
   postMergeRunning(flowId: string): boolean { return this.postMerge.isRunning(flowId); }
 
@@ -197,7 +209,7 @@ export class Engine {
   async promote(flowId: string): Promise<string[]> {
     const flow = this.d.store.readFlow(flowId);
     if (flow.stage_status !== 'active' && flow.stage_status !== 'awaiting_gate') return [];
-    // 门禁进行中只有 stage-qa 可以就绪（第 11 节第 3 步）
+    // 门禁进行中只有 stage-qa 可以就绪
     const ids = computeReady(this.d.store.listTasks(flowId), flow.stage)
       .filter((id) => flow.stage_status === 'active' || this.d.store.readTask(flowId, id).kind === 'qa');
     for (const id of ids) await this.d.store.transitionTask(flowId, id, { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
@@ -220,16 +232,13 @@ export class Engine {
     return out;
   }
 
-  /**
-   * 派发前检查（第六轮 B3、B4）：同样的原因连续失败，升级模型与兜底模型都用过（或都没有）时交出去；
-   * 模块连同派生任务超出谱系预算也交出去。返回原因。
-   */
-  private handOffReason(flowId: string, task: TaskFile, plan: ModelPlan): string | null {
+  /** 派发前检查：同样的原因连续失败，升级模型与兜底模型都用过（或都没有）时交出去。返回原因。 */
+  private handOffReason(task: TaskFile, plan: ModelPlan): string | null {
     if (plan.exhausted) {
       const tried = plan.alternatives.length ? `（换过${plan.alternatives.join('、')}，仍然一样）` : '（没有可升级的模型，也没有设置兜底模型）';
       return `同样的原因连续失败 ${task.same_failures} 次${tried}，再用同一个模型重试多半还是一样：${(task.last_failure ?? '').replace(/\s+/g, ' ').slice(0, 300)}。处理后 /forge unblock ${task.id}`;
     }
-    return lineageExceeded(this.d.store, this.d.config, flowId, task, this.now());
+    return null;
   }
 
   /** 派发一个任务：ready → 开工；in_progress 无租约 → 重新派发（接着原会话）。立即返回 run_id。 */
@@ -244,7 +253,7 @@ export class Engine {
     const paused = activePause(store, model, this.now());
     if (paused) throw new DispatchError(`${describePause(paused, this.now())}。恢复：/forge models resume ${paused.model}，或用 /forge-config 给 ${role} 换模型，或用 /forge-config fallback <模型> 设置兜底模型`);
     if (!task.lease && (task.status === 'ready' || task.status === 'in_progress')) {
-      const why = this.handOffReason(flowId, task, plan);
+      const why = this.handOffReason(task, plan);
       if (why) {
         await store.transitionTask(flowId, taskId, { to: 'blocked', trigger: 'block', actor: 'dispatcher', facts: { reason: why } });
         await store.recordEvent({ flow: flowId, task: taskId, actor: 'dispatcher', type: 'note', reason: `需要你处理：${why}`, data: { needs_human: true } });
@@ -317,7 +326,7 @@ export class Engine {
 
     let handle: SubagentHandle;
     try {
-      // 第 4.1 节：本次运行专用的端口段、数据库名与临时目录，经环境变量传给子进程（bash 与 forge_service 都继承）；
+      // 本次运行专用的端口段、数据库名与临时目录，经环境变量传给子进程（bash 与 forge_service 都继承）；
       // 有共享构建环境时再带 FORGE_SHARED_ENV（审查者在链接了共享依赖的 worktree 里用自己的端口与库跑本 task 的测试）
       const res = await allocateResources(root, runId, resourceOptions(this.d.config));
       const spec = this.buildSpec(flowId, task, role, runId, token, model, thinking, fork, timeout ? { ...timeout, budget: minutes } : null);
@@ -375,7 +384,7 @@ export class Engine {
     const up = esc.enabled ? escalationModel(this.d.config, settings, role, model) : null;
     const critical = esc.criticalFanout > 0 && hardFanout(task, this.d.store.listTasks(flowId)) >= esc.criticalFanout;
     const failures = task.attempts + (task.precheck_failures ?? 0) + (task.merge_failures ?? 0) + (task.review_rounds ?? 0);
-    // 第 10.1 节：strong 审查（底座、auth、高风险）用升级模型
+    // strong 审查（底座、auth、高风险）用升级模型
     const strongReview = task.kind === 'review' && task.review === 'strong';
     const same = task.same_failures ?? 0;
     if (same >= 2 && task.status === 'in_progress' && !task.timeout_review) {
@@ -635,7 +644,7 @@ export class Engine {
     }
     // merge-fix 是合并流程的一部分（原任务挂起等待它），P1 的 architect 由程序驱动（主会话只等待）：都由程序直接派发；仍受并发与互斥约束
     try { await this.dispatchProgramDriven(flowId); } catch (e) { report(e); }
-    // merge-fix 最终失败：挂起的原任务一并转 blocked（第 10 节 merging → blocked）
+    // merge-fix 最终失败：挂起的原任务一并转 blocked（merging → blocked）
     try {
       for (const s of this.d.store.readMergeQueue().suspended ?? []) {
         if (s.flow !== flowId) continue;
@@ -659,8 +668,8 @@ export class Engine {
     if (!mq.merging && mq.queue.some((e) => e.flow === flowId)) {
       this.track(this.mergeQueue.processNext(flowId).then((r) => {
         if (r) this.d.onMerge?.(r);
-        // 有 task 合入：后台跑一次合并后回归测试（不阻塞合并队列）
-        if (r?.kind === 'merged') { const pm = this.postMerge.schedule(flowId); if (pm) this.track(pm); }
+        // 有 task 合入：换成集成分支上最新的 commands.yaml，再后台跑一次合并后回归测试（不阻塞合并队列）
+        if (r?.kind === 'merged') { this.syncCommands(flowId); const pm = this.postMerge.schedule(flowId); if (pm) this.track(pm); }
         this.notify();
         return r ? this.pump(flowId) : undefined;
       }));
@@ -689,19 +698,15 @@ export class Engine {
     const { store, root, config } = this.d;
     const t = store.readTask(flowId, taskId);
     if (t.status !== 'checking') return;
-    let failure: string | null;
-    if (t.kind === 'doc') failure = changeOfTask(store, flowId, t.id) ? changeDocPrecheck(root, store, config, flowId, t) : docPrecheck(root, store, config, flowId, t);
-    else {
-      const r = await runPrecheck(root, store, config, flowId, t);
-      failure = r.ok ? null : r.reason;
-    }
+    // 实现类任务的预检不跑命令、也不再检查契约（契约只能追加在 forge_submit 时检查）；只有文档任务（P1 计划、小改动的计划）有程序检查
+    const failure = t.kind !== 'doc' ? null : changeOfTask(store, flowId, t.id) ? changeDocPrecheck(root, store, config, flowId, t) : docPrecheck(root, store, config, flowId, t);
     if (store.readTask(flowId, taskId).status !== 'checking') return;
     if (failure) {
       await store.appendHandoff(flowId, taskId, failure, 'engine');
       await store.transitionTask(flowId, taskId, { to: 'in_progress', trigger: 'precheck_fail', actor: 'engine', facts: { precheck_ok: false, reason: failure.slice(0, 4000) } });
       return;
     }
-    // 第 10.1 节：按 task.review 或推导决定是否审查；需要时进入 in_review，.rv / .rv-n 由 resolveReviews 创建（pump 串行，不会重复创建）
+    // 按 task.review 或推导决定是否审查；需要时进入 in_review，.rv / .rv-n 由 resolveReviews 创建（pump 串行，不会重复创建）
     if (decideReview(store, config, flowId, store.readTask(flowId, taskId)) === 'skip') {
       await store.transitionTask(flowId, taskId, { to: 'queued_merge', trigger: 'precheck_pass_skip', actor: 'engine', facts: { precheck_ok: true, review_required: false } });
     } else {
@@ -742,7 +747,7 @@ export class Engine {
   private async advanceStage(flowId: string, report: (e: unknown) => void, force = false): Promise<void> {
     try {
       const flow = this.d.store.readFlow(flowId);
-      // 修复与小改动流程（第 13.4 节）：由 fixStep 逐步推进，不跑阶段门禁
+      // 修复与小改动流程：由 fixStep 逐步推进，不跑阶段门禁
       if (isLightFlow(flow)) {
         await fixStep({ root: this.d.root, store: this.d.store, config: this.d.config,
           dispatch: (f, t) => { const task = this.d.store.readTask(f, t); return this.pausedFor(f, task) || awaitingReview(task) ? Promise.resolve(null) : this.dispatch(f, t).catch((e) => { if (!(e instanceof HandedToUser)) throw e; }); },
@@ -790,7 +795,7 @@ export class Engine {
           .then(() => { this.notify(); return this.pump(flowId); }));
         return;
       }
-      // 实施阶段（第 7.6、11 节）：门禁与覆盖率 → stage-qa → 修复 → 只确认 → 签收；编排见 stage-acceptance.ts
+      // 实施阶段：门禁与覆盖率 → stage-qa → 修复 → 只确认 → 签收；编排见 stage-acceptance.ts
       // 合并后回归测试还在跑：先等它（它可能定位到 task 建修复；通过的结果门禁直接沿用），结束后会再推进
       if (!force && flow.stage_status === 'active' && this.postMerge.isRunning(flowId)) return;
       const deps = { root: this.d.root, store: this.d.store, config: this.d.config };

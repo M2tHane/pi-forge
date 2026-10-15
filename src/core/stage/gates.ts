@@ -1,5 +1,4 @@
-// 来源：pi-flow src/core/gates.ts @ 31f3f15
-// 阶段闸门（第 8 节 gate）：all_tasks_done、S1/F1 必须有任务提案、在集成分支 HEAD 上执行 auto 命令并保存 evidence。
+// 阶段闸门（gate）：all_tasks_done、S1/F1 必须有任务提案、在集成分支 HEAD 上执行 auto 命令并保存 evidence。
 // 通过后：需要人工 → awaiting_human；否则 → done。最后一个阶段一律需要人工（之后合入主分支）。
 import { specGateLint } from '../spec/spec-flow.ts';
 import { mkdirSync } from 'node:fs';
@@ -21,7 +20,7 @@ import { headSha } from '../workspace/worktree.ts';
 import { recordVerified, reusableRuns, reuseText, treeOfCommit } from '../verify/verify-cache.ts';
 import { failingAcceptanceDirs } from '../acceptance/acceptance-flow.ts';
 import { createStageFixTasks, type StageIssue } from '../acceptance/stage-fix.ts';
-import { createCoverageRounds, stageCoverage, writeCoverageReport, type CoverageResult, type CoverageRow } from '../acceptance/coverage.ts';
+import { stageCoverage, writeCoverageReport, type CoverageResult } from '../acceptance/coverage.ts';
 
 /** failed：失败的闸门命令与输出；引擎据此生成有限轮次的修复任务。 */
 export interface GateOutcome { stage: string; passed: boolean; needsHuman: boolean; reasons: string[]; failed?: { command: string; output: string } }
@@ -58,7 +57,8 @@ export async function runStageGate(root: string, store: StateStore, config: Flow
   }
   const def = stageDef(config, flow.stage);
   const isLast = flow.stage === flow.stages.at(-1);
-  const needsHuman = !!def.gate.human || isLast;
+  // S0 与最后一个阶段批准时要合入主分支，一律人工
+  const needsHuman = !!def.gate.human || isLast || flow.stage === 'S0';
   const reasons: string[] = [];
   let failed: GateOutcome['failed'];
 
@@ -93,8 +93,8 @@ export interface ImplementationChecks {
 }
 
 /**
- * 实施阶段的程序检查（第 11.1 节）：在集成分支 HEAD 的临时 worktree 里跑 auto 命令（带资源、保存 evidence），
- * 通过后计算覆盖率，把报告存成阶段 evidence（coverage.md）并提交到集成分支的 docs/qa/<stage>.md。
+ * 实施阶段的程序检查：在集成分支 HEAD 的临时 worktree 里跑 auto 命令（带资源、保存 evidence），
+ * 通过后计算覆盖率，把报告存成阶段 evidence（coverage.md）并提交到集成分支的 docs/qa/<stage>.md。覆盖率只报告（签收时给用户看），缺口不拦门禁。
  * 不迁移阶段状态：由调用方（主会话的编排）决定。命令失败时不算覆盖率。
  */
 export async function runImplementationChecks(root: string, store: StateStore, config: FlowConfig, flowId: string, timeoutMs?: number): Promise<ImplementationChecks> {
@@ -147,7 +147,6 @@ export async function runImplementationChecks(root: string, store: StateStore, c
       coverage = stageCoverage(root, store, config, flowId, flow.stage, startHead);
       await store.saveStageEvidence(flowId, flow.stage, 'coverage.md', coverage.markdown, 'gate');
       head = await writeCoverageReport(root, store, flowId, flow.stage, coverage.markdown);
-      if (coverage.gaps.length) reasons.push(`覆盖率缺口：${coverage.gaps.map((g) => g.ac).join('、')}`);
     } catch (e) {
       reasons.push(`覆盖率无法计算：${(e as Error).message}`);
     }
@@ -171,7 +170,7 @@ function safeGit(cwd: string, args: string[]): string {
 }
 
 /**
- * 闸门命令失败的输出 → 问题清单（纯函数，第 11.1 节）：
+ * 闸门命令失败的输出 → 问题清单（纯函数）：
  * 日志里的 tests/acceptance/<T-xxx>/ 归该 impl task，可写范围用 impl 自己的 writes（worker 不能写测试）；
  * 其他仓库文件按 writes 归属（stage-fix 的 ownerOf）。
  */
@@ -189,7 +188,7 @@ export function gateIssues(failed: { command: string; output: string }, tasks: r
 }
 
 /**
- * 闸门的全量测试失败：问题按负责的 task 分组，为每个 task 建 .fx-n 修复任务（第 11.1 节），并记一轮 gate_rounds。
+ * 闸门的全量测试失败：问题按负责的 task 分组，为每个 task 建 .fx-n 修复任务，并记一轮 gate_rounds。
  * 返回生成的任务 id；已修 MAX_GATE_ROUNDS 轮或定位不到负责 task 时返回空数组并给出原因（由调用方提示用户）。
  */
 export async function gateFailed(d: StageDeps, flowId: string, failed: { command: string; output: string }): Promise<{ tasks: string[]; reason?: string }> {
@@ -203,17 +202,4 @@ export async function gateFailed(d: StageDeps, flowId: string, failed: { command
   if (!tasks.length) return { tasks: [], reason: `全量 ${failed.command} 失败，但无法从日志定位负责的 task` };
   await store.addGateRound(flowId, { stage: flow.stage, command: failed.command, tasks, at: new Date().toISOString() }, [], {});
   return { tasks };
-}
-
-/**
- * 覆盖率缺口：为缺口所属的 impl 建补测 task（.fx-n），记一轮 command 为 coverage 的 gate_rounds（与门禁修复共用 MAX_GATE_ROUNDS）。
- * 已满轮次时返回空数组与原因；没有建成任何任务（负责 task 的修复还在进行、或缺口都无主）时不记轮次。
- */
-export async function createCoverageGapRound(store: StateStore, flowId: string, gaps: readonly CoverageRow[]): Promise<{ tasks: string[]; unowned: CoverageRow[]; skipped: string[]; reason?: string }> {
-  const flow = store.readFlow(flowId);
-  const rounds = (flow.gate_rounds ?? []).filter((r) => r.stage === flow.stage);
-  if (rounds.length >= MAX_GATE_ROUNDS) return { tasks: [], unowned: [...gaps].filter((g) => !g.owner), skipped: [], reason: `覆盖率缺口补测 ${MAX_GATE_ROUNDS} 轮后仍未补齐` };
-  const r = await createCoverageRounds(store, flowId, gaps, 'engine');
-  if (r.tasks.length) await store.addGateRound(flowId, { stage: flow.stage, command: 'coverage', tasks: r.tasks, at: new Date().toISOString() }, [], {});
-  return r;
 }

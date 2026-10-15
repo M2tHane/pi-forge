@@ -1,8 +1,8 @@
-// 来源：pi-flow scripts/real-build.ts @ 31f3f15 的改编（旧脚本用 pi -p 一轮一轮跑；这里重写为 RPC 模式的 M9 实验驱动）。
+// RPC 模式的 M9 实验驱动。
 // 用法：
 //   node scripts/real-build.ts --arm A0|A1 --prd <requirement.md> [--change <change.md>] [--hidden <hidden.mjs>]
-//        [--out <目录>] [--max-min 240] [--stuck-min 30] [--planner-model ..] [--planner-thinking medium]
-//        [--coder-model ..] [--coder-thinking high] [--main-model ..] [--ext <扩展>]... [--poll-sec 5] [--stop-after-gates N] [--plan-mode lean|standard]
+//        [--out <目录>] [--max-min 240] [--stuck-min 30] [--planner-model ..] [--planner-thinking medium] [--max-parallel N]
+//        [--coder-model ..] [--coder-thinking high] [--main-model ..] [--ext <扩展>]... [--poll-sec 5] [--stop-after-gates N]
 // 做的事（M9 实验方案，原 docs/M9-PLAN.md，已删除，见 git 历史）：
 //   建空仓库 → /forge init → 写实验配置（按角色设模型与思考级别、关闭升级、A1 关闭 test-author）→ 用 `pi --mode rpc` 拉起主会话
 //   → /forge-build --prd → 把 extension_ui_request 与 .forge/ 状态交给 simulator.ts 的规则表 → 交付后 /forge-build --feature --prd
@@ -12,7 +12,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { parseDocument, parse as parseYaml } from 'yaml';
+import { parseDocument } from 'yaml';
 import { loadConfig } from '../src/core/state/config.ts';
 import { pendingChanges } from '../src/core/plan/change-flow.ts';
 import { changeDelegated, stageDelegated } from '../src/core/engine/decisions.ts';
@@ -53,9 +53,10 @@ export interface Options {
   ext: string[];
   pollSec: number;
   stopAfterGates: number | null;
-  planMode: 'lean' | 'standard';
   /** 只做冒烟：在 --out 里已交付的项目上只跑变更阶段（不计入结果）；有未完成的 feature 流程时接着它 */
   changeOnly: boolean;
+  /** limits.max_parallel（同时运行的 impl task 数）；不给就用模板的值 */
+  maxParallel: number | null;
 }
 
 export function parseArgs(argv: string[]): Options {
@@ -78,12 +79,11 @@ export function parseArgs(argv: string[]): Options {
     pollSec: Number(get('--poll-sec') ?? 5),
     stopAfterGates: get('--stop-after-gates') ? Number(get('--stop-after-gates')) : null,
     changeOnly: argv.includes('--change-only'),
-    // standard：lean_below_loc 设为 1（最小合法值）、模拟用户不再要求精简模式，让 architect 出多任务并行的计划
-    planMode: get('--plan-mode') === 'standard' ? 'standard' as const : 'lean' as const,
+    maxParallel: get('--max-parallel') ? Number(get('--max-parallel')) : null,
   };
 }
 
-// —— 实验配置（第 2 节） ——
+// —— 实验配置 ——
 
 export const PLANNER_ROLES = ['orchestrator', 'architect', 'reviewer', 'stage-qa'] as const;
 export const CODER_ROLES = ['worker', 'test-author'] as const;
@@ -93,7 +93,7 @@ export const CODER_ROLES = ['worker', 'test-author'] as const;
  * thinking 写在角色上——这是 workflow.yaml 本来支持的方式，不动 ~/.pi/agent/pi-forge.json），escalation.enabled=false，A1 关闭 test-author。
  * 用 yaml 的 Document 改，保留模板里的注释与行内写法。
  */
-export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' | 'plannerModel' | 'plannerThinking' | 'coderModel' | 'coderThinking'> & { planMode?: Options['planMode'] }): string {
+export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' | 'plannerModel' | 'plannerThinking' | 'coderModel' | 'coderThinking'> & { maxParallel?: number | null }): string {
   const doc = parseDocument(yamlText);
   doc.setIn(['models', 'planner'], o.plannerModel);
   doc.setIn(['models', 'coder'], o.coderModel);
@@ -105,7 +105,7 @@ export function applyExperimentConfig(yamlText: string, o: Pick<Options, 'arm' |
   for (const r of CODER_ROLES) { if (!doc.hasIn(['roles', r])) continue; /* 模板不再定义 test-author */ doc.setIn(['roles', r, 'model'], 'coder'); doc.setIn(['roles', r, 'thinking'], o.coderThinking); }
   doc.setIn(['escalation', 'enabled'], false);
   if (o.arm === 'A1') doc.setIn(['implementation_gate', 'test_author'], false);
-  if (o.planMode === 'standard') doc.setIn(['limits', 'lean_below_loc'], 1);
+  if (o.maxParallel) doc.setIn(['limits', 'max_parallel'], o.maxParallel);
   return String(doc);
 }
 
@@ -116,24 +116,17 @@ function git(cwd: string, args: string[]): string {
 }
 const gitTry = (cwd: string, args: string[]): string | null => { try { return git(cwd, args); } catch { return null; } };
 
-function planModeOf(root: string, branch: string): string | null {
-  const text = gitTry(root, ['show', `refs/heads/${branch}:docs/plan/plan.yaml`]);
-  if (text === null) return null;
-  try { const m = (parseYaml(text) as { mode?: unknown } | null)?.mode; return typeof m === 'string' ? m : null; } catch { return null; }
-}
-
 /** 把 .forge/ 整理成 simulator 的快照（只读）。flowId 是本阶段对应的流程 */
-export function readSnapshot(store: StateStore, root: string, flowId: string | null, extra: { nowMs: number; requireLean: boolean; turnEnded: boolean; lastAssistantText: string; ui?: UiRequest | null }): Snapshot {
-  const base: Snapshot = { nowMs: extra.nowMs, requireLean: extra.requireLean, turnEnded: extra.turnEnded, lastAssistantText: extra.lastAssistantText, ui: extra.ui ?? null, flow: null, tasks: [] };
+export function readSnapshot(store: StateStore, root: string, flowId: string | null, extra: { nowMs: number; turnEnded: boolean; lastAssistantText: string; ui?: UiRequest | null }): Snapshot {
+  const base: Snapshot = { nowMs: extra.nowMs, turnEnded: extra.turnEnded, lastAssistantText: extra.lastAssistantText, ui: extra.ui ?? null, flow: null, tasks: [] };
   if (!flowId) return base;
   const flow = store.readFlow(flowId);
   const tasks = store.listTasks(flowId);
-  const gate = flow.stage_status === 'awaiting_human' && flow.stage === 'P1';
   return {
     ...base,
     flow: {
       id: flow.id, mode: flow.mode, stage: flow.stage, stageStatus: flow.stage_status, version: flow.version,
-      specSubmitted: flow.spec?.submitted === true, planMode: gate ? planModeOf(root, flow.integration_branch) : null,
+      specSubmitted: flow.spec?.submitted === true,
       delegated: stageDelegated(store, flow),
     },
     tasks: tasks.map((t) => ({
@@ -198,7 +191,7 @@ export async function main(argv: string[]): Promise<number> {
   const runStart = Date.now();
   let scoringMs = 0;
   const log = (s: string) => console.log(`[${Math.round((Date.now() - runStart) / 1000)}s] ${s}`);
-  log(`输出目录：${out}\nPi ${piVersion}；pi-forge ${sha?.slice(0, 8) ?? '?'}${dirty ? '（有未提交改动）' : ''}\n组 ${o.arm}（${o.planMode}）；规划模型 ${o.plannerModel}（${o.plannerThinking}）；写代码模型 ${o.coderModel}（${o.coderThinking}）`);
+  log(`输出目录：${out}\nPi ${piVersion}；pi-forge ${sha?.slice(0, 8) ?? '?'}${dirty ? '（有未提交改动）' : ''}\n组 ${o.arm}；规划模型 ${o.plannerModel}（${o.plannerThinking}）；写代码模型 ${o.coderModel}（${o.coderThinking}）`);
 
   // 1. 空仓库 + /forge init + 实验配置
   const env: NodeJS.ProcessEnv = { ...process.env, PI_SKIP_VERSION_CHECK: '1' };
@@ -247,7 +240,7 @@ export async function main(argv: string[]): Promise<number> {
   let stopping = false;
   const phases: Phase[] = [];
   const intervene = (a: Exclude<Action, { kind: 'stuck' }>, result: Record<string, unknown> = {}) => {
-    const snap = phase?.flowId ? safe(() => readSnapshot(store, project, phase!.flowId, { nowMs: Date.now(), requireLean: o.planMode === 'lean', turnEnded: false, lastAssistantText: '' })) : null;
+    const snap = phase?.flowId ? safe(() => readSnapshot(store, project, phase!.flowId, { nowMs: Date.now(), turnEnded: false, lastAssistantText: '' })) : null;
     appendFileSync(interventionsFile, `${JSON.stringify({
       ts: new Date().toISOString(), elapsed_s: Math.round((Date.now() - runStart) / 1000), phase: phase?.name ?? null,
       category: a.category, counts: a.counts, key: a.key, kind: a.kind,
@@ -297,8 +290,8 @@ export async function main(argv: string[]): Promise<number> {
 
   function handleUi(r: RpcRecord): void {
     const ui: UiRequest = { id: String(r['id']), method: r['method'] as UiRequest['method'], title: String(r['title'] ?? ''), ...(Array.isArray(r['options']) ? { options: r['options'] as string[] } : {}) };
-    const snap = safe(() => readSnapshot(store, project, phase?.flowId ?? null, { nowMs: Date.now(), requireLean: o.planMode === 'lean', turnEnded: false, lastAssistantText: live.lastText, ui }))
-      ?? ({ nowMs: Date.now(), requireLean: o.planMode === 'lean', turnEnded: false, flow: null, tasks: [], ui } as Snapshot);
+    const snap = safe(() => readSnapshot(store, project, phase?.flowId ?? null, { nowMs: Date.now(), turnEnded: false, lastAssistantText: live.lastText, ui }))
+      ?? ({ nowMs: Date.now(), turnEnded: false, flow: null, tasks: [], ui } as Snapshot);
     const asked = Date.now();
     const action = decide(snap, sim);
     if (!action || action.kind === 'stuck') {
@@ -356,10 +349,10 @@ export async function main(argv: string[]): Promise<number> {
       // 活动：事件日志、子进程会话、主会话 RPC 输出
       lastActivity = Math.max(lastActivity, rpc.lastRecordAt, safe(() => statSync(path.join(project, '.forge', 'events.jsonl')).mtimeMs) ?? 0, newestMtime(sessionsRoot(project)));
       if (now - lastDetailAt > 60_000) { lastDetailAt = now; live.lastDetail = safe(() => renderDetail(store, config)) ?? live.lastDetail; }
-      const snap = safe(() => readSnapshot(store, project, p.flowId, { nowMs: now, requireLean: o.planMode === 'lean', turnEnded: live.turnEnded, lastAssistantText: live.lastText }));
+      const snap = safe(() => readSnapshot(store, project, p.flowId, { nowMs: now, turnEnded: live.turnEnded, lastAssistantText: live.lastText }));
       if (!snap) continue;
       const action = live.inFlight ? null : decide(snap, sim);
-      if (action?.kind === 'stuck') { fail(action.failure === 'plan_not_lean' ? 'plan_not_lean' : action.failure === 'limit' ? 'limit' : action.failure === 'repeat' ? 'repeat' : 'out_of_table', action.reason); return; }
+      if (action?.kind === 'stuck') { fail(action.failure === 'limit' ? 'limit' : action.failure === 'repeat' ? 'repeat' : 'out_of_table', action.reason); return; }
       if (action?.kind === 'prompt') {
         sim = apply(sim, action, now);
         intervene(action);

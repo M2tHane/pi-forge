@@ -1,4 +1,4 @@
-// 改编自 pi-flow test/e2e/flow6.test.ts @ 31f3f15：P0 提交、闸门、人工打回。
+// P0 提交、闸门、人工打回。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, writeFileSync } from 'node:fs';
@@ -24,7 +24,7 @@ function env(p: Project): { cmd: CommandEnv; engine: ReturnType<typeof makeEngin
   });
   return { cmd: { root: p.dir, packageRoot: ROOT, ui: null, engine: () => ({ store: p.store, engine, config: p.config }), store: () => p.store, roleSettings: () => ({ version: 1, roles: {} }), availableModels: () => [], activateOrchestrator: () => {}, waitForIdle: true }, engine, launched: () => launcher.launched.length };
 }
-test('P0 不合格规格零写入；合格规格独立索引提交，打回带意见，批准后进入 P1 并派发 architect', async () => {
+test('P0 不合格规格不写集成分支（保存为草稿）；只重交改动的那份，其余沿用上一次提交；合格规格独立索引提交，打回带意见，批准后进入 P1 并派发 architect', async () => {
   const p = await setupProject({ stages: ['P0', 'P1'] });
   const e = env(p);
   try {
@@ -34,15 +34,18 @@ test('P0 不合格规格零写入；合格规格独立索引提交，打回带�
     const state = p.store.readState();
     const flow = p.store.readFlow(p.flowId);
     const sha = p.git('rev-parse', ref);
-    await assert.rejects(flowSpec(p.dir, p.store, p.config, { ...P0_SPEC, requirements: P0_SPEC.requirements.replace('Given', '') }), /spec-lint.*未通过[\s\S]*Given/);
+    await assert.rejects(flowSpec(p.dir, p.store, p.config, { requirements: P0_SPEC.requirements }), /还没有提交过 permissions、glossary/);
     assert.deepEqual(p.store.readState(), state);
+    await assert.rejects(flowSpec(p.dir, p.store, p.config, { ...P0_SPEC, requirements: P0_SPEC.requirements.replace('[MVP]', '') }), /spec-lint 未通过[\s\S]*\[MVP\]、\[LATER\] 或 \[NO\][\s\S]*只需重交/);
+    assert.match(p.store.readEvents().at(-1)!.reason ?? '', /未通过 spec-lint/);
     assert.deepEqual(p.store.readFlow(p.flowId), flow);
     assert.equal(p.git('rev-parse', ref), sha);
     assert.equal(p.git('ls-tree', '-r', '--name-only', ref, '--', 'docs/spec/requirements.md'), '');
     writeFileSync(path.join(p.dir, 'staged.md'), '用户的暂存内容');
     p.git('add', 'staged.md');
     const index = p.git('diff', '--cached');
-    assert.match((await flowSpec(p.dir, p.store, p.config, P0_SPEC)).text, /等待用户 \/forge-approve/);
+    // 只重交改好的 requirements：其余三份沿用上一次提交
+    assert.match((await flowSpec(p.dir, p.store, p.config, { requirements: P0_SPEC.requirements })).text, /screens、permissions、glossary 沿用上一次提交[\s\S]*等待用户 \/forge-approve/);
     assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
     assert.equal(p.git('diff', '--cached'), index);
     assert.equal(existsSync(path.join(p.dir, 'docs/spec/requirements.md')), false);
@@ -56,7 +59,8 @@ test('P0 不合格规格零写入；合格规格独立索引提交，打回带�
     const restored = new StateStore(p.dir);
     assert.match(turnContext(restored, 3, 0, p.config), /名称要唯一[\s\S]*docs\/spec\/inputs\/prd\/prd.md/);
     assert.equal(nextStep(restored, 3).tool, 'forge_spec');
-    await flowSpec(p.dir, p.store, p.config, { ...P0_SPEC, requirements: P0_SPEC.requirements.replace('返回看板编号', '返回唯一看板编号') });
+    await flowSpec(p.dir, p.store, p.config, { requirements: P0_SPEC.requirements.replace('返回看板编号', '返回唯一看板编号') });
+    assert.match(readSpec(p.dir, ref).files.requirements, /返回唯一看板编号/);
     assert.match(await runFlowCommand('approve', e.cmd), /进入阶段 P1/);
     assert.deepEqual([p.store.readFlow(p.flowId).stage, p.store.readFlow(p.flowId).stage_status], ['P1', 'active']);
     await e.engine.idle();
@@ -76,11 +80,11 @@ test('P0 闸门重读集成分支：本地文件不能掩盖不合格或缺失�
   try {
     await submitSpec(p.dir, p.store, p.flowId, P0_SPEC);
     assert.match(turnContext(p.store, 3), /重读集成分支/);
-    commitFilesToBranch(p.dir, p.store.readFlow(p.flowId).integration_branch, [{ rel: 'docs/spec/requirements.md', content: P0_SPEC.requirements.replace('Given', '') }], '模拟提交后的规格变化');
+    commitFilesToBranch(p.dir, p.store.readFlow(p.flowId).integration_branch, [{ rel: 'docs/spec/requirements.md', content: P0_SPEC.requirements.replace('[MVP]', '') }], '模拟提交后的规格变化');
     const r = await runStageGate(p.dir, p.store, p.config, p.flowId);
     assert.equal(r.passed, false);
     assert.equal(p.store.readFlow(p.flowId).stage_status, 'active');
-    assert.match(p.store.readFlow(p.flowId).spec!.feedback!, /Given/);
+    assert.match(p.store.readFlow(p.flowId).spec!.feedback!, /\[MVP\]/);
     assert.ok(p.store.readEvents().some((ev) => ev.trigger === 'gate_failed'));
     await submitSpec(p.dir, p.store, p.flowId, P0_SPEC);
     await e.engine.pump(p.flowId);

@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/tools6.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第六轮 D1–D3：forge_service 启动并在运行结束时清理服务；guard 拒绝时给出可行做法。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +12,7 @@ const freePort = () => new Promise<number>((resolve) => {
   s.listen(0, '127.0.0.1', () => { const port = (s.address() as { port: number }).port; s.close(() => resolve(port)); });
 });
 
-test('forge_service：只能启动 serve 命令；ready 等端口就绪；本次运行结束时程序结束服务（连同它的子进程）', async () => {
+test('forge_service：启动 commands.yaml 里的命令或直接给的命令；ready 等端口就绪；本次运行结束时程序结束服务（连同它的子进程）', async () => {
   const port = await freePort();
   const server = `node -e "require('http').createServer((q,s)=>s.end('pong')).listen(${port})"`;
   const yaml = PROJECT_YAML.replace(/  e2e:       "true"/, `  e2e:       "true"\n  serve:     "${server.replace(/"/g, '\\"')}"`);
@@ -25,7 +24,7 @@ test('forge_service：只能启动 serve 命令；ready 等端口就绪；本次
       await a.call('forge_claim');
       const bg = await a.call('bash', { command: 'sleep 100 &' });
       assert.match(bg.text, /forge_service start/, '后台 & 被拦下时提示用 forge_service');
-      assert.match((await a.call('forge_service', { action: 'start', name: 'test' })).text, /只能启动 workflow.yaml commands 里 serve/);
+      assert.match((await a.call('forge_service', { action: 'start', name: 'nope' })).text, /commands\.yaml 里没有命令 nope[\s\S]*command 参数/);
       const r = await a.call('forge_service', { action: 'start', name: 'serve', ready: port, timeout_s: 20 });
       assert.ok(r.ok, r.text);
       assert.match(r.text, /已就绪/);

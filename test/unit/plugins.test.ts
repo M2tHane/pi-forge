@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/unit/plugins.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';

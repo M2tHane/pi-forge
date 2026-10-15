@@ -1,4 +1,3 @@
-// 来源：pi-flow src/commands/role-table.ts @ 31f3f15
 // /forge-config 的角色表格：每行一个角色，列为 角色、职责、模型、升级模型、思考强度；最后一行是兜底模型（所有角色共用，只有模型一列）。
 // 纯逻辑（状态、按键、渲染），不依赖 Pi；由 pi-adapter 用 ctx.ui.custom 承载。
 import type { ThinkingLevel } from '../core/state/schemas.ts';

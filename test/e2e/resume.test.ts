@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/resume.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // M5：恢复（进程内模拟崩溃：丢弃旧引擎，用新的 StateStore 与引擎恢复）。真实强杀见 crash-recovery.test.ts。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,4 +1,4 @@
-// 契约的结构解析与符号目录（规格第 6、7.2、12.2 节）。parseContracts 是纯函数；contractFilesAt、contractFilesInDir 只负责读取文件。
+// 契约的结构解析与符号目录。parseContracts 是纯函数；contractFilesAt、contractFilesInDir 只负责读取文件。
 // 追加判定与结构化三方合并在 M5 实现。
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -48,7 +48,10 @@ function atPointer(doc: unknown, pointer: string): unknown {
 
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-/** 解析全部契约文件，给出符号目录与结构错误。文件为空集合时报"缺少契约"。 */
+/**
+ * 解析全部契约文件，给出符号目录。只有不是合法 YAML 算错误；文件布局、OpenAPI 写法、错误码命名、表结构等都只给警告
+ * （真实运行里模块名带下划线这类格式问题把计划打回过十几处，格式不影响实现）。
+ */
 export function parseContracts(all: ContractFiles): ContractCheck {
   // 空文件（含 /forge init 留下的 .gitkeep）视为不存在：architect 没有删除能力，不需要的文件清空即可
   const files: ContractFiles = Object.fromEntries(Object.entries(all).filter(([, text]) => text.trim() !== ''));
@@ -67,8 +70,8 @@ export function parseContracts(all: ContractFiles): ContractCheck {
   for (const dir of ['paths', 'components', 'errors', 'modules']) {
     for (const rel of Object.keys(files).filter((f) => f.startsWith(`${dir}/`))) {
       const m = moduleOf(rel, dir);
-      if (m === null) errors.push({ file: at(rel), message: `${dir}/ 下只能放 <模块>.${dir === 'modules' ? 'md' : 'yaml'}，不能有子目录或其他文件（不需要的文件把内容清空即可，空文件视为不存在）` });
-      else if (m !== 'common' && !MODULE_NAME.test(m)) errors.push({ file: at(rel), message: `模块名 ${m} 只能用小写字母、数字和短横线，并以字母开头` });
+      if (m === null) warnings.push({ file: at(rel), message: `${dir}/ 下只能放 <模块>.${dir === 'modules' ? 'md' : 'yaml'}，不能有子目录或其他文件（不需要的文件把内容清空即可，空文件视为不存在）` });
+      else if (m !== 'common' && !MODULE_NAME.test(m)) warnings.push({ file: at(rel), message: `模块名 ${m} 只能用小写字母、数字和短横线，并以字母开头` });
     }
   }
 
@@ -89,7 +92,7 @@ export function parseContracts(all: ContractFiles): ContractCheck {
     for (const [k, v] of Object.entries(node)) {
       if (k === '$ref' && typeof v === 'string') {
         const r = resolveRef(file, v);
-        if (typeof r === 'string') errors.push({ file: at(file), message: r });
+        if (typeof r === 'string') warnings.push({ file: at(file), message: r });
       } else walkRefs(file, v);
     }
   };
@@ -97,34 +100,35 @@ export function parseContracts(all: ContractFiles): ContractCheck {
 
   // openapi.yaml：根文件只放 info、公共 components 与 paths；paths 下每条只能是指向 paths/<模块>.yaml 的 $ref
   const root = docs.get('openapi.yaml');
-  if (!('openapi.yaml' in files)) errors.push({ file: at('openapi.yaml'), message: '缺少根文件 openapi.yaml' });
+  if (!('openapi.yaml' in files)) warnings.push({ file: at('openapi.yaml'), message: '缺少根文件 openapi.yaml' });
   else if (root !== undefined) {
     if (!isMap(root) || typeof root['openapi'] !== 'string' || !root['openapi'].startsWith('3.')) {
-      errors.push({ file: at('openapi.yaml'), message: '根文件必须写 openapi: 3.1.0（OpenAPI 3.x）' });
+      warnings.push({ file: at('openapi.yaml'), message: '根文件必须写 openapi: 3.1.0（OpenAPI 3.x）' });
     }
     const paths = isMap(root) ? root['paths'] : undefined;
-    if (paths !== undefined && !isMap(paths)) errors.push({ file: at('openapi.yaml'), message: 'paths 必须是映射' });
+    if (paths !== undefined && !isMap(paths)) warnings.push({ file: at('openapi.yaml'), message: 'paths 必须是映射' });
     const referenced = new Set<string>();
     for (const [route, entry] of Object.entries(isMap(paths) ? paths : {})) {
-      if (!route.startsWith('/')) { errors.push({ file: at('openapi.yaml'), message: `路径 ${route} 必须以 / 开头` }); continue; }
+      if (!route.startsWith('/')) { warnings.push({ file: at('openapi.yaml'), message: `路径 ${route} 必须以 / 开头` }); continue; }
       const ref = isMap(entry) && Object.keys(entry).length === 1 && typeof entry['$ref'] === 'string' ? entry['$ref'] : null;
       const m = ref?.match(/^\.\/paths\/([^/#]+)\.ya?ml#(\/.*)$/);
       if (!ref || !m) {
-        errors.push({ file: at('openapi.yaml'), message: `paths 下的 ${route} 只能写一条 $ref: './paths/<模块>.yaml#/<路径>'（path item 写在 paths/<模块>.yaml）` });
+        warnings.push({ file: at('openapi.yaml'), message: `paths 下的 ${route} 建议只写一条 $ref: './paths/<模块>.yaml#/<路径>'（path item 写在 paths/<模块>.yaml，实施中各模块只追加自己的文件）` });
+        if (isMap(entry)) for (const op of HTTP_METHODS.filter((o) => o in entry)) catalog.apis.set(`${op.toUpperCase()} ${route}`, { module: null, file: at('openapi.yaml') });
         continue;
       }
       const resolved = resolveRef('openapi.yaml', ref);
       if (typeof resolved === 'string') continue; // 已在 walkRefs 报告
       referenced.add(`${resolved.file}#${m[2]}`);
       const item = resolved.target;
-      if (!isMap(item)) { errors.push({ file: at(resolved.file), message: `${route} 的 path item 必须是映射` }); continue; }
+      if (!isMap(item)) { warnings.push({ file: at(resolved.file), message: `${route} 的 path item 必须是映射` }); continue; }
       const ops = HTTP_METHODS.filter((op) => op in item);
-      if (!ops.length) errors.push({ file: at(resolved.file), message: `${route} 没有任何 operation（get、post……）` });
+      if (!ops.length) warnings.push({ file: at(resolved.file), message: `${route} 没有任何 operation（get、post……）` });
       for (const op of ops) {
         const operation = item[op];
         const key = `${op.toUpperCase()} ${route}`;
         if (!isMap(operation) || !isMap(operation['responses']) || !Object.keys(operation['responses']).length) {
-          errors.push({ file: at(resolved.file), message: `${key} 必须写 responses（所有可能的状态码）` });
+          warnings.push({ file: at(resolved.file), message: `${key} 必须写 responses（所有可能的状态码）` });
         }
         if (isMap(operation) && typeof operation['operationId'] !== 'string') warnings.push({ file: at(resolved.file), message: `${key} 缺少 operationId` });
         catalog.apis.set(key, { module: m[1]!, file: at(resolved.file) });
@@ -145,18 +149,18 @@ export function parseContracts(all: ContractFiles): ContractCheck {
   for (const rel of Object.keys(files).filter((f) => f.startsWith('errors/') && docs.has(f))) {
     const module = moduleOf(rel, 'errors');
     const doc = docs.get(rel);
-    if (!isMap(doc)) { errors.push({ file: at(rel), message: '错误码文件必须是 CODE: { http, message } 的映射' }); continue; }
+    if (!isMap(doc)) { warnings.push({ file: at(rel), message: '错误码文件必须是 CODE: { http, message } 的映射' }); continue; }
     for (const [code, def] of Object.entries(doc)) {
-      if (!ERROR_CODE.test(code)) errors.push({ file: at(rel), message: `错误码 ${code} 只能用大写字母、数字和下划线` });
+      if (!ERROR_CODE.test(code)) warnings.push({ file: at(rel), message: `错误码 ${code} 只能用大写字母、数字和下划线` });
       if (module && module !== 'common' && !code.startsWith(errorPrefix(module))) {
-        errors.push({ file: at(rel), message: `错误码 ${code} 必须以模块前缀 ${errorPrefix(module)} 开头（通用错误放 errors/common.yaml）` });
+        warnings.push({ file: at(rel), message: `错误码 ${code} 必须以模块前缀 ${errorPrefix(module)} 开头（通用错误放 errors/common.yaml）` });
       }
       const http = isMap(def) ? def['http'] : undefined;
       if (!isMap(def) || typeof http !== 'number' || !Number.isInteger(http) || http < 100 || http > 599 || typeof def['message'] !== 'string') {
-        errors.push({ file: at(rel), message: `错误码 ${code} 必须写 http（100–599 的整数）与 message` });
+        warnings.push({ file: at(rel), message: `错误码 ${code} 必须写 http（100–599 的整数）与 message` });
       }
       const prev = catalog.errors.get(code);
-      if (prev) errors.push({ file: at(rel), message: `错误码 ${code} 与 ${prev.file} 重复` });
+      if (prev) warnings.push({ file: at(rel), message: `错误码 ${code} 与 ${prev.file} 重复` });
       else catalog.errors.set(code, { module, file: at(rel), http: typeof http === 'number' ? http : 0 });
     }
   }
@@ -164,10 +168,10 @@ export function parseContracts(all: ContractFiles): ContractCheck {
   // data-model.yaml：tables: { 名字: { columns: { 列: {...} } } }
   if (docs.has('data-model.yaml')) {
     const tables = (docs.get('data-model.yaml') as Record<string, unknown> | null)?.['tables'];
-    if (!isMap(tables)) errors.push({ file: at('data-model.yaml'), message: '必须有 tables 映射' });
+    if (!isMap(tables)) warnings.push({ file: at('data-model.yaml'), message: '必须有 tables 映射' });
     else for (const [name, def] of Object.entries(tables)) {
       if (!isMap(def) || !isMap(def['columns']) || !Object.keys(def['columns']).length) {
-        errors.push({ file: at('data-model.yaml'), message: `表 ${name} 必须写 columns` });
+        warnings.push({ file: at('data-model.yaml'), message: `表 ${name} 必须写 columns` });
       }
       catalog.tables.set(name, { module: null, file: at('data-model.yaml') });
     }
@@ -181,7 +185,7 @@ export function parseContracts(all: ContractFiles): ContractCheck {
       const m = line.match(/^##\s+(\S+)\s*$/);
       if (!m) continue;
       const key = `${module}#${m[1]}`;
-      if (catalog.fns.has(key)) errors.push({ file: at(rel), message: `函数 ${m[1]} 重复定义` });
+      if (catalog.fns.has(key)) warnings.push({ file: at(rel), message: `函数 ${m[1]} 重复定义` });
       catalog.fns.set(key, { module, file: at(rel) });
     }
   }

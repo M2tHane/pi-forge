@@ -1,4 +1,3 @@
-// 来源：pi-flow test/helpers/config.ts @ 31f3f15
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 /** 运行时测试固定使用 v3 配置与 pi-forge 角色；真实模板单独验证 */

@@ -1,4 +1,4 @@
-// 运行时资源隔离（规格第 4.1 节）：每次运行、预检、门禁分配一段端口、一个数据库名与一个临时目录，经环境变量注入。
+// 运行时资源隔离：每次运行、预检、门禁分配一段端口、一个数据库名与一个临时目录，经环境变量注入。
 // 登记在 <项目>.worktrees/.resources.json（不在 .forge/ 内），文件锁保护；正常结束时释放，resume 与 doctor --fix 回收残留。
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';

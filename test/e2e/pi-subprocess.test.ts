@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/pi-subprocess.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 真实 pi 子进程 + 假 LLM（OpenAI 兼容流式服务）：验证 pi-adapter（启动参数、子进程扩展、guard、forge_* 工具、token 统计）。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -121,16 +120,15 @@ test('真实 pi 子进程：模型返回额度用完（429 insufficient_quota）
   } finally { p.cleanup(); }
 });
 
-test('真实 pi 子进程：合并后验证（merge_check）失败退回，接着上一次的对话修好后合入（预检不再跑命令）', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
-  const yaml = DIRECT_YAML.replace(/(  acceptance: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n');
-  const p = await setupProject({ yaml, tasks: [mkTask('T-001', { verify: ['typecheck', 'test'] })] });
+test('真实 pi 子进程：审查要求修改后，接着上一次的对话修好再合入', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
+  const p = await setupProject({ yaml: DIRECT_YAML, tasks: [mkTask('T-001', { verify: ['typecheck', 'test'] })] });
   try {
     const logFile = '/tmp/pi-forge-e2e-llm.log';
     const before = existsSync(logFile) ? readFileSync(logFile, 'utf8').length : 0;
     const errors: unknown[] = [];
     const engine = new Engine({
       root: p.dir, store: p.store, config: p.config, launcher: new PiLauncher(),
-      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-fork' }, 'reviewer': { model: 'fakellm/review-pass' } } }),
+      roleSettings: () => ({ version: 1, roles: { 'worker': { model: 'fakellm/impl-fork' }, 'reviewer': { model: 'fakellm/review-changes' } } }),
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
@@ -141,20 +139,19 @@ test('真实 pi 子进程：合并后验证（merge_check）失败退回，接�
     assert.deepEqual(errors, []);
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done', `${t.status} ${t.last_failure ?? ''}`);
-    assert.equal(t.merge_failures, 1, '第一次提交在合并后验证（merge_check）中失败');
+    assert.equal(t.review_rounds, 1, '第一次提交被审查要求修改');
     assert.equal(t.precheck_failures ?? 0, 0);
     assert.equal(t.attempts, 0);
     const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at)).filter((r) => r.role === 'worker');
     assert.deepEqual(runs.map((r) => r.role), ['worker', 'worker']);
     assert.equal(runs[1]!.forked_from, runs[0]!.run_id);
     const triggers = p.store.readEvents().filter((e) => e.task === 'T-001' && e.type === 'transition').map((e) => e.trigger);
-    // 完整序列（核对 6146bc8 时恢复：改写后只断言了包含 precheck_fail 与最后 merge_done）
     assert.deepEqual(triggers.filter((x) => x !== 'dispatch' && x !== 'schedule'),
-      ['submit', 'inputs_ready', 'precheck_pass', 'review_pass', 'merge_start', 'merge_verify_fail', 'submit', 'inputs_ready', 'precheck_pass', 'review_pass', 'merge_start', 'merge_done'], triggers.join(','));
+      ['submit', 'inputs_ready', 'precheck_pass', 'review_changes', 'submit', 'inputs_ready', 'precheck_pass', 'review_pass', 'merge_start', 'merge_done'], triggers.join(','));
     const reqs = readFileSync(logFile, 'utf8').slice(before).trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'impl-fork');
     const second = reqs.find((r) => r.turn === 5)!;
     assert.ok(second, '第二次运行的第一个请求带着上一次的 5 条回复');
-    assert.match(JSON.stringify(second.last), /继续任务[\s\S]*合并后验证失败[\s\S]*forge_claim/);
+    assert.match(JSON.stringify(second.last), /继续任务[\s\S]*a 不应是 FAIL[\s\S]*forge_claim/);
     assert.ok(runs[1]!.session_file && runs[1]!.session_file !== runs[0]!.session_file, '新会话单独留档');
   } finally { p.cleanup(); }
 });

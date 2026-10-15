@@ -19,7 +19,6 @@
     "scripts"
   ],
   "exclude": [
-    "legacy",
     "node_modules"
   ]
 }

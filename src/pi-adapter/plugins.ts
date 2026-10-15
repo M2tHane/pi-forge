@@ -1,4 +1,3 @@
-// 来源：pi-flow src/pi-adapter/plugins.ts @ 31f3f15
 // 子进程加载的第三方插件：按角色用到的工具组，找到已安装的 Pi 包并用 -e 加载（在 pi-forge 的 guard 扩展之前）。
 // 已核实：-e 可以指向包根目录（按包规则加载 pi.extensions）；pi-web-access 的工具注册后需 setActiveTools 激活（subagent 扩展会做）。
 import { existsSync } from 'node:fs';

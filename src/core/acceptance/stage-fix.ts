@@ -1,5 +1,5 @@
-// 阶段验收发现的问题交给负责的 task 修复（规格第 11.1 节）：门禁失败、stage-qa 的 must 共用。
-// 归属按 task 而不是按角色（pi-flow 的 gateFailed 按角色分组）：文件归"最后一个实际改过它（合入的 diff）或 writes 覆盖它、并且已经 done 的 impl task"；
+// 阶段验收发现的问题交给负责的 task 修复：门禁失败、stage-qa 的 must 共用。
+// 归属按 task 而不是按角色：文件归"最后一个实际改过它（合入的 diff）或 writes 覆盖它、并且已经 done 的 impl task"；
 // 都找不到时（例如 S0 骨架里没人碰过的文件）归本阶段最后合入的 impl（写入放开后 writes 不再可靠，总得有人修）。
 import type { TaskFile } from '../state/schemas.ts';
 import type { StateStore, TaskInput } from '../state/state-store.ts';
@@ -90,7 +90,7 @@ export function groupIssuesByOwner<T extends Pick<TaskFile, 'id' | 'kind' | 'sta
 
 /**
  * 为阶段验收发现的问题创建 fix task（T-003.fx-n）：kind fix、角色同原 task（worker）、writes 是问题涉及的文件加原 task 的非验收测试目录、
- * fork 原 task 最后一次 worker 会话。worktree 在派发时从集成分支新建。没有新的 .at，不做逐任务审查，合并只跑 merge_check（第 11.1 节）。
+ * fork 原 task 最后一次 worker 会话。worktree 在派发时从集成分支新建。没有新的 .at，不做逐任务审查，合并不跑命令。
  */
 export async function createStageFixTasks(store: StateStore, flowId: string, source: StageFixSource, issues: readonly StageIssue[], round: string, actor = 'engine', sourceRound?: { task: string; round: number }): Promise<{ tasks: string[]; unowned: string[] }> {
   const flow = store.readFlow(flowId);

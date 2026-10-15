@@ -1,4 +1,4 @@
-// 第 10 节：逐任务审查接进引擎。fake-subagent 驱动真实的引擎、guard、工具与状态存储（不使用真实模型）。
+// 逐任务审查接进引擎。fake-subagent 驱动真实的引擎、guard、工具与状态存储（不使用真实模型）。
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +34,7 @@ async function drive(p: Project, e: ReturnType<typeof makeEngine>, rounds = 12) 
 }
 
 const must1 = { level: 'must' as const, basis: 'ac:REQ-001.AC1', files: ['src/server/t-001/a.ts'], location: 'a', problem: '没有返回看板编号', expected: '返回编号' };
-const badMust = { level: 'must' as const, basis: '我觉得命名不好', files: ['src/server/t-001/a.ts'], location: '', problem: '命名', expected: '改名' };
+const weakMust = { level: 'must' as const, basis: '我觉得命名不好', files: ['src/server/t-001/a.ts'], location: '', problem: '命名', expected: '改名' };
 const sug = { level: 'suggest' as const, basis: '过长函数', file: 'src/server/t-001/a.ts', location: 'a', problem: '函数过长', expected: '拆分' };
 
 interface Seen { brief: string; cwd: string; tools: string[]; results: Record<string, { ok: boolean; text: string }> }
@@ -55,7 +55,7 @@ async function flow(roundTwo: 'resolved' | 'unresolved', maxRounds = 2) {
     if (a.env.task === 'T-001.rv') {
       s.results['confirm'] = await a.call('forge_review_confirm', { items: [{ id: 'R-1', resolved: true }] });
       s.results['noFiles'] = await a.call('forge_review_report', { verdict: 'changes', issues: [{ level: 'suggest', basis: 'x', location: '', problem: 'p', expected: 'e' }] });
-      s.results['report'] = await a.call('forge_review_report', { verdict: 'changes', issues: [must1, badMust, sug] });
+      s.results['report'] = await a.call('forge_review_report', { verdict: 'changes', issues: [must1, sug] });
       return;
     }
     // 第二轮：不能提新问题；编号不全或多出编号会被拒绝
@@ -69,7 +69,7 @@ async function flow(roundTwo: 'resolved' | 'unresolved', maxRounds = 2) {
   return { p, e, seen, handoffs };
 }
 
-test('审查 → 打回 → 确认通过：第二轮只能确认；出处不合格的 must 降级；suggest 记入集成分支；通过后合并', async () => {
+test('审查 → 打回 → 确认通过：第二轮只能确认；suggest 记入集成分支；通过后合并', async () => {
   const { p, e, seen, handoffs } = await flow('resolved');
   try {
     await drive(p, e);
@@ -94,12 +94,12 @@ test('审查 → 打回 → 确认通过：第二轮只能确认；出处不合�
     assert.ok(!brief.includes('diff --git a/tests/acceptance'));
     assert.match(readFileSync(e.launcher.launched.find((s) => s.env['PI_FORGE_TASK'] === 'T-001.rv')!.appendSystemPromptFiles[0]!, 'utf8'), /handler 内不写业务逻辑/, 'rules/backend.md 进系统提示');
 
-    // 第一轮的工具结果：确认工具此时不可用；must 降级的说明
+    // 第一轮的工具结果：确认工具此时不可用
     assert.match(seen['T-001.rv']!.results['confirm']!.text, /第一轮审查/);
     assert.match(seen['T-001.rv']!.results['noFiles']!.text, /没有写 files/);
-    assert.match(seen['T-001.rv']!.results['report']!.text, /需要修改（must 1 条：R-1）.*已降为 suggest：R-2/);
-    const report = readReviewEvidence<{ issues: { id: string; level: string }[]; downgraded: { id: string }[] }>(p.store, p.flowId, 'T-001.rv', REVIEW_REPORT)!;
-    assert.deepEqual(report.issues.map((i) => [i.id, i.level]), [['R-1', 'must'], ['R-2', 'suggest'], ['R-3', 'suggest']]);
+    assert.match(seen['T-001.rv']!.results['report']!.text, /需要修改（must 1 条：R-1）/);
+    const report = readReviewEvidence<{ issues: { id: string; level: string }[] }>(p.store, p.flowId, 'T-001.rv', REVIEW_REPORT)!;
+    assert.deepEqual(report.issues.map((i) => [i.id, i.level]), [['R-1', 'must'], ['R-2', 'suggest']]);
 
     // 打回：must 清单进了 worker 的 handoff，worker 接着改
     assert.match(handoffs[0]!, /审查意见（第 1 轮）[\s\S]*R-1[\s\S]*没有返回看板编号/);
@@ -121,12 +121,11 @@ test('审查 → 打回 → 确认通过：第二轮只能确认；出处不合�
     assert.deepEqual(readReviewEvidence<{ unresolved: string[] }>(p.store, p.flowId, 'T-001.rv-2', REVIEW_CONFIRM)!.unresolved, []);
     assert.equal(readReviewEvidence<ReviewInputFile>(p.store, p.flowId, 'T-001.rv-2', REVIEW_INPUT)!.prior_must[0]!.id, 'R-1');
 
-    // suggest（含被降级的）追加到集成分支，带审查 task 与 R 编号，只追加一次
+    // suggest 追加到集成分支，带审查 task 与 R 编号，只追加一次
     const sugg = p.git('show', `${p.store.readFlow(p.flowId).integration_branch}:${SUGGESTIONS_PATH}`);
-    assert.match(sugg, /\[T-001\.rv R-2\] T-001：命名/);
-    assert.match(sugg, /\[T-001\.rv R-3\] T-001：函数过长/);
+    assert.match(sugg, /\[T-001\.rv R-2\] T-001：函数过长/);
     assert.ok(!sugg.includes('R-1]'));
-    assert.equal(sugg.match(/R-3\]/g)!.length, 1);
+    assert.equal(sugg.match(/R-2\]/g)!.length, 1);
     assert.equal(p.git('show', `${p.store.readFlow(p.flowId).integration_branch}:src/server/t-001/a.ts`), 'export const a = 2;');
   } finally { p.cleanup(); }
 });
@@ -161,12 +160,12 @@ test('max_rounds=3：第二轮没解决还会再确认一轮（.rv-3），只回
   } finally { p.cleanup(); }
 });
 
-test('没有 must（只有 suggest 或出处不合格的 must）按 pass 处理，直接合并', async () => {
+test('没有 must（只有 suggest）按 pass 处理，直接合并；出处随便写的 must 程序不降级', async () => {
   const p = await setupProject({ yaml: YAML, files: FILES, tasks: [mkTask('T-001', { review: 'auto' })] });
   const e = makeEngine(p, async (role, _nth, a) => {
     if (role === 'worker') return implement(a, 't-001', 'export const a = 1;\n');
-    const r = await a.call('forge_review_report', { verdict: 'changes', issues: [badMust, sug] });
-    assert.match(r.text, /降级后没有 must，按 pass 处理/);
+    const r = await a.call('forge_review_report', { verdict: 'changes', issues: [sug] });
+    assert.match(r.text, /没有 must，按 pass 处理/);
   }, SETTINGS);
   try {
     await drive(p, e);
@@ -174,6 +173,23 @@ test('没有 must（只有 suggest 或出处不合格的 must）按 pass 处理�
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
     assert.equal(p.store.readTask(p.flowId, 'T-001').review_rounds, 0);
     assert.equal(e.launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'reviewer').length, 1);
+  } finally { p.cleanup(); }
+});
+
+test('出处不规范的 must 照样算 must：程序不校验出处', async () => {
+  const p = await setupProject({ yaml: YAML, files: FILES, tasks: [mkTask('T-001', { review: 'auto' })] });
+  const e = makeEngine(p, async (role, nth, a) => {
+    if (role === 'worker') return implement(a, 't-001', 'export const a = 1;\n');
+    if (nth === 1) {
+      const r = await a.call('forge_review_report', { verdict: 'changes', issues: [weakMust] });
+      assert.match(r.text, /需要修改（must 1 条：R-1）/);
+    } else await a.call('forge_review_confirm', { items: [{ id: 'R-1', resolved: true }] });
+  }, SETTINGS);
+  try {
+    await drive(p, e);
+    assert.deepEqual(e.errors, []);
+    const t = p.store.readTask(p.flowId, 'T-001');
+    assert.deepEqual([t.status, t.review_rounds], ['done', 1]);
   } finally { p.cleanup(); }
 });
 

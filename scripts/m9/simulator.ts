@@ -6,7 +6,7 @@
 /** 计数类别：p0_question（P0 问题数）、gate（必经闸门）、extra:<类别>（额外介入，每类单独一列） */
 export type Category = 'p0_question' | 'gate' | `extra:${string}`;
 
-export const EXTRA_CATEGORIES = ['plan_not_lean', 'dispute', 'blocked_question', 'blocked_reset', 'blocked_accept', 'needs_human', 'change_request', 'late_question'] as const;
+export const EXTRA_CATEGORIES = ['dispute', 'blocked_question', 'blocked_reset', 'blocked_accept', 'needs_human', 'change_request', 'late_question'] as const;
 
 /** 放行上限（第 4 节）：同一 task 放行 3 次后又停住算卡住；同一阶段放行 2 次后又 needs_human 算卡住 */
 export const MAX_TASK_RELEASES = 3;
@@ -18,7 +18,6 @@ export const REPEAT_COOLDOWN_MS = 20_000;
 export const MAX_P0_TEXT_TURNS = 10;
 
 export const CONFIRM_MERGE_OPTION = '确认合入并结束流程';
-export const NOT_LEAN_FEEDBACK = '规模低于阈值，按精简模式重做计划';
 export const BLOCKED_ANSWER = '按你的推荐做，以规格和契约为准';
 export const ACCEPT_NOTE = '模拟用户：按现状放行';
 export const P0_TEXT_REPLY = '都按你的推荐，继续';
@@ -42,8 +41,6 @@ export interface FlowSnap {
   version: number;
   /** P0：规格是否已通过检查并提交 */
   specSubmitted: boolean;
-  /** P1 等待批准时计划的 mode（读 docs/plan/plan.yaml）；读不到为 null */
-  planMode: string | null;
   /** needs_human 交给主会话决定（还没转交用户）：用户这时不处理 */
   delegated?: boolean;
 }
@@ -69,8 +66,6 @@ export interface SimState {
   releases: Record<string, number>;
   /** `${流程}:${阶段}` → accept 次数 */
   accepts: Record<string, number>;
-  /** 流程 → 因"不是精简模式"驳回计划的次数 */
-  leanRejects: Record<string, number>;
   /** `${流程}:${task}:${测试}` → 争议裁决次数 */
   decisions: Record<string, number>;
   p0TextTurns: number;
@@ -88,8 +83,6 @@ export interface SimState {
 
 export interface Snapshot {
   nowMs: number;
-  /** A0 / A1 要求计划是精简模式；false 时不检查 */
-  requireLean: boolean;
   /** 等待回答的扩展 UI 请求 */
   ui?: UiRequest | null;
   /** 主会话一轮已结束（收到 agent_settled）且尚未对它回复 */
@@ -115,19 +108,18 @@ export interface ActionMeta {
   /** 计数副作用：哪个 task / 阶段 / 测试的放行次数加一 */
   release?: string;
   accept?: string;
-  leanReject?: string;
   decision?: string;
 }
 
 export type UiResponse = { value: string } | { cancelled: true } | { confirmed: boolean };
 export type UiAction = ActionMeta & { kind: 'ui_response'; id: string; response: UiResponse; summary: string };
 export type PromptAction = ActionMeta & { kind: 'prompt'; message: string };
-export type StuckAction = { kind: 'stuck'; key: string; failure: 'limit' | 'out_of_table' | 'plan_not_lean' | 'repeat'; reason: string };
+export type StuckAction = { kind: 'stuck'; key: string; failure: 'limit' | 'out_of_table' | 'repeat'; reason: string };
 export type Action = UiAction | PromptAction | StuckAction;
 
 export function initialState(): SimState {
   return {
-    issued: {}, lastAt: {}, releases: {}, accepts: {}, leanRejects: {}, decisions: {}, p0TextTurns: 0,
+    issued: {}, lastAt: {}, releases: {}, accepts: {}, decisions: {}, p0TextTurns: 0,
     counts: { p0_question: 0, p0_text_turns: 0, p0_text_numbered: 0, gate: 0, extra: {} },
   };
 }
@@ -196,14 +188,6 @@ function decideGate(s: Snapshot, state: SimState, flow: FlowSnap): Action | null
   const guard = repeatGuard(state, key, s.nowMs);
   if (guard === 'wait') return null;
   if (guard === 'repeat') return stuck(key, 'repeat', `阶段 ${flow.stage} 的批准命令发出 ${MAX_REPEATS} 次后状态仍没变`);
-  if (flow.stage === 'P1' && s.requireLean && flow.planMode !== 'lean') {
-    if (flow.planMode === null) return stuck(key, 'out_of_table', '读不到 docs/plan/plan.yaml 的 mode，无法判断是否精简模式');
-    if ((state.leanRejects[flow.id] ?? 0) >= 1) return stuck(key, 'plan_not_lean', `第二次计划仍不是精简模式（mode: ${flow.planMode}）`);
-    return {
-      kind: 'prompt', message: `/forge-reject stage:P1 "${NOT_LEAN_FEEDBACK}"`, key, category: 'extra:plan_not_lean', counts: true,
-      note: `计划 mode 是 ${flow.planMode}，不是 lean`, leanReject: flow.id,
-    };
-  }
   return { kind: 'prompt', message: `/forge-approve stage:${flow.stage}`, key, category: 'gate', counts: true, note: `${flow.id} 阶段 ${flow.stage} 等待批准` };
 }
 
@@ -289,7 +273,6 @@ export function apply(state: SimState, action: Action, nowMs: number): SimState 
   if (next.issued[action.key]! > 1) return next;
   if (action.release) next.releases[action.release] = (next.releases[action.release] ?? 0) + 1;
   if (action.accept) next.accepts[action.accept] = (next.accepts[action.accept] ?? 0) + 1;
-  if (action.leanReject) next.leanRejects[action.leanReject] = (next.leanRejects[action.leanReject] ?? 0) + 1;
   if (action.decision) next.decisions[action.decision] = (next.decisions[action.decision] ?? 0) + 1;
   if (action.key.startsWith('p0text:')) {
     next.p0TextTurns++;

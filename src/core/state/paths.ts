@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/paths.ts @ 31f3f15
 // 路径规范化与 glob 关系判断。guard、dag、提交 diff 检查共用。
 import path from 'node:path';
 import { minimatch } from 'minimatch';
@@ -51,21 +50,6 @@ export function isTestWrite(w: string): boolean {
 export const OPEN_WRITES_EXCEPT = ['docs/spec/**'] as const;
 export const opensWrites = (t: { kind: string }) => t.kind === 'impl' || t.kind === 'fix';
 export const openWriteAllowed = (rel: string): boolean => !matchesAny(rel, OPEN_WRITES_EXCEPT);
-
-/** read_paths 按顺序覆盖：普通模式允许，! 模式排除；没有匹配默认拒绝。 */
-export function matchesReadPaths(rel: string, globs: readonly string[]): boolean {
-  let allowed = false;
-  for (const glob of globs) {
-    const exclude = glob.startsWith('!');
-    const pattern = exclude ? glob.slice(1) : glob;
-    if (!pattern) continue;
-    // 同时匹配目录本身，防止通过 ls/read 读取被排除目录的列表。
-    if (minimatch(rel, pattern, { ...MM, nonegate: true }) || minimatch(`${rel}/`, pattern, { ...MM, nonegate: true })) {
-      allowed = !exclude;
-    }
-  }
-  return allowed;
-}
 
 export function protectedGlobs(): string[] {
   return [...PROTECTED_PATHS];

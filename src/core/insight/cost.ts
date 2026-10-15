@@ -1,5 +1,4 @@
-// 来源：pi-flow src/core/cost.ts @ 31f3f15
-// 成本度量（第 21 节）：按流程、阶段、角色、任务汇总 token 与耗时；返工次数最多的任务。数据只来自 .forge/runs 与事件日志。
+// 成本度量：按流程、阶段、角色、任务汇总 token 与耗时；返工次数最多的任务。数据只来自 .forge/runs 与事件日志。
 import type { StateStore } from '../state/state-store.ts';
 import type { RunFile } from '../state/schemas.ts';
 

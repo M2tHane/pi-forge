@@ -1,4 +1,3 @@
-// 来源：pi-flow test/unit/codegraph.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, existsSync, readFileSync } from 'node:fs';

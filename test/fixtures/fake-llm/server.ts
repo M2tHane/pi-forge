@@ -1,4 +1,3 @@
-// 来源：pi-flow test/fixtures/fake-llm/server.ts @ 31f3f15
 // 假 LLM：OpenAI chat completions 兼容的流式服务，按脚本返回文本或工具调用。测试不依赖真实模型。
 // 脚本：<scriptsDir>/<model>.json = { steps: Step[] }；第 n 次请求（按请求中 assistant 消息数计）返回 steps[n]。
 // 每个请求追加记录到 <logFile>（JSONL），便于断言系统提示与声明的工具。
@@ -16,6 +15,7 @@ export interface Step {
   error?: { status: number; message: string; code?: string };
 }
 
+const isStatus = (m: { content: unknown }) => JSON.stringify(m.content ?? '').includes('[pi-forge 状态]');
 const isNotes = (m: { content: unknown }) => JSON.stringify(m.content ?? '').includes('由程序在每次请求时放回上下文');
 
 export interface FakeLlm { url: string; close(): Promise<void> }
@@ -37,9 +37,11 @@ export function startFakeLlm(opts: { scriptsDir: string; logFile?: string; port?
           model: payload.model, turn,
           system: payload.messages.filter((m) => m.role === 'system' || m.role === 'developer').map((m) => m.content),
           tools: (payload.tools ?? []).map((t) => t.function.name),
-          // pi-forge 每次请求在末尾放回的笔记单独记录；last 是笔记之前的最后一条消息
-          last: payload.messages.filter((m) => !isNotes(m)).at(-1),
+          // pi-forge 每次请求在末尾放回的笔记、主会话每轮的状态消息单独记录；last 是除此之外的最后一条消息
+          last: payload.messages.filter((m) => !isNotes(m) && !isStatus(m)).at(-1),
           notes: payload.messages.filter(isNotes).map((m) => m.content).at(-1) ?? null,
+          // 主会话每轮追加的状态消息（user 消息），最新的一条
+          status: payload.messages.filter((m) => JSON.stringify(m.content ?? '').includes('[pi-forge 状态]')).map((m) => m.content).at(-1) ?? null,
         }) + '\n');
       }
       const file = path.join(opts.scriptsDir, `${payload.model}.json`);

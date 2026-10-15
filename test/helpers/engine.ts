@@ -1,4 +1,3 @@
-// 来源：pi-flow test/helpers/engine.ts @ 31f3f15
 // 引擎测试夹具：fake-subagent 按角色与第几次派发选择脚本。
 import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';

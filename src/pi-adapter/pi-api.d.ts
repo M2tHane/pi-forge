@@ -1,4 +1,3 @@
-// 来源：pi-flow src/pi-adapter/pi-api.d.ts @ 31f3f15
 // pi-forge 用到的 Pi API 的最小类型声明，摘自 @earendil-works/pi-coding-agent 0.99.2 与 pi-ai 的 .d.ts（已核实；1.0.0 中这些类型未变）。
 // 运行时由 Pi（jiti）提供这些模块；只有 src/pi-adapter/ 可以引用它们。Pi 升级后需对照 NOTES.md 重新核实。
 declare module '@earendil-works/pi-coding-agent' {
@@ -64,6 +63,8 @@ declare module '@earendil-works/pi-coding-agent' {
     /** 可变：后续 handler 看到修改；appendSystemPrompt 会追加到系统提示 */
     systemPromptOptions: { appendSystemPrompt?: string; [k: string]: unknown };
   }
+  /** message：本轮追加一条上下文消息（发给模型时转成 user 消息，display 控制终端是否显示）（Pi 1.1 types.d.ts BeforeAgentStartEventResult） */
+  export interface BeforeAgentStartEventResult { message?: { customType: string; content: string; display: boolean; details?: unknown }; systemPrompt?: string }
   export interface ToolCallEvent { type: 'tool_call'; toolCallId: string; toolName: string; input: Record<string, unknown> }
   export interface ToolCallEventResult { block?: boolean; reason?: string; terminate?: boolean }
   /** Pi 1.0.0 docs/extensions.md、dist/core/extensions/types.d.ts：工具执行后触发，可改写结果；bash 非零退出时 isError 为 true，structuredContent 含 output、exit_code */
@@ -90,7 +91,7 @@ declare module '@earendil-works/pi-coding-agent' {
     /** 设置本会话思考级别（按模型能力收窄） */
     setThinkingLevel(level: ThinkingLevel): void;
     on(event: 'session_start' | 'session_shutdown' | 'agent_end', handler: (event: unknown, ctx: ExtensionContext) => unknown): () => void;
-    on(event: 'before_agent_start', handler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => unknown): () => void;
+    on(event: 'before_agent_start', handler: (event: BeforeAgentStartEvent, ctx: ExtensionContext) => BeforeAgentStartEventResult | void | Promise<BeforeAgentStartEventResult | void>): () => void;
     /** 每条消息结束（user、assistant、toolResult）；assistant 消息带 usage、provider、model（Pi 1.0.0 types.d.ts 的 MessageEndEvent） */
     on(event: 'message_end', handler: (event: { type: 'message_end'; message: Record<string, unknown> }, ctx: ExtensionContext) => unknown): () => void;
     on(event: 'context', handler: (event: ContextEvent, ctx: ExtensionContext) => { messages?: unknown[] } | void | Promise<{ messages?: unknown[] } | void>): () => void;

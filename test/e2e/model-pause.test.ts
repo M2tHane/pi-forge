@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/model-pause.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第三轮 A 验收：模型额度用完、限流时暂停这个模型，而不是判任务失败；只影响这个模型；恢复后继续。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

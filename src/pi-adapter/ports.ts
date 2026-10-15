@@ -1,4 +1,3 @@
-// 来源：pi-flow src/pi-adapter/ports.ts @ 31f3f15
 // pi-adapter 接口草案（M0 产出）：core 与 commands 只依赖这些接口，由 src/pi-adapter/ 用 Pi API 实现。
 // 每个接口后注明对应的、已在 Pi 0.99.2 上实测或读源码核实的能力，详见 NOTES.md 的 API 矩阵。
 

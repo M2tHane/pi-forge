@@ -38,12 +38,12 @@ pi-forge 是 Pi（`@earendil-works/pi-coding-agent`，一个终端里的编程 a
 | **阶段（stage）** | 流程分成几段：P0 规格、P1 契约与计划、S0 骨架、S1…Sn 实施。界面上只显示四个高层阶段：规格 → 契约与计划 → 实施 → 交付。 |
 | **task** | 一个工作单元，编号 `T-001`。派生的有 `T-001.rv`（审查）、`T-001.fx-1`（修复）、`S1.qa`（阶段验收）。 |
 | **规格（spec）** | `docs/spec/` 下的四份文档：需求（带编号的验收标准，如 `REQ-001.AC1`）、页面、权限、术语表。P0 结束后就不再改。 |
-| **契约（contract）** | `docs/contracts/` 下的接口定义（API、错误码、数据模型）。并行的 worker 靠它对齐。实施中只能追加，要修改已有内容得走变更请求。 |
+| **契约（contract）** | `docs/contracts/` 下 task 之间的边界：几个 task 共用的数据、公共错误码、被别的 task 调用的函数与接口。模块自己的行为以规格为准，不重复写进契约。并行的 worker 靠它对齐。实施中只能追加，要修改已有内容得走变更请求。 |
 | **集成分支** | `flow/<流程>/integration`。各 task 先合到这里，整个流程交付时再合入主分支。 |
 | **worktree** | git 的工作区副本。每个 task 有自己的 worktree（在 `<项目>.worktrees/` 下），worker 只在里面工作。 |
 | **handoff** | task 的交接记录：worker 写下做了什么、遇到什么，程序写下审查意见、失败原因。下一个接手的人先读它。 |
 | **`.forge/`** | 项目里的状态目录：流程、task、运行记录、事件日志。**只有程序能写**。 |
-| **门禁（gate）** | 阶段末的确定性检查：全量测试、验收测试、AC 覆盖率。 |
+| **门禁（gate）** | 阶段末的确定性检查：全量测试、验收测试；AC 覆盖率只出报告。 |
 
 ### 3. 角色
 
@@ -128,7 +128,7 @@ test/            unit/（纯函数与用 git 的单元测试）、e2e/（用假�
 **② 子进程里干活**（`pi-adapter/subagent.ts`）
 
 - 子进程加载这个扩展，它注册 `forge_*` 工具，并在每次工具调用前调用 guard。
-- guard（`core/security/guard.ts`：`enforceToolCall` → `checkToolCall`）检查工具白名单、读写路径、受保护路径、敏感文件；bash 命令先解析（`security/shell.ts`），实施角色按禁止列表拦，只读角色按允许列表放。拦下的计一次违规，满额结束运行。
+- guard（`core/security/guard.ts`：`enforceToolCall` → `checkToolCall`）检查工具白名单、写路径、受保护路径、敏感文件（读取不限范围）；bash 命令先解析（`security/shell.ts`），实施角色按禁止列表拦（判断不了的放行），只读角色按允许列表放。拦下的记一次违规，只记账，不结束运行。
 - worker 写完代码，调用 `forge_note` 写 handoff，再调用 `forge_submit`（`tools/subagent-tools.ts`：`flowSubmit`）。程序校验 token、算出 diff、检查越界和契约改动，状态转到 `awaiting_inputs`。
 
 **③ 子进程结束**（`dispatcher.ts`：`onExit`）
@@ -148,7 +148,7 @@ test/            unit/（纯函数与用 git 的单元测试）、e2e/（用假�
 
 **⑥ 合并**（`core/engine/merge-queue.ts`：`processNext` → `merge`）
 
-- 串行合并：把任务分支 squash 成一个提交，rebase 到集成分支最新提交，检查冲突标记、跑 `merge_check`，快进集成分支。
+- 串行合并：把任务分支 squash 成一个提交，rebase 到集成分支最新提交，检查冲突标记，快进集成分支（不跑命令；合入后在后台跑一次回归测试）。
 - 冲突：契约文件和"双方都只追加"的文件由程序三方合并；合不了的交回 worker。
 
 **⑦ 合并后回归测试**（`core/engine/post-merge-test.ts`：`PostMergeTester.schedule` → `checkIntegration`）
@@ -202,4 +202,3 @@ test/            unit/（纯函数与用 git 的单元测试）、e2e/（用假�
 - [README.md](../README.md)：所有命令、`workflow.yaml` 的每个配置项。
 - [docs/flow.md](flow.md)：task 状态机、阶段验收、变更请求的状态图。
 - [NOTES.md](../NOTES.md)：每个设计决定的原因，以及真实模型实验的结论。
-- `docs/BUILD_PROMPT.md`：最初的规格（不再修改，偏离都记在 NOTES.md）。

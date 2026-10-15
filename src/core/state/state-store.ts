@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/state-store.ts @ 31f3f15
 // .forge/ 的唯一读写入口：文件锁、schema 校验、转移校验、事务日志、事件追加、git 提交。
 import {
   closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync,
@@ -67,7 +66,7 @@ type StagedEvent = Omit<EventInput, 'ts'> & { ts?: string };
 
 const OPEN_CHANGE: readonly ChangeFile['status'][] = ['drafting', 'proposed', 'rejected'];
 /** 变更请求可以调整未开始 task 的这些字段 */
-const CHANGE_PATCH_KEYS = new Set(['title', 'stage', 'module', 'size', 'layers', 'ac', 'writes', 'shared', 'produces', 'requires', 'test_interface', 'manual_checks', 'review', 'risk', 'depends_on']);
+const CHANGE_PATCH_KEYS = new Set(['title', 'stage', 'module', 'size', 'layers', 'ac', 'writes', 'shared', 'produces', 'requires', 'manual_checks', 'risk', 'depends_on']);
 
 const TASK_PATCH_KEYS = new Set(['lease', 'worktree', 'branch', 'base_sha', 'timeout_review', 'timeout_progress']);
 
@@ -220,7 +219,6 @@ export interface ViolationInput {
   /** 被阻断调用的摘要（如 bash 命令），不含文件内容 */
   detail?: string;
 }
-export interface ViolationResult { count: number; terminate: boolean; blocked: boolean }
 
 export class StateStore {
   readonly flowDir: string;
@@ -608,7 +606,7 @@ export class StateStore {
         limits: this.limits,
         actor: req.actor,
         // 以下由程序推导，覆盖调用方传入的同名字段
-        // stage-qa 在门禁进行中（awaiting_gate）运行（第 11 节第 3 步），其余 task 只在阶段 active 时派发
+        // stage-qa 在门禁进行中（awaiting_gate）运行，其余 task 只在阶段 active 时派发
         stage_active: flow.stage === task.stage && (flow.stage_status === 'active' || (task.kind === 'qa' && flow.stage_status === 'awaiting_gate')),
         status_of: statusOf,
         soft_deps_done: softDepsDone(task, others),
@@ -619,8 +617,6 @@ export class StateStore {
         conflicting_running: others.filter((t) => IN_FLIGHT.includes(t.status) && t.id !== task.merge_fix_for && conflictsWith(t, task)).map((t) => t.id),
         merging_other: merging && merging !== me ? merging : null,
         queue_head: eligible ? key(eligible) === me : false,
-        handoff_written: (tx.readText(handoffRel(flowId, taskId)) ?? '').trim().length > 0,
-        handoff_text: tx.readText(handoffRel(flowId, taskId)) ?? '',
       };
       const plan = planTransition(task, req.to, req.trigger, facts, req.patch);
       if (!plan.ok) throw new StateError(`转移被拒（${me} ${task.status} -> ${req.to}）`, plan.errors);
@@ -782,50 +778,22 @@ export class StateStore {
     return r;
   }
 
-  /**
-   * 记录一次 guard 阻断。按 run 累计违规次数（以事件日志为准）；达到上限时任务转 blocked、run 标记为 killed，
-   * 返回 terminate=true，由调用方终止子进程。
-   */
-  async recordViolation(v: ViolationInput, maxPerRun: number): Promise<ViolationResult> {
+  /** 记一次被 guard 拦下的操作（只记账：运行与任务上的违规计数、一条 violation 事件） */
+  async recordViolation(v: ViolationInput): Promise<{ count: number }> {
     return this.transaction((tx) => {
       const count = this.readEvents().filter((e) => e.type === 'violation' && e.data?.['run'] === v.run).length + 1;
-      const terminate = count >= maxPerRun;
-      let blocked = false;
       tx.event({
         flow: v.flow, ...(v.task ? { task: v.task } : {}), actor: `run:${v.run}`, type: 'violation', reason: v.reason,
         data: { run: v.run, role: v.role, tool: v.tool, rule: v.rule, count, ...(v.detail ? { detail: v.detail } : {}) },
       });
       const run = tx.readJson<RunFile>(runRel(v.run));
-      if (run) {
-        run.violations = count;
-        if (terminate) { run.outcome = 'killed'; run.ended_at = tx.ts; }
-        tx.putRun(run);
-      }
+      if (run) { run.violations = count; tx.putRun(run); }
       if (v.flow && v.task) {
-        let task = tx.readTask(v.flow, v.task);
+        const task = tx.readTask(v.flow, v.task);
         task.violations += 1;
-        // 第六轮 B5：违规满额结束本次运行并计一次失败（理由带上被拦的操作与可行做法，重试时看得到），走正常的重试与升级；
-        // 失败次数用完才转 blocked。原来直接 blocked，依赖它的任务会一直等（ZCode 实测 T-011 → T-013）
-        if (terminate && task.status === 'in_progress' && task.lease?.run_id === v.run) {
-          const reason = `run ${v.run} 被拦下的操作达到 ${maxPerRun} 次，已结束本次运行；最后一次：${v.reason}`;
-          const plan = planTransition(task, 'in_progress', 'run_failed', { now: this.now(), limits: this.limits, actor: 'guard', reason });
-          if (plan.ok) {
-            tx.event({ flow: v.flow, task: v.task, actor: 'guard', type: 'transition', from: task.status, to: plan.task.status, trigger: 'run_failed', reason });
-            task = plan.task;
-            blocked = task.status === 'blocked';
-          }
-        } else if (terminate && IN_FLIGHT.includes(task.status)) {
-          const reason = `run ${v.run} 违规次数达到上限 ${maxPerRun}，已终止；最后一次：${v.reason}`;
-          const plan = planTransition(task, 'blocked', 'block', { now: this.now(), limits: this.limits, actor: 'guard', reason });
-          if (plan.ok) {
-            tx.event({ flow: v.flow, task: v.task, actor: 'guard', type: 'transition', from: task.status, to: 'blocked', trigger: 'block', reason });
-            task = plan.task;
-            blocked = true;
-          }
-        }
         tx.putTask(v.flow, task);
       }
-      return { count, terminate, blocked };
+      return { count };
     });
   }
 
@@ -977,7 +945,7 @@ export class StateStore {
   }
 
   /**
-   * 批准计划时落地（第 5 节）：同一事务内写入 S 阶段（stages_planned）、新增 task 与它们的初始笔记、记下锁定契约的提交。
+   * 批准计划时落地：同一事务内写入 S 阶段（stages_planned）、新增 task 与它们的初始笔记、记下锁定契约的提交。
    * 只能在 P1 等待批准时调用；已经落地过（有 s_stages）时拒绝。
    */
   async materializePlan(flowId: string, input: { stages: NonNullable<FlowFile['s_stages']>; tasks: readonly TaskInput[]; notes: Record<string, string[]>; contractsBase: string }): Promise<FlowFile> {
@@ -1040,7 +1008,7 @@ export class StateStore {
     });
   }
 
-  // —— 变更请求（第 12.3 节） ——
+  // —— 变更请求 ——
 
   readChange(flowId: string, id: string): ChangeFile {
     if (!/^C-[0-9]{3,}$/.test(id)) throw new StateError(`变更请求编号不合法：${id}`);
@@ -1135,7 +1103,7 @@ export class StateStore {
   }
 
   /**
-   * 批准变更请求时落地（第 5、12.3 节）：同一事务内新增 task 与初始笔记、调整或取消未开始的 task、
+   * 批准变更请求时落地：同一事务内新增 task 与初始笔记、调整或取消未开始的 task、
    * 写入修订后的 S 阶段（stages_revised）、把变更请求标为 approved 并记 approval 事件。任何一步失败整体回滚。
    */
   async applyChange(flowId: string, id: string, ops: ChangeOps, actor = 'human'): Promise<ChangeFile> {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { acTexts, effectiveSpec, lintSpec, parseRequirements, UNTESTABLE_WORDS } from '../../src/core/spec/spec.ts';
+import { acTexts, effectiveSpec, lintSpec, parseRequirements, UNTESTABLE_WORDS, WARNING_RULES } from '../../src/core/spec/spec.ts';
 import type { SpecFiles } from '../../src/core/spec/spec.ts';
 
 const requirement = (id = 'REQ-001', ac = '- AC1：Given 已登录 When 创建看板 Then 返回看板编号', priority = 'MVP'): string =>
@@ -22,7 +22,8 @@ const baseline: SpecFiles = {
   permissions: `# 权限\n${matrix}`,
   glossary: '# 团队看板\n\n## 术语\n**管理员（Admin）**：\n管理团队的角色。\n_不要叫_：超级用户\n\n**成员（Member）**：\n团队内的普通用户。\n\n**看板（Board）**：\n一组按列排列的卡片。\n_不要叫_：面板、kanban',
 };
-function checkRule(base: SpecFiles, rule: string, exists: boolean, warning = false): void {
+/** 只警告的规则（WARNING_RULES）在 warnings 里查 */
+function checkRule(base: SpecFiles, rule: string, exists: boolean, warning = WARNING_RULES.has(rule)): void {
   const result = lintSpec(base);
   assert.equal((warning ? result.warnings : result.errors).some((issue) => issue.rule === rule), exists, JSON.stringify(result));
 }
@@ -81,13 +82,13 @@ test('MVP 必须有 AC，LATER 和 NO 可无 AC', () => {
 });
 
 for (const keyword of ['Given', 'When', 'Then']) {
-  test(`自动 AC 缺 ${keyword} 报错，完整三段通过`, () => {
+  test(`自动 AC 缺 ${keyword} 警告，完整三段通过`, () => {
     checkRule(baseline, 'ac-gwt', false);
     checkRule({ ...baseline, requirements: requirement().replace(keyword, '') }, 'ac-gwt', true);
   });
 }
 
-test('GWT 空段或顺序错误报错，manual 可不用 GWT 但不能空白', () => {
+test('GWT 空段或顺序错误警告，manual 可不用 GWT 但不能空白', () => {
   for (const ac of ['Given When 创建 Then 成功', 'Given 已登录 When Then 成功', 'Given 已登录 When 创建 Then', 'When 创建 Given 已登录 Then 成功']) {
     checkRule({ ...baseline, requirements: requirement('REQ-001', `- AC1：${ac}`) }, 'ac-gwt', true);
   }
@@ -121,7 +122,7 @@ test('页面必须有 REQ 行并引用生效需求；非法编号不被猜测', 
 });
 
 for (const state of ['加载', '空', '错误', '无权限']) {
-  test(`页面缺少 ${state} 状态报错，有四态且无溢出行通过`, () => {
+  test(`页面缺少 ${state} 状态警告，有四态且无溢出行通过`, () => {
     checkRule(baseline, 'screen-state', false);
     const screens = screen().split('\n').filter((line) => !line.startsWith(`| ${state} |`)).join('\n');
     checkRule({ ...baseline, screens }, 'screen-state', true);
@@ -138,16 +139,17 @@ test('状态 N/A 必须有理由，全半角冒号与大小写均可', () => {
   }
 });
 
-test('页面路由或状态表无法解析时报错，溢出行可选', () => {
+test('页面路由或状态表无法解析时警告，溢出行可选', () => {
   checkRule({ ...baseline, screens: screen().replace('/boards', 'boards') }, 'screen-format', true);
   checkRule({ ...baseline, screens: screen().replace('| 加载 | 骨架屏 |', '| 加载 | 骨架屏 | 多余列 |') }, 'screen-state', true);
   checkRule({ ...baseline, screens: `${screen()}\n| 加载 | 再次加载 |` }, 'screen-state', true);
   assert.deepEqual(lintSpec({ ...baseline, screens: `${screen()}\n| 溢出 | 分页 |` }).errors, []);
 });
 
-test('权限表无法解析、列数不齐、空单元格、重复角色均报错', () => {
+test('权限表无法解析、列数不齐、空单元格、重复角色均警告；空文件不警告', () => {
   checkRule(baseline, 'permissions-table', false);
-  for (const permissions of ['', '管理员能创建', '| 资源 |', '| 资源 | 管理员 |\n看板 ✓', '| 资源 | 管理员 |\n| 看板 | ✓ | 多余列 |', '| 资源 | 管理员 |\n| 看板 | |', '| 资源 | 管理员 | 管理员 |', '| --- | --- |', '| 资源 | 管理员 |\n| --- | --- | --- |']) {
+  checkRule({ ...baseline, permissions: '' }, 'permissions-table', false);
+  for (const permissions of ['管理员能创建', '| 资源 |', '| 资源 | 管理员 |\n看板 ✓', '| 资源 | 管理员 |\n| 看板 | ✓ | 多余列 |', '| 资源 | 管理员 |\n| 看板 | |', '| 资源 | 管理员 | 管理员 |', '| --- | --- |', '| 资源 | 管理员 |\n| --- | --- | --- |']) {
     checkRule({ ...baseline, permissions }, 'permissions-table', true);
   }
 });
@@ -159,25 +161,23 @@ test('权限可包含多个矩阵，转义竖线作为条件正文保留', () =>
   assert.equal(spec.permissions.at(-1)!.grants['管理员'], '所有者 | 团队负责人');
 });
 
-test('权限角色必须匹配术语主名，英文名与废弃别名不作为角色', () => {
-  checkRule(baseline, 'permissions-role', false);
-  for (const role of ['访客', 'Admin', '超级用户']) checkRule({ ...baseline, permissions: matrix.replace('管理员', role) }, 'permissions-role', true);
-  const glossary = `${baseline.glossary}\n\n**访客（Guest）**：\n受邀查看页面的人。`;
-  assert.deepEqual(lintSpec({ ...baseline, glossary, permissions: matrix.replace('管理员', '访客') }).errors, []);
+test('权限表的角色不必在术语表里', () => {
+  assert.deepEqual(lintSpec({ ...baseline, permissions: matrix.replace('管理员', '访客') }), { errors: [], warnings: [] });
 });
 
-test('术语格式严格要求中文主名、英文名与定义', () => {
+test('术语格式：缺中文主名、英文名或定义时警告', () => {
   checkRule(baseline, 'glossary-format', false);
   for (const glossary of ['**管理员**：\n管理团队。', '**管理员（Admin）**：']) checkRule({ ...baseline, glossary }, 'glossary-format', true);
 });
 
 for (const file of ['requirements', 'screens', 'permissions', 'glossary'] as const) {
-  test(`${file} 的 TODO、TBD、待定均报错且有行号`, () => {
+  test(`${file} 的 TODO、TBD、待定均警告且有行号`, () => {
     checkRule(baseline, 'placeholder', false);
     for (const word of ['TODO', 'TBD：价格', '（TODO）', '待定']) {
       const content = `${baseline[file]}\n${word}`;
       const result = lintSpec({ ...baseline, [file]: content });
-      const found = result.errors.find((item) => item.rule === 'placeholder')!;
+      assert.ok(!result.errors.some((item) => item.rule === 'placeholder'));
+      const found = result.warnings.find((item) => item.rule === 'placeholder')!;
       assert.equal(found.file, `docs/spec/${file}.md`);
       assert.equal(found.line, content.split('\n').length);
       assert.match(found.message, /替换/);

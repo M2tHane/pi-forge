@@ -1,4 +1,3 @@
-// 来源：pi-flow test/helpers/project.ts @ 31f3f15
 // 测试项目夹具：临时 git 仓库 + workflow.yaml + 规则 + 已初始化的 .forge/ + 一个 build 流程与集成分支。
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';

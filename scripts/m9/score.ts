@@ -133,7 +133,7 @@ function row(s: Summary): string {
     s.score.change ? `${s.score.change.passed}/${s.score.change.total}` : '—',
     String(s.score.total), String(s.score.regression),
     `${t(b)} + ${t(c)} = ${f1(s.agent_min)}${s.time_charged_min !== s.agent_min ? `（按上限计 ${f1(s.time_charged_min)}）` : ''}`,
-    String(s.interventions.extra_total), cell('plan_not_lean'), cell('dispute'), cell('blocked_question'), cell('blocked_reset'), cell('needs_human'), cell('late_question'),
+    String(s.interventions.extra_total), cell('dispute'), cell('blocked_question'), cell('blocked_reset'), cell('needs_human'), cell('late_question'),
     String(s.interventions.gates),
     `${s.interventions.p0_questions}（文字 ${s.interventions.p0_text_turns} 轮，编号 ${s.interventions.p0_text_numbered} 题）`,
     s.project_tests.after_change ? String(s.project_tests.after_change.failed ?? '?') : '—',
@@ -141,7 +141,7 @@ function row(s: Summary): string {
 }
 
 const HEADER = [
-  '组 | 状态 | 基础/39 | 变更/6 | 合计 | 回归 | agent 时间（分钟，新建 + 变更） | 额外介入 | 计划非精简 | 争议 | 阻塞提问 | 阻塞重置 | needs_human | 其他提问 | 必经闸门 | P0 问题数 | 自带测试失败数（变更后）',
+  '组 | 状态 | 基础/39 | 变更/6 | 合计 | 回归 | agent 时间（分钟，新建 + 变更） | 额外介入 | 争议 | 阻塞提问 | 阻塞重置 | needs_human | 其他提问 | 必经闸门 | P0 问题数 | 自带测试失败数（变更后）',
   '---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---',
 ];
 

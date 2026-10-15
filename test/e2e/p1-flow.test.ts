@@ -1,8 +1,6 @@
 // M3：P1 契约与计划。architect 由 fake-subagent 扮演，经真实的 SubagentRuntime（guard + forge_* 工具）提交。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { setupProject, type Project } from '../helpers/project.ts';
 import { commitToBranch } from '../helpers/engine.ts';
 import type { MergeHooks } from '../../src/core/engine/merge-queue.ts';
@@ -11,11 +9,9 @@ import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
 import { nextStep, turnContext } from '../../src/core/engine/context-injector.ts';
 import { renderStatus } from '../../src/core/ops/status-view.ts';
 import { flowSpec, statusText } from '../../src/tools/orchestrator-tools.ts';
-import { parseConfig } from '../../src/core/state/config.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { engineEnv } from '../helpers/commands.ts';
 
-const RULE_DRAFT = '# 后端\n- 服务层抛出 AppError\n\n## 审查清单\n- [ ] R1 错误码来自 errors/*.yaml\n';
 const COMMANDS_DRAFT = 'commands:\n  test: "true"\n  contract_lint: "true"\nshared_env:\n  deps: ["node_modules", "web/node_modules"]\n';
 const GLOSSARY_ADD = '\n**连接测试（ConnectionTest）**：\n检查数据源能否连上。\n';
 
@@ -30,8 +26,7 @@ async function writeDesign(a: FakeAgent) {
   await writeAll(a, {
     ...Object.fromEntries(Object.entries(CONTRACTS).map(([k, v]) => [`docs/contracts/${k}`, v])),
     'docs/arch/overview.md': '# 架构\nNode + React。\n',
-    'docs/rules-draft/backend.md': RULE_DRAFT,
-    'docs/rules-draft/commands.yaml': COMMANDS_DRAFT,
+    'commands.yaml': COMMANDS_DRAFT,
     'AGENTS.md': '# 开发说明\n',
   });
   const glossary = (await a.call('read', { path: 'docs/spec/glossary.md' })).text;
@@ -47,14 +42,13 @@ async function toP1(p: Project, cmd: CommandEnv) {
 test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、合并、闸门 → 批准生成 S 阶段与 task，规则与命令应用，契约锁定，进入 S0', async () => {
   const p = await setupProject({ stages: ['P0', 'P1'] });
   const results: { tool: string; ok: boolean; text: string }[] = [];
-  let workerSystem = '';
   let architectRuns = 0; // 第 1 次是 P1 的 doc task，第 2 次是 S0 的 impl
   const e = engineEnv(p, async (role, nth, a) => {
     if (role === 'architect' && ++architectRuns === 1) {
       await a.call('forge_claim');
       await writeDesign(a);
-      // 缺少生产方：S1 需要的 table:teams 没人产出
-      await writeAll(a, { 'docs/plan/plan.yaml': PLAN_YAML.replace('produces: [table:teams, ', 'produces: [') });
+      // S0 的 task 依赖 S1 才产出的表：调度不了，被拒
+      await writeAll(a, { 'docs/plan/plan.yaml': PLAN_YAML.replace('    requires: []', '    requires: [table:datasources]') });
       results.push({ tool: 'forge_propose_plan', ...(await a.call('forge_propose_plan', {})) });
       await writeAll(a, { 'docs/plan/plan.yaml': PLAN_YAML });
       results.push({ tool: 'forge_propose_plan', ...(await a.call('forge_propose_plan', {
@@ -67,7 +61,6 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     }
     // S0 的 architect（第二次派发）：这里只确认被派发，然后交给用户
     if (role === 'architect') {
-      workerSystem = readFileSync(e.launcher.launched.at(-1)!.appendSystemPromptFiles[0]!, 'utf8');
       await a.call('forge_claim'); await a.call('forge_block', { reason: '测试到此为止' });
       return;
     }
@@ -77,9 +70,9 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     await toP1(p, e.cmd);
     await e.engine.idle();
     assert.deepEqual(e.errors, []);
-    // 第一次 propose：缺少生产方；第二次通过并给出报告；提交成功
+    // 第一次 propose：依赖更晚阶段；第二次通过并给出报告；提交成功
     assert.equal(results[0]!.ok, false);
-    assert.match(results[0]!.text, /T-003 需要的 table:teams 缺少生产方/);
+    assert.match(results[0]!.text, /T-002（S0）需要的 table:datasources 由更晚阶段的 T-003（S1）产出/);
     assert.equal(results[1]!.ok, true, results[1]!.text);
     assert.match(results[1]!.text, /S0（1 个 task）[\s\S]*关键路径 2/);
     assert.equal(results[2]!.ok, true, results[2]!.text);
@@ -99,7 +92,7 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     const integrationHead = p.git('rev-parse', p.store.readFlow(p.flowId).integration_branch);
     const out = await runFlowCommand('approve', e.cmd);
     assert.doesNotMatch(out, /合入/, 'P1 批准不会合入主分支');
-    assert.match(out, /已生成 2 个 S 阶段（S0、S1）与 2 个 task[\s\S]*契约已锁定[\s\S]*已应用命令草案[\s\S]*进入阶段 S0/);
+    assert.match(out, /已生成 2 个 S 阶段（S0、S1）与 2 个 task[\s\S]*契约已锁定[\s\S]*进入阶段 S0/);
     const after = p.store.readFlow(p.flowId);
     assert.deepEqual(after.stages, ['P0', 'P1', 'S0', 'S1']);
     assert.deepEqual(after.s_stages!.map((s) => [s.id, s.exit]), [['S0', ['REQ-002']], ['S1', ['REQ-001']]]);
@@ -118,20 +111,16 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     assert.ok(t3.writes.includes('tests/acceptance/T-003/**'));
     const notes = p.store.readNotes(`flows/${p.flowId}/notes/T-003.json`)!;
     assert.match(notes.goal.join('\n'), /REQ-001\.AC2：Given 已有同名数据源 When 再次创建 Then 失败[\s\S]*manual/);
-    // 规则与命令应用到主分支（单独一个提交），运行中的配置同步更新
-    assert.notEqual(p.git('rev-parse', 'main'), before);
-    assert.equal(readFileSync(path.join(p.dir, 'rules/backend.md'), 'utf8'), RULE_DRAFT);
-    const wf = parseConfig(readFileSync(path.join(p.dir, 'workflow.yaml'), 'utf8'));
-    assert.equal(wf.commands['contract_lint'], 'true');
-    assert.deepEqual(wf.raw.shared_env, { deps: ['node_modules', 'web/node_modules'] });
+    // 运行中的配置换成集成分支上的 commands.yaml；主分支不动（规则由 S0 直接写）
+    assert.equal(p.git('rev-parse', 'main'), before);
     assert.equal(p.config.commands['contract_lint'], 'true');
+    assert.deepEqual(p.config.sharedEnv?.deps, ['node_modules', 'web/node_modules']);
     // S0 开工：由 architect 执行（S0 由架构师搭骨架），提示里注入了按 layers 选择的 rules/backend.md
     await e.engine.idle();
     const worker = e.launcher.launched.find((s) => s.env['PI_FORGE_TASK'] === 'T-002')!;
     assert.ok(worker, '进入 S0 后派发了 S0 的 task');
     assert.equal(worker.env['PI_FORGE_ROLE'], 'architect');
     assert.equal(worker.env['PI_FORGE_TASK'], 'T-002');
-    assert.match(workerSystem, /服务层抛出 AppError/);
     assert.ok((await p.store.verifyIntegrity()).ok);
   } finally { p.cleanup(); }
 });
@@ -204,7 +193,7 @@ test('P1 闸门：集成分支上的契约不合格时回到 active，派 archit
   const hooks: MergeHooks = { afterMerge: async (root) => {
     if (broken) return;
     broken = true;
-    commitToBranch(root, p.store.readFlow(p.flowId).integration_branch, { 'docs/contracts/errors/team.yaml': 'BAD: { http: 400, message: x }\n' }, '外部改动');
+    commitToBranch(root, p.store.readFlow(p.flowId).integration_branch, { 'docs/contracts/errors/team.yaml': 'BAD: [unclosed\n' }, '外部改动');
   } };
   let run = 0;
   const e = engineEnv(p, async (role, _nth, a) => {
@@ -228,7 +217,7 @@ test('P1 闸门：集成分支上的契约不合格时回到 active，派 archit
     assert.equal(e.launcher.launched.length, 2, '闸门失败后派了返工的 architect');
     const t2 = p.store.readTask(p.flowId, 'T-002');
     assert.deepEqual([t2.role, t2.fork_from_task], ['architect', 'T-001']);
-    assert.match(p.store.readHandoff(p.flowId, 'T-002'), /P1 闸门未通过[\s\S]*BAD 必须以模块前缀 TEAM_ 开头/);
+    assert.match(p.store.readHandoff(p.flowId, 'T-002'), /P1 闸门未通过[\s\S]*errors\/team\.yaml：不是合法的 YAML/);
     assert.equal(p.store.readFlow(p.flowId).stage, 'P1');
   } finally { p.cleanup(); }
 });

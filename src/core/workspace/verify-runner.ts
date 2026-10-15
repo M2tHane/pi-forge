@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/verify-runner.ts @ 31f3f15
 // 运行 workflow.yaml 中的命令（合并后验证与阶段闸门共用）：清理过的环境、超时、输出截断与 evidence 文本。
 import { spawn } from 'node:child_process';
 import type { StateStore } from '../state/state-store.ts';
@@ -17,7 +16,7 @@ export function scrubbedEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-/** extraEnv：第 4.1 节分配的资源变量等，叠加在清理过密钥的环境上 */
+/** extraEnv：本次运行分配的资源变量等，叠加在清理过密钥的环境上 */
 export function runShell(command: string, cwd: string, timeoutMs = DEFAULT_VERIFY_TIMEOUT_MS, extraEnv: Record<string, string> = {}): Promise<Omit<CommandRun, 'command'>> {
   const started = Date.now();
   return new Promise((resolve) => {

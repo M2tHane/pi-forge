@@ -1,4 +1,4 @@
-// 变更请求的流程（规格第 12.3、13.2 节）：创建（forge_change_request）、architect 起草与提交、
+// 变更请求的流程：创建（forge_change_request）、architect 起草与提交、
 // doc 预检、批准时落地、打回返工。推导与落地内容是纯函数（change-request.ts），写状态只经 StateStore。
 import { createHash } from 'node:crypto';
 import type { FlowConfig } from '../state/config.ts';
@@ -7,9 +7,10 @@ import type { StateStore, TaskInput } from '../state/state-store.ts';
 import { git, gitOk } from '../state/git.ts';
 import { contractFilesAt, contractFilesInDir, parseContracts } from './contract-check.ts';
 import { checkPlan, nextPlanTaskId, parsePlan, PLAN_PATH, type PlanCheck } from './plan.ts';
-import { effectiveSpec, glossaryTerms } from '../spec/spec.ts';
+import { effectiveSpec } from '../spec/spec.ts';
 import { initialNotes, readRel, readSpecFrom, type Source } from './plan-flow.ts';
 import { changeSummary, changeTouched, diffPlanRevision, isOpenChange, materializeChange, summarizeActions, type ChangeAction, type CurrentPlan } from './change-request.ts';
+import { escalationPolicy } from '../insight/cost-control.ts';
 
 const hashText = (text: string) => createHash('sha256').update(text).digest('hex');
 export class ChangeError extends Error {}
@@ -40,10 +41,10 @@ export interface ChangeCheck {
 }
 
 /**
- * 检查修订：契约结构、术语表只追加（给了 glossaryBase 时）、修订后计划的符号与 DAG（允许 modifies）、
+ * 检查修订：契约结构、修订后计划的符号与 DAG（允许 modifies）、
  * 与当前计划的差异是否合规。契约可以修改，不做"只能追加"检查（那是 impl/fix 的约束）。
  */
-export function checkChange(root: string, src: Source, flowId: string, store: StateStore, config: FlowConfig, glossaryBase?: string): ChangeCheck {
+export function checkChange(root: string, src: Source, flowId: string, store: StateStore, config: FlowConfig): ChangeCheck {
   const flow = store.readFlow(flowId);
   const tasks = store.listTasks(flowId);
   const none = (errors: string[], over: Partial<ChangeCheck> = {}): ChangeCheck => ({ errors, warnings: [], plan: null, planText: null, check: null, actions: [], spec: null, ...over });
@@ -57,14 +58,6 @@ export function checkChange(root: string, src: Source, flowId: string, store: St
   const contracts = parseContracts('dir' in src ? contractFilesInDir(src.dir) : contractFilesAt(src.root, src.ref));
   errors.push(...contracts.errors.map((e) => `契约 ${e.file}：${e.message}`));
   warnings.push(...contracts.warnings.map((e) => `契约 ${e.file}：${e.message}`));
-  if (glossaryBase && gitOk(root, ['cat-file', '-e', `${glossaryBase}:docs/spec/glossary.md`])) {
-    const after = new Map(glossaryTerms(specFiles.files.glossary).map((t) => [t.name, t]));
-    for (const t of glossaryTerms(git(root, ['show', `${glossaryBase}:docs/spec/glossary.md`]))) {
-      const now = after.get(t.name);
-      if (!now) errors.push(`术语表：已有条目「${t.name}」被删除或改名；只能追加新条目`);
-      else if (now.english !== t.english || now.definition !== t.definition || now.aliases.join('、') !== t.aliases.join('、')) errors.push(`术语表：已有条目「${t.name}」被修改；只能追加新条目`);
-    }
-  }
   const planText = readRel(src, PLAN_PATH);
   if (planText === null) return none([...errors, `缺少 ${PLAN_PATH}`], { warnings, spec });
   const parsed = parsePlan(planText);
@@ -73,7 +66,7 @@ export function checkChange(root: string, src: Source, flowId: string, store: St
   const planIds = new Set(cur.plan.tasks.map((t) => t.id));
   const check = checkPlan(parsed.plan, {
     catalog: contracts.catalog, spec, existingTaskIds: tasks.map((t) => t.id).filter((id) => !planIds.has(id)), allowModifies: true,
-    limits: { max_parallel: config.limits.max_parallel, max_task_files: config.limits.max_task_files },
+    limits: { max_parallel: config.limits.max_parallel, max_task_files: config.limits.max_task_files, critical_fanout: escalationPolicy(config).criticalFanout },
   });
   errors.push(...check.errors);
   warnings.push(...check.warnings);
@@ -189,7 +182,7 @@ export async function proposeChange(root: string, store: StateStore, config: Flo
   input: { assumptions: NonNullable<ChangeFile['assumptions']>; extras: NonNullable<ChangeFile['extras']> }, actor: string): Promise<{ ok: boolean; text: string }> {
   const change = changeOfTask(store, flowId, task.id);
   if (!change || (change.status !== 'drafting' && change.status !== 'proposed') || !task.worktree) return { ok: false, text: '这个 task 不是进行中的变更请求起草任务，不能提交修订。' };
-  const r = checkChange(root, { dir: task.worktree }, flowId, store, config, task.base_sha ?? undefined);
+  const r = checkChange(root, { dir: task.worktree }, flowId, store, config);
   if (r.errors.length || !r.plan || r.planText === null) {
     return { ok: false, text: `修订未通过校验（共 ${r.errors.length} 处），改了再提交：\n${r.errors.map((e) => `- ${e}`).join('\n')}${r.warnings.length ? `\n\n提醒：\n${r.warnings.map((w) => `- ${w}`).join('\n')}` : ''}` };
   }
@@ -206,7 +199,7 @@ export function changeDocPrecheck(root: string, store: StateStore, config: FlowC
   const problems: string[] = [];
   if (change.status !== 'proposed' || change.task !== task.id || !change.plan_hash) problems.push('还没有用 forge_propose_plan 提交修订');
   else {
-    const r = checkChange(root, { root, ref: task.branch }, flowId, store, config, task.base_sha ?? undefined);
+    const r = checkChange(root, { root, ref: task.branch }, flowId, store, config);
     problems.push(...r.errors);
     if (r.planText !== null && hashText(r.planText) !== change.plan_hash) problems.push('docs/plan/plan.yaml 在 forge_propose_plan 之后又改过，请重新提交修订');
   }
@@ -240,7 +233,7 @@ export async function approveChange(root: string, store: StateStore, config: Flo
   if (r.errors.length || !r.plan || !r.spec) throw new ChangeError(`修订未通过批准前的检查：\n${r.errors.map((e) => `- ${e}`).join('\n')}`);
   if (JSON.stringify(summarizeActions(r.actions)) !== JSON.stringify(c.actions)) throw new ChangeError('task 的状态在提交修订之后发生了变化，原来的动作清单已不适用，请打回让 architect 重新提交。');
   const tasks = store.listTasks(flowId);
-  const verify = ['typecheck', 'lint', 'test'].filter((x) => config.commands[x]?.trim());
+  const verify = ['test'].filter((x) => config.commands[x]?.trim());
   const ops = materializeChange(r.actions, r.plan, tasks, { flowStage: flow.stage, scopes: { worker: config.role('worker').scopes }, verify, changeId: id });
   ops.notes = initialNotes(ops.add.filter((t) => t.kind === 'impl'), r.spec);
   await store.applyChange(flowId, id, ops, actor);

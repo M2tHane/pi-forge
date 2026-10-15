@@ -38,7 +38,7 @@ export function hardlinkTree(src: string, dst: string): void {
 }
 
 /** 只读工作区（stage-qa）的依赖缓存目录：shared_env.deps 显式配置时才启用；只接受工作区内的相对路径 */
-export const cacheDirsOf = (config: FlowConfig): string[] => (config.raw.shared_env?.deps ?? []).filter((d: string) => d && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
+export const cacheDirsOf = (config: FlowConfig): string[] => (config.sharedEnv?.deps ?? []).filter((d: string) => d && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
 
 export interface SetupLog { step: string; ok: boolean; detail?: string }
 export type WorkspaceMode = 'readonly' | 'writable';
@@ -56,8 +56,8 @@ export interface WorkspaceResult {
 }
 
 /**
- * 准备工作区：install（readonly 命中缓存时跳过）→ codegen。失败不抛异常。
- * 没有清单与锁文件、或没有 install 命令时跳过 install 与 codegen（codegen 通常依赖已安装的依赖）。
+ * 准备工作区：install（readonly 命中缓存时跳过）。失败不抛异常。没有清单与锁文件、或没有 install 命令时跳过。
+ * 程序只跑 install；codegen 之类是 commands.yaml 里给 agent 参考的命令，需要时由 worker 自己运行。
  */
 export async function prepareWorkspace(root: string, config: FlowConfig, dir: string, opts: { mode: WorkspaceMode; timeoutMs?: number; /** 强制私有依赖副本（worker 改了已有依赖，forge_private_deps） */ forcePrivate?: boolean }): Promise<WorkspaceResult> {
   const t0 = Date.now();
@@ -65,22 +65,9 @@ export async function prepareWorkspace(root: string, config: FlowConfig, dir: st
   const done = (r: Omit<WorkspaceResult, 'ms' | 'log'>): WorkspaceResult => ({ ...r, ms: Date.now() - t0, log });
   const timeout = opts.timeoutMs ?? SETUP_TIMEOUT_MS;
   const install = config.commands['install']?.trim();
-  const codegen = config.commands['codegen']?.trim();
   if (!install) return done({ ok: true, skipped: true, reason: '没有定义 install 命令' });
   const files = listFiles(dir);
   if (!hasManifest(files)) return done({ ok: true, skipped: true, reason: '工作区里还没有包清单与锁文件' });
-
-  const runCodegen = async (extra: Omit<WorkspaceResult, 'ok' | 'ms' | 'log' | 'reason'>): Promise<WorkspaceResult> => {
-    if (codegen) {
-      const r = await runShell(codegen, dir, timeout);
-      if (r.exit_code !== 0) {
-        log.push({ step: 'codegen', ok: false });
-        return done({ ok: false, ...extra, reason: `codegen 失败（退出码 ${r.exit_code}）：\n${failureSummary(r.output, 1500)}` });
-      }
-      log.push({ step: 'codegen', ok: true });
-    }
-    return done({ ok: true, ...extra });
-  };
 
   // 共享构建环境：存在时，依赖清单相同的 worktree 直接链接共享依赖目录；纯追加的先装进共享环境；有改动的退回私有副本
   let shared: WorkspaceResult['shared'];
@@ -97,7 +84,7 @@ export async function prepareWorkspace(root: string, config: FlowConfig, dir: st
       const linked = linkSharedDeps(root, config, dir);
       if (linked.length) {
         log.push({ step: 'install', ok: true, detail: `链接共享环境（${linked.join('、')}）` });
-        return runCodegen({ cached: true, shared: shared ?? 'linked' });
+        return done({ ok: true, cached: true, shared: shared ?? 'linked' });
       }
     } else if (dec.action === 'private') log.push({ step: 'install', ok: true, detail: `私有依赖副本：${dec.reason}` });
     shared = 'private';
@@ -139,7 +126,7 @@ export async function prepareWorkspace(root: string, config: FlowConfig, dir: st
       } catch { /* 缓存失败不影响本次 */ } finally { rmSync(tmp, { recursive: true, force: true }); }
     }
   }
-  return runCodegen({ ...(hit ? { cached: true } : {}), ...(shared ? { shared } : {}) });
+  return done({ ok: true, ...(hit ? { cached: true } : {}), ...(shared ? { shared } : {}) });
 }
 
 /** 准备工作区并记一条事件（type note，data.kind = workspace_prepare），供 /forge-status --metrics 汇总 */

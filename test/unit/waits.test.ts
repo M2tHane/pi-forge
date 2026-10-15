@@ -16,7 +16,7 @@ test('S0 的 impl 在 awaiting_inputs，别的 task 硬依赖它——不等它�
   assert.deepEqual(stalls(tasks), []);
 });
 
-test('等到已阻塞的软依赖生产方，报停滞（规格第 8.1 节"卡住时必须能被看见"）', () => {
+test('等到已阻塞的软依赖生产方，报停滞（"卡住时必须能被看见"）', () => {
   const tasks = [mkTask('T-001', { status: 'blocked', blocked_by: 'agent', blocked_reason: '要问你' }), mkTask('T-002', { status: 'awaiting_inputs', deps: [soft('T-001')] })];
   const r = stalls(tasks);
   assert.equal(r.length, 1);

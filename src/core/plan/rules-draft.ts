@@ -1,16 +1,13 @@
-// 来源：pi-flow src/core/rules-draft.ts @ 31f3f15
-// 规则与命令草案（S1/F1）：主 agent 在规划时于 docs/rules-draft/ 写草案，随文档合入集成分支；
-// 用户确认后由程序写入主工作区的 rules/ 与 workflow.yaml 并提交。agent 不能直接改 rules/ 与 workflow.yaml。
+// 规则草案：知识提升（/forge knowledge promote）在 docs/rules-draft/ 写草案，用户确认后由程序写入主工作区的 rules/ 并提交。
+// 项目命令不再走草案：architect 直接写仓库根目录的 commands.yaml，随代码合并（见 state/project-commands.ts）。
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { parseDocument, parse as parseYaml, isMap } from 'yaml';
-import { parseConfig } from '../state/config.ts';
 import { git, gitOk } from '../state/git.ts';
 
 export const DRAFT_DIR = 'docs/rules-draft';
 
 export interface Draft {
-  kind: 'rule' | 'commands';
+  kind: 'rule';
   /** 草案路径（相对仓库根） */
   file: string;
   /** 写入目标 */
@@ -31,46 +28,6 @@ function lineDiff(cur: string | null, next: string): string {
   return add || del ? `+${add} 行，-${del} 行` : '与现有内容相同';
 }
 
-type SharedEnvDraft = { enabled?: boolean; deps?: string[] };
-/** 命令草案：commands（名称 → 命令）、gui_commands（会打开桌面应用或浏览器窗口的项目命令，agent 不能运行）与 shared_env（共享构建环境） */
-function parseCommands(text: string, file: string): { commands: Record<string, string>; gui: string[]; sharedEnv: SharedEnvDraft | null } {
-  let raw: unknown;
-  try { raw = parseYaml(text); } catch (e) { throw new Error(`${file} 不是合法 YAML：${(e as Error).message}`); }
-  const obj = raw as { commands?: unknown; gui_commands?: unknown; shared_env?: unknown } | null;
-  const structured = !!obj && typeof obj === 'object' && ('commands' in obj || 'gui_commands' in obj || 'shared_env' in obj);
-  const cmds = structured ? obj!.commands ?? {} : raw;
-  if (!cmds || typeof cmds !== 'object' || Array.isArray(cmds)) throw new Error(`${file} 应为 commands: { 名称: "命令" } 的映射`);
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(cmds)) {
-    if (typeof v !== 'string' || !v.trim()) throw new Error(`${file} 中 ${k} 的命令必须是非空字符串`);
-    out[k] = v;
-  }
-  const g = structured ? obj!.gui_commands ?? [] : [];
-  if (!Array.isArray(g) || g.some((x) => typeof x !== 'string' || !x.trim())) throw new Error(`${file} 中 gui_commands 应为非空字符串的列表`);
-  const list = (v: unknown) => v === undefined || Array.isArray(v) && v.every((x) => typeof x === 'string' && x.trim());
-  const se = structured ? obj!.shared_env : undefined;
-  if (se !== undefined && (!se || typeof se !== 'object' || Array.isArray(se) || Object.keys(se).some((k) => k !== 'enabled' && k !== 'deps')
-    || ('enabled' in se && typeof (se as SharedEnvDraft).enabled !== 'boolean') || !list((se as SharedEnvDraft).deps))) {
-    throw new Error(`${file} 中 shared_env 应为 { enabled: true|false, deps: [依赖目录] }`);
-  }
-  return { commands: out, gui: (g as string[]).map((x) => x.trim()), sharedEnv: (se as SharedEnvDraft | undefined) ?? null };
-}
-
-/** 命令草案是完整的命令表：草案里没有的命令（例如模板默认的 typecheck、lint）一并去掉，不留下项目里跑不了的命令 */
-function setCommands(doc: ReturnType<typeof parseDocument>, commands: Record<string, string>): void {
-  const node = doc.get('commands', true);
-  if (isMap(node)) for (const k of Object.keys(node.toJSON() as Record<string, unknown>)) if (!(k in commands)) doc.deleteIn(['commands', k]);
-  for (const [k, v] of Object.entries(commands)) doc.setIn(['commands', k], v);
-}
-
-/** 运行中的配置换成新的命令表（同样去掉草案里没有的） */
-export function replaceCommands(target: Record<string, string>, next: Record<string, string>): void {
-  for (const k of Object.keys(target)) if (!(k in next)) delete target[k];
-  Object.assign(target, next);
-}
-
-const currentWorkflow = (root: string) => (parseYaml(readFileSync(path.join(root, 'workflow.yaml'), 'utf8')) ?? {}) as { commands?: Record<string, string>; gui_commands?: string[]; shared_env?: SharedEnvDraft };
-
 /** 列出某个 git 引用（通常是集成分支）上的草案，并与主工作区现状比较 */
 export function listDrafts(root: string, ref: string): Draft[] {
   if (!gitOk(root, ['rev-parse', '--verify', '-q', ref])) return [];
@@ -79,20 +36,7 @@ export function listDrafts(root: string, ref: string): Draft[] {
   for (const file of files) {
     const content = git(root, ['show', `${ref}:${file}`]);
     const base = path.posix.basename(file);
-    if (base === 'commands.yaml' || base === 'commands.yml') {
-      const next = parseCommands(content, file);
-      const wf = currentWorkflow(root);
-      const cur = wf.commands ?? {};
-      const changes = Object.entries(next.commands).filter(([k, v]) => cur[k] !== v).map(([k, v]) => `${k}：${cur[k] ? `"${cur[k]}" → ` : '新增 '}"${v}"`);
-      const removed = Object.keys(cur).filter((k) => !(k in next.commands));
-      if (removed.length) changes.push(`去掉 ${removed.join('、')}`);
-      const gui = next.gui.filter((c) => !(wf.gui_commands ?? []).includes(c));
-      if (gui.length) changes.push(`agent 不能运行（会打开界面）：${gui.map((c) => `"${c}"`).join('、')}`);
-      if (next.sharedEnv && JSON.stringify(next.sharedEnv) !== JSON.stringify(wf.shared_env ?? null)) {
-        changes.push(`共享构建环境：${next.sharedEnv.enabled === false ? '关闭' : '开启'}；依赖目录 ${(next.sharedEnv.deps ?? []).join('、') || '默认'}`);
-      }
-      out.push({ kind: 'commands', file, target: 'workflow.yaml', content, current: null, summary: changes.length ? changes.join('；') : '与现有命令相同' });
-    } else if (base.endsWith('.md')) {
+    if (base.endsWith('.md')) {
       const target = `rules/${base}`;
       const abs = path.join(root, target);
       const current = existsSync(abs) ? readFileSync(abs, 'utf8') : null;
@@ -102,52 +46,11 @@ export function listDrafts(root: string, ref: string): Draft[] {
   return out.filter((d) => !/相同$/.test(d.summary));
 }
 
-/**
- * 命令草案的问题（第六轮 7.3：原来只在批准时报错）：不是合法 YAML、格式不对、合并后缺 test、合并后的 workflow.yaml 校验不通过。
- * 规划阶段闸门据此不通过，主 agent 在规划时就改好。
- */
-export function commandsDraftProblems(root: string, ref: string): string[] {
-  const files = gitOk(root, ['rev-parse', '--verify', '-q', ref])
-    ? git(root, ['ls-tree', '-r', '--name-only', ref, '--', DRAFT_DIR]).split('\n').filter((f) => /\/commands\.ya?ml$/.test(f))
-    : [];
-  const out: string[] = [];
-  for (const file of files) {
-    let draft: ReturnType<typeof parseCommands>;
-    try { draft = parseCommands(git(root, ['show', `${ref}:${file}`]), file); } catch (e) { out.push((e as Error).message); continue; }
-    const doc = parseDocument(readFileSync(path.join(root, 'workflow.yaml'), 'utf8'));
-    setCommands(doc, draft.commands);
-    if (draft.sharedEnv) doc.set('shared_env', draft.sharedEnv);
-    const merged = (doc.toJS() as { commands?: Record<string, string> }).commands ?? {};
-    if (!merged['test']?.trim()) out.push(`${file} 缺少 test 命令（合并时要跑全量测试）`);
-    try { parseConfig(doc.toString()); } catch (e) { out.push(`${file} 合并进 workflow.yaml 后校验不通过：${(e as Error).message.slice(0, 500)}`); }
-  }
-  return out;
-}
-
-/** 写入选中的草案并提交；返回新的命令表（若命令有变化），供运行中的引擎更新配置 */
-export function applyDrafts(root: string, drafts: Draft[], flowId: string): { applied: string[]; commands: Record<string, string> | null; sharedEnv: SharedEnvDraft | null } {
-  if (!drafts.length) return { applied: [], commands: null, sharedEnv: null };
+/** 写入选中的规则草案并提交 */
+export function applyDrafts(root: string, drafts: Draft[], flowId: string): { applied: string[] } {
+  if (!drafts.length) return { applied: [] };
   const touched: string[] = [];
-  let commands: Record<string, string> | null = null;
-  let sharedEnv: SharedEnvDraft | null = null;
-  for (const d of drafts.filter((x) => x.kind === 'commands')) {
-    const file = path.join(root, 'workflow.yaml');
-    const doc = parseDocument(readFileSync(file, 'utf8'));
-    const node = doc.get('commands', true);
-    if (!isMap(node)) throw new Error('workflow.yaml 缺少 commands 映射');
-    const draft = parseCommands(d.content, d.file);
-    setCommands(doc, draft.commands);
-    // gui_commands 只增不减：草案里列出的会打开界面的命令加进去
-    const gui = [...new Set([...((doc.toJS() as { gui_commands?: string[] }).gui_commands ?? []), ...draft.gui])];
-    if (gui.length) doc.set('gui_commands', gui);
-    if (draft.sharedEnv) { doc.set('shared_env', draft.sharedEnv); sharedEnv = draft.sharedEnv; }
-    const text = doc.toString();
-    parseConfig(text);
-    writeFileSync(file, text);
-    commands = (parseYaml(text) as { commands: Record<string, string> }).commands;
-    touched.push('workflow.yaml');
-  }
-  for (const d of drafts.filter((x) => x.kind === 'rule')) {
+  for (const d of drafts) {
     if (d.content.split('\n').length > 120) throw new Error(`${d.file} 超过 120 行；规则越长遵守越差，请在规划时精简`);
     mkdirSync(path.join(root, 'rules'), { recursive: true });
     writeFileSync(path.join(root, d.target), d.content.endsWith('\n') ? d.content : `${d.content}\n`);
@@ -155,9 +58,9 @@ export function applyDrafts(root: string, drafts: Draft[], flowId: string): { ap
   }
   git(root, ['add', '--', ...touched]);
   if (!gitOk(root, ['diff', '--cached', '--quiet', '--', ...touched])) {
-    git(root, ['commit', '-q', '--no-verify', '-m', `pi-forge: 应用 ${flowId} 的规则与命令草案`, '--', ...touched], { engineIdentity: true });
+    git(root, ['commit', '-q', '--no-verify', '-m', `pi-forge: 应用 ${flowId} 的规则草案`, '--', ...touched], { engineIdentity: true });
   }
-  return { applied: touched, commands, sharedEnv };
+  return { applied: touched };
 }
 
 export function formatDrafts(drafts: Draft[]): string {

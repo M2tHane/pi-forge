@@ -1,8 +1,8 @@
-// 第 11.1 节：阶段验收覆盖率（矩阵、渲染、报告提交、补测轮次）与实施阶段程序检查。
+// 阶段验收覆盖率（矩阵、渲染、报告提交、补测轮次）与实施阶段程序检查。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { coverageMatrix, createCoverageRounds, renderCoverageMarkdown, stageCoverage, writeCoverageReport } from '../../src/core/acceptance/coverage.ts';
-import { createCoverageGapRound, gateFailed, gateIssues, MAX_GATE_ROUNDS, runImplementationChecks } from '../../src/core/stage/gates.ts';
+import { coverageMatrix, renderCoverageMarkdown, stageCoverage, writeCoverageReport } from '../../src/core/acceptance/coverage.ts';
+import { gateFailed, gateIssues, runImplementationChecks } from '../../src/core/stage/gates.ts';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import type { Requirement } from '../../src/core/spec/spec.ts';
@@ -76,28 +76,13 @@ test('writeCoverageReport：提交到 docs/qa/<stage>.md，内容不变不再提
   } finally { p.cleanup(); }
 });
 
-test('createCoverageGapRound：记一轮 coverage，与门禁修复共用轮次上限', async () => {
-  const p = await project();
-  try {
-    const gap = [{ req: 'REQ-001', ac: 'REQ-001.AC2', owner: 'T-001', files: [] }];
-    const r = await createCoverageGapRound(p.store, p.flowId, gap);
-    assert.deepEqual(r.tasks, ['T-001.fx-1']);
-    assert.deepEqual(p.store.readFlow(p.flowId).gate_rounds?.map((x) => [x.stage, x.command, x.tasks]), [['S1', 'coverage', ['T-001.fx-1']]]);
-    await p.store.addGateRound(p.flowId, { stage: 'S1', command: 'test', tasks: [], at: new Date().toISOString() }, [], {});
-    assert.equal(p.store.readFlow(p.flowId).gate_rounds!.length, MAX_GATE_ROUNDS);
-    const last = await createCoverageGapRound(p.store, p.flowId, gap);
-    assert.deepEqual(last.tasks, []);
-    assert.match(last.reason ?? '', /2 轮/);
-  } finally { p.cleanup(); }
-});
-
-test('runImplementationChecks：命令通过后写覆盖报告并返回缺口，不迁移阶段', async () => {
+test('runImplementationChecks：命令通过后写覆盖报告；缺口只报告、不拦门禁，不迁移阶段', async () => {
   const p = await project();
   try {
     const before = p.store.readFlow(p.flowId);
     const r = await runImplementationChecks(p.dir, p.store, p.config, p.flowId);
-    assert.equal(r.passed, false);
-    assert.deepEqual(r.reasons, ['覆盖率缺口：REQ-001.AC2']);
+    assert.equal(r.passed, true);
+    assert.deepEqual(r.reasons, []);
     assert.equal(r.failed, undefined);
     assert.deepEqual(r.coverage?.gaps.map((g) => g.ac), ['REQ-001.AC2']);
     const branch = before.integration_branch;
@@ -158,25 +143,3 @@ test('gateFailed：生成 .fx-n（验收测试失败时 writes 为 impl 的 writ
   } finally { p.cleanup(); }
 });
 
-test('createCoverageGapRound：给 impl 建 .fx-n，写自己的验收目录', async () => {
-  const p = await project();
-  try {
-    const gaps = [
-      { req: 'REQ-001', ac: 'REQ-001.AC2', text: '密码错误', owner: 'T-001', files: [] },
-      { req: 'REQ-005', ac: 'REQ-005.AC1', files: [] },
-    ];
-    const r = await createCoverageGapRound(p.store, p.flowId, gaps);
-    assert.deepEqual(r.tasks, ['T-001.fx-1']);
-    assert.deepEqual(r.unowned.map((x) => x.ac), ['REQ-005.AC1']);
-    const t = p.store.readTask(p.flowId, 'T-001.fx-1');
-    assert.deepEqual([t.kind, t.role, t.for_task, t.title, t.fork_from_task], ['fix', 'worker', 'T-001', '补齐 AC 编号的验收测试', 'T-001']);
-    assert.ok(t.writes.includes('tests/acceptance/T-001/**'));
-    assert.ok(t.writes.includes('src/server/t-001/**'), '补测时也可以改实现：writes 同 impl');
-    assert.deepEqual(t.ac, ['REQ-001.AC2']);
-    assert.match(p.store.readHandoff(p.flowId, 'T-001.fx-1'), /补齐验收测试[\s\S]*REQ-001\.AC2：密码错误/);
-    assert.deepEqual(p.store.readFlow(p.flowId).gate_rounds?.map((x) => [x.command, x.tasks]), [['coverage', ['T-001.fx-1']]]);
-    // 上一个 .fx-n 还没结束：跳过
-    const again = await createCoverageRounds(p.store, p.flowId, gaps, 'engine');
-    assert.deepEqual([again.tasks, again.skipped], [[], ['T-001']]);
-  } finally { p.cleanup(); }
-});

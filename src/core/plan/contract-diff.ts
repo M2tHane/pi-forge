@@ -1,4 +1,4 @@
-// 契约只能追加的结构化检查（规格第 12.1、12.2 节）。contractDiff 是纯函数；contractViolationsAt 只负责从 git 与 worktree 读两版。
+// 契约只能追加的结构化检查。contractDiff 是纯函数；contractViolationsAt 只负责从 git 与 worktree 读两版。
 //
 // 判定要点：
 // - 逐路径比较新旧两版：旧版有的键必须还在且值相同；新版新增的键只在"集合"里允许

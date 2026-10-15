@@ -1,4 +1,3 @@
-// 来源：pi-flow src/tools/tool-common.ts @ 31f3f15
 // subagent 工具共用的部分：run 环境、工具上下文、错误类型、run token 与租约校验。
 import type { FlowConfig } from '../core/state/config.ts';
 import { StateError, type StateStore } from '../core/state/state-store.ts';

@@ -1,4 +1,3 @@
-// 来源：pi-flow test/fixtures/fake-llm/provider.ts @ 31f3f15
 // Pi 扩展：注册假 LLM provider（provider=fakellm），模型 id 即脚本名。由 FAKE_LLM_URL 指定服务地址。
 import { readdirSync } from 'node:fs';
 import path from 'node:path';

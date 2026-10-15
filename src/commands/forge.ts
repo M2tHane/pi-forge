@@ -1,4 +1,3 @@
-// 来源：pi-flow src/commands/flow.ts @ 31f3f15（改名）
 // /forge 子命令的业务实现（不依赖 Pi）：init、doctor、resume、status、next。M6、M7 在此扩展 approve、unblock、--cost。
 import { formatTiming, timingReport } from '../core/engine/timing.ts';
 import { DEFAULT_CHECKPOINT_MINUTES, listCheckpoints, restoreCheckpoint } from '../core/state/checkpoints.ts';
@@ -20,7 +19,7 @@ import { readFileSync } from 'node:fs';
 import { renderCostView, renderDetail, renderMetricsView } from '../core/ops/status-detail.ts';
 import { deliveryReport, sStageIds, stageSignoff } from '../core/stage/signoff.ts';
 import { renderStatus, visibleFlows } from '../core/ops/status-view.ts';
-import { applyDrafts, formatDrafts, listDrafts, replaceCommands, type Draft } from '../core/plan/rules-draft.ts';
+import { applyDrafts, formatDrafts, listDrafts, type Draft } from '../core/plan/rules-draft.ts';
 import { findSessionFile, formatRunDetail, summarizeSession } from '../core/engine/session-log.ts';
 import { budgetState, formatBudget } from '../core/insight/cost-control.ts';
 import { KnowledgeError, acceptCandidate, formatKnowledgeList, markPromoted, promoteToDraft, retireEntries, searchKnowledge } from '../core/engine/knowledge.ts';
@@ -84,7 +83,7 @@ export const FLOW_USAGE = [
   '  /forge answer [<任务>]   回答阻塞任务提出的问题（弹出输入框），回答后任务继续',
   '  /forge unblock <任务> ["<回答>"] [--reset]   解除阻塞；--reset 清零对应失败计数',
   '  /forge gate              闸门失败并修复后，重跑当前阶段闸门',
-  '  /forge rules [apply [all|<草案文件>...]]   查看或应用规则与命令草案（docs/rules-draft/，来自规划或知识提升）',
+  '  /forge rules [apply [all|<草案文件>...]]   查看或应用规则草案（docs/rules-draft/，来自知识提升）',
   '  /forge models [resume <模型>|all]   查看因额度用完、限流而暂停的模型；resume 立即恢复派发',
   '  /forge budget [tokens|cost|minutes <数值>]   查看或设置本流程的预算（minutes 不含等你的时间）；超出后暂停派发新任务',
   '  /forge checkpoint [restore <任务>]  列出运行中自动拍的工作区检查点；工作区被改坏时恢复',
@@ -341,8 +340,8 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       const drafts = allDrafts(env.root, h, flowId);
       if (argv[1] !== 'apply') {
         return drafts.length
-          ? `待应用的规则与命令草案${flowId ? `（${flowId} 与主分支）` : '（主分支）'}：\n${formatDrafts(drafts)}\n应用：/forge rules apply all，或 /forge rules apply <草案文件>...`
-          : '没有待应用的规则或命令草案。';
+          ? `待应用的规则草案${flowId ? `（${flowId} 与主分支）` : '（主分支）'}：\n${formatDrafts(drafts)}\n应用：/forge rules apply all，或 /forge rules apply <草案文件>...`
+          : '没有待应用的规则草案。';
       }
       const picks = argv.slice(2);
       const chosen = !picks.length || picks.includes('all') ? drafts : drafts.filter((d) => picks.includes(d.file) || picks.includes(path.basename(d.file)));
@@ -605,7 +604,7 @@ export async function runFlowChange(args: string, env: CommandEnv): Promise<stri
   return lines.join('\n');
 }
 
-/** /forge-fix "<问题>" 或 /forge-fix --from <文件>（规格第 13.2、13.4 节） */
+/** /forge-fix "<问题>" 或 /forge-fix --from <文件> */
 export async function runFlowFix(args: string, env: CommandEnv): Promise<string> {
   const argv = splitArgs(args);
   if (argv[0] === 'help' || argv[0] === '--help') return FIX_USAGE;
@@ -684,9 +683,8 @@ function allDrafts(root: string, h: EngineHandle, flowId: string | null): Draft[
 
 async function applyAndReport(env: CommandEnv, h: EngineHandle, flowId: string | null, drafts: Draft[]): Promise<string> {
   const r = applyDrafts(env.root, drafts, flowId ?? '知识库');
-  if (r.commands) replaceCommands(h.config.raw.commands, r.commands);
   const promoted = await markPromoted(h.store, drafts.map((d) => d.file));
-  return `已应用：${r.applied.join('、')}，并已提交。之后派发的任务使用新的规则${r.commands ? '与命令' : ''}（子进程提示的稳定前缀变化，模型服务的提示缓存会失效一次）。${promoted.length ? `\n知识 ${promoted.join('、')} 已成为规则，不再作为知识注入。` : ''}`;
+  return `已应用：${r.applied.join('、')}，并已提交。之后派发的任务使用新的规则（子进程提示的稳定前缀变化，模型服务的提示缓存会失效一次）。${promoted.length ? `\n知识 ${promoted.join('、')} 已成为规则，不再作为知识注入。` : ''}`;
 }
 
 /** /forge run [<run_id>]：某次运行的工具调用摘要与最后的回复；不给 id 时列出最近的运行 */

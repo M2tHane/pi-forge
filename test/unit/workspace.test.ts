@@ -1,4 +1,4 @@
-// F1：工作区的依赖准备（install → codegen，readonly 走缓存，writable 直接 install）。
+// F1：工作区的依赖准备（只跑 install，readonly 走缓存，writable 直接 install；codegen 等是给 agent 参考的命令，程序不跑）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -30,8 +30,8 @@ function setup(files: Record<string, string>) {
 
 function configWith(commands: Record<string, string>) {
   const c = parseConfig(TEST_YAML);
-  for (const k of ['install', 'codegen']) delete c.raw.commands[k];
-  Object.assign(c.raw.commands, commands);
+  for (const k of ['install', 'codegen']) delete c.raw.commands![k];
+  Object.assign(c.raw.commands!, commands);
   c.raw.shared_env = { deps: ['node_modules'] };
   return c;
 }
@@ -63,7 +63,7 @@ test('没有 install 命令：跳过', async () => {
   } finally { p.cleanup(); }
 });
 
-test('readonly：第二次命中缓存（依赖文件与缓存是同一个 inode），跳过 install；codegen 照跑', async () => {
+test('readonly：第二次命中缓存（依赖文件与缓存是同一个 inode），跳过 install；codegen 不跑', async () => {
   const p = setup(PKG);
   try {
     const log = path.join(p.base, 'cmd.log');
@@ -73,7 +73,7 @@ test('readonly：第二次命中缓存（依赖文件与缓存是同一个 inode
     const ws2 = p.fresh();
     const r2 = await prepareWorkspace(p.root, config, ws2, { mode: 'readonly' });
     assert.deepEqual([r2.ok, r2.cached], [true, true]);
-    assert.equal(readFileSync(log, 'utf8'), 'install\ncodegen\ncodegen\n');
+    assert.equal(readFileSync(log, 'utf8'), 'install\n');
     const entries = readdirSync(depsCacheRoot(p.root)).filter((n) => !n.includes('.tmp-'));
     assert.equal(entries.length, 1);
     const cachedFile = path.join(depsCacheRoot(p.root), entries[0]!, 'node_modules/dep/index.js');
@@ -128,23 +128,18 @@ test('writable：每次都运行 install，不产生缓存，也不用缓存', a
   } finally { p.cleanup(); }
 });
 
-test('codegen 在 install 之后运行；失败各自返回 ok:false 与原因，不抛异常', async () => {
+test('只跑 install、不跑 codegen；install 失败返回 ok:false 与原因，不抛异常', async () => {
   const p = setup(PKG);
   try {
     const ok = configWith({ install: 'echo i > order.txt', codegen: 'echo c >> order.txt' });
     const r = await prepareWorkspace(p.root, ok, p.ws, { mode: 'writable' });
     assert.equal(r.ok, true);
-    assert.equal(readFileSync(path.join(p.ws, 'order.txt'), 'utf8'), 'i\nc\n');
-    assert.deepEqual(r.log.map((l) => l.step), ['install', 'codegen']);
+    assert.equal(readFileSync(path.join(p.ws, 'order.txt'), 'utf8'), 'i\n');
+    assert.deepEqual(r.log.map((l) => l.step), ['install']);
 
-    const badInstall = await prepareWorkspace(p.root, configWith({ install: 'echo 网络不通 >&2; exit 7', codegen: 'echo c > ran.txt' }), p.fresh(), { mode: 'readonly' });
+    const badInstall = await prepareWorkspace(p.root, configWith({ install: 'echo 网络不通 >&2; exit 7' }), p.fresh(), { mode: 'readonly' });
     assert.equal(badInstall.ok, false);
     assert.match(badInstall.reason ?? '', /install 失败（退出码 7）[\s\S]*网络不通/);
-
-    const w = p.fresh();
-    const badCodegen = await prepareWorkspace(p.root, configWith({ install: 'true', codegen: 'echo 生成失败 >&2; exit 3' }), w, { mode: 'writable' });
-    assert.equal(badCodegen.ok, false);
-    assert.match(badCodegen.reason ?? '', /codegen 失败（退出码 3）[\s\S]*生成失败/);
   } finally { p.cleanup(); }
 });
 

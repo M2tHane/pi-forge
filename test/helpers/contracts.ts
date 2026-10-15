@@ -139,7 +139,6 @@ tasks:
     writes: [server/src/team/**, web/src/pages/team/**, package.json]
     produces: [table:teams, api:GET /api/teams, page:/teams, fn:team#currentTeam, error:FORBIDDEN]
     requires: []
-    test_interface: [HTTP /api/teams, page /teams]
   - id: T-003
     stage: S1
     module: datasource
@@ -151,6 +150,5 @@ tasks:
     shared: [server/src/routes.ts]
     produces: [table:datasources, api:POST /api/datasources, api:GET /api/datasources, error:DATASOURCE_NAME_TAKEN, page:/datasources]
     requires: [table:teams, ~api:GET /api/teams, fn:team#currentTeam]
-    test_interface: [HTTP /api/datasources*, page /datasources]
     manual_checks: [新增后列表第一行出现新项]
 `;

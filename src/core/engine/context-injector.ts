@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/context-injector.ts @ 31f3f15（M1 改编）
 // 每轮注入程序状态与主会话可执行的下一步；主工作区改动检测保留。
 import { P1_STAGE, planApprovalSummary } from '../plan/plan-flow.ts';
 import type { StateStore } from '../state/state-store.ts';

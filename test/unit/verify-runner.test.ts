@@ -1,4 +1,3 @@
-// 来源：pi-flow test/unit/verify-runner.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detectToolMissing, evidenceText, failureSummary } from '../../src/core/workspace/verify-runner.ts';

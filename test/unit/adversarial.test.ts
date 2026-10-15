@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/unit/adversarial.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
@@ -11,8 +10,7 @@ import { TEST_YAML } from '../helpers/config.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import { mkTask } from '../helpers/tasks.ts';
 
-const config = parseConfig(TEST_YAML.replace(/max_violations_per_run: \d+/, 'max_violations_per_run: 100'));
-const strict = parseConfig(TEST_YAML.replace(/max_violations_per_run: \d+/, 'max_violations_per_run: 3'));
+const config = parseConfig(TEST_YAML);
 const now = () => new Date('2026-01-01T00:00:00Z');
 
 async function setup() {
@@ -85,28 +83,22 @@ test('对抗：orchestrator 自己写代码被阻断并记录', async () => {
   } finally { cleanup(); }
 });
 
-test('违规达到上限：结束 run 并计一次失败（第六轮 B5），任务留在 in_progress 等重新派发；失败次数用完才转 blocked', async () => {
+test('被拦下的操作只记账：次数再多也不结束 run，任务状态不变', async () => {
   const { store, flow, wt, dir, cleanup } = await setup();
   try {
-    const ctx: GuardContext = { config: strict, role: 'worker', cwd: wt, workspaceRoot: wt, mainRoot: dir, writes: ['src/server/**'] };
+    const ctx: GuardContext = { config, role: 'worker', cwd: wt, workspaceRoot: wt, mainRoot: dir, writes: ['src/server/**'] };
     const run = { flow: flow.id, task: 'T-001', run: 'r-1' };
-    const bad = { toolName: 'bash', input: { command: 'rm -rf src' } };
-    const r1 = await enforceToolCall(bad, ctx, store, run);
-    const r2 = await enforceToolCall(bad, ctx, store, run);
-    assert.ok(!r1.allow && !r1.terminate && !r2.allow && !r2.terminate);
-    if (!r2.allow) assert.match(r2.reason, /2\/3/);
-    const r3 = await enforceToolCall(bad, ctx, store, run);
-    assert.ok(!r3.allow && r3.terminate);
-    if (!r3.allow) assert.match(r3.reason, /结束并计一次失败/);
+    const bad = { toolName: 'bash', input: { command: 'git reset --hard HEAD~1' } };
+    for (let i = 0; i < 6; i++) assert.equal((await enforceToolCall(bad, ctx, store, run)).allow, false);
     const t = store.readTask(flow.id, 'T-001');
     assert.equal(t.status, 'in_progress');
-    assert.equal(t.attempts, 1);
-    assert.match(t.last_failure ?? '', /被拦下的操作达到 3 次[\s\S]*rm/);
-    assert.equal(t.lease, null);
-    assert.equal(store.readRun('r-1').outcome, 'killed');
+    assert.equal(t.attempts, 0);
+    assert.ok(t.lease);
+    assert.equal(t.violations, 6);
+    assert.equal(store.readRun('r-1').outcome, null);
     // 放行的调用不产生违规
     const okr = await enforceToolCall({ toolName: 'write', input: { path: 'src/server/a.ts', content: '' } }, ctx, store, run);
     assert.equal(okr.allow, true);
-    assert.equal(store.readEvents().filter((e) => e.type === 'violation').length, 3);
+    assert.equal(store.readEvents().filter((e) => e.type === 'violation').length, 6);
   } finally { cleanup(); }
 });

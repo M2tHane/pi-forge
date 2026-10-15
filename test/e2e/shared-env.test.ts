@@ -46,9 +46,8 @@ test('阶段开始建立共享环境；任务 worktree 链接依赖（不再 ins
     await a.call('forge_claim');
     seen[`${id}:link`] = (await a.call('bash', { command: 'test -L node_modules && echo LINK || echo REAL' })).text.trim();
     if (id === 'T-001') {
-      // guard：依赖目录是共享链接时不允许自己 install
-      const r = await a.call('bash', { command: 'pnpm add left-pad' });
-      assert.equal(r.ok, false);
+      // guard：依赖目录是共享链接时用包管理器改依赖，放行但提醒用 forge_add_dependency（--help 不会真的装）
+      const r = await a.call('bash', { command: 'pnpm add --help > /dev/null 2>&1 || true' });
       assert.match(r.text, /forge_add_dependency/);
     }
     if (id === 'T-002') {

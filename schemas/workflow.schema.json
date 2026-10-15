@@ -6,7 +6,6 @@
     "version",
     "project",
     "main_branch",
-    "commands",
     "limits",
     "models",
     "modes",
@@ -42,7 +41,6 @@
         "max_parallel",
         "max_attempts",
         "lease_minutes",
-        "max_violations_per_run",
         "max_task_files",
         "fix_max_files"
       ],
@@ -125,14 +123,6 @@
         "max_continuations": {
           "type": "integer",
           "minimum": 0
-        },
-        "module_runs": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "module_minutes": {
-          "type": "integer",
-          "minimum": 1
         },
         "stall_minutes": {
           "type": "integer",

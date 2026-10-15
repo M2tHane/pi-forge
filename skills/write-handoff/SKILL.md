@@ -3,8 +3,6 @@ name: write-handoff
 description: 用 forge_note 写 handoff：做到哪、下一步、踩过的坑、未决问题
 ---
 
-> pi-forge：从 pi-flow skills/write-handoff 复用，只改了路径与工具名。
-
 # 写 handoff
 
 调用 forge_note，四段，每段一两句：

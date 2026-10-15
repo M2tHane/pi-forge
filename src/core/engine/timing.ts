@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/timing.ts @ 31f3f15
 // 耗时分布（第六轮 A1）：时间花在哪里——各阶段（进行中、闸门检查、等你审批）、子进程按角色与结果、合并排队与合并验证、
 // 任务阻塞，以及用时最长的任务。全部由事件与 runs 现算；/forge-status --timing 查看（--json 输出 JSON）。
 import type { StateStore } from '../state/state-store.ts';

@@ -1,6 +1,5 @@
-// 逐任务审查的流程部分（规格第 10 节）：决定是否审查、创建 .rv / .rv-n、处理审查结论（通过、打回、轮数用尽）、把 suggest 记入集成分支。
+// 逐任务审查的流程部分：决定是否审查、创建 .rv / .rv-n、处理审查结论（通过、打回、轮数用尽）、把 suggest 记入集成分支。
 // 结论存为 .rv task 的 evidence（review-input.json、review-report.json、review-confirm.json），不新增 schema；状态只经 StateStore 写入。
-// 机制参考 pi-flow 5100d6b^:src/core/stage-review.ts（第二轮只确认）。
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
@@ -16,7 +15,7 @@ import { acTexts, effectiveSpec } from '../spec/spec.ts';
 import {
   CONTRACT_SNIPPET_MAX, GLOSSARY_MAX, buildReviewBrief, contractFilesFor, fitSnippets, mustHandoff, mustOf, nextReviewId, reviewMode, reviewPolicy,
   reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, truncateDiff,
-  type ConfirmItem, type Downgraded, type ReviewMode,
+  type ConfirmItem, type ReviewMode,
 } from './review.ts';
 
 export const REVIEW_INPUT = 'review-input.json';
@@ -27,7 +26,7 @@ export const SUGGESTIONS_PATH = 'docs/review/suggestions.md';
 
 /** 创建 .rv 时存下的输入：确认轮的上一轮 must 清单，以及这一轮审查的提交范围 */
 export interface ReviewInputFile { round: number; base: string; head: string; prior_must: ReviewFinding[] }
-export interface ReviewReportFile { round: number; requested: 'pass' | 'changes'; verdict: 'pass' | 'changes'; issues: ReviewFinding[]; downgraded: Downgraded[]; head: string }
+export interface ReviewReportFile { round: number; requested: 'pass' | 'changes'; verdict: 'pass' | 'changes'; issues: ReviewFinding[]; head: string }
 export interface ReviewConfirmFile { round: number; items: ConfirmItem[]; unresolved: string[]; head: string }
 
 export function readReviewEvidence<T>(store: StateStore, flowId: string, taskId: string, name: string): T | null {
@@ -52,7 +51,7 @@ export function unresolvedAfter(store: StateStore, flowId: string, rvId: string)
 /**
  * 预检通过后是否需要审查，以及强度（impl 一律审查，审查者运行本 task 自己的测试）。
  * 已有审查记录时：上一轮有未解决的 must 则继续确认轮（沿用强度）；上一轮通过后又返工（例如合并冲突由 worker 解决）要重新审查，因为合并时不再跑测试。
- * 没有记录时按第 10.1 节推导。
+ * 没有记录时按 review.ts 的规则推导。
  */
 export function decideReview(store: StateStore, config: FlowConfig, flowId: string, t: TaskFile): ReviewMode {
   const tasks = store.listTasks(flowId);

@@ -1,5 +1,5 @@
-// 规格 v3.2 的纯函数解析与检查；参考 pi-flow src/core/requirements.ts @ 31f3f15
-// 的 AC 提取方式，REQ、页面、权限及叠加规则按新规格实现，不复用 IO。
+// 规格的纯函数解析与检查（spec-lint）。
+// 只有程序要靠它解析的格式算错误（需求标题与编号、AC 编号）；GWT 写法、占位词、页面、权限表、术语格式都只给警告。
 export interface SpecFiles { requirements: string; screens: string; permissions: string; glossary: string }
 export interface LintIssue { file: string; line?: number; rule: string; message: string }
 export interface LintResult { errors: LintIssue[]; warnings: LintIssue[] }
@@ -57,6 +57,8 @@ export interface EffectiveSpec {
 export const MAX_AC_PER_REQ_HINT = 6;
 export const UNTESTABLE_WORDS = ['快速', '友好', '合理'] as const;
 export const REQUIRED_SCREEN_STATES = ['加载', '空', '错误', '无权限'] as const;
+/** 只警告、不拦提交的规则 */
+export const WARNING_RULES: ReadonlySet<string> = new Set(['ac-gwt', 'placeholder', 'permissions-table', 'screen-format', 'screen-req', 'screen-state', 'screen-na', 'glossary-format']);
 const SPEC_DIR = 'docs/spec/';
 const splitLines = (md: string): string[] => md.replace(/\r\n?/g, '\n').split('\n');
 const names = (text: string): string[] => text.split(/[、,，;；]/).map((s) => s.trim()).filter(Boolean);
@@ -193,7 +195,7 @@ function parseScreens(lines: string[], file: string, offset: number, issues: Lin
   return screens;
 }
 
-function parsePermissions(lines: string[], file: string, offset: number, issues: LintIssue[], roleRefs: { role: string; file: string; line: number }[]): SpecPermission[] {
+function parsePermissions(lines: string[], file: string, offset: number, issues: LintIssue[]): SpecPermission[] {
   const permissions: SpecPermission[] = [];
   let header: string[] | undefined;
   let found = false;
@@ -216,7 +218,6 @@ function parsePermissions(lines: string[], file: string, offset: number, issues:
         return;
       }
       header = row;
-      row.slice(1).forEach((role) => roleRefs.push({ role, file, line }));
       return;
     }
     if (row.length !== header.length || row.some((cell) => !cell)) {
@@ -225,7 +226,7 @@ function parsePermissions(lines: string[], file: string, offset: number, issues:
     }
     permissions.push({ resource: row[0]!, grants: Object.fromEntries(header.slice(1).map((role, i) => [role, row[i + 1]!])), file, line });
   });
-  if (!found) issues.push(issue(file, offset + 1, 'permissions-table', '无法解析权限表，请填写 | 资源 · 操作 | 角色 | 表头及权限矩阵。'));
+  if (!found && lines.some((l) => l.trim() && !/^#/.test(l.trim()))) issues.push(issue(file, offset + 1, 'permissions-table', '无法解析权限表，请填写 | 资源 · 操作 | 角色 | 表头及权限矩阵。'));
   return permissions;
 }
 
@@ -251,7 +252,7 @@ function parseGlossary(md: string, file: string, issues: LintIssue[]): GlossaryT
   return terms;
 }
 
-/** 解析四份规格并做交叉检查（页面引用的 REQ 必须存在、权限矩阵的角色必须在术语表里）。 */
+/** 解析四份规格并做交叉检查（页面引用的 REQ 是否存在）。screens.md 可以为空（没有界面的项目）。 */
 export function effectiveSpec(base: SpecFiles): EffectiveSpec {
   const issues: LintIssue[] = [];
   const warnings: LintIssue[] = [];
@@ -259,7 +260,6 @@ export function effectiveSpec(base: SpecFiles): EffectiveSpec {
   const usedIds = new Set<string>();
   const screens = new Map<string, SpecScreen>();
   const permissions = new Map<string, SpecPermission>();
-  const roleRefs: { role: string; file: string; line: number }[] = [];
   let maxId = 0;
   const scanPlaceholders = (content: string, file: string): void => {
     splitLines(content).forEach((line, index) => {
@@ -292,13 +292,14 @@ export function effectiveSpec(base: SpecFiles): EffectiveSpec {
   if (!baseReqs.reqs.length) issues.push(issue(`${SPEC_DIR}requirements.md`, 1, 'req-format', '基线至少填写一条 ### REQ-001 标题 [MVP] 需求。'));
   applyRequirements(baseReqs);
   parseScreens(splitLines(base.screens), `${SPEC_DIR}screens.md`, 0, issues).forEach((screen) => screens.set(screen.route, screen));
-  applyPermissions(parsePermissions(splitLines(base.permissions), `${SPEC_DIR}permissions.md`, 0, issues, roleRefs));
+  applyPermissions(parsePermissions(splitLines(base.permissions), `${SPEC_DIR}permissions.md`, 0, issues));
   for (const screen of screens.values()) for (const id of screen.reqs) {
     if (!reqs.has(id)) issues.push(issue(screen.file, screen.reqLine ?? screen.line, 'screen-req', `页面 ${screen.name} 引用了不存在的 ${id}，请改为生效规格中的 REQ 编号。`));
   }
-  const roles = new Set(glossary.map((term) => term.name));
-  for (const ref of roleRefs) if (!roles.has(ref.role)) issues.push(issue(ref.file, ref.line, 'permissions-role', `角色 ${ref.role} 不在术语表中，请添加 **${ref.role}（EnglishName）**：及定义，或改用术语表已有名字。`));
-  return { reqs: [...reqs.values()], screens: [...screens.values()], permissions: [...permissions.values()], glossary, issues, warnings };
+  return {
+    reqs: [...reqs.values()], screens: [...screens.values()], permissions: [...permissions.values()], glossary,
+    issues: issues.filter((i) => !WARNING_RULES.has(i.rule)), warnings: [...issues.filter((i) => WARNING_RULES.has(i.rule)), ...warnings],
+  };
 }
 
 export function lintSpec(base: SpecFiles): LintResult {
@@ -314,7 +315,3 @@ export function acTexts(spec: EffectiveSpec, ids: readonly string[]): Record<str
   return Object.fromEntries(ids.filter((id) => all.has(id)).map((id) => [id, all.get(id)!.text]));
 }
 
-/** 只解析术语表（P1 起 architect 只能追加条目，比较前后两版时用） */
-export function glossaryTerms(md: string, file = `${SPEC_DIR}glossary.md`): GlossaryTerm[] {
-  return parseGlossary(md, file, []);
-}

@@ -1,4 +1,4 @@
-// M4：真实预检（第 8.2 节）。同步输入、契约检查；假 agent 不参与这些程序步骤。
+// M4：真实预检。同步输入、契约检查；假 agent 不参与这些程序步骤。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -30,7 +30,7 @@ async function submitted(p: Project, content: string, id = 'T-001') {
 const engineOf = (p: Project) => makeEngine(p, async (role) => { if (role !== 'reviewer') throw new Error('预检不派发子进程'); }).engine;
 const hasPrecheckEvidence = (p: Project, id = 'T-001') => p.store.readEvents().some((e) => e.task === id && e.reason === 'evidence' && e.actor === 'precheck');
 
-test('预检：同步新输入，不跑命令，进入审查；审查通过后合并（合并只做冲突标记与 merge_check）', async () => {
+test('预检：同步新输入，不跑命令，进入审查；审查通过后合并（合并只检查冲突标记）', async () => {
   const p = await setupProject({ tasks: [mkTask('T-001')] });
   try {
     const wt = await submitted(p, 'ok');

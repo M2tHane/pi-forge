@@ -1,8 +1,8 @@
-// 改编自 pi-flow test/unit/config.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse, stringify } from 'yaml';
 import { parseConfig, ConfigError } from '../../src/core/state/config.ts';
+import { parseProjectCommands } from '../../src/core/state/project-commands.ts';
 import { PHASES, type WorkflowFile } from '../../src/core/state/schemas.ts';
 import { TEMPLATE_YAML, TEST_YAML, REAL_TEMPLATE_YAML } from '../helpers/config.ts';
 
@@ -34,7 +34,6 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
       const role = c.role(name), expected = template.role(name);
       assert.deepEqual(role.scopes, expected.scopes, name);
       assert.deepEqual(role.writes, expected.writes, name);
-      assert.deepEqual(role.readPaths, expected.readPaths, name);
       assert.equal(role.modelTier, expected.modelTier, name);
       assert.equal(role.bash, expected.bash, name);
       assert.deepEqual(role.bashAllow, expected.bashAllow, name);
@@ -49,10 +48,8 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
   assert.deepEqual(PHASES, ['spec', 'plan', 'implementation']);
 });
 
-test('新配置块、命令与次数默认值可读取', () => {
+test('新配置块、命令与次数默认值可读取；命令来自 commands.yaml，没有时用 workflow.yaml 里旧的 commands', () => {
   const c = parseConfig(changed((wf) => {
-    wf.commands.db_create = 'createdb $FORGE_DB_NAME';
-    wf.commands.db_drop = 'dropdb --if-exists $FORGE_DB_NAME';
     delete wf.limits.max_precheck_failures;
     delete wf.limits.max_merge_failures;
   }));
@@ -63,17 +60,19 @@ test('新配置块、命令与次数默认值可读取', () => {
   assert.equal(c.raw.review?.max_rounds, 2);
   assert.equal(c.raw.testing?.adjust_tests, true, '按真实模板保留');
   assert.equal(c.raw.qa?.max_rounds, 2);
-  assert.deepEqual(c.raw.generated_paths, ['web/src/api/generated/**']);
-  assert.equal(c.commands.db_create, 'createdb $FORGE_DB_NAME');
-  assert.equal(c.commands.db_drop, 'dropdb --if-exists $FORGE_DB_NAME');
+  assert.deepEqual(c.commands, {}, '模板的 workflow.yaml 不再有命令');
+  c.setProjectCommands(parseProjectCommands('commands:\n  test: "npm test"\n  db_create: "createdb $FORGE_DB_NAME"\ngui_commands: ["npm run desktop"]\nshared_env: { deps: [.venv] }\n'));
+  assert.deepEqual([c.commands.db_create, c.guiCommands, c.sharedEnv?.deps], ['createdb $FORGE_DB_NAME', ['npm run desktop'], ['.venv']]);
+  const legacy = parseConfig(TEMPLATE_YAML);
+  assert.equal(legacy.commands['test'], 'pnpm test', '老项目 workflow.yaml 里的 commands 仍然认');
 });
 
 test('角色 writes 由真实 scopes 并集推导；env 与读路径顺序保留', () => {
   const c = parseConfig(TEST_YAML);
   // architect 兼有 plan 与 code scope（S0 搭骨架）；P1 的 task 只取 plan scope（config.scopeWrites()）
   assert.deepEqual(c.role('architect').scopes, ['plan', 'code']);
-  assert.deepEqual(c.role('architect').writes, ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'docs/rules-draft/**', 'AGENTS.md', '**']);
-  assert.deepEqual(c.scopeWrites()['plan'], ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'docs/rules-draft/**', 'AGENTS.md']);
+  assert.deepEqual(c.role('architect').writes, ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'commands.yaml', 'AGENTS.md', '**']);
+  assert.deepEqual(c.scopeWrites()['plan'], ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'commands.yaml', 'AGENTS.md']);
   assert.deepEqual(c.role('reviewer').writes, []);
   assert.deepEqual(c.role('stage-qa').writes, []);
   assert.deepEqual(c.role('worker').writes, ['**']);
@@ -81,17 +80,16 @@ test('角色 writes 由真实 scopes 并集推导；env 与读路径顺序保留
   assert.equal(c.role('worker').modelTier, 'strong');
   const strict = parseConfig(changed((wf) => {
     wf.roles['worker']!.env = { PI_FORGE_STRICT: '1' };
-    wf.roles.worker!.read_paths = ['**', '!a/**', 'a/b/**'];
+    wf.roles.worker!.read_paths = ['**'];
   }, TEST_YAML));
   assert.equal(strict.role('worker').env.PI_FORGE_STRICT, '1');
-  assert.deepEqual(strict.role('worker').readPaths, ['**', '!a/**', 'a/b/**']);
+  // 旧配置里的 read_paths 仍能解析（已不再使用）
   assert.match(errorsOf(changed((wf) => { wf.roles.reviewer!.writes = ['src/**']; })).join(), /roles\.reviewer\.writes.*scopes/);
 });
 
 test('工具组展开、类别与唯一列表；orchestrator 严格使用规格白名单', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
   const orchestrator = c.role('orchestrator');
-  assert.deepEqual(orchestrator.readPaths, ['**']);
   assert.deepEqual(orchestrator.writes, []);
   assert.equal(orchestrator.bash, 'none');
   assert.ok(!orchestrator.tools.has('bash'));
@@ -108,7 +106,7 @@ test('工具组展开、类别与唯一列表；orchestrator 严格使用规格�
   for (const r of Object.values(c.roles)) assert.equal(r.toolList.length, r.tools.size);
   assert.deepEqual(c.activeTools('worker'), c.role('worker').toolList);
   assert.throws(() => c.role('missing'), /角色 missing/);
-  assert.ok(c.dagCatalog().commands.includes('acceptance'));
+  assert.ok(parseConfig(TEMPLATE_YAML).dagCatalog().commands.includes('acceptance'));
 });
 
 test('limits.change_max_tasks 默认 3，可配置，必须是正整数', () => {
@@ -201,7 +199,7 @@ test('隐式授予只包含通用子进程工具；专属工具不再隐式授�
     const implicit = r.name === 'orchestrator' ? ['forge_decide', 'notes', 'history'] : ['forge_block', 'forge_learn', 'notes', 'history'];
     assert.deepEqual([...r.tools].sort(), ['read', ...implicit].sort());
   }
-  // 第 14 节：有 forge_submit 的角色才隐式拥有 forge_claim
+  // 有 forge_submit 的角色才隐式拥有 forge_claim
   const withSubmit = parseConfig(changed((wf) => { wf.roles.worker!.tools = ['read', 'forge_submit']; }));
   assert.ok(withSubmit.roles.worker!.tools.has('forge_claim'));
   assert.ok(!withSubmit.roles.reviewer!.tools.has('forge_claim'));
@@ -217,7 +215,7 @@ for (const tool of ['bash', 'bash_readonly']) {
   });
 }
 
-test('allowlist 必须有命令名数组，命令必须存在；解析为 allowlist 并保留 bashAllow', () => {
+test('allowlist 必须有命令名数组；解析为 allowlist 并保留 bashAllow', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
   // 模板里 reviewer 是 allowlist（放行 typecheck、lint、test、acceptance，用来核对本 task）
   assert.equal(c.role('reviewer').bash, 'allowlist');
@@ -226,21 +224,16 @@ test('allowlist 必须有命令名数组，命令必须存在；解析为 allowl
   assert.deepEqual(c.role('worker').bashAllow, []);
   assert.match(errorsOf(changed((wf) => { delete wf.roles['reviewer']!.bash_allow; })).join(), /bash: allowlist 必须配置 bash_allow/);
   assert.ok(errorsOf(changed((wf) => { wf.roles['reviewer']!.bash_allow = []; })).length);
-  // 没定义的命令只告警（模板默认列出 typecheck、lint，项目未必都有）
-  assert.match(parseConfig(changed((wf) => { wf.roles['reviewer']!.bash_allow = ['not_configured']; })).warnings.join(), /not_configured 未在 commands 中定义/);
+  // 命令名在 commands.yaml 里找，没定义的只是没有可放行的内容，不告警
+  assert.ok(!parseConfig(changed((wf) => { wf.roles['reviewer']!.bash_allow = ['not_configured']; })).warnings.join().includes('not_configured'));
   assert.match(errorsOf(changed((wf) => { wf.roles.worker!.bash_allow = ['test']; })).join(), /bash_allow 只能用于 bash: allowlist/);
-  // Object 原型上的名字不算已配置命令。
-  assert.match(parseConfig(changed((wf) => { wf.roles['reviewer']!.bash_allow = ['toString']; })).warnings.join(), /toString 未在 commands/);
 });
 
-test('implementation_gate 保留可选 auto 命令；固定阶段 gate 引用缺失命令时报错', () => {
+test('implementation_gate 默认只跑 test 与 acceptance（其余命令给 agent 参考）；已删除的配置项只提醒', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
-  assert.ok(c.raw.implementation_gate?.auto?.includes('e2e'));
-  assert.ok(!Object.hasOwn(c.commands, 'e2e'));
+  assert.deepEqual(c.raw.implementation_gate?.auto, ['test', 'acceptance']);
   assert.equal(c.raw.implementation_gate?.coverage, true);
   assert.equal(c.raw.implementation_gate?.qa, true);
-  // 门禁运行全量 typecheck、lint、test、acceptance（每个 task 不跑，回归在这里发现）
-  for (const n of ['typecheck', 'lint', 'test', 'acceptance']) assert.ok(c.raw.implementation_gate?.auto?.includes(n), n);
   // 已删除的配置项：旧项目的 workflow.yaml 里还有时忽略并提醒
   const legacy = parseConfig(changed((wf) => { (wf.implementation_gate as Record<string, unknown>)['test_author'] = true; (wf as Record<string, unknown>)['acctest_workspace'] = { cache: ['node_modules'] }; (wf.limits as Record<string, unknown>)['lean_below_loc'] = 6000; }));
   assert.ok(legacy.warnings.some((w) => /implementation_gate\.test_author 已不再支持/.test(w)));
@@ -249,9 +242,8 @@ test('implementation_gate 保留可选 auto 命令；固定阶段 gate 引用缺
   assert.ok(!oldTools.role('worker').tools.has('forge_request_scope'));
   assert.ok(legacy.warnings.some((w) => /acctest_workspace 已不再支持/.test(w)));
   assert.ok(legacy.warnings.some((w) => /limits\.lean_below_loc 已不再支持/.test(w)));
-  assert.match(errorsOf(changed((wf) => {
-    wf.modes.build!.stages[1]!.gate.auto = ['missing'];
-  })).join(), /modes\.build\.stages\[1\]\.gate\.auto\[0\].*missing/);
+  // gate 里的命令名在 commands.yaml 里找，没有的运行时跳过，不算配置错误
+  assert.deepEqual(errorsOf(changed((wf) => { wf.modes.build!.stages[1]!.gate.auto = ['missing']; })), []);
 });
 
 test('固定模式只能配置 P0、P1，phase 不能倒退或使用旧名称', () => {

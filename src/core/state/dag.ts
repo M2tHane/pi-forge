@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/dag.ts @ 31f3f15
 // DAG：依赖类型校验、环检测、互斥推导、ready 计算、关键路径与宽度统计。纯函数，不做 IO。
 import type { TaskFile } from './schemas.ts';
 import { globWithin, globsOverlap } from './paths.ts';
@@ -52,7 +51,6 @@ export function validateDag(tasks: readonly DagTask[], catalog: DagCatalog): Dag
       if (!byId.has(d.task)) errors.push(`${t.id}：依赖的任务 ${d.task} 不存在`);
       if (seen.has(d.task)) errors.push(`${t.id}：对 ${d.task} 的依赖重复声明`);
       seen.add(d.task);
-      if (d.type === 'hard' && !d.reason?.trim()) errors.push(`${t.id}：对 ${d.task} 的硬依赖缺少 reason`);
     }
   }
 
@@ -203,7 +201,7 @@ export interface DagReport {
   warnings: string[];
 }
 
-/** 第 11 节第 7 条：任务数、关键路径长度（只计硬依赖）、最大并行宽度、硬依赖占比；关键路径过长时提示 */
+/** 任务数、关键路径长度（只计硬依赖）、最大并行宽度、硬依赖占比；关键路径过长时提示 */
 /** 关键路径占任务数的比例超过它时提醒（第三轮 D：0.6 → 0.5） */
 export const CRITICAL_PATH_RATIO = 0.5;
 /** 同一阶段开头连续这么多层都只有一个任务时提醒 */

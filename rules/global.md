@@ -1,6 +1,6 @@
 # 全局规则
 
-（改编自 pi-flow rules/global.md。与 rules/<layer>.md 冲突时，以分层规则为准。）
+（与 rules/<layer>.md 冲突时，以分层规则为准。）
 
 ## 完成与范围
 1. 完成的定义：本 task 相关的测试全部通过，并且每条 AC 都能通过任务说明指定的验收入口演示；之后才能 forge_submit。

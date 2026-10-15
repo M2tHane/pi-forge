@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/cost-control.ts @ 31f3f15
 // 成本控制：失败后升级模型；流程预算。全部由程序按 workflow.yaml 判定。
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';

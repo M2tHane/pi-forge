@@ -1,6 +1,4 @@
-// 改编自 pi-flow src/core/finish-report.ts @ 31f3f15
-// 阶段签收材料、交付汇报与速度/返工/质量/成本度量（规格第 5、11、17 节）。
-// pi-flow 的验收与提案概念在这里换成 pi-forge 的对应物：覆盖率矩阵、stage-qa 结论、审查建议、manual_checks。
+// 阶段签收材料、交付汇报与速度/返工/质量/成本度量。
 // 计算部分都是对普通数据（事件、task、run）的纯函数，可以不依赖 git 单元测试；读取 git/磁盘的部分集中在 flowMetrics 与 stageSignoff。
 import { existsSync, readFileSync } from 'node:fs';
 import type { FlowConfig } from '../state/config.ts';
@@ -443,7 +441,7 @@ function stageBody(root: string, store: StateStore, config: FlowConfig, flow: Fl
   const sugg = showOnBranch(root, flow.integration_branch, 'docs/review/suggestions.md');
   const suggLines = sugg ? filterSuggestions(sugg, new Set(mine.map((t) => t.id))) : [];
   const serve = Object.entries(config.commands).filter(([k]) => /^serve(_[a-z0-9_]+)?$/.test(k));
-  const ifaces = [...new Set(live.filter((t) => t.status === 'done').flatMap((t) => t.test_interface ?? []))].slice(0, 15);
+  const ifaces = [...new Set(live.filter((t) => t.status === 'done').flatMap((t) => (t.produces ?? []).filter((x) => /^(api|page):/.test(x))))].slice(0, 15);
   const checks = live.flatMap((t) => (t.manual_checks ?? []).map((c) => `- [ ] ${t.id}：${c}`));
   const c = m.cost_by_stage[stage] ?? sumRuns([], now.getTime());
   const cov = matrix ? parseCoverageMatrix(matrix) : null;
@@ -483,13 +481,13 @@ function commandsFooter(flow: FlowFile, stage: string, last: boolean, main: stri
   return [
     '',
     '## 你可以做的',
-    last ? `- /forge-approve：批准交付，程序把 ${flow.integration_branch} 以 --no-ff 合入 ${main}` : '- /forge-approve：批准本阶段，进入下一阶段',
+    last ? `- /forge-approve：批准交付，程序把 ${flow.integration_branch} 以 --no-ff 合入 ${main}` : stage === 'S0' ? `- /forge-approve：批准骨架，程序把 ${flow.integration_branch} 以 --no-ff 合入 ${main}，之后的阶段从这里继续` : '- /forge-approve：批准本阶段，进入下一阶段',
     '- /forge-reject "<意见>"：打回，阶段回到 active，意见整理成规格修订',
     ...(flow.stage === stage && flow.stage_status === 'needs_human' ? [`- /forge accept ${stage} --note "<说明>"：门禁修复轮数用尽时，人工放行进入签收（也可以 /forge gate 重跑门禁）`] : []),
   ];
 }
 
-/** S 阶段的人工签收材料（Markdown，中文）。第 11 节第 5 步 */
+/** S 阶段的人工签收材料（Markdown，中文） */
 export function stageSignoff(root: string, store: StateStore, config: FlowConfig, flowId: string, stage: string, now = new Date()): string {
   const flow = store.readFlow(flowId);
   const last = stage === sStageIds(flow).at(-1);

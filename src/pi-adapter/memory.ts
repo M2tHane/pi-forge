@@ -1,4 +1,3 @@
-// 来源：pi-flow src/pi-adapter/memory.ts @ 31f3f15
 // 结构化笔记放回上下文与按阈值压缩（第五轮），子进程扩展与主会话扩展共用。
 // 已核实（Pi 1.0.0 dist/core/extensions/types.d.ts）：context 事件可替换 messages；custom 消息转换给模型时变成 user 消息；
 // ctx.getContextUsage() 给出占比；ctx.compact() 触发压缩但不等待；session_compact / session_compact_failed 报告结果。

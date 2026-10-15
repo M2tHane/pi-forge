@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/event-log.ts @ 31f3f15
 // 事件日志：events.jsonl 追加、哈希链、状态提交。
 import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';

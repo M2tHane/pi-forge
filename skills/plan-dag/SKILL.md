@@ -5,14 +5,14 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 
 # 拆分阶段与任务
 
-（吸收 pi-flow 的 plan-modules 与 decompose-dag，以及 mattpocock/skills 的 to-tickets（MIT）中的切分规则。）
+（吸收了 mattpocock/skills 的 to-tickets（MIT）中的切分规则。）
 
 你**不画依赖边**，只声明每个 task 产出什么（produces）、需要什么（requires）。依赖边、环检测、互斥、覆盖检查都由程序计算。
 声明准确，DAG 就是对的；声明漏了，程序会报"缺少生产方"。
 
 ## 阶段
 
-- **S0 骨架**（固定，只能有 1 个 task，由 architect 自己做，不是 worker）：按 docs/arch/overview.md 建项目骨架、依赖清单与锁文件并安装依赖；搭好 docker、数据库等环境，让命令草案里的命令真的能跑；把共享类型、错误码常量、统一错误响应结构落成代码；直接写 rules/；写 tests/acceptance/_support/ 公共工具和冒烟测试 tests/acceptance/S0-smoke/（含一条最薄的端到端链路，桩实现也可以）。
+- **S0 骨架**（固定，只能有 1 个 task，由 architect 自己做，不是 worker）：按 docs/arch/overview.md 建项目骨架、依赖清单与锁文件并安装依赖；搭好 docker、数据库等环境，让 commands.yaml 里的命令真的能跑；把共享类型、错误码常量、统一错误响应结构落成代码；直接写 rules/；写 tests/acceptance/_support/ 公共工具和冒烟测试 tests/acceptance/S0-smoke/（含一条最薄的端到端链路，桩实现也可以）。
   **不建**类型生成、客户端生成、契约检查、DOM 模拟；exit 涉及的 AC 最多 4 条，选一两条最核心的 REQ。
   所有命令都要遵守程序注入的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP，以便并行运行。
   S0 交付共享构建环境的输入：完整的依赖清单与锁文件（之后基本不再改）、能一条命令建库删库的脚本。
@@ -38,14 +38,12 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 | `ac` | 负责的 AC 编号（不含 manual）。每条 MVP AC 恰好分给一个 task |
 | `writes` | 计划的改动范围：具体目录（前端、后端、迁移、单元测试都包括）。用于调度优先级：重叠的 task 尽量错开运行（没别的可派时也会并行），所以不同 task 尽量不重叠。worker 不受它限制，需要时可以改范围外的文件（验收测试、规格除外），但是否写测试路径决定能否新建测试代码 |
 | `shared` | 几个 task 都要追加的公共文件（路由注册、菜单、i18n 文案）。登记后不算互斥 |
-| `produces` | 本 task 实现的契约符号：`api:POST /api/x`、`table:x`、`error:X`、`fn:m#name`、`page:/x`、`lib:name` |
+| `produces` | 本 task 实现的符号：`api:POST /api/x`、`table:x`、`error:X`、`fn:m#name`、`page:/x`、`lib:name`。别的 task 会用到的要在契约里有定义；只有自己用的不必写进契约 |
 | `requires` | 本 task 用到的、别的 task 产出的符号。只需要契约就能开工的加 `~` 前缀（软依赖：并行开工，预检和合并都排在生产方之后） |
-| `test_interface` | 允许的测试入口（任务说明里渲染成『允许的测试入口』一节）：`HTTP /api/datasources*`、`page /datasources`、`fn:m#name`。入口需要搭环境或构造数据时（已有的测试 helper、夹具、启动方式），在这里多写一条指路，省得 worker 在大代码库里自己摸索 |
 | `size` | S、M、L，决定时间预算 |
 | `layers` | 涉及的层，决定注入哪些 rules/<layer>.md |
 | `module` | 所属模块，决定 worker 能追加哪个契约文件（paths/<模块>.yaml、errors/<模块>.yaml） |
-| `risk` | 涉及权限、计费、删除数据时写 high（审查用强模型） |
-| `review` | 一般不写，由程序推导；只在需要覆盖推导结果时写 skip、auto 或 strong |
+| `risk` | 只在涉及权限与鉴权、金额计算、不可恢复的批量数据操作时写 high（审查用强模型，更贵）；普通增删改查（包括单条删除）不写。多数 task 都是 high 说明标错了。审查强度由程序推导，批准页会列出哪些 task 用强审查 |
 | `manual_checks` | 需要用户打开应用确认的内容（来自 AC 的 manual 条目与界面效果） |
 
 ## 尽早并行
@@ -58,5 +56,6 @@ description: 把规格与契约拆成分阶段的任务计划（plan.yaml）：�
 
 用 forge_propose_plan 提交 plan.yaml，同时附上 assumptions 与 extras。程序返回：
 
-- 错误（符号找不到、缺少生产方、重复生产、跨阶段反向依赖、环、AC 未覆盖或重复分配）：改了再提交。
-- 报告（task 数、关键路径、并行宽度、互斥对、提醒）：有提醒时优先调整。
+- 错误（跨阶段反向依赖、环、编号与阶段写错、不是合法的 YAML）：改了再提交。
+- 提醒（符号找不到、缺少生产方、重复生产、AC 未覆盖或重复分配）：多半是拆分有遗漏，看过再决定要不要改。
+- 报告（task 数、关键路径、并行宽度、强审查的 task、互斥对、提醒）：有提醒时优先调整。

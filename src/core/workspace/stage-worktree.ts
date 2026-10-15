@@ -1,4 +1,4 @@
-// 阶段级只读任务（stage-qa 的 .qa）使用的临时 worktree（规格第 11、14 节）。
+// 阶段级只读任务（stage-qa 的 .qa）使用的临时 worktree。
 // 它们没有自己的任务分支：在集成分支 HEAD 上新建一个 detached 的 worktree，放在 worktreesRoot(root) 下，
 // 任务结束（done 或 cancelled）后删除。这类任务的流水线只有 ready → in_progress → done（report），
 // 不经过预检、合并、同步，也不会在其中提交；branch 字段只是记账（集成分支名），检出本身是 detached。

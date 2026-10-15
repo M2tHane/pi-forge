@@ -1,4 +1,3 @@
-// 来源：pi-flow test/unit/metrics.test.ts @ 31f3f15
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { UsageAccumulator } from '../../src/core/engine/metrics.ts';

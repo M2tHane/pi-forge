@@ -1,9 +1,8 @@
-// 来源：pi-flow src/tools/subagent-tools.ts @ 31f3f15
 // subagent 使用的 forge_* 工具：forge_claim、forge_note、forge_submit、forge_block、forge_learn、notes、history，
 // forge_sync 的共用同步实现见 module-tools.ts；旧验收与审查入口已删除。
 // 纯业务实现，不依赖 Pi；由 pi-adapter 注册为 Pi 工具，测试中由 fake-subagent 直接调用。run token 只来自环境变量，模型看不到也不需要传。
 import { listResources, resourceEnv } from '../core/workspace/resources.ts';
-import { contractBaseOf } from '../core/engine/precheck.ts';
+import { taskBaseOf } from '../core/state/git.ts';
 import { contractViolationsAt } from '../core/plan/contract-diff.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -12,7 +11,7 @@ import type { StateStore } from '../core/state/state-store.ts';
 import { KNOWLEDGE_CATEGORIES, type TaskFile } from '../core/state/schemas.ts';
 import { KnowledgeError, learn, KNOWLEDGE_CONTENT_MAX, KNOWLEDGE_PER_RUN } from '../core/engine/knowledge.ts';
 import { changedFiles, cleanStrayUntracked, removeWorktree, snapshot } from '../core/workspace/worktree.ts';
-import { canAppendInterfaces, docsUpdateWaived, isDocsUpdateTask } from '../core/state/state-machine.ts';
+import { canAppendInterfaces, canFinishWithoutChanges } from '../core/state/state-machine.ts';
 import { testAdjustEnabled, testAdjustments } from '../core/verify/test-adjust.ts';
 import { NOTES_DESCRIPTION, NotesError, NotesParams, applyNoteOps, renderNotes } from '../core/engine/notes.ts';
 import { HISTORY_DESCRIPTION, HistoryParams, formatSearch, loadHistory, readHistoryEntry, searchHistory } from '../core/ops/history.ts';
@@ -37,7 +36,7 @@ export { RUN_ENV_KEYS, runEnvFrom, FlowToolError, checkRunOf, type RunEnv, type 
 import { FlowToolError, actor, checkRun, rethrow, type ToolContext, type ToolResult } from './tool-common.ts';
 
 export const ClaimParams = Type.Object({});
-export const NoteParams = Type.Object({ text: Type.String({ minLength: 1, maxLength: NOTE_LIMIT, description: 'handoff 笔记：做到哪、下一步、踩过的坑、未决问题；需求讨论的意见也写在这里' }) });
+export const NoteParams = Type.Object({ text: Type.String({ minLength: 1, description: 'handoff 笔记：做到哪、下一步、踩过的坑、未决问题；需求讨论的意见也写在这里' }) });
 export const SubmitParams = Type.Object({
   summary: Type.String({ minLength: 1, maxLength: 500, description: '一句话总结本次改动（只读任务：一句话结论）' }),
 });
@@ -68,9 +67,10 @@ export function flowClaim(ctx: ToolContext): ToolResult {
 
 export async function flowNote(ctx: ToolContext, p: Static<typeof NoteParams>): Promise<ToolResult> {
   checkRun(ctx);
-  if (p.text.length > NOTE_LIMIT) throw new FlowToolError(`handoff 笔记超过 ${NOTE_LIMIT} 字，请精简后再写。`);
-  await ctx.store.appendHandoff(ctx.env.flow, ctx.env.task, p.text, actor(ctx));
-  return { text: '已写入 handoff。' };
+  // 超长的截断保存，不拒绝
+  const cut = p.text.length > NOTE_LIMIT;
+  await ctx.store.appendHandoff(ctx.env.flow, ctx.env.task, cut ? `${p.text.slice(0, NOTE_LIMIT)}\n……（超过 ${NOTE_LIMIT} 字，后面的已截断）` : p.text, actor(ctx));
+  return { text: cut ? `已写入 handoff（超过 ${NOTE_LIMIT} 字，只保存了前 ${NOTE_LIMIT} 字）。` : '已写入 handoff。' };
 }
 
 export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams>): Promise<ToolResult> {
@@ -86,28 +86,29 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   }
   snapshot(t.worktree, `[${ctx.env.flow}/${t.id}] ${p.summary.split('\n')[0]}`);
   const diff = changedFiles(t.worktree, t.base_sha);
-  // 小改动流程的"更新架构图与契约"：确认无需更新（handoff 里写了「无需更新：原因」）且确实没有改动时，不走合并（没有内容可合），直接完成
-  if (isDocsUpdateTask(t) && !diff.length && docsUpdateWaived(ctx.store.readHandoff(ctx.env.flow, t.id))) {
+  // 没有改动（要做的已在集成分支上、文档无需更新）：不走合并（没有内容可合），直接完成，依赖它的任务照常推进
+  if (!diff.length && canFinishWithoutChanges(t)) {
     try {
       await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'done', trigger: 'report', actor: actor(ctx), facts: { token: ctx.env.token, diff_files: [], structured_report: true } });
-    } catch (e) { rethrow(e, '请先用 forge_note 写「无需更新：原因」，再提交。'); }
+    } catch (e) { rethrow(e, '请调用 forge_block 报告。'); }
+    await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明（没有改动）：${p.summary}`, actor(ctx));
     removeWorktree(ctx.env.root, t.worktree, t.branch ?? undefined);
-    await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交（无需更新文档）');
-    return { text: `已记录：${p.summary.split('\n')[0]}。架构图与契约无需更新，任务完成。请直接结束，不要再调用工具。`, details: { files: [], waived: true } };
+    await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交（没有改动）');
+    return { text: `已记录：${p.summary.split('\n')[0]}。没有改动，任务视为完成。请直接结束，不要再调用工具。`, details: { files: [], no_changes: true } };
   }
-  // 契约只能追加（第 12.1、12.2 节，与预检同一套结构化规则）：有违规的契约文件由状态机拒绝
-  const violations = canAppendInterfaces(t) ? contractViolationsAt(ctx.env.root, contractBaseOf(t, ctx.store.readFlow(ctx.env.flow).integration_branch) ?? t.base_sha, t.worktree, t.module) : [];
+  // 契约只能追加：有违规的契约文件由状态机拒绝（基线是任务 worktree 与集成分支的合并基点）
+  const violations = canAppendInterfaces(t) ? contractViolationsAt(ctx.env.root, taskBaseOf(t, ctx.store.readFlow(ctx.env.flow).integration_branch) ?? t.base_sha, t.worktree, t.module) : [];
   const rewrites = [...new Set(violations.map((v) => v.file))];
   // 适配已有测试：writes 之外只修改过的已有测试文件不算越界，记在任务上（验收时一并检查）
   const adjusted = testAdjustEnabled(ctx.config, t) ? testAdjustments(t.worktree, t.base_sha, t.writes) : [];
   try {
     await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'awaiting_inputs', trigger: 'submit', actor: actor(ctx),
       facts: { token: ctx.env.token, diff_files: diff, interface_rewrites: rewrites, test_adjustments: adjusted,
-        // 结构化检查通过的契约追加不受 writes 限制（第 12.2 节）；有违规的文件已在 interface_rewrites 里被拒
+        // 结构化检查通过的契约追加不受 writes 限制；有违规的文件已在 interface_rewrites 里被拒
         contract_additions: canAppendInterfaces(t) ? diff.filter((f) => f.startsWith('docs/contracts/') && !rewrites.includes(f)) : [] } });
   } catch (e) {
     if (rewrites.length) rethrow(e, `契约只能追加（新增路径、操作、可选字段、错误码等），并且只能改本模块（${t.module ?? '未指定'}）的契约文件：\n${violations.slice(0, 10).map((v) => `- ${v.file}${v.path ? ` ${v.path}` : ''}：${v.message}`).join('\n')}\n还原对已有内容的修改（git checkout ${t.base_sha} -- <文件>）再只追加；确需修改已有契约时调用 forge_block 说明，由用户决定。`);
-    rethrow(e, `只修改可写范围内的文件（登记的公共文件可以改；别的模块已有的测试可以改来适配，但不能新增或删除可写范围外的文件）。还原越界改动：新增的文件用 git rm <文件>，修改过或删除的文件用 git checkout ${t.base_sha} -- <文件>。先 forge_note 写 handoff，然后再次 forge_submit。`);
+    rethrow(e, `只修改可写范围内的文件（登记的公共文件可以改；别的模块已有的测试可以改来适配，但不能新增或删除可写范围外的文件）。还原越界改动：新增的文件用 git rm <文件>，修改过或删除的文件用 git checkout ${t.base_sha} -- <文件>，然后再次 forge_submit。`);
   }
   await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明：${p.summary}`, actor(ctx));
   if (adjusted.length) await ctx.store.appendHandoff(ctx.env.flow, t.id, `修改了可写范围外的已有测试（适配接口变化）：${adjusted.join('、')}`, 'forge-submit');
@@ -141,13 +142,14 @@ export async function flowBlock(ctx: ToolContext, p: Static<typeof BlockParams>)
 
 export const ServiceParams = Type.Object({
   action: Type.Union([Type.Literal('start'), Type.Literal('stop'), Type.Literal('status'), Type.Literal('logs')]),
-  name: Type.Optional(Type.String({ description: 'commands 里 serve 或 serve_* 命名的命令（start、stop、logs 需要）' })),
+  name: Type.Optional(Type.String({ description: '服务名（start、stop、logs 需要）；start 不给 command 时运行 commands.yaml 里同名的命令' })),
+  command: Type.Optional(Type.String({ minLength: 1, description: 'start 时要运行的命令；不给时用 commands.yaml 里名为 name 的命令' })),
   ready: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 65535 }), Type.String()], { description: 'start 时等它就绪：本机端口号，或 http://localhost:<端口>/… 的地址' })),
   timeout_s: Type.Optional(Type.Integer({ minimum: 1, maximum: SERVICE_READY_MAX_S, description: `等就绪的秒数（最多 ${SERVICE_READY_MAX_S}）` })),
 });
 
 /**
- * 服务的工作目录（第 14 节）：只能是任务自己的 worktree；没有 worktree 时拒绝，**绝不回退到主工作区**（纯函数）。
+ * 服务的工作目录：只能是任务自己的 worktree；没有 worktree 时拒绝，**绝不回退到主工作区**（纯函数）。
  * stage-qa 与阶段审查有集成分支 HEAD 的临时 worktree，所以正常情况下不会走到拒绝。
  */
 export function serviceCwd(task: Pick<TaskFile, 'id' | 'worktree'>, root: string): string {
@@ -163,7 +165,7 @@ export async function flowService(ctx: ToolContext, p: Static<typeof ServicePara
   const names = serviceCommands(ctx.config.commands);
   if (p.action === 'status') {
     const list = serviceStatus(scratch);
-    return { text: `${list.length ? list.map((s) => `${s.name}（${s.running ? '运行中' : '已退出'}，pid ${s.pid}）：${s.command}`).join('\n') : '没有启动的服务。'}\n可启动：${names.join('、') || '（commands 里没有 serve 或 serve_* 命令）'}` };
+    return { text: `${list.length ? list.map((s) => `${s.name}（${s.running ? '运行中' : '已退出'}，pid ${s.pid}）：${s.command}`).join('\n') : '没有启动的服务。'}\ncommands.yaml 里的服务命令：${names.join('、') || '（没有 serve 或 serve_* 命令；可以用 command 参数直接给出命令）'}` };
   }
   if (!p.name) throw new FlowToolError(`${p.action} 需要 name。`);
   if (p.action === 'logs') {
@@ -175,12 +177,11 @@ export async function flowService(ctx: ToolContext, p: Static<typeof ServicePara
     const s = stopService(scratch, p.name);
     return { text: s ? `已结束服务 ${p.name}。` : `服务 ${p.name} 没有在运行。` };
   }
-  if (!names.includes(p.name)) {
-    throw new FlowToolError(`只能启动 workflow.yaml commands 里 serve 或 serve_* 命名的命令（${names.join('、') || '当前没有'}）；需要新的服务命令写进 handoff，由主 agent 或用户补到 commands。`);
-  }
-  const command = ctx.config.commands[p.name]!;
-  if (opensGui(command.split(/\s+/).filter(Boolean), ctx.config.raw.gui_commands ?? [])) throw new FlowToolError(GUI_REASON);
-  // 第 4.1 节：服务拿到本次运行分配的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP
+  if (!/^[\w.-]+$/.test(p.name)) throw new FlowToolError(`服务名 ${p.name} 只能用字母、数字、下划线、点和短横线。`);
+  const command = p.command ?? ctx.config.commands[p.name];
+  if (!command) throw new FlowToolError(`commands.yaml 里没有命令 ${p.name}（服务命令：${names.join('、') || '没有'}）；用 command 参数直接给出要运行的命令。`);
+  if (opensGui(command.split(/\s+/).filter(Boolean), ctx.config.guiCommands)) throw new FlowToolError(GUI_REASON);
+  // 服务拿到本次运行分配的 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP
   const res = listResources(ctx.env.root).find((e) => e.run === ctx.env.run);
   const r = await startService({ name: p.name, command, cwd: serviceCwd(t, ctx.env.root), scratch, ...(res ? { env: { ...process.env, ...resourceEnv(res) } } : {}),
     ...(p.ready !== undefined ? { ready: p.ready } : {}), ...(p.timeout_s ? { timeoutS: p.timeout_s } : {}) });
@@ -249,10 +250,10 @@ export const ProposePlanParams = Type.Object({
   }), { maxItems: 50, description: '超出需求但不得不做的设计（安全、数据完整性）' })),
 });
 
-/** forge_propose_plan：校验 worktree 里的契约、术语表与 docs/plan/plan.yaml，通过后保存计划提案（第 7 节） */
+/** forge_propose_plan：校验 worktree 里的契约、术语表与 docs/plan/plan.yaml，通过后保存计划提案 */
 export async function flowProposePlan(ctx: ToolContext, p: Static<typeof ProposePlanParams>): Promise<ToolResult> {
   const t = checkRun(ctx);
-  // 变更请求的 architect task：校验修订后的计划与差异，通过后变更请求进入 proposed（第 12.3 节）
+  // 变更请求的 architect task：校验修订后的计划与差异，通过后变更请求进入 proposed
   if (t.kind === 'doc' && changeOfTask(ctx.store, ctx.env.flow, t.id)) {
     const c = await proposeChange(ctx.env.root, ctx.store, ctx.config, ctx.env.flow, t, { assumptions: p.assumptions ?? [], extras: p.extras ?? [] }, actor(ctx));
     if (!c.ok) throw new FlowToolError(c.text);
@@ -282,8 +283,8 @@ export async function flowChangeRequest(ctx: ToolContext, p: Static<typeof Chang
 }
 
 const ReviewIssue = Type.Object({
-  level: Type.Union([Type.Literal('must'), Type.Literal('suggest')], { description: 'must 必须改（必须有出处）；suggest 建议（不阻塞合并）' }),
-  basis: Type.String({ minLength: 1, maxLength: 500, description: 'must 只能是 rule:<文件>#<条目>、ac:<编号>、contract:<位置>、defect:<什么输入下会出什么错>；格式不对的 must 会被程序降为 suggest' }),
+  level: Type.Union([Type.Literal('must'), Type.Literal('suggest')], { description: 'must 必须改；suggest 建议（不阻塞合并）' }),
+  basis: Type.String({ minLength: 1, maxLength: 500, description: '出处：rule:<文件>#<条目>、ac:<编号>、contract:<位置> 或 defect:<什么输入下会出什么错>' }),
   files: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 20, description: '涉及的文件（同一类问题合并成一条，列出所有文件）' })),
   file: Type.Optional(Type.String({ minLength: 1, description: '单个文件（与 files 二选一）' })),
   location: Type.String({ maxLength: 500, description: '函数名或行号范围' }),
@@ -323,11 +324,11 @@ async function finishReview(ctx: ToolContext, t: TaskFile): Promise<void> {
 }
 
 /**
- * forge_review_report（第 10.3 节，第一轮）：程序给问题编号；must 的出处不合格（不是 rule:/ac:/contract:/defect: 开头或冒号后为空）降为 suggest；
- * 降级后没有 must 就按 pass 处理。结论存为 evidence，由引擎的 resolveReviews 推进原 task。
+ * forge_review_report（第一轮）：程序给问题编号，级别与出处照 reviewer 写的保存；有 must 就是 changes，没有就是 pass。
+ * 结论存为 evidence，由引擎的 resolveReviews 推进原 task。
  */
 export const flowReviewReport = (ctx: ToolContext, p: Static<typeof ReviewReportParams>): Promise<ToolResult> => submitReport(ctx, p, REVIEW_FLAVOR);
-/** forge_qa_report（第 11 节第 3 步，第一轮）：规则同 forge_review_report；结论存为 qa-report.json，由 resolveQa 处理 */
+/** forge_qa_report（第一轮）：规则同 forge_review_report；结论存为 qa-report.json，由 resolveQa 处理 */
 export const flowQaReport = (ctx: ToolContext, p: Static<typeof ReviewReportParams>): Promise<ToolResult> => submitReport(ctx, p, QA_FLAVOR);
 
 async function submitReport(ctx: ToolContext, p: Static<typeof ReviewReportParams>, f: ReviewFlavor): Promise<ToolResult> {
@@ -338,18 +339,17 @@ async function submitReport(ctx: ToolContext, p: Static<typeof ReviewReportParam
     if (!files.length) throw new FlowToolError(`第 ${n + 1} 个问题没有写 files（涉及的文件）。`);
     return { level: i.level, basis: i.basis, files, location: i.location, problem: i.problem, expected: i.expected };
   });
-  const { issues, downgraded } = classifyIssues(inputs, 1, (rel) => { const abs = path.join(ctx.env.root, rel); return existsSync(abs) ? readFileSync(abs, 'utf8') : null; });
+  const issues = classifyIssues(inputs);
   const verdict = effectiveVerdict(issues);
-  const file: ReviewReportFile = { round: input.round, requested: p.verdict, verdict, issues, downgraded, head: input.head };
+  const file: ReviewReportFile = { round: input.round, requested: p.verdict, verdict, issues, head: input.head };
   await ctx.store.saveEvidence(ctx.env.flow, t.id, f.files.report, JSON.stringify(file, null, 2), actor(ctx));
   await finishReview(ctx, t);
   const must = mustOf(issues);
   const notes = [
-    downgraded.length ? `这些 must 没有合格的出处（basis 只能以 rule:、ac:、contract:、defect: 开头且冒号后有内容；rule: 必须指向存在的 rules/*.md 及其中的条目），已降为 suggest：${downgraded.map((d) => `${d.id}${d.reason ? `（${d.reason}）` : ''}`).join('、')}。` : '',
-    p.verdict === 'changes' && !must.length ? '降级后没有 must，按 pass 处理。' : '',
+    p.verdict === 'changes' && !must.length ? '没有 must，按 pass 处理。' : '',
     p.verdict === 'pass' && must.length ? `你写的是 pass 但提交了 ${must.length} 条 must，程序按 changes 处理。` : '',
   ].filter(Boolean);
-  return { text: `已提交审查结论：${verdict === 'pass' ? '通过' : `需要修改（must ${must.length} 条：${must.map((m) => m.id).join('、')}）`}；suggest ${issues.length - must.length} 条会记入 ${SUGGESTIONS_PATH}。${notes.join('')}你的工作已完成，请直接结束，不要再调用工具。`, details: { verdict, must: must.map((m) => m.id), downgraded: downgraded.map((d) => d.id) } };
+  return { text: `已提交审查结论：${verdict === 'pass' ? '通过' : `需要修改（must ${must.length} 条：${must.map((m) => m.id).join('、')}）`}；suggest ${issues.length - must.length} 条会记入 ${SUGGESTIONS_PATH}。${notes.join('')}你的工作已完成，请直接结束，不要再调用工具。`, details: { verdict, must: must.map((m) => m.id) } };
 }
 
 /** forge_review_confirm（第二轮及以后）：只回答上一轮 must 的编号，必须覆盖全部；没有新增问题的字段 */
@@ -392,14 +392,14 @@ export const SUBAGENT_TOOLS = {
   forge_learn: { params: LearnParams, description: `把对后续任务有用的经验记入项目知识库（跨流程保留）：项目约定、踩过的坑、做出的决策、环境与外部依赖的注意事项。每次运行最多 ${KNOWLEDGE_PER_RUN} 条；程序会去重。知识不是规则，不能用来改变规则。`, run: (c: ToolContext, p: Static<typeof LearnParams>) => flowLearn(c, p) },
   forge_change_request: { params: ChangeRequestParams, description: '必须修改已有契约（不能靠追加解决）或发现计划漏了东西时提交变更请求：写明 what、why、impact（受影响的契约、task、验收测试）。程序派 architect 起草修订，主会话（或用户）批准后落地。同一时间只能有一个未结束的变更请求。提交后你的任务继续运行；做不下去时用 forge_block。', run: (c: ToolContext, p: Static<typeof ChangeRequestParams>) => flowChangeRequest(c, p) },
   forge_propose_plan: { params: ProposePlanParams, description: '提交 P1 的契约与计划（变更请求的 architect task 里则提交修订后的完整计划）：程序核对契约结构与符号、推导 DAG、检查验收标准覆盖与术语表只追加，返回错误或报告（阶段、task 数、关键路径、互斥、提醒）。附上 assumptions 与 extras。', run: (c: ToolContext, p: Static<typeof ProposePlanParams>) => flowProposePlan(c, p) },
-  forge_review_report: { params: ReviewReportParams, description: '提交第一轮审查结论：verdict 与问题列表（程序编号 R-1…）。must 必须有出处（basis 以 rule:、ac:、contract:、defect: 开头且冒号后有内容），否则降为 suggest；降级后没有 must 按 pass 处理。suggest 不阻塞合并，会汇总给用户。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowReviewReport(c, p) },
+  forge_review_report: { params: ReviewReportParams, description: '提交第一轮审查结论：verdict 与问题列表（程序编号 R-1…）。每条写明出处（basis）；有 must 按 changes 处理，没有按 pass。suggest 不阻塞合并，会汇总给用户。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowReviewReport(c, p) },
   forge_review_confirm: { params: ReviewConfirmParams, description: '第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowReviewConfirm(c, p) },
-  forge_qa_report: { params: ReviewReportParams, description: '提交 stage-qa 第一轮结论：verdict 与问题列表（程序编号 R-1…）。规则同 forge_review_report：must 必须有出处（rule:、ac:、contract:、defect:），否则降为 suggest；降级后没有 must 按 pass 处理。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowQaReport(c, p) },
+  forge_qa_report: { params: ReviewReportParams, description: '提交 stage-qa 第一轮结论：verdict 与问题列表（程序编号 R-1…）。规则同 forge_review_report：每条写明出处，有 must 按 changes 处理，没有按 pass。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowQaReport(c, p) },
   forge_qa_confirm: { params: ReviewConfirmParams, description: 'stage-qa 第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowQaConfirm(c, p) },
   forge_add_dependency: { params: AddDependencyParams, description: '缺依赖时追加：程序把它装进共享构建环境（加锁串行，所有任务共用），并把 package.json 与锁文件的改动同步到你的工作区，随任务提交。依赖目录是共享链接，不要自己在工作区里运行 install/add。要升级、删除或改动已有依赖的版本时改用 forge_private_deps。', run: (c: ToolContext, p: Static<typeof AddDependencyParams>) => flowAddDependency(c, p) },
   forge_private_deps: { params: PrivateDepsParams, description: '要升级、删除或改动已有依赖的版本时：把共享依赖目录换成本任务的私有副本（先改好依赖清单，程序按它安装），之后可以直接用包管理器，不影响别的任务。只追加新依赖不需要，用 forge_add_dependency。', run: (c: ToolContext) => flowPrivateDeps(c) },
   forge_sync: { params: SyncParams, description: '把集成分支的最新代码（其他模块已合入的改动）合进你的工作区：没有冲突直接完成；有冲突时冲突标记留在文件里，解决后再调用一次完成同步。依赖的模块刚合入、或想提前发现冲突时使用。', run: (c: ToolContext) => flowSync(c) },
-  forge_service: { params: ServiceParams, description: '启动、结束、查看本次运行的长时间服务（开发服务器、数据库等）：只能启动 commands 里 serve 或 serve_* 命名的命令，start 可以用 ready 等端口或地址就绪；不要用 & 把命令放到后台。本次运行结束时程序会一并结束。', run: (c: ToolContext, p: Static<typeof ServiceParams>) => flowService(c, p) },
+  forge_service: { params: ServiceParams, description: '启动、结束、查看本次运行的长时间服务（开发服务器、数据库等）：start 运行 command 参数给的命令，或 commands.yaml 里名为 name 的命令；可以用 ready 等端口或地址就绪；不要用 & 把命令放到后台。本次运行结束时程序会一并结束。', run: (c: ToolContext, p: Static<typeof ServiceParams>) => flowService(c, p) },
   notes: { params: NotesParams, description: NOTES_DESCRIPTION, run: (c: ToolContext, p: Static<typeof NotesParams>) => flowNotes(c, p) },
   history: { params: HistoryParams, description: HISTORY_DESCRIPTION, run: (c: ToolContext, p: Static<typeof HistoryParams>) => flowHistory(c, p) },
 } as const;

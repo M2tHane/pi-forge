@@ -1,4 +1,4 @@
-// 动态实施阶段的门禁（第 11 节）：只运行已配置命令；失败按 task 生成 .fx-n（第 11.1 节），两轮后 needs_human；accept 放行后最终签收以 --no-ff 合入主分支。
+// 动态实施阶段的门禁：只运行已配置命令；失败按 task 生成 .fx-n，两轮后 needs_human；accept 放行后最终签收以 --no-ff 合入主分支。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runFlowCommand } from '../../src/commands/forge.ts';
@@ -40,6 +40,30 @@ test('动态实施闸门：只运行已配置命令，两轮 .fx-n 后 needs_hum
     assert.equal(p.git('rev-list', '--parents', '-n', '1', 'main').split(' ').length, 3, '最终提交有两个父提交');
     assert.equal(p.git('show', 'main:src/server/t-001/a.ts'), '完成 T-001.fx-2');
     assert.deepEqual((await p.store.verifyIntegrity()).errors, []);
+  } finally { p.cleanup(); }
+});
+
+test('S0 批准：骨架合入 main，集成分支移到合入后的提交，之后的阶段在它上面继续；S0 一律人工签收', async () => {
+  const p = await setupProject({ yaml: PROJECT_YAML.replace(/^  human: true/m, '  human: false'), stages: ['S0', 'S1'], tasks: [mkTask('T-001', { stage: 'S0' }), mkTask('T-002', { stage: 'S1', writes: ['src/server/t-002/**'] })] });
+  try {
+    const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
+      assert.ok((await a.call('forge_claim')).ok);
+      assert.ok((await a.call('write', { path: `src/server/${a.env.task.toLowerCase()}/a.ts`, content: a.env.task })).ok);
+      await a.call('forge_note', { text: '完成' });
+      assert.ok((await a.call('forge_submit', { summary: a.env.task })).ok);
+    });
+    for (let i = 0; i < 3; i++) { await engine.next(p.flowId); await engine.idle(); }
+    assert.deepEqual(errors, []);
+    const integ = p.store.readFlow(p.flowId).integration_branch;
+    assert.deepEqual([p.store.readFlow(p.flowId).stage, p.store.readFlow(p.flowId).stage_status], ['S0', 'awaiting_human'], 'gate.human 为 false 时 S0 也等人工');
+    assert.match(await approveStage({ root: p.dir, store: p.store, config: p.config }, p.flowId), /骨架已合入 main/);
+    assert.equal(p.git('show', 'main:src/server/t-001/a.ts'), 'T-001');
+    assert.equal(p.git('rev-parse', integ), p.git('rev-parse', 'main'), '集成分支移到 main 的合入提交');
+    for (let i = 0; i < 3; i++) { await engine.next(p.flowId); await engine.idle(); }
+    assert.deepEqual(errors, []);
+    assert.equal(p.store.readTask(p.flowId, 'T-002').status, 'done');
+    assert.equal(p.git('show', `${integ}:src/server/t-002/a.ts`), 'T-002');
+    assert.ok(!p.git('ls-tree', '--name-only', 'main', 'src/server/').includes('t-002'), 'S1 的改动等交付时才进 main');
   } finally { p.cleanup(); }
 });
 

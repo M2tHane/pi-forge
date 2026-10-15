@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/unit/loop-guard.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 运行内的打转检测（第六轮 B1、B2）：滑动窗口里的同类调用、同样的检查失败反复出现。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,4 +1,3 @@
-// 来源：pi-flow test/e2e/run-budget.test.ts @ 31f3f15
 // 每次运行的时间预算：到期提醒收尾，宽限期后结束；超时不计失败，等主会话复核（接着做、从头做、交给用户）；超时次数有上限。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

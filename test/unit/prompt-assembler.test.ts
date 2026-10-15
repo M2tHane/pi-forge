@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/unit/prompt-assembler.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -138,35 +137,32 @@ test('任务说明：writes 含自己的验收目录（test_author: false）时�
   assert.ok(!review.user.includes('由你编写'));
 });
 
-// —— 允许的测试入口与已交付的接口 ——
+// —— 已交付的接口 ——
 const ifaceAgent = (name: string) => ({ name, tier: 'strong', thinking: null, description: '', prompt: 'R' });
 const ifaceTasks = () => [
-  mkTask('T-002', { status: 'done', produces: ['table:teams', 'api:GET /api/teams', 'page:/teams'], test_interface: ['HTTP /api/teams'] }),
-  mkTask('T-003', { status: 'in_progress', produces: ['api:POST /api/datasources', 'fn:ds#create'], test_interface: ['HTTP /api/datasources*', 'page /datasources'] }),
+  mkTask('T-002', { status: 'done', produces: ['table:teams', 'api:GET /api/teams', 'page:/teams'] }),
+  mkTask('T-003', { status: 'in_progress', produces: ['api:POST /api/datasources', 'fn:ds#create'] }),
   mkTask('T-004', { status: 'pending', produces: ['api:GET /api/later'] }),
 ];
 const ifaceUser = (role: string, taskId: string, tasks = ifaceTasks()) => assemblePrompt({ agent: ifaceAgent(role), rules: [], task: tasks.find((x) => x.id === taskId)!, flowId: 'B-001', handoff: '', mode: 'impl', commands: config.commands, flowTasks: tasks }).user;
 
-test('任务说明带「允许的测试入口」与「本阶段及之前已交付的接口」：已 done 的 impl 的 api/page，加本 task 自己的 produces', () => {
+test('任务说明带「本阶段及之前已交付的接口」：已 done 的 impl 的 api/page，加本 task 自己的 produces', () => {
   const u = ifaceUser('worker', 'T-003');
-  assert.match(u, /## 允许的测试入口\n[^\n]*\n- HTTP \/api\/datasources\*\n- page \/datasources/);
+  assert.doesNotMatch(u, /允许的测试入口/, '不再限定测试入口');
   const sec = /## 本阶段及之前已交付的接口\n([\s\S]*?)(?=\n## |\n开始：)/.exec(u)![1]!;
   assert.match(sec, /- api:GET \/api\/teams（T-002）\n- page:\/teams（T-002）\n- api:POST \/api\/datasources（T-003 正在实现）\n- fn:ds#create（T-003 正在实现）/);
   assert.doesNotMatch(sec, /table:teams|api\/fake|api\/later/, '只列 api/page、只列 impl、不列未完成的');
 });
 
-test('reviewer 用 for_task 的 impl 的 test_interface 和 produces；stage-qa、architect 不输出', () => {
+test('reviewer 用 for_task 的 impl 的 produces；stage-qa、architect 不输出', () => {
   const rv = ifaceUser('reviewer', 'T-003.rv', [...ifaceTasks(), mkTask('T-003.rv', { kind: 'review', role: 'reviewer', for_task: 'T-003', writes: [] })]);
-  assert.match(rv, /## 允许的测试入口[\s\S]*page \/datasources/);
   assert.match(rv, /api:POST \/api\/datasources（T-003 正在实现）/);
   assert.match(rv, /## 本阶段及之前已交付的接口/);
-  assert.doesNotMatch(ifaceUser('stage-qa', 'T-003'), /## 允许的测试入口|## 本阶段及之前已交付的接口/);
+  assert.doesNotMatch(ifaceUser('stage-qa', 'T-003'), /## 本阶段及之前已交付的接口/);
   // architect：P1 / 变更请求的 doc task 不输出；S0 的 impl / fix 与 worker 一样输出
-  const doc = mkTask('T-009', { kind: 'doc', role: 'architect', test_interface: ['HTTP /api/x'] });
-  assert.doesNotMatch(ifaceUser('architect', 'T-009', [...ifaceTasks(), doc]), /## 允许的测试入口|## 本阶段及之前已交付的接口/);
-  assert.match(ifaceUser('architect', 'T-003'), /## 允许的测试入口[\s\S]*page \/datasources/);
-  // test_interface 为空时不输出这一节
-  assert.doesNotMatch(ifaceUser('worker', 'T-004'), /## 允许的测试入口/);
+  const doc = mkTask('T-009', { kind: 'doc', role: 'architect' });
+  assert.doesNotMatch(ifaceUser('architect', 'T-009', [...ifaceTasks(), doc]), /## 本阶段及之前已交付的接口/);
+  assert.match(ifaceUser('architect', 'T-003'), /## 本阶段及之前已交付的接口[\s\S]*api:POST \/api\/datasources/);
 });
 
 test('已交付的接口过长时截断并注明总数，本 task 自己的 produces 保留', () => {

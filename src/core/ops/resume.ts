@@ -1,5 +1,4 @@
-// 来源：pi-flow src/core/resume.ts @ 31f3f15
-// 恢复（第 18 节）：只依赖 .forge/ 与 git，不依赖对话历史。
+// 恢复：只依赖 .forge/ 与 git，不依赖对话历史。
 // 1 重放事务日志并校验完整性（不一致则记 integrity_error 并停止）→ 2 活动流程 → 3 清理残留子进程 → 4 处理租约
 // → 5 恢复中断的合并 → 6 生成 resume brief。
 import { existsSync } from 'node:fs';
@@ -93,7 +92,7 @@ export async function resume(d: ResumeDeps, decide?: (q: ResumeDecision) => Prom
     }
     await store.updateRun(r.run_id, { ended_at: now().toISOString(), ...(r.outcome ? {} : { outcome: 'killed' }) }, 'resume', '恢复：run 已中断');
   }
-  // 3b. 残留的运行资源（第 4.1 节）：run 已结束或分配它的进程已不存在
+  // 3b. 残留的运行资源：run 已结束或分配它的进程已不存在
   const ended = new Set(store.listRuns().filter((r) => r.ended_at).map((r) => r.run_id));
   const reclaimed = await reclaimResources(d.root, (e) => isStaleResource(e, ended, isAlive, active), d.config.commands);
   if (reclaimed.length) actions.push(`回收 ${reclaimed.length} 份残留的运行资源（端口、数据库、临时目录）`);

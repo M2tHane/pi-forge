@@ -1,8 +1,9 @@
-// 来源：pi-flow src/core/config.ts @ 31f3f15
 // 解析并校验 workflow.yaml：schema 校验 + 引用校验 + 角色策略推导。错误指出 YAML 路径与行号。
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { LineCounter, parseDocument, isNode } from 'yaml';
 import { PHASES, validate, type ThinkingLevel, type WorkflowFile } from './schemas.ts';
+import { COMMANDS_FILE, commandsTextAt, commandsTextIn, parseProjectCommands, type ProjectCommands, type SharedEnvSetting } from './project-commands.ts';
 
 export const BUILTIN_READ_TOOLS = ['read', 'grep', 'find', 'ls'] as const;
 export const BUILTIN_WRITE_TOOLS = ['write', 'edit'] as const;
@@ -32,7 +33,7 @@ const ROLE_EXCLUSIVE: Record<string, readonly string[]> = {
   forge_read: ['orchestrator'], forge_spec: ['orchestrator'], forge_change: ['orchestrator'],
   forge_resolve_timeout: ['orchestrator'], forge_decide: ['orchestrator'],
 };
-/** orchestrator 严格使用第 13.1 节的白名单 */
+/** orchestrator 严格使用这份白名单 */
 const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_spec', 'forge_change', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_decide', ...MEMORY_TOOLS]);
 const WEB_GROUP = 'web';
 
@@ -49,11 +50,10 @@ export interface ResolvedRole {
   /** 有序的工具列表，用于动态启用 */
   toolList: string[];
   bash: 'none' | 'full' | 'readonly' | 'allowlist';
-  /** allowlist 档位额外允许的命令名（引用 commands，按前缀匹配，第 14.1 节） */
+  /** allowlist 档位额外允许的命令名（引用 commands，按前缀匹配） */
   bashAllow: string[];
   writes: string[];
   /** null 表示读不受路径限制（敏感文件除外） */
-  readPaths: string[] | null;
   env: Record<string, string>;
   rules: string[];
 }
@@ -72,6 +72,8 @@ export class FlowConfig {
   readonly roles: Record<string, ResolvedRole>;
   readonly warnings: string[];
   private readonly kinds: Map<string, ToolKind>;
+  /** commands.yaml 的内容；null 时用 workflow.yaml 里旧的 commands（老项目） */
+  private project: ProjectCommands | null = null;
 
   constructor(raw: WorkflowFile, roles: Record<string, ResolvedRole>, kinds: Map<string, ToolKind>, warnings: string[]) {
     this.raw = raw;
@@ -81,7 +83,21 @@ export class FlowConfig {
   }
 
   get limits() { return this.raw.limits; }
-  get commands() { return this.raw.commands; }
+  /** 项目命令：commands.yaml（集成分支上最新的一份，见 syncCommands），没有时用 workflow.yaml 里旧的 commands */
+  get commands(): Record<string, string> { return this.project?.commands ?? this.raw.commands ?? {}; }
+  get guiCommands(): string[] { return this.project?.gui_commands ?? this.raw.gui_commands ?? []; }
+  get sharedEnv(): SharedEnvSetting | undefined { return this.project?.shared_env ?? this.raw.shared_env; }
+  setProjectCommands(p: ProjectCommands | null): void { this.project = p; }
+
+  /**
+   * 换成某个分支（通常是集成分支）上的 commands.yaml；分支上没有时保持不变。
+   * 格式不对时保持不变并返回错误（不让 worker 写坏的文件把程序停住；P1 闸门与审查会发现）。
+   */
+  syncCommands(root: string, ref: string): string | null {
+    const text = commandsTextAt(root, ref);
+    if (text === null) return null;
+    try { this.project = parseProjectCommands(text, `${ref}:${COMMANDS_FILE}`); return null; } catch (e) { return (e as Error).message; }
+  }
   /** 触发压缩的上下文占比 */
   get compactAt(): number { return this.raw.context?.compact_at ?? DEFAULT_COMPACT_AT; }
 
@@ -91,7 +107,7 @@ export class FlowConfig {
     return r;
   }
 
-  /** 子进程应启用的工具列表（第 14 节第 7 条） */
+  /** 子进程应启用的工具列表 */
   activeTools(role: string): string[] {
     return this.role(role).toolList;
   }
@@ -105,7 +121,7 @@ export class FlowConfig {
     return {
       roles: Object.fromEntries(Object.values(this.roles).map((r) => [r.name, { scopes: r.scopes }])),
       scopes: this.scopeWrites(),
-      commands: Object.keys(this.raw.commands),
+      commands: Object.keys(this.commands),
       maxTaskFiles: this.raw.limits.max_task_files,
     };
   }
@@ -115,8 +131,14 @@ export class FlowConfig {
   }
 }
 
-export function loadConfig(file: string): FlowConfig {
-  return parseConfig(readFileSync(file, 'utf8'));
+/** 读 workflow.yaml，再读 commands.yaml（默认同目录，即主工作区；子进程传自己的 worktree） */
+export function loadConfig(file: string, commandsDir = path.dirname(file)): FlowConfig {
+  const config = parseConfig(readFileSync(file, 'utf8'));
+  const text = commandsTextIn(commandsDir) ?? (commandsDir !== path.dirname(file) ? commandsTextIn(path.dirname(file)) : null);
+  if (text !== null) {
+    try { config.setProjectCommands(parseProjectCommands(text)); } catch (e) { config.warnings.push((e as Error).message); }
+  }
+  return config;
 }
 
 export function parseConfig(source: string): FlowConfig {
@@ -166,7 +188,7 @@ export function parseConfig(source: string): FlowConfig {
   wf.limits.max_precheck_failures ??= 3;
   wf.limits.max_merge_failures ??= 2;
   wf.limits.change_max_tasks ??= 3;
-  // 状态机按 limits.review_max_rounds 判定审查轮数用尽；取自 review.max_rounds（第 10 节）
+  // 状态机按 limits.review_max_rounds 判定审查轮数用尽；取自 review.max_rounds
   (wf.limits as Record<string, unknown>)['review_max_rounds'] ??= wf.review?.max_rounds ?? 2;
   const errors: string[] = [];
   const warnings: string[] = [...removedWarnings];
@@ -191,9 +213,6 @@ export function parseConfig(source: string): FlowConfig {
       }
       if (seen.has(s.id)) errors.push(`${at(['modes', mode, 'stages', i, 'id'])}: 阶段 id ${s.id} 重复`);
       seen.add(s.id);
-      (s.gate.auto ?? []).forEach((c, j) => {
-        if (!(c in wf.commands)) errors.push(`${at(['modes', mode, 'stages', i, 'gate', 'auto', j])}: 命令 ${c} 未在 commands 中定义`);
-      });
     });
   }
 
@@ -235,10 +254,7 @@ export function parseConfig(source: string): FlowConfig {
     if (def.bash_allow && def.bash !== 'allowlist') {
       errors.push(`${at(['roles', name, 'bash_allow'])}: bash_allow 只能用于 bash: allowlist`);
     }
-    // bash_allow 里没有定义的命令只是没有可放行的内容（模板默认列出 typecheck、lint，项目未必都有），不算错误
-    for (const [i, command] of (def.bash_allow ?? []).entries()) {
-      if (!Object.hasOwn(wf.commands, command)) warnings.push(`${at(['roles', name, 'bash_allow', i])}: 命令 ${command} 未在 commands 中定义，不会放行`);
-    }
+    // bash_allow 里的命令名在 commands.yaml 里找；没有定义的只是没有可放行的内容（项目未必都有），不算错误
     const addTool = (t: string, loc: string) => {
       if (t === 'bash' || t === 'bash_readonly') {
         errors.push(`${loc}: tools 中不能声明 ${t}，请改用角色的 bash: full、readonly 或 allowlist 字段`);
@@ -258,7 +274,7 @@ export function parseConfig(source: string): FlowConfig {
     if (name !== 'orchestrator') toolList.push('forge_block', 'forge_learn');
     // orchestrator 隐式拥有 forge_decide：阻塞、门禁用尽、变更请求先由它决定
     else toolList.push('forge_decide');
-    // 第 14 节：有 forge_submit 的角色隐式拥有 forge_claim
+    // 有 forge_submit 的角色隐式拥有 forge_claim
     if (toolList.includes('forge_submit')) toolList.push('forge_claim');
     toolList.push(...MEMORY_TOOLS);
     const unique = [...new Set(toolList)];
@@ -280,7 +296,7 @@ export function parseConfig(source: string): FlowConfig {
 
     roles[name] = {
       name, modelTier: def.model, model: wf.models[def.model] ?? '', thinking: def.thinking ?? null,
-      scopes, tools, toolList: unique, bash, bashAllow: [...(def.bash_allow ?? [])], writes, readPaths: def.read_paths ?? null, env: def.env ?? {},
+      scopes, tools, toolList: unique, bash, bashAllow: [...(def.bash_allow ?? [])], writes, env: def.env ?? {},
       rules: [...new Set(scopes.flatMap((s) => wf.scopes[s]?.rules ?? []))],
     };
   }

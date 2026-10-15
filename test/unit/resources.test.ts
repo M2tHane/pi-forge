@@ -1,4 +1,4 @@
-// 第 4.1 节：运行时资源的分配、注入与回收。
+// 运行时资源的分配、注入与回收。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

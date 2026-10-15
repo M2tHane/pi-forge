@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/intake.ts @ 31f3f15（改编）
 // 将需求文档与原型原件提交到集成分支，返回文件清单；不解析或生成输入内容。
 // 来源有两种：/forge-build --prd/--prototype 指定的路径；不指定时扫描项目 docs/ 下用户放的文档。
 import { existsSync, lstatSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
@@ -12,7 +11,7 @@ import { IMAGE_MIME_TYPES } from '../workspace/forge-read.ts';
 import { isUtf8 } from 'node:buffer';
 import { createHash } from 'node:crypto';
 
-// 来源：pi-flow src/core/requirements.ts @ 31f3f15；独立索引提交原语。
+// 独立索引提交原语。
 export function commitFilesToBranch(root: string, branch: string, files: readonly { rel: string; content: string | Buffer; mode?: '100644' | '100755' }[], message: string): string | null {
   const ref = `refs/heads/${branch}`;
   const parent = git(root, ['rev-parse', ref]).trim();

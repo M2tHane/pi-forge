@@ -1,4 +1,4 @@
-// stage-qa（规格第 11 节第 3 步）：阶段门禁与覆盖率之后，由 stage-qa 在集成分支 HEAD 的临时 worktree 里实际运行、核对 exit。
+// stage-qa：阶段门禁与覆盖率之后，由 stage-qa 在集成分支 HEAD 的临时 worktree 里实际运行、核对 exit。
 // 第 1 轮（S1.qa）出问题清单（forge_qa_report），之后各轮（S1.qa-2…）只确认上一轮的 must（forge_qa_confirm，规则同 reviewer）。
 // 这里是纯函数（编号、轮次、任务说明）与流程（创建 .qa、处理结论）。轮次处理在 stage-rounds.ts。
 // 引擎的编排（什么时候创建、什么时候调用 resolveQa）由 dispatcher 的 advanceStage 负责。

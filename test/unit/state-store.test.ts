@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/unit/state-store.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, appendFileSync } from 'node:fs';
@@ -152,9 +151,6 @@ test('程序可推导的 facts 不采信调用方', async () => {
     const flow = await flowWithTasks(store);
     await assert.rejects(store.transitionTask(flow.id, 'T-002', { to: 'ready', trigger: 'schedule', actor: 'scheduler',
       facts: { status_of: new Map([['T-001', 'done']]), stage_active: true } }), /T-001/);
-    await toInProgress(store, flow.id, 'T-001');
-    await assert.rejects(store.transitionTask(flow.id, 'T-001', { to: 'awaiting_inputs', trigger: 'submit', actor: 'run:r-1',
-      facts: { token: 'tok', diff_files: ['src/server/t-001/a.ts'], handoff_written: true } }), /handoff/);
   } finally { cleanup(); }
 });
 

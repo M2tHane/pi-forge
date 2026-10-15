@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/init.ts @ 31f3f15
 // /forge init：检查 git、运行 preflight、生成骨架与模板、.codegraph/ 写入 .gitignore、初始化 .forge/、做一次初始提交。
 // 可重复执行：不覆盖已有文件，只补缺，并报告与模板不同的文件。
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -19,6 +18,7 @@ export function skeleton(packageRoot: string, projectName: string): Map<string, 
   const t = (rel: string) => readFileSync(path.join(packageRoot, rel), 'utf8');
   const files = new Map<string, string>();
   files.set('workflow.yaml', t('templates/workflow.yaml').replace(/^project: .*$/m, `project: ${projectName}`));
+  files.set('commands.yaml', t('templates/commands.yaml'));
   files.set('AGENTS.md', t('templates/AGENTS.md'));
   // 通用规则；项目专属规则 rules/project.md 由规划阶段的主 agent 起草、用户批准时写入
   for (const f of readdirSync(path.join(packageRoot, 'rules')).filter((x) => x.endsWith('.md')).sort()) files.set(`rules/${f}`, t(`rules/${f}`));

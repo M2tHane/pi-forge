@@ -44,10 +44,10 @@ export interface SharedEnvMeta {
   added: { name: string; spec: string; by: string; at: string }[];
 }
 
-export const sharedEnvEnabled = (config: FlowConfig) => config.raw.shared_env?.enabled !== false;
+export const sharedEnvEnabled = (config: FlowConfig) => config.sharedEnv?.enabled !== false;
 /** 依赖目录：shared_env.deps，默认 node_modules；只接受工作区内的相对路径 */
 export function sharedDepsDirs(config: FlowConfig): string[] {
-  const raw: string[] = config.raw.shared_env?.deps ?? DEFAULT_SHARED_DEPS;
+  const raw: string[] = config.sharedEnv?.deps ?? DEFAULT_SHARED_DEPS;
   const ok = raw.filter((d) => d && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
   return ok.length ? ok : DEFAULT_SHARED_DEPS;
 }

@@ -1,4 +1,3 @@
-// 来源：pi-flow test/e2e/rpc-driver.ts @ 31f3f15
 // 以 RPC 模式驱动 pi：发送一条 prompt，按计划应答扩展 UI 的 select/confirm/input，收集 notify。
 // 用法：node rpc-driver.ts <cwd> <plan.json> <pi 参数...>
 //   plan.json = { prompt: string, answers: string[] }，answers 依次用于每个对话框：select 按选项前缀匹配，confirm 用 "yes"/"no"，input 原样

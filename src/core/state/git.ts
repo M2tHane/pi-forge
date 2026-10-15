@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/git.ts @ 31f3f15
 // git 子进程封装：统一身份、遇到 index.lock 等锁冲突时短暂重试。
 import { execFileSync } from 'node:child_process';
 

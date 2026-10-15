@@ -1,4 +1,3 @@
-// 来源：pi-flow test/fixtures/crash-driver.ts @ 31f3f15
 // 崩溃测试用的引擎进程：在独立的 node 进程中运行引擎（真实 pi 子进程），由测试 SIGKILL。
 // 用法：node crash-driver.ts <项目目录> <角色设置 JSON>
 import path from 'node:path';

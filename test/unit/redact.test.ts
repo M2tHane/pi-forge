@@ -1,4 +1,3 @@
-// 来源：pi-flow test/unit/redact.test.ts @ 31f3f15
 // 敏感内容打码（第六轮 D4）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

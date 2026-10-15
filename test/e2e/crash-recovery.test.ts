@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/crash-recovery.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // M5 验收：在任务进行中与合并进行中分别强杀引擎进程（SIGKILL），重启后都能正确恢复。真实 pi 子进程 + 假 LLM。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';

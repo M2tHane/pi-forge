@@ -1,4 +1,4 @@
-// 第 11 节第 3 步：stage-qa。编号与轮次（纯函数）、任务说明、临时 worktree、forge_qa_*、resolveQa 的各种结论、forge_service 的 cwd 规则。
+// stage-qa。编号与轮次（纯函数）、任务说明、临时 worktree、forge_qa_*、resolveQa 的各种结论、forge_service 的 cwd 规则。
 // fake-subagent 驱动真实的引擎与工具（不使用真实模型）。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -22,7 +22,7 @@ import { evidenceRel, taskRel } from '../../src/core/state/state-store.ts';
 const YAML = PROJECT_YAML.replace('acceptance: "true"', 'acceptance: "true"\n  serve:     "true"');
 const FILES = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));
 const must1 = { level: 'must' as const, basis: 'ac:REQ-001.AC1', files: ['src/server/t-001/a.ts'], location: 'a', problem: '没有返回看板编号', expected: '返回编号' };
-const badMust = { level: 'must' as const, basis: '我觉得不好', files: ['src/server/t-001/a.ts'], location: '', problem: '命名', expected: '改名' };
+const namingSug = { level: 'suggest' as const, basis: '我觉得不好', files: ['src/server/t-001/a.ts'], location: '', problem: '命名', expected: '改名' };
 const sug = { level: 'suggest' as const, basis: '过长函数', file: 'src/server/t-001/a.ts', location: 'a', problem: '函数过长', expected: '拆分' };
 
 /** 测试专用：直接改任务文件（让已完成的 impl 不必走完整流水线） */
@@ -170,7 +170,7 @@ test('stage-qa 全流程：临时 worktree、第一轮出清单、fix task、确
       assert.ok(existsSync(a.spec.cwd));
       s.results['confirm'] = await a.call('forge_qa_confirm', { items: [{ id: 'R-1', resolved: true }] });
       s.results['reviewTool'] = await a.call('forge_review_report', { verdict: 'pass', issues: [] });
-      s.results['report'] = await a.call('forge_qa_report', { verdict: 'changes', issues: [must1, badMust, sug] });
+      s.results['report'] = await a.call('forge_qa_report', { verdict: 'changes', issues: [must1, namingSug, sug] });
     });
     assert.match(s1.cwd, /\.worktrees\/B-001-S1\.qa$/);
     assert.notEqual(path.resolve(s1.cwd), path.resolve(p.dir));
@@ -178,7 +178,7 @@ test('stage-qa 全流程：临时 worktree、第一轮出清单、fix task、确
     assert.match(s1.brief, /阶段验收：S1/);
     assert.match(s1.results['confirm']!.text, /第一轮阶段验收/);
     assert.equal(s1.results['reviewTool']!.ok, false, '审查工具不能提交 qa');
-    assert.match(s1.results['report']!.text, /需要修改（must 1 条：R-1）.*已降为 suggest：R-2/);
+    assert.match(s1.results['report']!.text, /需要修改（must 1 条：R-1）/);
     assert.equal(p.store.readTask(p.flowId, 'S1.qa').status, 'done');
     const report = readReviewEvidence<{ issues: { id: string; level: string }[] }>(p.store, p.flowId, 'S1.qa', QA_REPORT)!;
     assert.deepEqual(report.issues.map((i) => [i.id, i.level]), [['R-1', 'must'], ['R-2', 'suggest'], ['R-3', 'suggest']]);

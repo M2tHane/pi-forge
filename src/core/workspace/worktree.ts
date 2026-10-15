@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/worktree.ts @ 31f3f15
 // worktree 与任务分支：从集成分支 HEAD 拉出，放在项目目录之外的同级目录。
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';

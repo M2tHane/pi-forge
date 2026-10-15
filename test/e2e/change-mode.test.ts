@@ -39,7 +39,7 @@ const planFile = () => {
   return file;
 };
 
-test('/forge-change：两个 task 依次合入 → doc 任务（先被拒，写说明后提交）→ X1.qa 通过 → 变更日志', async () => {
+test('/forge-change：两个 task 依次合入 → doc 任务（只改术语表也能提交）→ X1.qa 通过 → 变更日志', async () => {
   const p = await setupProject({ yaml: YAML });
   const docAttempts: { ok: boolean; text: string }[] = [];
   const e = engineEnv(p, async (role, _n, a) => {
@@ -49,14 +49,9 @@ test('/forge-change：两个 task 依次合入 → doc 任务（先被拒，写�
     if (id === 'T-002') return submitWork(a, '页面按钮', { 'src/server/t-002/b.ts': 'ok\n' });
     if (id === 'T-003') {
       assert.equal(role, 'architect');
-      // 第一次：只改了术语表，没改 docs/arch 或 docs/contracts，也没写「无需更新」→ 提交被拒
+      // 只改了术语表，没改 docs/arch 或 docs/contracts：照样可以提交
       assert.ok((await a.call('write', { path: 'docs/spec/glossary.md', content: '# 术语\n- 导出：把列表保存为 CSV\n' })).ok);
-      await a.call('forge_note', { text: '术语表加了一条' });
-      const rejected = await a.call('forge_submit', { summary: '只更新术语表' });
-      docAttempts.push({ ok: rejected.ok, text: rejected.text });
-      // 第二次：说明架构图与契约无需更新 → 提交成功
-      await a.call('forge_note', { text: '无需更新：只新增了导出接口，没有改变模块划分或已有契约' });
-      const accepted = await a.call('forge_submit', { summary: '术语表' });
+      const accepted = await a.call('forge_submit', { summary: '只更新术语表' });
       docAttempts.push({ ok: accepted.ok, text: accepted.text });
       return;
     }
@@ -78,10 +73,8 @@ test('/forge-change：两个 task 依次合入 → doc 任务（先被拒，写�
     const log = p.git('log', '--format=%s', 'main');
     assert.ok(log.indexOf('T-002') < log.indexOf('T-001'), 'T-002 依赖 T-001，后合入');
 
-    assert.equal(docAttempts.length, 2);
-    assert.equal(docAttempts[0]!.ok, false);
-    assert.match(docAttempts[0]!.text, /docs\/arch\/\*\* 或 docs\/contracts\/\*\*|无需更新/);
-    assert.equal(docAttempts[1]!.ok, true, docAttempts[1]!.text);
+    assert.equal(docAttempts.length, 1);
+    assert.equal(docAttempts[0]!.ok, true, docAttempts[0]!.text);
     const doc = p.store.readTask(flow.id, 'T-003');
     assert.deepEqual([doc.kind, doc.role, doc.status], ['doc', 'architect', 'done']);
     assert.equal(p.git('show', 'main:docs/spec/glossary.md').includes('导出'), true);

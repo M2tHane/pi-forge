@@ -1,8 +1,8 @@
-// 第 10 节：逐任务审查的纯函数部分。
+// 逐任务审查的纯函数部分。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  REVIEW_DIFF_MAX, buildReviewBrief, classifyIssues, contractFilesFor, effectiveVerdict, fitSnippets, isValidMustBasis, mustHandoff, mustOf, ruleBasisProblem,
+  REVIEW_DIFF_MAX, buildReviewBrief, classifyIssues, contractFilesFor, effectiveVerdict, fitSnippets, mustHandoff, mustOf,
   nextReviewId, reviewMode, reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, touchesContracts, truncateDiff, validateConfirm,
   type ReviewPolicy,
 } from '../../src/core/stage/review.ts';
@@ -50,26 +50,18 @@ test('reviewMode：fix / merge-fix / doc 不做逐任务审查（即使写了 re
   }
 });
 
-test('出处校验：must 只认 rule:、ac:、contract:、defect: 且冒号后非空', () => {
-  for (const ok of ['rule:rules/backend.md#3', 'ac:REQ-001.AC2', 'contract:paths/ds.yaml:12', 'defect:空名称时抛 500', ' ac: REQ-001.AC1 ']) assert.equal(isValidMustBasis(ok), true, ok);
-  for (const bad of ['', 'rule:', 'ac:   ', '坏味道：过长函数', 'rules/backend.md#3', 'Rule:x', 'defects:x', '感觉不对']) assert.equal(isValidMustBasis(bad), false, bad);
-});
-
-test('classifyIssues：编号 R-1…；出处不合格的 must 降为 suggest 并列出；suggest 不受影响', () => {
+test('classifyIssues：编号 R-1…；级别与出处照写，程序不校验出处', () => {
   const mk = (level: 'must' | 'suggest', basis: string) => ({ level, basis, files: ['src/a.ts'], location: 'f()', problem: 'p', expected: 'e' });
-  const r = classifyIssues([mk('must', 'ac:REQ-001.AC1'), mk('must', '我觉得'), mk('suggest', '坏味道'), mk('must', 'defect:')]);
-  assert.deepEqual(r.issues.map((i) => [i.id, i.level]), [['R-1', 'must'], ['R-2', 'suggest'], ['R-3', 'suggest'], ['R-4', 'suggest']]);
-  assert.deepEqual(r.downgraded.map((d) => d.id), ['R-2', 'R-4']);
-  assert.equal(mustOf(r.issues).length, 1);
-  assert.equal(effectiveVerdict(r.issues), 'changes');
-  assert.equal(classifyIssues([], 1).issues.length, 0);
-  assert.equal(classifyIssues([mk('suggest', 'x')], 5).issues[0]!.id, 'R-5');
+  const issues = classifyIssues([mk('must', 'ac:REQ-001.AC1'), mk('must', 'rule:rules/不存在.md#R9'), mk('suggest', '坏味道'), mk('must', '  ')]);
+  assert.deepEqual(issues.map((i) => [i.id, i.level, i.basis]), [['R-1', 'must', 'ac:REQ-001.AC1'], ['R-2', 'must', 'rule:rules/不存在.md#R9'], ['R-3', 'suggest', '坏味道'], ['R-4', 'must', '（未写出处）']]);
+  assert.equal(mustOf(issues).length, 3);
+  assert.equal(classifyIssues([]).length, 0);
+  assert.equal(classifyIssues([mk('suggest', 'x')], 5)[0]!.id, 'R-5');
 });
 
-test('effectiveVerdict：降级后没有 must 就是 pass，不管 reviewer 写了什么', () => {
-  const r = classifyIssues([{ level: 'must', basis: '没有出处', files: ['a.ts'], location: '', problem: 'p', expected: 'e' }]);
-  assert.equal(r.downgraded.length, 1);
-  assert.equal(effectiveVerdict(r.issues), 'pass');
+test('effectiveVerdict：有 must 就是 changes，没有就是 pass，不管 reviewer 写了什么', () => {
+  assert.equal(effectiveVerdict(classifyIssues([{ level: 'must', basis: '我觉得', files: ['a.ts'], location: '', problem: 'p', expected: 'e' }])), 'changes');
+  assert.equal(effectiveVerdict(classifyIssues([{ level: 'suggest', basis: 'x', files: ['a.ts'], location: '', problem: 'p', expected: 'e' }])), 'pass');
   assert.equal(effectiveVerdict([]), 'pass');
 });
 
@@ -181,35 +173,6 @@ test('mustHandoff 与 suggestionLine：返工说明带编号；用尽时说明�
   const line = suggestionLine('T-001.rv', 'T-001', { ...must, id: 'R-3', level: 'suggest', basis: '过长函数' });
   assert.match(line, /^- \[T-001\.rv R-3\] T-001：/);
   assert.ok(line.includes('src/a.ts') && line.includes('返回 400'));
-});
-
-// —— rule: 出处必须指向真实存在的规则文件与条目 ——
-const RULES: Record<string, string> = {
-  'rules/global.md': '# 全局\n1. 完成的定义\n2. 范围\n',
-  'rules/backend.md': '# 后端\n- R1 错误码来自 errors/*.yaml\n- 服务层抛出 AppError\n\n## 审查清单\n- [ ] R3 权限检查在服务层\n4. 日志不含密钥\n',
-};
-const readRule = (rel: string) => RULES[rel] ?? null;
-
-test('ruleBasisProblem：文件存在且条目出现才算数；技能、不存在的文件、不存在的编号都不行', () => {
-  for (const ok of ['rule:rules/global.md#2', 'rule:rules/backend.md#R1', 'rule:rules/backend.md#R3', 'rule:rules/backend.md#4', 'rule: rules/backend.md#服务层抛出 AppError', 'rule:rules/global.md', 'ac:REQ-001.AC1']) {
-    assert.equal(ruleBasisProblem(ok, readRule), null, ok);
-  }
-  assert.match(ruleBasisProblem('rule:skills/tdd#三种坏测试', readRule)!, /不是项目的规则文件/);
-  assert.match(ruleBasisProblem('rule:AGENTS.md#1', readRule)!, /不是项目的规则文件/);
-  assert.match(ruleBasisProblem('rule:rules/../x.md#1', readRule)!, /不是项目的规则文件/);
-  assert.match(ruleBasisProblem('rule:rules/ui.md#3', readRule)!, /rules\/ui\.md 不存在/);
-  assert.match(ruleBasisProblem('rule:rules/backend.md#R9', readRule)!, /找不到条目 R9/);
-  assert.match(ruleBasisProblem('rule:rules/global.md#R12', readRule)!, /找不到条目 R12/, '12 不能被 1 或 2 误匹配');
-  assert.match(ruleBasisProblem('rule:rules/backend.md#不存在的话', readRule)!, /找不到条目/);
-});
-
-test('classifyIssues 带 readRule：rule: 出处不真实的 must 降为 suggest 并写明原因；不带 readRule 保持只看前缀', () => {
-  const mk = (basis: string) => ({ level: 'must' as const, basis, files: ['a.ts'], location: 'f', problem: 'p', expected: 'e' });
-  const r = classifyIssues([mk('rule:rules/backend.md#R3'), mk('rule:skills/tdd#三种坏测试'), mk('rule:rules/backend.md#R9'), mk('defect:空名称 500')], 1, readRule);
-  assert.deepEqual(r.issues.map((i) => i.level), ['must', 'suggest', 'suggest', 'must']);
-  assert.deepEqual(r.downgraded.map((d) => d.id), ['R-2', 'R-3']);
-  assert.match(r.downgraded[0]!.reason!, /不是项目的规则文件/);
-  assert.equal(classifyIssues([mk('rule:skills/tdd#x')]).issues[0]!.level, 'must');
 });
 
 test('buildReviewBrief：给了 tests 与 acceptance 时，先列出要运行的命令，再列 AC 覆盖；缺失的 AC 点名为 must', () => {

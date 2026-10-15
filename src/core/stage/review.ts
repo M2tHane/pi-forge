@@ -1,5 +1,5 @@
-// 逐任务审查的纯函数部分（规格第 10 节）：是否审查（10.1）、问题的出处校验与降级、第二轮的确认校验、reviewer 的输入组装（10.2）。
-// 设计参考 pi-flow 5100d6b^:src/core/stage-review.ts（第二轮只确认、must 必须有出处）。不依赖 Pi，不读写 .forge。
+// 逐任务审查的纯函数部分：是否审查、问题编号、第二轮的确认校验、reviewer 的输入组装（10.2）。
+// 第二轮只确认、must 必须有出处。不依赖 Pi，不读写 .forge。
 import type { FlowConfig } from '../state/config.ts';
 import type { ReviewFinding, TaskFile } from '../state/schemas.ts';
 import { escalationPolicy, hardFanout } from '../insight/cost-control.ts';
@@ -7,7 +7,7 @@ import type { AcceptanceAudit, ReviewTestPlan } from './review-tests.ts';
 
 export type ReviewMode = 'skip' | 'auto' | 'strong';
 
-/** 审查输入的上限（第 10.2 节：diff 最多 2 万字） */
+/** 审查输入的上限（diff 最多 2 万字） */
 export const REVIEW_DIFF_MAX = 20_000;
 export const CONTRACT_SNIPPET_MAX = 8_000;
 export const GLOSSARY_MAX = 4_000;
@@ -32,7 +32,7 @@ export function reviewPolicy(config: FlowConfig): ReviewPolicy {
 const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'review', 'qa'];
 
 /**
- * 推导一个 impl task 的审查强度（第 10.1 节；预检不再运行命令，所以 impl 一律审查，审查者读 diff 并运行本 task 自己的测试，不能关掉）。
+ * 推导一个 impl task 的审查强度（预检不再运行命令，所以 impl 一律审查，审查者读 diff 并运行本 task 自己的测试，不能关掉）。
  * task.review 写了 strong 以它为准；否则：底座（被 critical_fanout 个 task 硬依赖）、layers 含 auth、risk=high → strong；其余 auto。
  */
 export function reviewMode(task: Pick<TaskFile, 'id' | 'kind' | 'review' | 'risk' | 'size' | 'layers' | 'depends_on'>, tasks: readonly TaskFile[], policy: ReviewPolicy): ReviewMode {
@@ -45,35 +45,6 @@ export function reviewMode(task: Pick<TaskFile, 'id' | 'kind' | 'review' | 'risk
 
 // —— reviewer 的输出：问题与出处 ——
 
-/** must 的 basis 只能以这四种开头，冒号后必须有内容 */
-const MUST_BASIS = /^(rule|ac|contract|defect):\s*\S/;
-export const isValidMustBasis = (basis: string): boolean => MUST_BASIS.test(basis.trim());
-
-/** 读项目里的规则文件（相对项目根的路径）；不存在返回 null */
-export type RuleReader = (rel: string) => string | null;
-
-/**
- * rule: 出处必须指向真实存在的规则文件：rules/ 下的 .md，`#` 后的条目要在该文件里出现。
- * 条目可以是编号（R3、3、#3：匹配以该编号开头的行，如 `3.`、`R3 `、`- [ ] R3 `、`## R3`），也可以是文件里的一段文字。
- * 不是 rule: 开头的出处返回 null（别的前缀不在这里校验）；通过返回 null，否则返回不通过的原因。
- */
-export function ruleBasisProblem(basis: string, read: RuleReader): string | null {
-  const m = /^rule:\s*([^#\s]+)\s*(?:#\s*(.*\S))?\s*$/.exec(basis.trim());
-  if (!/^rule:/.test(basis.trim())) return null;
-  if (!m) return 'rule: 出处的格式应为 rule:rules/<文件>.md#<条目>';
-  const rel = m[1]!.replace(/^\.\//, '');
-  if (!/^rules\/[\w./-]+\.md$/.test(rel) || rel.includes('..')) return `${rel} 不是项目的规则文件（只能是 rules/ 下的 .md；技能、AGENTS.md、任务笔记都不能当出处）`;
-  const text = read(rel);
-  if (text === null) return `规则文件 ${rel} 不存在`;
-  const anchor = m[2]?.trim();
-  if (!anchor) return null;
-  const num = /^#?R?(\d+)$/i.exec(anchor);
-  const found = num
-    ? new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\[.\\]\\s*)?(?:#+\\s*)?R?${num[1]}(?!\\d)(?=[\\s.、)）:：]|$)`, 'im').test(text)
-    : text.toLowerCase().includes(anchor.replace(/^#/, '').toLowerCase());
-  return found ? null : `${rel} 里找不到条目 ${anchor}`;
-}
-
 export interface ReviewIssueInput {
   level: 'must' | 'suggest';
   basis: string;
@@ -82,27 +53,17 @@ export interface ReviewIssueInput {
   problem: string;
   expected: string;
 }
-export interface Downgraded { id: string; basis: string; reason?: string }
-
-/** 给问题编号 R-<start>…；没有合格出处的 must 降为 suggest（返回被降级的编号与原因，供回复说明）。给了 readRule 才校验 rule: 指向的文件与条目 */
-export function classifyIssues(inputs: readonly ReviewIssueInput[], start = 1, readRule?: RuleReader): { issues: ReviewFinding[]; downgraded: Downgraded[] } {
-  const downgraded: Downgraded[] = [];
-  const issues = inputs.map((i, n): ReviewFinding => {
-    const id = `R-${start + n}`;
-    const basis = i.basis.trim();
-    let level = i.level;
-    if (level === 'must') {
-      const reason = !isValidMustBasis(basis) ? undefined : readRule ? ruleBasisProblem(basis, readRule) ?? undefined : undefined;
-      if (!isValidMustBasis(basis) || reason) { level = 'suggest'; downgraded.push({ id, basis, ...(reason ? { reason } : {}) }); }
-    }
-    return { id, level, basis: basis || '（未写出处）', files: [...i.files], location: i.location.trim(), problem: i.problem.trim(), expected: i.expected.trim() };
-  });
-  return { issues, downgraded };
+/** 给问题编号 R-<start>…。级别与出处照 reviewer 写的保存，程序不校验出处 */
+export function classifyIssues(inputs: readonly ReviewIssueInput[], start = 1): ReviewFinding[] {
+  return inputs.map((i, n): ReviewFinding => ({
+    id: `R-${start + n}`, level: i.level, basis: i.basis.trim() || '（未写出处）', files: [...i.files],
+    location: i.location.trim(), problem: i.problem.trim(), expected: i.expected.trim(),
+  }));
 }
 
 export const mustOf = (issues: readonly ReviewFinding[]): ReviewFinding[] => issues.filter((i) => i.level === 'must');
 
-/** 最终结论由程序按降级后的问题决定：没有 must 就是 pass（即使 reviewer 写了 changes）；有 must 就是 changes（即使写了 pass） */
+/** 最终结论由程序按问题决定：没有 must 就是 pass（即使 reviewer 写了 changes）；有 must 就是 changes（即使写了 pass） */
 export const effectiveVerdict = (issues: readonly ReviewFinding[]): 'pass' | 'changes' => (mustOf(issues).length ? 'changes' : 'pass');
 
 export interface ConfirmItem { id: string; resolved: boolean; note?: string }
@@ -245,7 +206,7 @@ function acceptanceSection(a: AcceptanceAudit): string {
     '## 审查本 task 的验收测试（worker 自己写的，没有 test-author；diff 里含 tests/acceptance/**）',
     `程序扫描的 AC 覆盖（测试名里带 [REQ-xxx.ACn] 的文件）：\n${rows}`,
     a.missing.length ? `**以下 AC 没有测试：${a.missing.join('、')}。每条都是 must，basis 写 \`ac:<编号>\`，expected 写“补上带该编号的测试”。**` : '每条 AC 都有测试。',
-    '再逐条核对（技能 acceptance-tests）：(1) 测试是否真的走了 AC 的 Given/When/Then，并且只通过任务说明里『允许的测试入口』验证，不直接调内部函数或查数据库；(2) 断言有没有被弱化（只查状态码、断言过宽、什么都没断言、被跳过或删除的用例）；(3) 有没有依赖实现细节、断言了规格没规定的东西。缺失或形同虚设的测试是 must，basis 写对应的 `ac:<编号>`；写法上的小问题是 suggest。',
+    '再逐条核对（技能 acceptance-tests）：(1) 测试是否真的走了 AC 的 Given/When/Then，并且从公开入口（HTTP 接口、页面、跨模块函数）验证，不直接调内部函数或查数据库；(2) 断言有没有被弱化（只查状态码、断言过宽、什么都没断言、被跳过或删除的用例）；(3) 有没有依赖实现细节、断言了规格没规定的东西。缺失或形同虚设的测试是 must，basis 写对应的 `ac:<编号>`；写法上的小问题是 suggest。',
   ].join('\n\n');
 }
 

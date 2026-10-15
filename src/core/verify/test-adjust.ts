@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/test-adjust.ts @ 31f3f15
 // 适配已有测试：实施类任务可以改任何测试文件（不受 writes 限制）；这里只负责记录 writes 之外有哪些已有测试被修改过，
 // 记在任务上与 handoff 里，给审查者看。
 import type { FlowConfig } from '../state/config.ts';

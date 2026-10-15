@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/prompt-assembler.ts @ 31f3f15
 // 组装子进程提示：稳定内容（角色提示、规则、技能、项目知识）进系统提示，动态内容（任务、上游与本任务的 handoff、上次没通过的原因）进用户消息。
 // 顺序固定，以便命中提供商的提示缓存（项目知识按编号只追加，放在系统提示末尾）。结构化笔记不在这里：由子进程扩展在每次请求时放在消息末尾。
 import { existsSync, readFileSync } from 'node:fs';
@@ -7,6 +6,7 @@ import type { FlowConfig } from '../state/config.ts';
 import type { AgentDef } from './agents.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import { acceptanceDirOf, writesOwnAcceptance } from '../state/paths.ts';
+import { commandsReference } from '../state/project-commands.ts';
 
 export interface RuleFile { path: string; content: string }
 
@@ -17,7 +17,7 @@ export const UPSTREAM_TAIL = 8000;
 export const UPSTREAM_TOTAL = 16000;
 
 /**
- * global.md、任务 scopes 对应的规则文件、task 的 layers 对应的 rules/<layer>.md（第 16 节：按 layers 选规则），按顺序去重；路径相对项目根。
+ * global.md、任务 scopes 对应的规则文件、task 的 layers 对应的 rules/<layer>.md（按 layers 选规则），按顺序去重；路径相对项目根。
  * 缺失的文件跳过（例如 P1 批准之前还没有分层规则）。
  * 给出 worktree 时每个规则文件先在 worktree 里找，有就用它，没有再用项目根目录（S0 的 architect 写进 rules/ 的规则合入集成分支后，后续 worktree 都读得到）。
  */
@@ -59,12 +59,12 @@ export interface AssembleInput {
   continuation?: { run: string };
   /** 上一次运行超过时间预算被结束，主会话复核后继续：forked 表示接着那次的对话，否则从头开始（只带 handoff 与工作区） */
   timeoutResume?: { run: string; minutes: number; budget: number; forked: boolean; decision?: 'continue' | 'restart'; note?: string };
-  /** 逐任务审查（第 10.2 节）：reviewer 的输入（diff、AC、契约……），完整放进提示，不按 handoff 的长度截断 */
+  /** 逐任务审查：reviewer 的输入（diff、AC、契约……），完整放进提示，不按 handoff 的长度截断 */
   reviewBrief?: string;
   /** 确认轮（.rv-2 起）：只能用 forge_review_confirm 回答上一轮的 must 清单 */
   confirmRound?: boolean;
   /** 本任务依赖的上游任务及其 handoff（需求汇总者从这里读两方意见） */
-  /** 本流程的全部 task，用来渲染「允许的测试入口」与「已交付的接口」（worker、reviewer） */
+  /** 本流程的全部 task，用来渲染「已交付的接口」（worker、reviewer） */
   flowTasks?: readonly TaskFile[];
   upstream?: { id: string; title: string; type: 'hard' | 'soft'; status: string; handoff: string }[];
 }
@@ -111,21 +111,18 @@ export function upstreamSection(ups: NonNullable<AssembleInput['upstream']>): st
   return blocks.length ? `## 上游任务的 handoff\n上游任务留下的意见、进展与约定；内容太长时只保留最近部分，需要细节时读取对应文件。\n\n${blocks.join('\n\n')}` : '';
 }
 
-/** 渲染接口清单的角色：这些角色的任务说明里带「允许的测试入口」与「已交付的接口」（stage-qa、architect 不需要） */
+/** 渲染接口清单的角色：这些角色的任务说明里带「已交付的接口」（stage-qa、architect 不需要） */
 const INTERFACE_ROLES: readonly string[] = ['worker', 'reviewer'];
 /** 已交付的接口最多列出的条数，超出的截断并注明总数 */
 export const DELIVERED_MAX = 40;
 const DELIVERED_KEY = /^(api|page):/;
 
 /**
- * 任务说明里的两节接口信息：本 task（.at / .fx / .rv 取 for_task 的 impl）的 test_interface，以及
- * 本流程中已 done 的 impl 的 api: / page: 产出加上本 task 自己的 produces。没有内容的节不输出。
+ * 任务说明里的接口信息：本流程中已 done 的 impl 的 api: / page: 产出，加上本 task（.fx / .rv 取 for_task 的 impl）自己的 produces。没有内容时不输出。
  */
 export function interfaceSections(task: TaskFile, all: readonly TaskFile[]): string[] {
   const impl = task.for_task ? all.find((x) => x.id === task.for_task) ?? task : task;
   const out: string[] = [];
-  const ti = impl.test_interface ?? [];
-  if (ti.length) out.push(`## 允许的测试入口\n测试只能从下面这些入口验证（test_interface）：\n${list(ti)}`);
   const mine = (impl.produces ?? []).map((p) => `${p}（${impl.id} 正在实现）`);
   const done = all.filter((x) => x.kind === 'impl' && x.status === 'done' && x.id !== impl.id)
     .flatMap((x) => (x.produces ?? []).filter((p) => DELIVERED_KEY.test(p)).map((p) => `${p}（${x.id}）`));
@@ -184,7 +181,7 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
   ].join('\n\n');
 
   const t = i.task;
-  const verify = t.verify.map((c) => `${c}：\`${i.commands[c] ?? '（未定义）'}\``);
+  const commands = t.kind === 'doc' ? '' : commandsReference(i.commands);
   const writes = [...(t.conflict_files ?? t.writes), ...(t.conflict_files ? [] : (t.shared ?? []).map((x) => `${x}（登记的公共文件：可以改，其他模块也可能改，只做必要的追加）`))];
   const parts = [
     `# 任务 ${i.flowId}/${t.id}：${t.title}`,
@@ -192,7 +189,7 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     `## 验收标准\n${list(t.ac ?? [])}`,
     `## 输入文件\n${list(t.inputs)}`,
     `## 可写范围（writes）\n${list(writes, '（只读）')}`,
-    ...(verify.length ? [`## 测试命令\n${list(verify)}\n提交前自己跑通 typecheck、lint 与本任务的测试。合并时程序不再跑这些，reviewer 会运行本任务自己的测试，全量测试在阶段门禁运行。`] : []),
+    ...(commands ? [`## 项目命令\n${commands}\n提交前自己跑通本任务的测试，以及与改动相关的参考检查（有 typecheck、lint 就跑）。合并时程序不再跑这些，reviewer 会运行本任务自己的测试，全量测试在阶段门禁运行。`] : []),
   ];
   // worker 自己按 AC 编号写本任务的验收测试（写在用户消息里，不动系统提示）
   if (i.mode === 'impl' && (t.kind === 'impl' || t.kind === 'fix') && writesOwnAcceptance(t)) {

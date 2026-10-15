@@ -1,4 +1,4 @@
-// 来源：pi-flow scripts/baseline-build.ts @ 31f3f15（经 pi-forge scripts/baseline-build.ts 改编）
+// 改编自 scripts/baseline-build.ts
 // M9 的 N 组：不加载 pi-forge，用原生 pi 在单会话里从零做同一个项目，再在同一会话里提需求变更。
 //   node scripts/m9/native.ts --prd <requirement.md> --then-file <change.md> --hidden <hidden.mjs>
 //        [--out <目录>] [--model magpie/zcode/GLM-5.3-Flash] [--thinking high] [--max-min 90] [--stuck-min 30]

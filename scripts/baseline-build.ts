@@ -1,4 +1,3 @@
-// 来源：pi-flow scripts/baseline-build.ts @ 31f3f15
 // 对照实验：不加载 pi-forge，用原生 pi 从零做同一个项目，统计耗时、token、轮数、工具调用（含 subagent 子会话）。
 //   node scripts/baseline-build.ts [--model provider/id] [--thinking high] [--desc "<描述>"] [--keep]
 // 只加载 pi-codegraph、pi-subagents 两个插件（--no-extensions 后用 -e 显式加载），不加载其他全局插件、技能、提示模板与上下文文件。

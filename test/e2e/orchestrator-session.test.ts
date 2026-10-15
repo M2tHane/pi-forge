@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/orchestrator-session.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 真实 Pi 进程连接本地假模型：主会话只读，任务由程序派发。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +20,7 @@ before(async () => { llm = await startFakeLlm({ scriptsDir: SCRIPTS, logFile: LO
 after(() => { rmSync(LOG, { force: true }); return llm?.close(); });
 
 test('调度模式：orchestrator 不能自己写代码，程序派发后 wait/status；任务经子进程完成', { skip: !piAvailable && 'pi 不可用', timeout: 300_000 }, async () => {
-  const p = await setupProject({ yaml: PROJECT_YAML.replace('auto_dispatch: false', 'auto_dispatch: true').replace('read_paths: ["**"], writes: []', 'read_paths: ["docs/**", ".forge/**"], writes: []'),
+  const p = await setupProject({ yaml: PROJECT_YAML.replace('auto_dispatch: false', 'auto_dispatch: true'),
     tasks: [mkTask('T-001', { verify: ['test'] })] });
   const agentDir = mkdtempSync(path.join(tmpdir(), 'pi-forge-agentdir-'));
   try {
@@ -45,8 +44,8 @@ test('调度模式：orchestrator 不能自己写代码，程序派发后 wait/s
     const store = new StateStore(p.dir);
     assert.equal(store.readTask(p.flowId, 'T-001').status, 'done', r.stdout + r.stderr);
     const violations = store.readEvents().filter((e) => e.type === 'violation' && e.data?.['role'] === 'orchestrator');
-    assert.deepEqual(violations.map((e) => [e.data?.['tool'], e.data?.['rule']]), [['read', 'read_paths']]);
-    assert.match(violations[0]!.reason ?? '', /调度者/);
+    // 读取不限范围：脚本里读源码不再算违规
+    assert.deepEqual(violations.map((e) => [e.data?.['tool'], e.data?.['rule']]), []);
     const all = readFileSync(LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     const reqs = all.filter((x) => x.model === 'orch-runtime');
     assert.ok(reqs.length >= 5);
@@ -54,7 +53,10 @@ test('调度模式：orchestrator 不能自己写代码，程序派发后 wait/s
     assert.ok(['read', 'forge_status', 'forge_wait', 'notes', 'history'].every((t) => reqs[0].tools.includes(t)));
     assert.match(JSON.stringify(reqs[1].last), /Tool write not found/);
     assert.match(JSON.stringify(reqs[0].system), /你是 pi-forge 的主会话/);
-    assert.match(JSON.stringify(reqs[0].system), /唯一允许的下一步/);
+    assert.doesNotMatch(JSON.stringify(reqs[0].system), /\[pi-forge 状态\]/, '每轮变化的状态不进系统提示');
+    assert.match(JSON.stringify(reqs[0].status), /\[唯一允许的下一步\]/);
+    // 系统提示在整个调度过程中不变，提示缓存可以命中
+    assert.ok(reqs.every((x) => JSON.stringify(x.system) === JSON.stringify(reqs[0].system)), '系统提示不随轮次变化');
     const last = all.filter((x) => x.model === 'plain').at(-1);
     assert.ok(last && ['read', 'bash', 'edit', 'write'].every((t) => last.tools.includes(t)));
     assert.match(r.stdout + r.stderr, /已退出调度模式，恢复原来的模型/);

@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/history.ts @ 31f3f15
 // 历史检索（第五轮）：在完整会话历史里检索，包括已被压缩、不在上下文里的部分。
 // 数据来自 Pi 的会话文件（JSONL，见 Pi docs/session-format.md）：压缩只追加 compaction 条目，不删除旧条目。
 // 本地文本检索，不需要嵌入模型和额外的模型调用；结果确定。纯函数加文件读取，不依赖 Pi。

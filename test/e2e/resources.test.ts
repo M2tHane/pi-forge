@@ -1,4 +1,4 @@
-// M4：运行时资源隔离（第 4.1 节）。forge_service 启动的服务拿到本次运行分配的资源；运行结束后释放。
+// M4：运行时资源隔离。forge_service 启动的服务拿到本次运行分配的资源；运行结束后释放。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';

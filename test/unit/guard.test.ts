@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/unit/guard.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 import { test, before, after } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
@@ -57,51 +56,13 @@ test('orchestrator：写、编辑、bash、审批全部被阻断，reason 含指
   ]) blocked(d, 'tool_whitelist', /你是调度者，不能直接修改代码。请用户执行 \/forge next，或调用 forge_wait 等待结果。/);
 });
 
-test('orchestrator：有序 read_paths 仍可限制只读路径为 docs 与 .forge', () => {
-  const scoped = parseConfig(YAML);
-  scoped.role('orchestrator').readPaths = ['docs/**', '.forge/**'];
-  const c = ctx('orchestrator', { config: scoped });
-  allowed(checkToolCall(call('read', { path: 'docs/PRD.md' }), c));
-  allowed(checkToolCall(call('read', { path: '.forge/state.json' }), c));
-  allowed(checkToolCall(call('forge_status', {}), c));
-  blocked(checkToolCall(call('read', { path: 'src/server/a.ts' }), c), 'read_paths', /orchestrator 只能读取/);
-  blocked(checkToolCall(call('read', { path: '../proj/src/server/a.ts' }), c), 'read_paths');
-});
-
-const readCtx = (patterns: string[]): GuardContext => {
-  const scoped = parseConfig(YAML);
-  scoped.role('worker').readPaths = patterns;
-  return ctx('worker', { config: scoped });
-};
-
-test('有序 read_paths：排除 .forge，目录本身与符号链接同样拒绝', () => {
-  const c = readCtx(['**', '!.forge/**']);
-  allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), c));
-  blocked(checkToolCall(call('read', { path: '.forge/state.json' }), c), 'read_paths');
-  blocked(checkToolCall(call('read', { path: 'src/server/evil/state.json' }), c), 'read_paths');
-  blocked(checkToolCall(call('ls', { path: '.forge' }), c), 'read_paths');
-  allowed(checkToolCall(call('ls', {}), c));
-  blocked(checkToolCall(call('read', { path: path.join(main, 'src/server/a.ts') }), c), 'read_paths');
-});
-
-test('有序 read_paths：后面的允许和排除反复覆盖', () => {
-  const c = readCtx(['**', '!a/**', 'a/b/**', '!a/b/private/**', 'a/b/private/public/**']);
-  blocked(checkToolCall(call('read', { path: 'a/x.ts' }), c), 'read_paths');
-  allowed(checkToolCall(call('read', { path: 'a/b/x.ts' }), c));
-  blocked(checkToolCall(call('read', { path: 'a/b/private/x.ts' }), c), 'read_paths');
-  allowed(checkToolCall(call('read', { path: 'a/b/private/public/x.ts' }), c));
-});
-
-test('有序 read_paths：只有排除项或空列表拒绝所有读取，null 保持不限制', () => {
-  for (const patterns of [[], ['!a/**', '!.forge/**']]) {
-    const c = readCtx(patterns);
-    blocked(checkToolCall(call('read', { path: 'src/server/a.ts' }), c), 'read_paths');
-    blocked(checkToolCall(call('ls', {}), c), 'read_paths');
-    blocked(checkToolCall(call('grep', { pattern: 'x' }), c), 'read_paths');
+test('读取不限范围：orchestrator 与 worker 都能读 .forge/ 与源码，敏感文件仍拦', () => {
+  for (const c of [ctx('orchestrator'), ctx('worker', { writes: ['src/server/**'] }), ctx('reviewer')]) {
+    allowed(checkToolCall(call('read', { path: '.forge/state.json' }), c));
+    allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), c));
+    blocked(checkToolCall(call('read', { path: '.env' }), c), 'sensitive');
   }
-  const unrestricted = parseConfig(YAML);
-  unrestricted.role('worker').readPaths = null;
-  allowed(checkToolCall(call('read', { path: 'src/server/a.ts' }), ctx('worker', { config: unrestricted })));
+  allowed(checkToolCall(call('ls', { path: '.forge' }), ctx('orchestrator')));
 });
 
 test('reviewer：任何写入都被阻断', () => {
@@ -156,13 +117,13 @@ test('stage-qa 在临时 worktree 里按隔离工作区约束：写不到主工�
 
 test('architect（P1 的 doc task，writes 取 plan scope）：只能写规划产物，不能写实现代码或规格需求', () => {
   const c = ctx('architect', { writes: config.scopeWrites()['plan']! });
-  for (const file of ['docs/contracts/openapi.yaml', 'docs/arch/overview.md', 'docs/plan/plan.yaml', 'docs/rules-draft/backend.md', 'docs/spec/glossary.md', 'AGENTS.md']) {
+  for (const file of ['docs/contracts/openapi.yaml', 'docs/arch/overview.md', 'docs/plan/plan.yaml', 'commands.yaml', 'docs/spec/glossary.md', 'AGENTS.md']) {
     allowed(checkToolCall(call('write', { path: file, content: '' }), c));
   }
-  for (const file of ['src/server/a.ts', 'docs/spec/requirements.md', 'docs/review/x.md']) {
+  for (const file of ['src/server/a.ts', 'docs/spec/requirements.md', 'docs/review/x.md', 'docs/rules-draft/backend.md']) {
     blocked(checkToolCall(call('write', { path: file, content: '' }), c), 'write_paths');
   }
-  blocked(checkToolCall(call('read', { path: '.forge/state.json' }), c), 'read_paths');
+  allowed(checkToolCall(call('read', { path: '.forge/state.json' }), c));
   // bash 为 full 档，但 rm / mv 仍只能作用于 task writes 内的文件
   blocked(checkToolCall(bash('rm src/server/a.ts'), c), 'bash', /writes/);
   blocked(checkToolCall(bash('rm x'), ctx('reviewer')), 'bash', /只读角色不能执行该命令（rm）/);
@@ -178,7 +139,8 @@ test('实施角色：writes 白名单', () => {
   blocked(checkToolCall(call('write', { path: '/tmp/x.ts', content: '' }), c), 'write_paths', /worktree/);
   blocked(checkToolCall(call('write', { path: path.join(main, 'src/server/a.ts'), content: '' }), c), 'write_paths', /主工作区/);
   blocked(checkToolCall(call('write', { path: 'src/server/mainlink/x.ts', content: '' }), c), 'write_paths', /主工作区/);
-  blocked(checkToolCall(call('write', { content: 'x' }), c), 'write_paths', /无法确定/);
+  // 判断不了写到哪里的调用放行（工具自己会报缺参数）
+  allowed(checkToolCall(call('write', { content: 'x' }), c));
   // 任务 writes 比角色 writes 窄时以任务为准
   const narrow = ctx('worker', { writes: ['src/server/export/**'] });
   blocked(checkToolCall(call('write', { path: 'src/server/a.ts', content: '' }), narrow), 'write_paths');
@@ -230,7 +192,6 @@ const IMPL_BLOCKED = [
   'rm -rf .*',
   'sed -i s/a/b/ .forge/state.json',
   'tee ../../proj/src/a.ts',
-  'cd /tmp && ls',
   'git reset --hard HEAD~1',
   'git rebase main',
   'git push --force',
@@ -243,9 +204,6 @@ const IMPL_BLOCKED = [
   'git commit --amend -m x',
   'git -C ../.. commit -am x',
   'git config core.hooksPath /tmp',
-  'cd /tmp',
-  'cd ..',
-  'cd',
   'curl -o .forge/x https://example.com',
   'wget -P ../../proj/src https://example.com/a',
   'ssh host',
@@ -254,15 +212,12 @@ const IMPL_BLOCKED = [
   'eval "rm x"',
   'echo $(rm x)',
   'echo `mv a b`',
-  'find . -name "*.ts" -delete',
   'find . -exec rm {} \;',
-  'ls | xargs rm',
   'env FOO=1 rm x',
   'sudo rm x',
   'nohup rm x &',
   'cat <<EOF > .forge/x\nhi\nEOF',
   'echo x > ../../proj/src/a.ts',
-  'echo "unterminated',
 ];
 
 test('实施角色：bash 约束（对抗用例）', () => {
@@ -276,6 +231,7 @@ test('实施角色：bash 约束（对抗用例）', () => {
 test('实施角色：正常命令放行；禁止列表之外判断不了的（命令名、sh -c、eval、重定向目标含变量）也放行', () => {
   const c = ctx('worker', { writes: ['src/server/**'] });
   for (const cmd of ["sed -i 's/a/b/' src/server/a.ts", "sed -Ei 's/a/b/' src/server/a.ts", "perl -pi -e 's/a/b/' src/server/a.ts", 'rm src/server/*.ts',
+    'echo "unterminated', 'cd /tmp && ls', 'cd ..', 'cd', 'find . -name "*.ts" -delete', 'ls | xargs rm', 'rm -rf $DIST',
     '$CMD src', 'bash -c "$SCRIPT"', 'eval "$X"', 'eval echo hi', 'echo x > "$OUT"', 'node build.js | tee src/server/build.log', 'curl -o $OUT https://example.com']) {
     allowed(checkToolCall(bash(cmd), c));
   }
@@ -298,9 +254,9 @@ test('临时目录：实施角色可以 cd、写入、rm、mv；worktree 中只�
   }
   allowed(checkToolCall(call('write', { path: path.join(scratch, 'n.js'), content: 'x' }), c));
   blocked(checkToolCall(bash('rm -rf .scratchtest'), c), 'bash', /临时目录/);
-  blocked(checkToolCall(bash('cd /tmp'), c), 'bash', /临时目录/);
-  const r = ctx('reviewer', { scratchDir: scratch });
-  blocked(checkToolCall(bash(`cd ${scratch}`), r), 'bash');
+  // cd 不拦：之后的相对路径按新目录判断
+  allowed(checkToolCall(bash('cd /tmp'), c));
+  blocked(checkToolCall(bash(`cd ${main} && echo x > a.ts`), c), 'bash', /主工作区/);
 });
 
 test('敏感读取对所有角色阻断', () => {
@@ -349,15 +305,16 @@ test('worktree 中未被 git 跟踪的临时文件可以删除；被跟踪的 wr
   blocked(checkToolCall(bash('mv .tmpcheck/x.js .tmpcheck/y.js'), c), 'bash');
 });
 
-test('同一命令中字面量赋值的变量会被代入后校验；含命令替换或未知变量的仍阻断', () => {
+test('同一命令中字面量赋值的变量会被代入后校验；含命令替换或未知变量的放行', () => {
   const scratch = path.join(base, 'scratch-r2');
   mkdirSync(scratch, { recursive: true });
   const c = ctx('worker', { writes: ['src/server/**'], scratchDir: scratch });
   allowed(checkToolCall(bash(`S=${scratch}; mkdir -p $S/a && cp src/server/a.ts $S/a/ && rm -rf "\${S}/a"`), c));
   blocked(checkToolCall(bash('S=/etc; rm -rf $S/x'), c), 'bash');
   blocked(checkToolCall(bash('F=.forge; echo x > $F/state.json'), c));
-  blocked(checkToolCall(bash('S=$(pwd); rm -rf $S/x'), c), 'bash');
-  blocked(checkToolCall(bash('rm -rf $UNKNOWN/x'), c), 'bash');
+  // 位置判断不了的（命令替换、未知变量）放行
+  allowed(checkToolCall(bash('S=$(pwd); rm -rf $S/x'), c));
+  allowed(checkToolCall(bash('rm -rf $UNKNOWN/x'), c));
   // 命令替换里的 curl 也能用外层赋值的变量（真实实验：stage-qa 的 P=59670; B=http://localhost:$P; ID=$(curl $B/boards) 被拦）
   allowed(checkToolCall(bash(`P=59670; B=http://localhost:$P; ID=$(curl -s -X POST $B/boards -d '{"name":"x"}' | sed -E 's/.*"id":"([^"]+)".*/\\1/'); echo $ID`), c));
   allowed(checkToolCall(bash('H=http://example.com; ID=$(curl -s $H/boards)'), c));
@@ -445,15 +402,16 @@ test('所有角色都可以联网：curl、wget 不限主机；实施角色的�
   blocked(checkToolCall(bash(`curl -o ${main}/x http://localhost:3000/`), qa), 'read_paths');
 });
 
-test('uv 管理的 Python 项目：pip 装包被拦下并提示 uv add；uv add、uv sync、uv run 放行；没有 uv.lock 的项目不拦 pip', () => {
+test('uv 管理的 Python 项目：pip 装包放行但提醒用 uv add；uv add、uv sync、uv run 不提醒；没有 uv.lock 的项目不提醒', () => {
   assert.deepEqual(['pip install x', 'pip3 install -r r.txt', 'python3 -m pip install x', 'uv pip install x', 'uv pip sync r.txt', 'pip list', 'uv add x', 'python -m pytest']
     .map((c) => pipInstall(c.split(' '))), [true, true, true, true, true, false, false, false]);
   const dir = realpathSync(mkdtempSync(path.join(base, 'uv-')));
   writeFileSync(path.join(dir, 'uv.lock'), 'version = 1\n');
   const c = { ...ctx('worker'), cwd: dir, workspaceRoot: dir };
-  for (const cmd of ['pip install requests', 'uv pip install requests', '.venv/bin/python -m pip install x']) blocked(checkToolCall(bash(cmd), c), 'bash', /uv add/);
-  for (const cmd of ['uv add requests', 'uv sync --frozen', 'uv run --frozen pytest -q']) allowed(checkToolCall(bash(cmd), c));
-  allowed(checkToolCall(bash('pip install requests'), ctx('worker')));
+  const warning = (cmd: string, cx: GuardContext) => { const d = checkToolCall(bash(cmd), cx); assert.ok(d.allow, cmd); return d.allow ? d.warning : undefined; };
+  for (const cmd of ['pip install requests', 'uv pip install requests', '.venv/bin/python -m pip install x']) assert.match(warning(cmd, c) ?? '', /uv add/);
+  for (const cmd of ['uv add requests', 'uv sync --frozen', 'uv run --frozen pytest -q']) assert.equal(warning(cmd, c), undefined);
+  assert.equal(warning('pip install requests', ctx('worker')), undefined);
 });
 
 test('downloadTargets：curl、wget 会写的文件与目录（带值的短选项簇不误判）', () => {
@@ -503,22 +461,11 @@ test('allowlistPrefixes / allowedByList：{files} 占位与之后的词去掉；
   assert.equal(allowedByList(words('npm run e2e'), p), false);
 });
 
-test('只读与白名单档位：能读出其他提交内容的 git 用法被拦，工作区内的 diff、log、blame 放行', async () => {
-  const { gitReadsOtherCommits } = await import('../../src/core/security/guard.ts');
-  for (const role of ['reviewer']) { // architect 现为 full 档（S0 搭骨架），不再属于只读档位
-    const c = ctx(role);
-    for (const cmd of ['git show HEAD~1:src/a.ts', 'git show abc123', 'git cat-file -p HEAD:src/a.ts', 'git log -p', 'git log --patch -1 -- src',
-      'git log -L 1,5:src/a.ts', 'git diff HEAD~1', 'git diff main...HEAD -- src', 'git diff src/a.ts', 'git grep foo HEAD~2', 'git grep -e foo main',
-      'git blame HEAD~1 -- src/a.ts', 'git archive HEAD', 'git remote -v', 'git fetch', 'git clone ../x', 'git worktree list']) {
-      blocked(checkToolCall(bash(cmd), c), 'bash');
-    }
-    for (const cmd of ['git diff', 'git diff -- src', 'git diff --stat', 'git diff --cached', 'git log --oneline -5', 'git log --stat', 'git grep foo', 'git grep -e foo -- src',
-      'git blame src/a.ts', 'git status', 'git ls-files']) allowed(checkToolCall(bash(cmd), c));
-  }
-  assert.equal(gitReadsOtherCommits('log', ['--oneline', '--pretty=%h']), null);
-  assert.match(gitReadsOtherCommits('show', [])!, /git show/);
-  // 实施档位不受影响（worker 自己的 worktree）
-  allowed(checkToolCall(bash('git show HEAD:src/server/a.ts'), ctx('worker', { writes: ['src/server/**'] })));
+test('只读档位：可以读其他提交（git show、log -p、diff <版本>），不能操作远程与 worktree', () => {
+  const c = ctx('reviewer');
+  for (const cmd of ['git remote -v', 'git fetch', 'git clone ../x', 'git worktree list', 'git archive HEAD']) blocked(checkToolCall(bash(cmd), c), 'bash');
+  for (const cmd of ['git show HEAD~1:src/a.ts', 'git cat-file -p HEAD:src/a.ts', 'git log -p', 'git diff HEAD~1', 'git diff main...HEAD -- src', 'git grep foo HEAD~2',
+    'git blame HEAD~1 -- src/a.ts', 'git diff', 'git log --oneline -5', 'git status', 'git ls-files']) allowed(checkToolCall(bash(cmd), c));
 });
 
 test('隔离工作区（stage-qa 的临时 worktree）：读写与 bash 参数不能越出工作区，不能碰 .forge/', () => {
@@ -539,4 +486,28 @@ test('隔离工作区（stage-qa 的临时 worktree）：读写与 bash 参数�
   allowed(checkToolCall(bash('cat src/server/../server/a.ts && ls tests'), c));
   allowed(checkToolCall(bash('pnpm test:acceptance -- T-001'), c));
   allowed(checkToolCall(bash('curl http://localhost:3000/x'), ctx('worker', { writes: ['src/**'], isolatedWorkspace: true })));
+});
+
+test('隔离工作区：系统临时目录可用、别的 worktree 仍拦；不查敏感文件；点名的 printenv 放行（所有角色）、打印全部仍拦', () => {
+  const c = ctx('stage-qa', { isolatedWorkspace: true });
+  const sysTmp = realpathSync(tmpdir());
+  for (const cmd of ['mktemp -d /tmp/club-s1-qa.XXXXXX', `rm -rf ${sysTmp}/tmp.6q1K3wfy7K`, 'ls /tmp',
+    "rg --files -g '!package-lock.json' -g '!.env*' -g '!*.pem'", 'cat .env', 'printenv PORT FORGE_DB_NAME']) {
+    allowed(checkToolCall(bash(cmd), c));
+  }
+  allowed(checkToolCall(call('read', { path: '/tmp/x.json' }), c));
+  blocked(checkToolCall(bash(`cat ${path.join(base, 'proj.worktrees', 'B-001-T-002', 'src/a.ts')}`), c), 'read_paths');
+  blocked(checkToolCall(bash(`cat ${main}/src/server/a.ts`), c), 'read_paths');
+  for (const cmd of ['printenv', 'printenv -0', 'env', 'export']) blocked(checkToolCall(bash(cmd), c), 'sensitive');
+  allowed(checkToolCall(bash('printenv PORT'), ctx('worker')));
+  blocked(checkToolCall(bash('env | grep -i port'), ctx('worker')), 'sensitive');
+});
+
+test('受保护路径的目录本身（worktree 里的 .git 文件）与会匹配到它的隐藏文件通配都拦；forge_service 直接给的命令同样检查', () => {
+  const c = ctx('worker', { openWrites: true, writes: ['src/server/**'] });
+  for (const cmd of ['rm .git', 'mv .git x', 'rm -rf .g*']) blocked(checkToolCall(bash(cmd), c), 'protected');
+  assert.equal(checkToolCall(bash('rm -rf .*'), c).allow, false);
+  allowed(checkToolCall(bash('rm -rf src/server/.cache*'), c));
+  blocked(checkToolCall(call('forge_service', { action: 'start', name: 'dev', command: 'git push' }), c), 'bash', /git push/);
+  allowed(checkToolCall(call('forge_service', { action: 'start', name: 'dev', command: 'npm run dev' }), c));
 });

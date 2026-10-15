@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/session-log.ts @ 31f3f15
 // 子进程会话留档：pi 以 --session-dir 运行，会话文件（JSONL，见 Pi docs/session-format.md）保存在
 // <项目>.worktrees/.sessions/<run>/，不放 .forge/（避免成为未登记文件）。这里负责定位、摘要与按保留期清理。
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';

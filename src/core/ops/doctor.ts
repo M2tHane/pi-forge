@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/doctor.ts @ 31f3f15
 // /forge doctor：状态完整性与前置条件检查；--fix 只做安全的清理（不改状态）。
 import { existsSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -47,7 +46,7 @@ export async function doctor(root: string, store: StateStore, opts: { fix?: bool
     }
   }
 
-  // 互相等待、或等到已阻塞 / 已取消的 task（第 8.1 节"卡住时必须能被看见"）
+  // 互相等待、或等到已阻塞 / 已取消的 task（"卡住时必须能被看见"）
   for (const flowId of flowIds) {
     for (const s of actionableStalls(store.listTasks(flowId))) errors.push(`${flowId} 停滞：${s.reason}`);
   }
@@ -89,7 +88,7 @@ export async function doctor(root: string, store: StateStore, opts: { fix?: bool
       warnings.push(`未被任何任务引用的 worktree：${w}（/forge doctor --fix 清理）`);
     }
   }
-  // 残留的运行资源（第 4.1 节）
+  // 残留的运行资源
   const endedRuns = new Set(store.listRuns().filter((r) => r.ended_at).map((r) => r.run_id));
   const staleRes = listResources(root).filter((e) => isStaleResource(e, endedRuns, processAlive));
   if (staleRes.length) {

@@ -1,4 +1,3 @@
-// 来源：pi-flow test/fixtures/fake-subagent/launcher.ts @ 31f3f15
 // fake-subagent：实现 SubagentLauncher，用脚本代替模型调用工具。
 // 每次调用都经过真实的 SubagentRuntime（guard + forge_* 工具）；内置工具在 worktree 中真实执行。
 import { redactSecrets } from '../../../src/core/security/redact.ts';
@@ -59,8 +58,10 @@ export class FakeLauncher implements SubagentLauncher {
         return { ok: false, text: g.reason };
       }
       calls++;
+      // 与 subagent 扩展一致：guard 放行但带提醒时，提醒追加到结果后面
+      const withNote = (r: CallResult): CallResult => (g.note ? { ...r, text: `${r.text}\n\n${g.note}` } : r);
       try {
-        if (rt.isFlowTool(tool)) return { ok: true, text: (await rt.callFlowTool(tool, input)).text };
+        if (rt.isFlowTool(tool)) return withNote({ ok: true, text: (await rt.callFlowTool(tool, input)).text });
         const p = typeof input['path'] === 'string' ? path.resolve(spec.cwd, input['path']) : '';
         switch (tool) {
           case 'write':
@@ -86,7 +87,7 @@ export class FakeLauncher implements SubagentLauncher {
             }
             const c = await rt.afterToolResult('bash', input, !r.ok, r.text);
             if (c.terminate) { terminated = true; throw new Terminated(c.note); }
-            return c.note ? { ...r, text: `${r.text}\n\n${c.note}` } : r;
+            return withNote(c.note ? { ...r, text: `${r.text}\n\n${c.note}` } : r);
           }
           default:
             return { ok: true, text: `（fake）${tool}` };

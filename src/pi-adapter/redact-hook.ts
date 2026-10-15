@@ -1,4 +1,3 @@
-// 来源：pi-flow src/pi-adapter/redact-hook.ts @ 31f3f15
 // tool_result 打码（第六轮 D4）：同时替换 content 与 structuredContent（Pi 1.0.0 文档：只替换 content 会丢掉 structuredContent）。
 import type { ToolResultEvent, ToolResultEventResult } from '@earendil-works/pi-coding-agent';
 import { redactDeep, redactSecrets } from '../core/security/redact.ts';

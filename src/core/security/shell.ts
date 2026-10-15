@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/shell.ts @ 31f3f15
 // 极简 shell 解析：只为 guard 服务，提取简单命令、重定向与命令替换。
 // 无法确定的结构返回 errors，由 guard 按"无法校验即阻断"处理。
 

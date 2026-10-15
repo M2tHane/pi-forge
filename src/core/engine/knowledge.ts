@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/knowledge.ts @ 31f3f15
 // 项目级知识库：跨流程积累的约定、坑、决策。agent 经 forge_learn 提交，程序校验后写入 .forge/knowledge.json。
 // 知识不是规则：注入提示时标明"与规则冲突时以规则为准"；要成为规则必须经"规则草案 → 用户应用"。
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';

@@ -1,5 +1,4 @@
-// 来源：pi-flow test/unit/state-recovery6.test.ts @ 31f3f15
-// 第六轮 7.3–7.5：命令草案无效时规划闸门不通过；自动检查点；外部通知。
+// 第六轮 7.3–7.5：commands.yaml 无效时规划闸门不通过；自动检查点；外部通知。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpRepo } from '../helpers/repo.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
-import { commandsDraftProblems } from '../../src/core/plan/rules-draft.ts';
+import { commandsProblems, commandsTextAt } from '../../src/core/state/project-commands.ts';
 import { createCheckpoint, dropCheckpoint, listCheckpoints, restoreCheckpoint } from '../../src/core/state/checkpoints.ts';
 import { notifyEvents, runNotify } from '../../src/core/ops/notify.ts';
 
@@ -21,25 +20,30 @@ function repoWithWorkflow() {
   return r;
 }
 
-test('命令草案：不是合法 YAML、合并后缺 test、校验不通过都算问题；合法的没有问题', () => {
+test('commands.yaml：缺文件、不是合法 YAML、命令为空、缺 test 都算问题；合法的没有问题；运行中的配置换成分支上的', () => {
   const r = repoWithWorkflow();
   try {
-    const draft = (text: string) => {
+    const at = (text: string) => {
       r.git('checkout', '-q', '-B', 'flow/B-001');
-      mkdirSync(path.join(r.dir, 'docs/rules-draft'), { recursive: true });
-      writeFileSync(path.join(r.dir, 'docs/rules-draft/commands.yaml'), text);
+      writeFileSync(path.join(r.dir, 'commands.yaml'), text);
       r.git('add', '.');
-      r.git('commit', '-q', '-m', 'draft');
+      r.git('commit', '-q', '-m', 'commands');
       r.git('checkout', '-q', 'main');
-      return commandsDraftProblems(r.dir, 'flow/B-001');
+      return commandsProblems(commandsTextAt(r.dir, 'flow/B-001'), '');
     };
-    assert.deepEqual(commandsDraftProblems(r.dir, 'flow/none'), [], '没有集成分支不报');
-    assert.match(draft('commands: [a, b').join(), /不是合法 YAML/);
-    assert.match(draft('commands:\n  lint: ""\n').join(), /lint 的命令必须是非空字符串/);
-    assert.deepEqual(draft('commands:\n  test: "npm test"\n  serve: "npm run dev"\n'), []);
-    // 草案是完整的命令表：不写 test 就没有 test；把 test 置空也不行
-    assert.match(draft('commands:\n  lint: "eslint ."\n').join(), /缺少 test 命令/);
-    assert.match(draft('commands:\n  test: " "\n').join(), /test 的命令必须是非空字符串/);
+    assert.equal(commandsTextAt(r.dir, 'flow/none'), null, '没有分支');
+    assert.match(commandsProblems(null, '集成分支上').join(), /集成分支上缺少 commands\.yaml/);
+    assert.match(at('commands: [a, b').join(), /不是合法 YAML/);
+    assert.match(at('commands:\n  lint: ""\n').join(), /lint 的命令必须是非空字符串/);
+    assert.match(at('commands:\n  lint: "eslint ."\n').join(), /缺少 test 命令/);
+    assert.match(at('commands:\n  test: "npm test"\nroles: {}\n').join(), /只能有 commands、gui_commands、shared_env/);
+    assert.deepEqual(at('commands:\n  test: "npm test"\n  serve: "npm run dev"\n'), []);
+    const config = parseConfig(TEST_YAML);
+    assert.equal(config.syncCommands(r.dir, 'flow/B-001'), null);
+    assert.deepEqual(config.commands, { test: 'npm test', serve: 'npm run dev' }, '换成分支上的命令表，workflow.yaml 里旧的不再用');
+    at('commands: [broken');
+    assert.match(config.syncCommands(r.dir, 'flow/B-001') ?? '', /不是合法 YAML/);
+    assert.equal(config.commands['test'], 'npm test', '写坏时保留原来的命令');
   } finally { r.cleanup(); }
 });
 

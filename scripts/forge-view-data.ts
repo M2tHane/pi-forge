@@ -8,7 +8,7 @@ import { flowMetrics } from '../src/core/stage/signoff.ts';
 import { redactDeep, redactSecrets } from '../src/core/security/redact.ts';
 import type { FlowFile, TaskFile } from '../src/core/state/schemas.ts';
 
-/** 六个角色（规格第 14 节；test-author 已删除） */
+/** 六个角色（test-author 已删除） */
 export const ROLES = ['orchestrator', 'architect', 'worker', 'reviewer', 'stage-qa'] as const;
 
 const HANDOFF_TAIL = 3000;

@@ -64,8 +64,7 @@ export function buildDocsUpdateHandoff(description: string, range: { from: strin
     '## 要求',
     '1. 读上面的改动和相关代码，弄清这次变更对架构和接口的影响。',
     '2. 把 docs/arch/overview.md 与 docs/contracts/ 改到与代码一致：新增的模块、数据流、接口写进去，变化的改掉，删除的去掉。这里的契约可以修改，不只是追加。术语有变化时同步 docs/spec/glossary.md。',
-    '3. 确认确实不需要改时，先用 forge_note 写一行说明（以「无需更新」开头，冒号后写原因，例如“无需更新：只改了内部实现，没有新增接口”），再提交。',
-    '没有改 docs/arch/** 或 docs/contracts/**、又没有这样的说明，提交会被拒绝。',
+    '3. 确认确实不需要改时，不改任何文件直接 forge_submit（summary 写明原因），没有改动的提交视为完成。',
   ].join('\n');
 }
 
@@ -126,7 +125,7 @@ export async function startChange(d: StartChangeDeps, input: ChangePlanInput, op
   }
   const lines: string[] = [];
   d.dependencyGate?.(lines);
-  const verify = ['typecheck', 'lint', 'test'].filter((c) => config.commands[c]);
+  const verify = ['test'].filter((c) => config.commands[c]);
   const { errors, tasks: planned } = checkChangePlan(input, { maxTasks: config.limits.change_max_tasks ?? 3, scopes: config.role('worker').scopes, verify });
   if (errors.length) throw new ChangeStartError(`迷你计划未通过检查：\n${errors.map((e) => `- ${e}`).join('\n')}`);
   const main = config.raw.main_branch;

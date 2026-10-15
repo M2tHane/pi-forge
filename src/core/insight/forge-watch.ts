@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/flow-watch.ts @ 31f3f15（改名）
 // 流程层面的时间与停滞（第六轮 B6）：流程墙钟（不含等用户的时间）、停滞看守、"流程卡住"判定。
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';

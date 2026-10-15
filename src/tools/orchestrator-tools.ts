@@ -1,4 +1,3 @@
-// 来源：pi-flow src/tools/orchestrator-tools.ts @ 31f3f15
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
 import { submitSpec } from '../core/spec/spec-flow.ts';
 import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan/plan-flow.ts';
@@ -32,11 +31,13 @@ export const SpecParams = Type.Object({
 }, { additionalProperties: false });
 export async function flowSpec(root: string, store: StateStore, config: FlowConfig, p: Static<typeof SpecParams>): Promise<ToolResult> {
   const id = activeFlowId(store);
-  const base = [p.requirements, p.screens, p.permissions, p.glossary];
-  if (!base.every(Boolean)) throw new FlowToolError('请提交四份完整规格：requirements、screens、permissions、glossary。');
-  const r = await submitSpec(root, store, id, { requirements: p.requirements!, screens: p.screens!, permissions: p.permissions!, glossary: p.glossary! });
+  const given = Object.fromEntries(Object.entries(p).filter(([, v]) => v)) as Partial<Record<'requirements' | 'screens' | 'permissions' | 'glossary', string>>;
+  if (!Object.keys(given).length) throw new FlowToolError('至少提交一份规格；第一次提交要给出 requirements、permissions、glossary（screens 没有界面的项目可以不交）。');
+  const r = await submitSpec(root, store, id, given);
+  const reused = r.reused.length ? `（${r.reused.join('、')} 沿用上一次提交）` : '';
+  if (!r.ok) throw new FlowToolError(`spec-lint 未通过，未写入集成分支${reused}：\n${r.lint.errors.map((e) => `- ${e.message}`).join('\n')}\n只需重交要改的那几份，没交的沿用这次提交的内容。`);
   const gate = await runStageGate(root, store, config, id);
-  return { text: gate.passed ? `四份规格已提交，spec-lint 通过，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${r.lint.warnings.length ? `\n警告：\n${r.lint.warnings.map((i) => i.message).join('\n')}` : ''}` : `集成分支上的 spec-lint 未通过，已回到规格讨论，请修正后用 forge_spec 重新提交：\n${gate.reasons.join('\n')}`, details: { sha: r.sha, lint: r.lint, gate } };
+  return { text: gate.passed ? `规格已提交${reused}，spec-lint 通过，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${r.lint.warnings.length ? `\n警告：\n${r.lint.warnings.map((i) => i.message).join('\n')}` : ''}` : `集成分支上的 spec-lint 未通过，已回到规格讨论，请修正后用 forge_spec 重交要改的那几份：\n${gate.reasons.join('\n')}`, details: { sha: r.sha, lint: r.lint, gate } };
 }
 
 export const ChangeParams = Type.Object({
@@ -68,7 +69,7 @@ export async function flowChange(root: string, store: StateStore, config: FlowCo
   }
 }
 
-/** forge_change_request（main）：提交变更请求，交给 architect 起草修订（第 12.3 节） */
+/** forge_change_request（main）：提交变更请求，交给 architect 起草修订 */
 export async function flowChangeRequestMain(root: string, store: StateStore, config: FlowConfig, p: Static<typeof ChangeRequestParams>): Promise<ToolResult> {
   try {
     const r = await requestChange(root, store, config, activeFlowId(store), p, 'main');

@@ -1,15 +1,16 @@
-// plan.yaml 的校验、DAG 推导与派生 task（规格第 7 节）。全部是纯函数，不做 IO。
+// plan.yaml 的校验、DAG 推导与派生 task。全部是纯函数，不做 IO。
 import { parse as parseYaml } from 'yaml';
+import { Value } from 'typebox/value';
 import type { ContractCatalog } from './contract-check.ts';
 import { HTTP_METHODS } from './contract-check.ts';
 import type { EffectiveSpec } from '../spec/spec.ts';
-import { validate, type PlanFile, type TaskFile } from '../state/schemas.ts';
+import { PlanFile, validate, type TaskFile } from '../state/schemas.ts';
 import type { TaskInput } from '../state/state-store.ts';
 import { conflictsWith, dagReport, findCycle, mutexPairs, type DagReport } from '../state/dag.ts';
-import { globWithin, globsOverlap, ownAcceptanceGlob } from '../state/paths.ts';
+import { globsOverlap, ownAcceptanceGlob } from '../state/paths.ts';
 
 export const PLAN_PATH = 'docs/plan/plan.yaml';
-/** S0（由 architect 执行）额外可写的验收目录（规格第 7.5、8.2 节）与项目规则 rules/** */
+/** S0（由 architect 执行）额外可写的验收目录与项目规则 rules/** */
 export const S0_EXTRA_WRITES = ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**', 'rules/**'] as const;
 /** impl 的 writes 不能覆盖这些路径：验收测试目录由程序派生，规格只经 forge_spec，契约只能由程序核实的追加修改 */
 export const FORBIDDEN_WRITES = ['tests/acceptance/**', 'docs/spec/**', 'docs/contracts/**', '.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
@@ -27,15 +28,18 @@ export interface PlanContext {
   spec: Pick<EffectiveSpec, 'reqs' | 'screens'>;
   /** 流程里已有的 task 编号（P1 的 architect task 等），plan 不能复用 */
   existingTaskIds: readonly string[];
-  /** 变更请求的修订才允许 task 写 modifies（第 12.3 节）；P1 的计划里不能写 */
+  /** 变更请求的修订才允许 task 写 modifies；P1 的计划里不能写 */
   allowModifies?: boolean;
-  limits: { max_parallel: number; max_task_files: number };
+  /** critical_fanout：被这么多 task 硬依赖的是底座，审查用强模型（报告里列出）；0 或不给时不算 */
+  limits: { max_parallel: number; max_task_files: number; critical_fanout?: number };
 }
 
 export interface PlanReport {
   stages: { id: string; goal: string; tasks: string[] }[];
   mutex: [string, string][];
   dag: DagReport;
+  /** 审查会用强模型的 task 与原因（批准页列给用户看） */
+  strong: { task: string; why: string }[];
 }
 
 export interface PlanCheck {
@@ -47,10 +51,21 @@ export interface PlanCheck {
   deps: Map<string, TaskFile['depends_on']>;
 }
 
-/** 解析 plan.yaml 文本并按 schema 校验形状 */
+const PLAN_LISTS = ['layers', 'ac', 'writes', 'produces', 'requires'] as const;
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** 解析 plan.yaml 文本并按 schema 校验形状：没见过的字段忽略，task 的列表字段、阶段的 exit 缺省为空 */
 export function parsePlan(text: string): { plan: PlanFile | null; errors: string[] } {
   let raw: unknown;
   try { raw = parseYaml(text); } catch (e) { return { plan: null, errors: [`${PLAN_PATH} 不是合法的 YAML：${(e as Error).message.split('\n')[0]}`] }; }
+  if (isObj(raw)) {
+    const fill = (x: unknown, defaults: Record<string, unknown>) => isObj(x) ? { ...defaults, ...Object.fromEntries(Object.entries(x).filter(([, v]) => v !== null)) } : x;
+    raw = Value.Clean(PlanFile, {
+      ...raw,
+      ...(Array.isArray(raw['stages']) ? { stages: raw['stages'].map((s) => fill(s, { exit: [] })) } : {}),
+      ...(Array.isArray(raw['tasks']) ? { tasks: raw['tasks'].map((t) => fill(t, Object.fromEntries(PLAN_LISTS.map((k) => [k, []])))) } : {}),
+    });
+  }
   const errors = validate('plan', raw);
   return errors.length ? { plan: null, errors: errors.map((e) => `${PLAN_PATH}：${e}`) } : { plan: raw as PlanFile, errors: [] };
 }
@@ -113,13 +128,14 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
       exitOf.set(r, [...(exitOf.get(r) ?? []), s.id]);
     }
   }
+  // 需求与 AC 的分配只提醒（覆盖率报告按它对账），不拦计划
   for (const r of ctx.spec.reqs.filter((x) => x.priority === 'MVP')) {
     const at = exitOf.get(r.id) ?? [];
-    if (!at.length) errors.push(`MVP 需求 ${r.id} 没有出现在任何阶段的 exit 中`);
-    if (at.length > 1) errors.push(`需求 ${r.id} 出现在多个阶段的 exit 中：${at.join('、')}（每条需求只能在一个阶段交付）`);
+    if (!at.length) warnings.push(`MVP 需求 ${r.id} 没有出现在任何阶段的 exit 中`);
+    if (at.length > 1) warnings.push(`需求 ${r.id} 出现在多个阶段的 exit 中：${at.join('、')}`);
   }
 
-  // task：编号、阶段、S0 的数量、writes
+  // task：编号、阶段、S0 的数量
   const ids = new Set<string>();
   for (const t of plan.tasks) {
     if (!/^T-\d{3,}$/.test(t.id)) errors.push(`task 编号 ${t.id} 必须写成 T-数字（.at、.rv、.fx 后缀由程序派生）`);
@@ -127,14 +143,7 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
     if (ctx.existingTaskIds.includes(t.id)) errors.push(`task 编号 ${t.id} 已被流程里的 task 使用，请从 ${nextFree(ctx.existingTaskIds)} 起编号`);
     ids.add(t.id);
     if (!stageIdx.has(t.stage)) errors.push(`${t.id} 的阶段 ${t.stage} 不在 stages 中`);
-    if (!t.writes.length) errors.push(`${t.id} 的 writes 不能为空`);
     if (t.modifies && !ctx.allowModifies) errors.push(`${t.id} 写了 modifies：只有变更请求的修订可以新增"修改 task"，P1 的计划不能写`);
-    for (const w of t.writes) {
-      // S0 的 architect 本来就可写 _support/、S0-smoke/ 与 rules/**（程序在派生时自动加上），计划里写出来也接受
-      if (t.stage === 'S0' && S0_EXTRA_WRITES.some((e) => globWithin(w, e))) continue;
-      const bad = forbiddenWriteOf(w);
-      if (bad) errors.push(`${t.id} 的 writes ${w} 与 ${bad} 重叠：验收测试目录由程序派生（tests/acceptance/<task>/），规格与契约不能由 impl 直接改写`);
-    }
     if (t.writes.length > ctx.limits.max_task_files) warnings.push(`${t.id} 的 writes 有 ${t.writes.length} 项，超过 max_task_files=${ctx.limits.max_task_files}，建议拆分`);
   }
   for (const s of plan.stages) {
@@ -161,7 +170,7 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
     for (const ac of t.ac) {
       const info = acs.get(ac);
       if (!info) { errors.push(`${t.id} 的 ac ${ac} 在规格中不存在（写成 REQ-012.AC1）`); continue; }
-      if (info.manual) errors.push(`${t.id} 的 ac ${ac} 是 manual 条目，不分配给 task（写进 manual_checks）`);
+      if (info.manual) warnings.push(`${t.id} 的 ac ${ac} 是 manual 条目，由用户验收，不需要分配给 task`);
       if (!info.mvp) warnings.push(`${t.id} 的 ac ${ac} 属于非 MVP 需求 ${info.req}`);
       if (t.modifies && owner.get(ac)?.includes(t.modifies)) continue;
       owner.set(ac, [...(owner.get(ac) ?? []), t.id]);
@@ -170,8 +179,8 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
   for (const [ac, info] of acs) {
     if (!info.mvp || info.manual) continue;
     const o = owner.get(ac) ?? [];
-    if (!o.length) errors.push(`MVP 验收标准 ${ac} 没有分配给任何 task`);
-    if (o.length > 1) errors.push(`验收标准 ${ac} 分配给了多个 task：${o.join('、')}（每条恰好分配一次）`);
+    if (!o.length) warnings.push(`MVP 验收标准 ${ac} 没有分配给任何 task`);
+    if (o.length > 1) warnings.push(`验收标准 ${ac} 分配给了多个 task：${o.join('、')}`);
   }
   const taskStage = new Map(plan.tasks.map((t) => [t.id, t.stage]));
   for (const s of plan.stages) {
@@ -179,22 +188,28 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
       for (const [ac, info] of acs) {
         if (info.req !== req || info.manual) continue;
         for (const tid of owner.get(ac) ?? []) {
-          if ((stageIdx.get(taskStage.get(tid)!) ?? 0) > stageIdx.get(s.id)!) errors.push(`阶段 ${s.id} 的 exit 含 ${req}，但它的 ${ac} 分配给了更晚阶段的 ${tid}`);
+          if ((stageIdx.get(taskStage.get(tid)!) ?? 0) > stageIdx.get(s.id)!) warnings.push(`阶段 ${s.id} 的 exit 含 ${req}，但它的 ${ac} 分配给了更晚阶段的 ${tid}`);
         }
       }
     }
   }
 
-  // 符号：语法、存在、唯一生产方、每个 requires 都有生产方
+  // 符号：用来推导依赖边；写错、找不到、多个生产方都只提醒（推导不出的边不加）。
+  // 契约只写跨 task 的边界：没有别的 task 需要的产出不要求在契约里
+  const requiredBy = new Map<string, Set<string>>();
+  for (const t of plan.tasks) for (const r of t.requires) {
+    const sym = parseSymbol(r);
+    if (typeof sym !== 'string') requiredBy.set(sym.key, (requiredBy.get(sym.key) ?? new Set()).add(t.id));
+  }
   const producer = new Map<string, string>();
   for (const t of plan.tasks) {
     for (const p of t.produces) {
       const sym = parseSymbol(p);
-      if (typeof sym === 'string') { errors.push(`${t.id} 的 produces：${sym}`); continue; }
-      if (sym.soft) errors.push(`${t.id} 的 produces ${p} 不能带 ~（~ 只用于 requires）`);
-      if (!symbolExists(sym, ctx)) errors.push(`${t.id} 产出的 ${sym.key} 在${sym.kind === 'page' ? '规格的 screens.md' : '契约'}中找不到`);
+      if (typeof sym === 'string') { warnings.push(`${t.id} 的 produces：${sym}`); continue; }
+      const others = [...(requiredBy.get(sym.key) ?? [])].some((id) => id !== t.id);
+      if (others && !symbolExists(sym, ctx)) warnings.push(`${t.id} 产出的 ${sym.key} 在${sym.kind === 'page' ? '规格的 screens.md' : '契约'}中找不到`);
       const prev = producer.get(sym.key);
-      if (prev) errors.push(`${sym.key} 有多个生产方：${prev}、${t.id}`);
+      if (prev) warnings.push(`${sym.key} 有多个生产方：${prev}、${t.id}（依赖按第一个推导）`);
       else producer.set(sym.key, t.id);
       const defined = sym.kind === 'api' ? ctx.catalog.apis.get(sym.key.slice(4)) : sym.kind === 'error' ? ctx.catalog.errors.get(sym.key.slice(6)) : undefined;
       if (defined?.module && defined.module !== 'common' && defined.module !== t.module) {
@@ -206,17 +221,18 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
     const edges = new Map<string, { hard: boolean; symbols: string[] }>();
     for (const r of t.requires) {
       const sym = parseSymbol(r);
-      if (typeof sym === 'string') { errors.push(`${t.id} 的 requires：${sym}`); continue; }
+      if (typeof sym === 'string') { warnings.push(`${t.id} 的 requires：${sym}`); continue; }
       const from = producer.get(sym.key);
-      if (!from) { errors.push(`${t.id} 需要的 ${sym.key} 缺少生产方：没有 task 在 produces 中声明它`); continue; }
-      if (from === t.id) { errors.push(`${t.id} 的 requires ${sym.key} 是它自己产出的`); continue; }
+      if (!from) { warnings.push(`${t.id} 需要的 ${sym.key} 没有 task 在 produces 中声明`); continue; }
+      if (from === t.id) continue;
       const e = edges.get(from) ?? { hard: false, symbols: [] };
       e.hard ||= !sym.soft;
       e.symbols.push(sym.key);
       edges.set(from, e);
       const fs = stageIdx.get(taskStage.get(from)!);
       const ts = stageIdx.get(t.stage);
-      if (fs !== undefined && ts !== undefined && fs > ts) errors.push(`${t.id}（${t.stage}）需要的 ${sym.key} 由更晚阶段的 ${from}（${taskStage.get(from)}）产出`);
+      // 依赖更晚阶段的 task 会让本阶段永远完不成（与依赖环一样调度不了），仍然拦
+      if (fs !== undefined && ts !== undefined && fs > ts) errors.push(`${t.id}（${t.stage}）需要的 ${sym.key} 由更晚阶段的 ${from}（${taskStage.get(from)}）产出：本阶段要等下一阶段，调度不了`);
     }
     deps.set(t.id, [...edges].map(([task, e]) => ({ task, type: e.hard ? 'hard' : 'soft', reason: e.symbols.join('、') })));
   }
@@ -227,11 +243,34 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
   if (cycle) errors.push(`依赖存在环：${cycle.join(' -> ')}`);
   if (errors.length) return { errors, warnings, report: null, deps };
   const mutex = mutexPairs(graph);
+  const strong = strongReviews(plan, deps, ctx.limits.critical_fanout ?? 0);
+  const impl = plan.tasks.filter((t) => t.stage !== 'S0');
+  const high = impl.filter((t) => t.risk === 'high');
+  if (high.length >= 2 && high.length * 2 > impl.length) {
+    warnings.push(`${high.length} / ${impl.length} 个 task 标了 risk: high（${high.map((t) => t.id).join('、')}）：high 只给涉及权限与鉴权、金额计算、不可恢复的批量数据操作的 task，普通增删改查的删除不算；多数 task 都是 high 说明标错了`);
+  }
   const dag = dagReport(graph, warnings);
   return {
     errors, warnings: dag.warnings, deps,
-    report: { stages: plan.stages.map((s) => ({ id: s.id, goal: s.goal, tasks: plan.tasks.filter((t) => t.stage === s.id).map((t) => t.id) })), mutex, dag },
+    report: { stages: plan.stages.map((s) => ({ id: s.id, goal: s.goal, tasks: plan.tasks.filter((t) => t.stage === s.id).map((t) => t.id) })), mutex, dag, strong },
   };
+}
+
+/** 审查会用强模型的 task（与 review.ts 的推导一致）：底座（被 critical_fanout 个 task 硬依赖）、layers 含 auth、risk: high */
+function strongReviews(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['depends_on']>, criticalFanout: number): { task: string; why: string }[] {
+  const fanout = new Map<string, number>();
+  for (const ds of deps.values()) for (const d of ds) if (d.type === 'hard') fanout.set(d.task, (fanout.get(d.task) ?? 0) + 1);
+  const out: { task: string; why: string }[] = [];
+  for (const t of plan.tasks) {
+    const n = fanout.get(t.id) ?? 0;
+    const why = [
+      ...(criticalFanout > 0 && n >= criticalFanout ? [`底座，被 ${n} 个 task 硬依赖`] : []),
+      ...(t.layers.includes('auth') ? ['auth 层'] : []),
+      ...(t.risk === 'high' ? ['risk: high'] : []),
+    ];
+    if (why.length) out.push({ task: t.id, why: why.join('；') });
+  }
+  return out;
 }
 
 function nextFree(ids: readonly string[]): string {
@@ -244,6 +283,7 @@ export function formatPlanReport(r: PlanReport, warnings: readonly string[] = r.
   return [
     ...r.stages.map((s) => `${s.id}（${s.tasks.length} 个 task）：${s.goal}`),
     `任务数 ${r.dag.task_count}，关键路径 ${r.dag.critical_path_length}（${r.dag.critical_path.join(' → ')}），最大并行宽度 ${r.dag.max_width}，硬依赖占比 ${Math.round(r.dag.hard_ratio * 100)}%`,
+    r.strong.length ? `强审查（审查用升级模型）${r.strong.length} 个：${r.strong.map((s) => `${s.task}（${s.why}）`).join('、')}` : '强审查：无',
     r.mutex.length ? `writes 重叠（优先错开运行，没别的可派时仍会并行）：${r.mutex.map(([a, b]) => `${a}↔${b}`).join('、')}` : '没有 writes 重叠的 task',
     ...warnings.map((w) => `! ${w}`),
   ].join('\n');
@@ -257,11 +297,9 @@ export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['
       id: t.id, stage: t.stage, kind: 'impl', role: t.stage === 'S0' ? 'architect' : 'worker', title: t.title, scopes: [...scopes.worker],
       depends_on: (deps.get(t.id) ?? []).map((d) => ({ ...d })), inputs: [],
       writes: [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ownAcceptanceGlob(t.id)])], verify: [...(opts.verify ?? [])],
-      module: t.module, size: t.size, layers: [...t.layers], ac: [...t.ac], produces: [...t.produces], requires: [...t.requires],
-      test_interface: [...t.test_interface],
+      ...(t.module ? { module: t.module } : {}), ...(t.size ? { size: t.size } : {}), layers: [...t.layers], ac: [...t.ac], produces: [...t.produces], requires: [...t.requires],
       ...(t.shared?.length ? { shared: [...t.shared] } : {}),
       ...(t.manual_checks?.length ? { manual_checks: [...t.manual_checks] } : {}),
-      ...(t.review ? { review: t.review } : {}),
       ...(t.risk ? { risk: t.risk } : {}),
     });
   }

@@ -1,4 +1,4 @@
-// 第 7.6、11 节的阶段验收编排：afterChecks 与 stageStep 的分支（不跑命令：检查结果直接构造）。
+// 阶段验收编排：afterChecks 与 stageStep 的分支（不跑命令：检查结果直接构造）。
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -8,7 +8,7 @@ import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
 import { commitToBranch } from '../helpers/engine.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
-import { afterChecks, gatePassedHead, stageStep, stageWorkSettled } from '../../src/core/stage/stage-acceptance.ts';
+import { afterChecks, gatePassedHead, sameWork, stageStep, stageWorkSettled } from '../../src/core/stage/stage-acceptance.ts';
 import { taskRel } from '../../src/core/state/state-store.ts';
 import { QA_INPUT, QA_REPORT } from '../../src/core/stage/stage-qa.ts';
 import { evidenceRel } from '../../src/core/state/state-store.ts';
@@ -63,10 +63,40 @@ test('跑 stage-qa：通过 → 建 S1.qa（ready），阶段留在 awaiting_gat
     force(p, 'S1.qa', { status: 'done' });
     const dir = path.join(p.dir, '.forge', evidenceRel(p.flowId, 'S1.qa'));
     mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, QA_REPORT), JSON.stringify({ round: 1, requested: 'pass', verdict: 'pass', issues: [], downgraded: [], head: head(p) }));
+    writeFileSync(path.join(dir, QA_REPORT), JSON.stringify({ round: 1, requested: 'pass', verdict: 'pass', issues: [], head: head(p) }));
     assert.ok(JSON.parse(readFileSync(path.join(dir, QA_INPUT), 'utf8')).head);
     assert.equal(await stageStep(deps, p.flowId, { gateFailedWithoutChange: () => false }), 'changed');
     assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
+  } finally { p.cleanup(); }
+});
+
+test('stage-qa 通过但带建议：记录建议的提交不让验收作废，直接签收（不再开新一轮）', async () => {
+  const { p, deps } = await project(true);
+  try {
+    await afterChecks(deps, p.flowId, checks(p));
+    force(p, 'S1.qa', { status: 'done' });
+    const dir = path.join(p.dir, '.forge', evidenceRel(p.flowId, 'S1.qa'));
+    mkdirSync(dir, { recursive: true });
+    const sug = { id: 'R-1', level: 'suggest', basis: 'defect:x', files: ['src/server/t-001/a.ts'], location: 'a', problem: '可以更好', expected: '改进' };
+    writeFileSync(path.join(dir, QA_REPORT), JSON.stringify({ round: 1, requested: 'pass', verdict: 'pass', issues: [sug], head: head(p) }));
+    const before = head(p);
+    assert.equal(await stageStep(deps, p.flowId, { gateFailedWithoutChange: () => false }), 'changed');
+    assert.notEqual(head(p), before, '建议已提交到集成分支');
+    assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
+    assert.ok(!p.store.listTasks(p.flowId).some((t) => t.id === 'S1.qa-2'), '没有开第二轮');
+  } finally { p.cleanup(); }
+});
+
+test('sameWork：只改了审查建议或覆盖率矩阵算同一份代码，改了代码不算', async () => {
+  const { p } = await project(false);
+  try {
+    const integ = p.store.readFlow(p.flowId).integration_branch;
+    const a = head(p);
+    const b = commitToBranch(p.dir, integ, { 'docs/review/suggestions.md': '# x\n', 'docs/qa/S1.md': '# m\n' }, '记录');
+    const c = commitToBranch(p.dir, integ, { 'src/server/t-001/a.ts': 'export const a = 2;\n' }, '改代码');
+    assert.equal(sameWork(p.dir, a, b), true);
+    assert.equal(sameWork(p.dir, a, c), false);
+    assert.equal(sameWork(p.dir, null, a), false);
   } finally { p.cleanup(); }
 });
 

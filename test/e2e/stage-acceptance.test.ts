@@ -1,4 +1,4 @@
-// M6：阶段验收（第 11 节）。fake-subagent 经真实的引擎、SubagentRuntime 与工具操作。
+// M6：阶段验收。fake-subagent 经真实的引擎、SubagentRuntime 与工具操作。
 // 覆盖：覆盖率缺口生成 .fx-n；stage-qa 的 must 生成 fix 并走流水线；超出轮数进入 needs_human、accept 放行；
 // 没有 worktree 的 stage-qa 用 forge_service 启动的服务运行在集成分支 HEAD 的临时 worktree 里，主工作区没有任何改动。
 import { test } from 'node:test';
@@ -31,27 +31,22 @@ const stageStatus = (p: Project) => p.store.readFlow(p.flowId).stage_status;
 const AC1_TEST = "test('[REQ-001.AC1] 返回编号', () => {});\n";
 const AC2_TEST = "test('[REQ-001.AC2] 名称为空返回 400', () => {});\n";
 
-test('覆盖率缺口：AC2 没有带编号的测试 → 为 T-001 建 .fx-1（coverage），补齐后门禁通过、docs/qa/S1.md 写入集成分支', async () => {
+test('覆盖率缺口只报告：AC2 没有带编号的测试也不建补测任务，门禁照常通过，缺口写进 docs/qa/S1.md 与签收材料', async () => {
   const p = await project(false);
   const e = engineEnv(p, async (_role, _n, a) => {
     await a.call('forge_claim');
-    const id = a.env.task;
-    if (id === 'T-001') { await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST }); return submitWork(a, '只覆盖了 AC1'); }
-    assert.equal(id, 'T-001.fx-1');
-    assert.match(p.store.readHandoff(p.flowId, id), /补齐验收测试[\s\S]*REQ-001\.AC2/);
-    await writeFiles(a, { 'tests/acceptance/T-001/b.test.ts': AC2_TEST });
-    return submitWork(a, '补上 AC2');
+    assert.equal(a.env.task, 'T-001');
+    await writeFiles(a, { 'src/server/t-001/a.ts': 'ok\n', 'tests/acceptance/T-001/a.test.ts': AC1_TEST });
+    return submitWork(a, '只覆盖了 AC1');
   });
   try {
     await drive(e, p.flowId);
     assert.deepEqual(e.errors, []);
-    const fx = p.store.readTask(p.flowId, 'T-001.fx-1');
-    assert.deepEqual([fx.status, fx.kind, fx.for_task], ['done', 'fix', 'T-001']);
+    assert.ok(!p.store.listTasks(p.flowId).some((t) => t.id.includes('.fx')), '不建补测任务');
     assert.equal(stageStatus(p), 'awaiting_human');
     const integ = p.store.readFlow(p.flowId).integration_branch;
-    const md = p.git('show', `${integ}:docs/qa/S1.md`);
-    assert.match(md, /REQ-001\.AC2[\s\S]*tests\/acceptance\/T-001\/b\.test\.ts/);
-    assert.match(await runFlowCommand('report', e.cmd), /覆盖率/);
+    assert.match(p.git('show', `${integ}:docs/qa/S1.md`), /REQ-001\.AC2/);
+    assert.match(await runFlowCommand('report', e.cmd), /覆盖[\s\S]*REQ-001\.AC2/);
   } finally { p.cleanup(); }
 });
 
@@ -111,7 +106,7 @@ test('stage-qa 超出 qa.max_rounds → needs_human；/forge accept S1 --note �
   } finally { p.cleanup(); }
 });
 
-test('第 14 节：stage-qa 没有自己的 worktree，forge_service 的服务运行在集成分支 HEAD 的临时 worktree，主工作区无进程无改动', async () => {
+test('stage-qa 没有自己的 worktree，forge_service 的服务运行在集成分支 HEAD 的临时 worktree，主工作区无进程无改动', async () => {
   const p = await project(true);
   const statusBefore = p.git('status', '--porcelain');
   let cwd = '';

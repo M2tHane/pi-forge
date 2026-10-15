@@ -1,6 +1,6 @@
 # pi-forge 流程图
 
-这些图按代码里的状态名画：task 状态机是 `src/core/state/state-machine.ts` 的 `TRANSITIONS`，阶段状态机是 `STAGE_TRANSITIONS`，阶段验收是 `src/core/stage/stage-acceptance.ts`，fix 与小改动的推进是 `src/modes/fix.ts`。规格的章节号指 `docs/BUILD_PROMPT.md`。图只画主要路径，完整的转移条件看代码和测试；与规格不同的地方看 `NOTES.md` 的偏离记录。
+这些图按代码里的状态名画：task 状态机是 `src/core/state/state-machine.ts` 的 `TRANSITIONS`，阶段状态机是 `STAGE_TRANSITIONS`，阶段验收是 `src/core/stage/stage-acceptance.ts`，fix 与小改动的推进是 `src/modes/fix.ts`。图只画主要路径，完整的转移条件看代码和测试；设计原因看 `NOTES.md`。
 
 ## 1. 三种流程
 
@@ -8,8 +8,8 @@
 flowchart TD
     subgraph build["build：/forge-build"]
         B0["P0 规格<br/>主会话 + 用户，spec-lint"] -->|"/forge-approve"| B1["P1 契约与计划<br/>architect，程序校验"]
-        B1 -->|"/forge-approve<br/>应用命令草案，生成 S 阶段与 task，契约只能追加"| S0["S0 骨架<br/>architect：骨架、rules/、共享类型"]
-        S0 --> SN["S1 … Sn<br/>阶段开始时建共享构建环境"]
+        B1 -->|"/forge-approve<br/>生成 S 阶段与 task，契约只能追加"| S0["S0 骨架<br/>architect：骨架、rules/、共享类型"]
+        S0 -->|"/forge-approve<br/>骨架 --no-ff 合入主分支"| SN["S1 … Sn<br/>阶段开始时建共享构建环境"]
         SN -->|"每个阶段验收后签收<br/>最后一个阶段签收时 --no-ff 合入主分支"| BD["交付"]
     end
     subgraph change["小改动：/forge-change --from &lt;yaml&gt; 或 forge_change"]
@@ -25,8 +25,8 @@ flowchart TD
 
 - 用户界面只显示四个高层阶段：规格 → 契约与计划 → 实施 → 交付（`/forge-status`）；内部阶段 id 在 `--detail`。
 - P0 的规格由主会话经 `forge_spec` 提交，程序做 spec-lint 并提交到集成分支，必须人工批准。P1 由程序驱动 architect，不经主会话。
-- 批准 P1 时，程序先在主工作区应用命令草案（`docs/rules-draft/commands.yaml`），再根据 `plan.yaml` 生成 S 阶段和 task；契约从此只能追加。
-- S0 只有一个 architect task：建骨架、直接写 `rules/`、把共享类型与错误响应落成代码；S0 合入后 rules 对 S1 起的 task 生效。S1 开始前建立共享构建环境，之后各 worktree 链接依赖，不再各自 install。
+- 批准 P1 时，程序根据 `plan.yaml` 生成 S 阶段和 task；契约从此只能追加。项目命令在 `commands.yaml`，随 architect 的文档合入集成分支即生效。
+- S0 只有一个 architect task：建骨架、直接写 `rules/`、把共享类型与错误响应落成代码；S0 合入后 rules 对 S1 起的 task 生效。S0 一律人工签收；批准时程序把集成分支（规格、契约、计划、骨架）合入主分支，再把集成分支移到合入后的提交，S1 起在它上面继续。之后中止流程，主分支上的骨架不撤回。S1 开始前建立共享构建环境，之后各 worktree 链接依赖，不再各自 install。
 - 阶段之间串行，同一阶段内按 DAG 并行：实施 task 用 `limits.max_parallel`，审查与 stage-qa 另用 `limits.max_parallel_aux`；writes 重叠的 task 优先错开，没别的可派时也并行。
 - 小改动与 fix 是单阶段 `X1` 的轻流程，同一时间只能有一个；build 流程运行时拒绝开始。
 
@@ -69,9 +69,9 @@ stateDiagram-v2
     in_review --> queued_merge: review_pass
     in_review --> blocked: review_exhausted
     queued_merge --> merging: merge_start（队列里第一个合格的 task）
-    merging --> done: merge_done（rebase、冲突标记与 merge_check、快进）
+    merging --> done: merge_done（rebase、冲突标记、快进）
     merging --> in_progress: merge_conflict（文本冲突交回 worker，merge_failures + 1）
-    merging --> in_progress: merge_verify_fail（merge_check 失败，merge_failures + 1）
+    merging --> in_progress: merge_verify_fail（残留冲突标记，或轻流程的 test 失败，merge_failures + 1）
     merging --> queued_merge: merge_requeue
     merging --> blocked: merge_blocked（没有改动、受保护文件冲突等）
     blocked --> queued_merge: accept（仅 review_exhausted）
@@ -103,7 +103,7 @@ stateDiagram-v2
 
 - 逐任务审查 `T-xxx.rv`、`.rv-2` 在被审查 task 的 worktree 里运行（只读）；第 2 轮起只确认上一轮的 must，不能新增问题。
 - stage-qa `S1.qa`、`S1.qa-2` 在集成分支 HEAD 的临时 detached worktree 里运行，结束后删除。
-- 小改动的「更新架构图与契约」是 doc task：有改动时走提交、合并；确实不用改时写明「无需更新：原因」后直接 `report` 完成。
+- 小改动的「更新架构图与契约」是 doc task：有改动时走提交、合并；确实不用改时不改文件直接提交，视为完成（impl、fix 没有改动时也一样）。
 
 ## 3. 阶段验收（规格第 11 节；`stage-acceptance.ts`）
 
@@ -112,13 +112,10 @@ stateDiagram-v2
 ```mermaid
 flowchart TD
     W["阶段 active<br/>本阶段的 task 都已结束<br/>且没有未结束的变更请求"] --> G["阶段 → awaiting_gate<br/>（submit_gate）"]
-    G --> CHK["确定性检查：<br/>implementation_gate.auto 的命令（全量 test、acceptance 等）<br/>+ AC 覆盖率矩阵（docs/qa/&lt;阶段&gt;.md）"]
+    G --> CHK["确定性检查：<br/>implementation_gate.auto 的命令（全量 test、acceptance 等）<br/>+ AC 覆盖率矩阵（docs/qa/&lt;阶段&gt;.md，只报告）"]
     CHK -->|"命令失败"| FIX["按责任 task 生成 .fx-n<br/>最多 MAX_GATE_ROUNDS = 2 轮"]
-    CHK -->|"覆盖率有缺口"| AT["给负责的 task 生成补测 .fx-n<br/>与门禁修复共用 2 轮"]
     FIX -->|"gate_failed：阶段回 active"| W
-    AT -->|"gate_failed：阶段回 active"| W
     FIX -->|"轮数用尽或找不到负责的 task"| NH
-    AT -->|"轮数用尽或找不到负责的 task"| NH
     CHK -->|"通过：记下通过时的 HEAD"| QAQ{"implementation_gate.qa ?"}
     QAQ -- 否 --> SIGN
     QAQ -- 是 --> QA["stage-qa S1.qa<br/>（阶段保持 awaiting_gate）"]
@@ -133,7 +130,7 @@ flowchart TD
     NH -->|"/forge gate"| G
     NH -->|"/forge-reject"| W
     SIGN -->|"/forge-reject（stage_reopened）"| W
-    SIGN -->|"/forge-approve"| DONE["done：进入下一阶段<br/>最后一个阶段：合入主分支"]
+    SIGN -->|"/forge-approve"| DONE["done：进入下一阶段<br/>S0 与最后一个阶段：合入主分支"]
 ```
 
 要点：
@@ -178,8 +175,8 @@ flowchart TD
     S2["/forge-change --from &lt;yaml&gt;<br/>或主会话的 forge_change"] --> T2["1–3 个 impl task<br/>（迷你计划，程序校验 DAG）"]
     T1 --> RV["逐任务审查 .rv"]
     T2 --> RV
-    RV --> M["合并队列：rebase、冲突标记、merge_check<br/>（fix 另跑 typecheck、lint、test）<br/>直接合入主分支"]
-    M -->|"小改动：实现都合入后"| D["「更新架构图与契约」doc task（architect）<br/>改 docs/arch、docs/contracts，或写明无需更新"]
+    RV --> M["合并队列：rebase、冲突标记<br/>（fix 另跑 test）<br/>直接合入主分支"]
+    M -->|"小改动：实现都合入后"| D["「更新架构图与契约」doc task（architect）<br/>改 docs/arch、docs/contracts；不用改就无改动提交"]
     M -->|"fix"| Q1
     D --> Q1["X1.qa（stage-qa，只读）<br/>在主分支 HEAD 的临时 worktree 确认"]
     Q1 -->|"没有 must"| LOG["写日志，X1 done"]

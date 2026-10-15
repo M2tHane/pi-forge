@@ -1,4 +1,4 @@
-// M7：/forge-fix（第 13.4 节）。fake-subagent 经真实的引擎、SubagentRuntime 与工具操作。
+// M7：/forge-fix。fake-subagent 经真实的引擎、SubagentRuntime 与工具操作。
 // worker 定位并修复（含回归测试）→ 合并时全量测试 → 直接合入主分支 → stage-qa 只读复现确认 → 修复日志（含成本）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

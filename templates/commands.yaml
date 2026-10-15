@@ -1,0 +1,20 @@
+# 项目命令：怎么装依赖、跑测试、启动服务。architect 在 P1 按技术栈填写、S0 修正，worker 加工具时补充；随代码一起合并，合入即生效。
+# 程序只执行 install、test、acceptance、serve（及 serve_*）、env_up、env_down、db_create、db_drop、add_dep；
+# 其余（typecheck、lint、e2e、codegen……）写在这里给 agent 参考，worker 与审查者自己决定要不要跑，程序不跑。
+# 用不到的不要写；跑不了的命令要删掉或改对。所有命令都从 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP 取资源。
+commands:
+  # install:    "npm ci"                    # 准备依赖：S0 之后在共享构建环境里装一次，worktree 链接复用
+  # test:       "npm test"                  # 必填：全量测试（阶段门禁、合并后回归）
+  # acceptance: "npm run test:acceptance"   # 加 "-- <task>" 时只跑 tests/acceptance/<task>/；自己启停服务
+  # serve:      "npm start"                 # forge_service 启动的服务
+  # typecheck:  "npx tsc --noEmit"          # 参考
+  # lint:       "npx eslint ."              # 参考
+  # env_up:     "docker compose up -d db"   # 共享构建环境建立时运行一次（起数据库服务器等）；$FORGE_SHARED_ENV 是它的路径
+  # env_down:   "docker compose down"
+  # db_create:  "createdb $FORGE_DB_NAME"   # 服务器类数据库按 FORGE_DB_NAME 建库删库
+  # db_drop:    "dropdb --if-exists $FORGE_DB_NAME"
+  # add_dep:    "npm install \"$FORGE_DEP\""  # forge_add_dependency 追加依赖的命令，默认按锁文件推断（pnpm/npm/yarn/bun）
+gui_commands: []                  # 会打开桌面应用或浏览器窗口的命令（前缀匹配）：agent 不能运行，要看效果时交给用户
+shared_env:                       # 共享构建环境：S0 结束后一次性装好依赖，之后所有 worktree 链接同一份依赖目录
+  # enabled: true                 # 默认开启；false 时每个 worktree 自己准备依赖
+  deps: [node_modules]            # 链接进 worktree 的依赖目录；默认 node_modules（Python 用 .venv）

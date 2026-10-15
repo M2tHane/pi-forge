@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/engine-lock.ts @ 31f3f15
 // 引擎锁：同一项目同一时间只允许一个 pi 会话运行引擎（派发、恢复会终止残留进程，不能误杀其他会话的子进程）。
 // 锁文件放在 <项目>.worktrees/.engine.lock（不在 .forge/ 内，避免成为未登记文件），内容为 pid 与时间。
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

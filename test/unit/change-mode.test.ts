@@ -7,7 +7,7 @@ import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts'
 import { parseConfig } from '../../src/core/state/config.ts';
 import { evidenceRel, isFinished, taskRel } from '../../src/core/state/state-store.ts';
 import { QA_REPORT } from '../../src/core/stage/stage-qa.ts';
-import { DOCS_UPDATE_PATHS, docsUpdateWaived, hashToken, isDocsUpdateTask, planTransition, type Facts } from '../../src/core/state/state-machine.ts';
+import { hashToken, isDocsUpdateTask, planTransition, type Facts } from '../../src/core/state/state-machine.ts';
 import { isLightFlow } from '../../src/core/state/schemas.ts';
 import { CHANGE_PHASE_LABEL, FIX_PHASE_LABEL, buildFixQaBrief, fixHelpHint, fixPhase, fixStatusLine, fixStep, readFixLog, renderFixLog, acceptFix } from '../../src/modes/fix.ts';
 import { DOCS_UPDATE_TITLE, buildChangeHandoff, buildDocsUpdateHandoff, renderChangeBrief, startChange } from '../../src/modes/change.ts';
@@ -74,9 +74,9 @@ test('renderChangeBrief：标题、说明、任务清单与依赖', () => {
   for (const s of ['# 看板支持导出 CSV', '导出按钮', '### T-001 导出接口', '### T-002 页面按钮', '依赖：T-001（硬）', '- 点击按钮下载文件']) assert.ok(md.includes(s), s);
 });
 
-test('buildDocsUpdateHandoff：改动统计、范围、改到与代码一致（契约可修改）、无需更新的写法', () => {
+test('buildDocsUpdateHandoff：改动统计、范围、改到与代码一致（契约可修改）、不需要改时直接提交', () => {
   const t = buildDocsUpdateHandoff('加导出', { from: 'a'.repeat(40), to: 'b'.repeat(40) }, ' src/a.ts | 3 ++-');
-  for (const s of ['加导出', 'aaaaaaaa..bbbbbbbb', 'src/a.ts | 3', 'docs/arch/overview.md', 'docs/contracts/', '可以修改', '无需更新', 'forge_note']) assert.ok(t.includes(s), s);
+  for (const s of ['加导出', 'aaaaaaaa..bbbbbbbb', 'src/a.ts | 3', 'docs/arch/overview.md', 'docs/contracts/', '可以修改', '直接 forge_submit']) assert.ok(t.includes(s), s);
   assert.match(buildDocsUpdateHandoff('x', { from: 'a', to: 'b' }, ''), /没有改动/);
 });
 
@@ -127,53 +127,25 @@ test('buildFixQaBrief：change 模式的“变更确认”', () => {
 
 // —— 提交校验（状态机） ——
 
-test('docsUpdateWaived：只认 agent 写的「无需更新：原因」，程序写的交接说明不算', () => {
-  const eng = '\n## 2026-03-04T00:00:00Z engine\n\n确认不需要改时写「无需更新：原因」。\n';
-  assert.equal(docsUpdateWaived(eng), false);
-  assert.equal(docsUpdateWaived(`${eng}\n## 2026-03-04T00:01:00Z run:r-1\n\n无需更新：只改了内部实现\n`), true);
-  assert.equal(docsUpdateWaived(`${eng}\n## 2026-03-04T00:01:00Z run:r-1\n\n无需更新：\n`), false, '没写原因不算');
-  assert.equal(docsUpdateWaived(`${eng}\n## 2026-03-04T00:01:00Z run:r-1\n\n看了一圈，不需要改\n`), false);
-  assert.equal(docsUpdateWaived(''), false);
-});
-
 const NOW = new Date('2026-01-01T00:00:00Z');
 const TOKEN = 'tok-doc';
 const lease = { run_id: 'r-1', role: 'architect', token_hash: hashToken(TOKEN), acquired_at: NOW.toISOString(), expires_at: '2026-01-01T00:30:00Z' };
 const facts = (over: Partial<Facts> = {}): Facts => ({
-  now: NOW, limits: { max_attempts: 3, max_parallel: 2 }, actor: 'run:r-1', token: TOKEN, handoff_written: true,
-  handoff_text: '\n## 2026-01-01T00:00:00Z engine\n\n说明\n', diff_files: ['docs/arch/overview.md'], ...over,
+  now: NOW, limits: { max_attempts: 3, max_parallel: 2 }, actor: 'run:r-1', token: TOKEN, diff_files: ['docs/arch/overview.md'], ...over,
 });
 const docTask = () => mkTask('T-003', { kind: 'doc', stage: 'X1', role: 'architect', scopes: ['plan'], writes: ['docs/arch/**', 'docs/contracts/**', 'docs/spec/glossary.md'], verify: [], status: 'in_progress', lease, worktree: '/wt', branch: 'b', base_sha: 'abc' });
 const submit = (f: Partial<Facts>) => planTransition(docTask(), 'awaiting_inputs', 'submit', facts(f));
-const errorsOf = (r: ReturnType<typeof submit>) => (r.ok ? [] : r.errors).join('\n');
 
-test('“更新架构图与契约”提交校验：diff 没有 docs/arch 或 docs/contracts 且没写「无需更新」时拒绝', () => {
+test('“更新架构图与契约”：改什么文档都能提交；没有改动时 report 直接完成', () => {
   assert.equal(isDocsUpdateTask(docTask()), true);
   assert.equal(isDocsUpdateTask(mkTask('T-004', { kind: 'doc', stage: 'S1' })), false);
-  assert.deepEqual([...DOCS_UPDATE_PATHS], ['docs/arch/**', 'docs/contracts/**']);
   assert.ok(submit({}).ok, '改了 docs/arch');
-  assert.ok(submit({ diff_files: ['docs/contracts/api.md'] }).ok, '改了 docs/contracts');
-  const only = submit({ diff_files: ['docs/spec/glossary.md'] });
-  assert.equal(only.ok, false);
-  assert.match(errorsOf(only), /没有 docs\/arch\/\*\* 或 docs\/contracts\/\*\* 的文件/);
-  assert.ok(submit({ diff_files: ['docs/spec/glossary.md'], handoff_text: '\n## t engine\n\n说明\n\n## t2 run:r-1\n\n无需更新：术语表只加了一个词\n' }).ok, '写了无需更新');
-  assert.equal(submit({ diff_files: ['docs/spec/glossary.md'], handoff_text: '\n## t engine\n\n无需更新：engine 写的不算\n' }).ok, false);
-  assert.match(errorsOf(submit({ diff_files: [] })), /无需更新/);
-  // 其他 doc 任务不受影响
-  const other = planTransition(mkTask('T-004', { kind: 'doc', stage: 'S1', writes: ['docs/plan/**'], status: 'in_progress', lease }), 'awaiting_inputs', 'submit', facts({ diff_files: ['docs/plan/a.md'] }));
-  assert.ok(other.ok);
-});
-
-test('“更新架构图与契约”确认无需更新且没有改动：report 直接完成，需要 handoff 里的说明', () => {
-  const waived = '\n## t engine\n\n说明\n\n## t2 run:r-1\n\n无需更新：只改了内部实现\n';
-  const done = planTransition(docTask(), 'done', 'report', facts({ diff_files: [], structured_report: true, handoff_text: waived }));
+  assert.ok(submit({ diff_files: ['docs/spec/glossary.md'] }).ok, '只改术语表也行');
+  assert.equal(submit({ diff_files: [] }).ok, false, '没有改动走 report，不走 submit');
+  const done = planTransition(docTask(), 'done', 'report', facts({ diff_files: [], structured_report: true }));
   assert.ok(done.ok, done.ok ? '' : done.errors.join());
   if (done.ok) assert.deepEqual([done.task.status, done.task.worktree, done.task.lease], ['done', null, null]);
-  const notWaived = planTransition(docTask(), 'done', 'report', facts({ diff_files: [], structured_report: true }));
-  assert.equal(notWaived.ok, false);
-  assert.match(errorsOf(notWaived as never), /无需更新/);
-  // impl 仍不能走 report
-  assert.equal(planTransition(mkTask('T-001', { status: 'in_progress', lease }), 'done', 'report', facts({ diff_files: [], structured_report: true, handoff_text: waived })).ok, false);
+  assert.equal(planTransition(docTask(), 'done', 'report', facts({ diff_files: ['docs/arch/overview.md'], structured_report: true })).ok, false, '有改动不能直接完成');
 });
 
 // —— startChange / 入口 ——
@@ -189,7 +161,7 @@ test('startChange：建 C-001（不占活动指针）、brief、全部 impl 与 
     assert.deepEqual(tasks.map((t) => [t.id, t.kind, t.role, t.stage, t.status]), [['T-001', 'impl', 'worker', 'X1', 'pending'], ['T-002', 'impl', 'worker', 'X1', 'pending']]);
     assert.deepEqual(tasks[1]!.depends_on.map((d) => [d.task, d.type]), [['T-001', 'hard']]);
     assert.ok(tasks[0]!.writes.includes('tests/acceptance/T-001/**'));
-    assert.deepEqual(tasks[0]!.verify, ['typecheck', 'lint', 'test']);
+    assert.deepEqual(tasks[0]!.verify, ['test'], 'typecheck、lint 是给 agent 参考的命令');
     assert.match(p.store.readHandoff(flow.id, 'T-002'), /点击按钮下载文件/);
     assert.match(p.store.readFlowBrief(flow.id), /### T-001 导出接口/);
     assert.match(statusText(p.store, null, flow.id), /变更步骤：实施中/);
@@ -299,7 +271,7 @@ test('fixStep(change)：预建 impl 不再建 T-001；全部 done 后建一次 d
     const handoff = p.store.readHandoff(flow.id, 'T-003');
     assert.match(handoff, /src\/export\/a\.ts/);
     assert.match(handoff, /看板支持导出 CSV/);
-    assert.match(handoff, /无需更新/);
+    assert.match(handoff, /不需要改时，不改任何文件直接 forge_submit/);
     assert.equal(fixPhase(p.store.readFlow(flow.id), p.store.listTasks(flow.id)), 'docs');
     // 重入幂等
     await fixStep(ctx, flow.id);

@@ -1,4 +1,3 @@
-// 来源：pi-flow test/e2e/commands.test.ts @ 31f3f15
 // 命令层：/forge approve、unblock、gate、/forge-build 的参数与交互（无 UI 环境）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

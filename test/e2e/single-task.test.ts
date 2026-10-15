@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/single-task.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // M3 验收：单任务闭环（fake-subagent 驱动真实的引擎、guard、工具、verify、状态存储）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,7 +54,7 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
       assert.ok(r.ended_at && r.tokens.input! > 0 && r.tokens.output! > 0 && r.model === 'fake/model');
       assert.equal(r.token_hash.length, 64);
     }
-    // 预检不跑命令，合并只跑 merge_check（本用例没有配置），所以 T-001 没有任何命令的 evidence
+    // 预检与 build 流程的合并都不跑命令，所以 T-001 没有任何命令的 evidence
     assert.ok(!existsSync(path.join(p.dir, '.forge/flows', p.flowId, 'evidence/T-001')), '没有预检与合并的命令 evidence');
     assert.match(p.store.readHandoff(p.flowId, 'T-001'), /提交说明：实现 a/);
     // 主工作区没有被实施角色改动
@@ -189,19 +188,20 @@ test('子进程未提交就退出：计一次失败并重新派发', async () =>
   } finally { p.cleanup(); }
 });
 
-test('违规达到上限：结束 run 并计一次失败、重新派发；同样的违规再来一次就交给用户', async () => {
+test('被拦下的操作只记账：同一次运行里违规 7 次也不结束，之后照常提交', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
     const { engine } = makeEngine(p, async (_role, _n, a) => {
-      for (let i = 0; i < 7; i++) await a.call('bash', { command: 'echo x > .forge/state.json' });
+      await a.call('forge_claim');
+      for (let i = 0; i < 7; i++) assert.equal((await a.call('bash', { command: `echo ${i} > .forge/state.json` })).ok, false);
+      await a.call('write', { path: 'src/server/t-001/a.ts', content: 'ok\n' });
+      assert.ok((await a.call('forge_submit', { summary: '完成' })).ok);
     });
     await engine.next(p.flowId);
     await engine.idle();
-    const t = p.store.readTask(p.flowId, 'T-001');
-    assert.equal(t.status, 'blocked');
-    assert.match(t.blocked_reason ?? '', /同样的原因连续失败 2 次[\s\S]*被拦下的操作达到 5 次/);
-    assert.deepEqual(p.store.listRuns().map((r) => r.outcome), ['killed', 'killed']);
-    assert.equal(p.store.readEvents().filter((e) => e.type === 'violation').length, 10, '每次运行上限 5');
+    assert.equal(p.store.readEvents().filter((e) => e.type === 'violation').length, 7);
+    assert.deepEqual(p.store.listRuns().filter((r) => r.task === 'T-001').map((r) => r.outcome), ['submitted']);
+    assert.notEqual(p.store.readTask(p.flowId, 'T-001').status, 'blocked');
     assert.deepEqual((await p.store.verifyIntegrity()).errors, []);
   } finally { p.cleanup(); }
 });

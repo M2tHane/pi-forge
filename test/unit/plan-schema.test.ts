@@ -6,37 +6,43 @@ import { mkTask } from '../helpers/tasks.ts';
 import { SCHEMA_VERSION, MIGRATIONS, migrationChain } from '../../src/core/state/migrations.ts';
 
 const plan = (): PlanFile => ({
-  size_estimate: { loc: 18000, modules: 9 },
   stages: [{ id: 'S0', goal: '骨架', exit: ['REQ-001'] }, { id: 'S1', goal: '数据源管理', exit: ['REQ-012'] }],
   tasks: [{
     id: 'T-003', stage: 'S1', module: 'datasource', title: '数据源管理', size: 'M',
     layers: ['backend', 'database', 'frontend'], ac: ['REQ-012.AC1', 'REQ-012.AC2'],
     writes: ['server/src/datasource/**'], shared: ['server/src/routes.ts'],
     produces: ['table:datasources', 'api:POST /api/datasources'], requires: ['table:teams', '~api:GET /api/teams/{id}'],
-    test_interface: ['HTTP /api/datasources*', 'page /datasources'], manual_checks: ['新增后列表高亮'], review: 'strong', risk: 'high',
+    manual_checks: ['新增后列表高亮'], risk: 'high',
   }],
 });
-test('规格第 7.1 节计划通过；可选字段可省略', () => {
+test('完整的计划通过；可选字段可省略', () => {
   assert.deepEqual(validate('plan', plan()), []);
   const minimal = plan();
-  for (const key of ['shared', 'manual_checks', 'review', 'risk'] as const) delete minimal.tasks[0]![key];
+  for (const key of ['shared', 'manual_checks', 'risk'] as const) delete minimal.tasks[0]![key];
   assert.deepEqual(validate('plan', minimal), []);
-  for (const review of ['skip', 'auto', 'strong'] as const) assert.deepEqual(validate('plan', { ...minimal, tasks: [{ ...minimal.tasks[0], review }] }), []);
 });
 test('计划拒绝缺字段、未知字段、错误类型、负整数、空阶段或任务、错误枚举', () => {
-  for (const key of ['size_estimate', 'stages', 'tasks']) {
+  for (const key of ['stages', 'tasks']) {
     const invalid: Record<string, unknown> = structuredClone(plan()); delete invalid[key]; assert.ok(validate('plan', invalid).length, key);
   }
-  for (const key of ['id', 'stage', 'module', 'title', 'size', 'layers', 'ac', 'writes', 'produces', 'requires', 'test_interface']) {
+  for (const key of ['id', 'stage', 'title', 'layers', 'ac', 'writes', 'produces', 'requires']) {
     const invalid = plan(); const entry = invalid.tasks[0]! as unknown as Record<string, unknown>; delete entry[key]; assert.ok(validate('plan', invalid).length, key);
   }
   for (const change of [
     { extra: true }, { mode: 'unknown' }, { stages: [] }, { tasks: [] },
-    { size_estimate: { loc: -1, modules: 1 } }, { size_estimate: { loc: 1.5, modules: 1 } },
     { stages: [{ id: 'S0', goal: '骨架', exit: 'REQ-001' }] },
-    { tasks: [{ ...plan().tasks[0], review: true }] }, { tasks: [{ ...plan().tasks[0], risk: 'critical' }] },
+    { tasks: [{ ...plan().tasks[0], review: 'strong' }] }, { tasks: [{ ...plan().tasks[0], risk: 'critical' }] },
     { tasks: [{ ...plan().tasks[0], acceptance: ['旧字段'] }] },
   ]) assert.ok(validate('plan', { ...plan(), ...change }).length);
+});
+test('parsePlan：多写的字段忽略，列表字段与 exit 缺省为空，module 与 size 可省略', async () => {
+  const { parsePlan } = await import('../../src/core/plan/plan.ts');
+  const r = parsePlan(['size_estimate: { loc: 100 }', 'note: 随手写的', 'stages:', '  - { id: S0, goal: 骨架 }', 'tasks:', '  - { id: T-001, stage: S0, title: 骨架, description: 多写的, owner: architect }'].join('\n'));
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.plan!.stages[0]!.exit, []);
+  assert.deepEqual(r.plan!.tasks[0]!.writes, []);
+  assert.equal((r.plan!.tasks[0] as Record<string, unknown>)['description'], undefined);
+  assert.ok(parsePlan('stages: []\ntasks: []').errors.length, '空阶段与空任务仍然拒绝');
 });
 test('M1 只校验形状：重复编号、未知阶段、符号和 AC 暂由后续语义检查处理', () => {
   const p = plan(); p.tasks.push(structuredClone(p.tasks[0]!)); p.tasks[0]!.stage = 'unknown'; p.tasks[0]!.requires = ['任意符号'];
@@ -52,7 +58,7 @@ test('编号支持主任务与 .rv/.fx 派生任务与阶段 .qa，其他后缀�
 });
 test('任务新增字段与独立计数合法；已删除字段与范围申请字段被拒', () => {
   const t = mkTask('T-003.fx-1', {
-    kind: 'fix', module: 'datasource', ac: ['REQ-012.AC1'], layers: ['backend'], produces: ['table:datasources'], requires: ['~table:teams'], test_interface: ['HTTP /api/datasources*'],
+    kind: 'fix', module: 'datasource', ac: ['REQ-012.AC1'], layers: ['backend'], produces: ['table:datasources'], requires: ['~table:teams'],
     review: 'skip', risk: 'high', for_task: 'T-003', deviations: ['按既有约定实现'], precheck_failures: 1, review_rounds: 2, merge_failures: 1, blocked_by: null,
   });
   assert.deepEqual(validate('task', t), []);

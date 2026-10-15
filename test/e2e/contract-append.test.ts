@@ -1,4 +1,4 @@
-// M5 验收：契约只能追加（第 12.1、12.2 节）的流程级测试——fake-subagent 经真实引擎与工具。
+// M5 验收：契约只能追加的流程级测试——fake-subagent 经真实引擎与工具。
 // 覆盖 forge_submit 的拒绝与预检、合并的接线（纯函数 contract-diff 另有单元测试）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

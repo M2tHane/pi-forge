@@ -77,7 +77,7 @@ function metricsFlows(store: StateStore): string[] {
   return store.listFlows().slice(-1);
 }
 
-/** /forge-status --metrics（规格第 17 节）。没有运行记录、没有流程时都不抛错 */
+/** /forge-status --metrics。没有运行记录、没有流程时都不抛错 */
 export function renderMetricsView(store: StateStore, now = new Date(), root?: string): string {
   const ids = metricsFlows(store);
   if (!ids.length) return '没有流程，暂无度量。';

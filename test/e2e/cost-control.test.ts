@@ -1,4 +1,3 @@
-// 改编自 pi-flow test/e2e/cost-control.test.ts @ 31f3f15（M2 按 pi-forge 角色重写）
 // 第二轮 H、I 验收：失败后升级模型；关键底座；流程预算。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,9 +12,6 @@ import { nextStep } from '../../src/core/engine/context-injector.ts';
 import { commandEnv } from '../helpers/commands.ts';
 
 const MODELS = (yaml: string) => yaml
-  .replace(/  test:      ".*"/, '  test:      "! grep -rqs FAIL src/server"')
-  // 合并只跑 merge_check，用它让 T-001 前两次提交的合并验证失败
-  .replace(/(  acceptance: .*\n)/, '$1  merge_check: "! grep -rqs FAIL src/server"\n')
   // 此用例显式把 worker 起始模型降为 medium，验证失败升级与关键底座机制。
   .replace('worker:            { model: strong', 'worker:            { model: medium')
   .replace(/models:[\s\S]*?\ntesting:/, 'models:\n  strong: "f/strong"\n  medium: "f/medium"\n  cheap:  "f/cheap"\ntesting:');
@@ -33,11 +29,13 @@ test('失败后升级模型：第 2 次失败后的派发使用升级模型并�
   const p = await setupProject({ yaml: MODELS(PROJECT_YAML).replace(/max_merge_failures: \d+/, 'max_merge_failures: 3'), tasks: [mkTask('T-001', { verify: ['test'] }),
     mkTask('T-002', { verify: [], writes: ['src/server/t-002/**'], deps: [{ task: 'T-001', type: 'hard', reason: '需要 T-001' }] })] });
   try {
-    const { engine, errors } = makeEngine(p, async (_role, nth, a) =>
-      // T-001 前两次提交的代码让合并时的 merge_check 失败
-      implement(a, `src/server/${a.env.task.toLowerCase()}/a.ts`, a.env.task === 'T-001' && nth <= 2 ? 'FAIL\n' : 'x\n'), SETTINGS);
+    const { engine, errors } = makeEngine(p, async (_role, nth, a) => {
+      // T-001 前两次运行没提交就退出
+      if (a.env.task === 'T-001' && nth <= 2) { assert.ok((await a.call('forge_claim')).ok); return; }
+      await implement(a, `src/server/${a.env.task.toLowerCase()}/a.ts`);
+    }, SETTINGS);
     // 预算：只够 T-001 的几次运行
-    await p.store.setFlowBudget(p.flowId, { tokens: 2200 });
+    await p.store.setFlowBudget(p.flowId, { tokens: 1100 });
     await engine.next(p.flowId);
     await engine.idle();
     assert.deepEqual(errors, []);
@@ -51,7 +49,7 @@ test('失败后升级模型：第 2 次失败后的派发使用升级模型并�
     assert.ok(actionsNeeded(p.store, p.config).some((x) => /已超出：暂停派发新任务/.test(x.text)));
     assert.match(nextStep(p.store, 2, 0, p.config).next, /预算已用完/);
     await assert.rejects(engine.dispatch(p.flowId, 'T-002'), /预算已用完/);
-    assert.match(await runFlowCommand('status --cost', env(p, engine)), /预算：token [\d,]+ \/ 2,200，已用 \d+%，已超出/);
+    assert.match(await runFlowCommand('status --cost', env(p, engine)), /预算：token [\d,]+ \/ 1,100，已用 \d+%，已超出/);
     // 提高预算后继续
     assert.match(await runFlowCommand('budget tokens 1000000', env(p, engine)), /已派发：T-002/);
     assert.equal(p.store.readTask(p.flowId, 'T-002').status, 'done');

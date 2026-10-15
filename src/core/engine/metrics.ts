@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/metrics.ts @ 31f3f15
 // 从 pi --mode json 的事件流汇总一次 run 的指标。字段拿不到时记 null，不估算。
 import type { RunFile } from '../state/schemas.ts';
 

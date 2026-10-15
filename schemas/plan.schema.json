@@ -3,29 +3,10 @@
   "$id": "pi-forge/plan.schema.json",
   "type": "object",
   "required": [
-    "size_estimate",
     "stages",
     "tasks"
   ],
   "properties": {
-    "size_estimate": {
-      "type": "object",
-      "required": [
-        "loc",
-        "modules"
-      ],
-      "properties": {
-        "loc": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "modules": {
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false
-    },
     "stages": {
       "type": "array",
       "items": {
@@ -63,15 +44,12 @@
         "required": [
           "id",
           "stage",
-          "module",
           "title",
-          "size",
           "layers",
           "ac",
           "writes",
           "produces",
-          "requires",
-          "test_interface"
+          "requires"
         ],
         "properties": {
           "id": {
@@ -139,13 +117,6 @@
               "minLength": 1
             }
           },
-          "test_interface": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
           "manual_checks": {
             "type": "array",
             "items": {
@@ -154,13 +125,6 @@
               "maxLength": 500
             },
             "maxItems": 20
-          },
-          "review": {
-            "enum": [
-              "skip",
-              "auto",
-              "strong"
-            ]
           },
           "risk": {
             "enum": [

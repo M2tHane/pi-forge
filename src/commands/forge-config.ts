@@ -1,4 +1,3 @@
-// 来源：pi-flow src/commands/flow-config.ts @ 31f3f15（改名）
 // /forge-config：为各角色设置模型与思考级别（effort），保存到用户级 ~/.pi/agent/pi-forge.json。
 // 交互模式经 UiPort 选择；无 UI 时（print/json 模式）使用子命令：show、models、set、unset。
 import { THINKING_LEVELS, type ThinkingLevel } from '../core/state/schemas.ts';

@@ -1,4 +1,3 @@
-// 来源：pi-flow src/pi-adapter/launcher.ts @ 31f3f15
 // 用 pi 命令行实现 SubagentLauncher（第五轮起用 RPC 模式）：pi --mode rpc --session-dir <留档目录> ...，
 // 经 stdin 发送 prompt；运行中可以用 steer 插话；收到 agent_settled 后关闭 stdin，pi 有序退出。
 // 已核实（Pi 1.0.0 docs/rpc.md、rpc-commands.md、json.md）：prompt / steer 命令；事件流与 json 模式相同；关闭 stdin 即请求退出。

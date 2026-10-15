@@ -1,4 +1,4 @@
-// 变更请求（规格第 5、12.3 节）：修订差异的每条规则、批准页文本、暂停判断、一个事务里的落地、创建与流程。
+// 变更请求：修订差异的每条规则、批准页文本、暂停判断、一个事务里的落地、创建与流程。
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -23,7 +23,7 @@ import { createTaskWorktree, snapshot } from '../../src/core/workspace/worktree.
 
 type PT = PlanFile['tasks'][number];
 const pt = (id: string, stage: string, over: Partial<PT> = {}): PT => ({
-  id, stage, module: 'm', title: `任务 ${id}`, size: 'M', layers: ['backend'], ac: [], writes: [`src/${id.toLowerCase()}/**`], produces: [], requires: [], test_interface: [], ...over,
+  id, stage, module: 'm', title: `任务 ${id}`, size: 'M', layers: ['backend'], ac: [], writes: [`src/${id.toLowerCase()}/**`], produces: [], requires: [], ...over,
 });
 const stages = (...ids: string[]): PlanFile['stages'] => ids.map((id) => ({ id, goal: `阶段 ${id}`, exit: [`REQ-${id}`] }));
 const oldPlan = (tasks: PT[], st = stages('S0', 'S1', 'S2')): CurrentPlan => ({ stages: st, tasks });
@@ -326,8 +326,8 @@ function revisedPlan(plan: PlanFile, ids: [string, string] = ['T-005', 'T-006'])
   r.tasks.find((t) => t.id === 'T-003')!.title = '数据源管理（含 SSL）';
   r.stages.push({ id: 'S2', goal: '导出', exit: ['REQ-003'] });
   r.tasks.push(
-    { id: ids[0], stage: 'S2', module: 'export', title: '导出数据源', size: 'S', layers: ['backend'], ac: ['REQ-003.AC1'], writes: ['server/src/export/**'], produces: [], requires: [], test_interface: ['HTTP /api/export'] },
-    { id: ids[1], stage: 'S1', module: 'team', title: '团队列表：增加成员数', size: 'S', layers: ['backend'], ac: ['REQ-002.AC1'], writes: ['server/src/team/count/**'], produces: [], requires: [], test_interface: [], modifies: 'T-002' },
+    { id: ids[0], stage: 'S2', module: 'export', title: '导出数据源', size: 'S', layers: ['backend'], ac: ['REQ-003.AC1'], writes: ['server/src/export/**'], produces: [], requires: [] },
+    { id: ids[1], stage: 'S1', module: 'team', title: '团队列表：增加成员数', size: 'S', layers: ['backend'], ac: ['REQ-002.AC1'], writes: ['server/src/team/count/**'], produces: [], requires: [], modifies: 'T-002' },
   );
   return stringify(r);
 }
@@ -399,19 +399,14 @@ test('完整流程：创建 → 起草提交（proposed）→ doc 预检 → 暂
   } finally { p.cleanup(); }
 });
 
-test('提交修订时的校验：改了已完成的 task、DAG 错误都被拒绝，变更请求保持 drafting', async () => {
+test('提交修订时的校验：改了已完成的 task 被拒绝（缺少生产方只提醒），变更请求保持 drafting', async () => {
   const { p, plan } = await planProject();
   try {
     await requestChange(p.dir, p.store, p.config, p.flowId, { what: 'w', why: 'y', impact: 'i' }, 'main');
     const bad = structuredClone(plan);
     bad.tasks.find((t) => t.id === 'T-002')!.title = '偷偷改已完成的 task';
-    bad.tasks.push({ id: 'T-005', stage: 'S1', module: 'm', title: '新增', size: 'S', layers: ['backend'], ac: [], writes: ['x/**'], produces: [], requires: ['api:GET /api/nothing'], test_interface: [] });
+    bad.tasks.push({ id: 'T-005', stage: 'S1', module: 'm', title: '新增', size: 'S', layers: ['backend'], ac: [], writes: ['x/**'], produces: [], requires: ['api:GET /api/nothing'] });
     const d = await draft(p, 'T-004', stringify(bad));
-    const r = await d.propose();
-    assert.equal(r.ok, false);
-    assert.match(r.text, /缺少生产方/, 'DAG 校验错误先报告');
-    bad.tasks.find((t) => t.id === 'T-005')!.requires = [];
-    writeFileSync(path.join(d.wt.path, 'docs/plan/plan.yaml'), stringify(bad));
     const r2 = await d.propose();
     assert.equal(r2.ok, false);
     assert.match(r2.text, /T-002 已完成，不能直接修改/);

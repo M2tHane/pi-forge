@@ -4,9 +4,8 @@
 // 任务 worktree 在派发时由程序 install，worker 不需要自己装。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setupProject, PROJECT_YAML, DIRECT_YAML } from '../helpers/project.ts';
-import { makeEngine } from '../helpers/engine.ts';
-import { hard, mkTask } from '../helpers/tasks.ts';
+import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
+import { mkTask } from '../helpers/tasks.ts';
 import { P0_SPEC } from '../helpers/spec.ts';
 import { drive, engineEnv, submitWork, writeFiles } from '../helpers/commands.ts';
 import { flowMetrics, renderMetrics } from '../../src/core/stage/signoff.ts';
@@ -114,36 +113,5 @@ test('(b) stage-qa：临时 worktree 里有依赖', async () => {
     assert.deepEqual(qaSeen, ['HAS'], 'stage-qa 的临时 worktree 里有依赖');
     assert.equal(p.store.readTask(p.flowId, 'S1.qa').status, 'done');
     assert.ok(prepared(p).some((x) => x.data!['mode'] === 'writable' && x.data!['ok'] === true && x.data!['skipped'] === false), 'stage-qa 的 worktree 准备记了事件');
-  } finally { p.cleanup(); }
-});
-
-test('(c) 批量合并：临时 worktree 里有依赖 → 整批一次合并成功（有 batch evidence），不退回逐个合并', async () => {
-  // merge_check（合并只跑它）依赖标记文件：批量合并的临时 worktree 没装依赖时会失败并退回逐个合并
-  const yaml = withDeps(DIRECT_YAML.replace(/^  max_parallel: 2$/m, '  max_parallel: 3'), 'test -f .deps-installed').replace(/(  acceptance: .*\n)/, '$1  merge_check: "test -f .deps-installed"\n');
-  const p = await setupProject({ yaml, files: DEPS, tasks: ['T-001', 'T-002', 'T-003'].map((id) => mkTask(id, { verify: ['test'] })) });
-  try {
-    let waited = false;
-    const beforeMerge = async () => {
-      if (waited) return;
-      waited = true;
-      const end = Date.now() + 60_000;
-      while (p.store.readMergeQueue().queue.length < 3) { if (Date.now() > end) throw new Error('等待超时'); await new Promise((r) => setTimeout(r, 20)); }
-    };
-    const { engine, merges, errors } = makeEngine(p, async (_role, _n, a) => {
-      const id = a.env.task.toLowerCase();
-      await a.call('forge_claim');
-      await writeFiles(a, { [`src/server/${id}/a.ts`]: id });
-      await a.call('forge_note', { text: '完成' });
-      assert.ok((await a.call('forge_submit', { summary: id })).ok);
-    }, undefined, { beforeMerge });
-    await engine.next(p.flowId);
-    await engine.idle();
-    assert.deepEqual(errors, []);
-    for (const id of ['T-001', 'T-002', 'T-003']) assert.equal(p.store.readTask(p.flowId, id).status, 'done', id);
-    assert.deepEqual(merges.map((m) => (m.kind === 'merged' ? [...m.finished].sort() : m.kind)), [['T-001', 'T-002', 'T-003']], '整批一次合并');
-    const batch = p.store.readEvents().filter((x) => x.type === 'merge');
-    assert.ok(batch.length === 3 && batch.every((x) => Array.isArray(x.data?.['batch']) && (x.data['batch'] as string[]).length === 3), 'merge 事件带 batch');
-    assert.ok(!p.store.readEvents().some((x) => /批量合并 .* 失败，改为逐个合并/.test(x.reason ?? '')));
-    assert.ok(prepared(p).some((x) => x.actor === 'merge-queue' && x.data!['mode'] === 'readonly'), '批量合并的临时 worktree 记了只读准备');
   } finally { p.cleanup(); }
 });

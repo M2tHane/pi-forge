@@ -1,4 +1,4 @@
-// 契约文件的结构化三方合并（规格第 12.2 节）。纯函数，不读写文件。
+// 契约文件的结构化三方合并。纯函数，不读写文件。
 // 只在双方都"仅追加"（新增映射键 / Markdown 小节，不改动 base 已有内容）且新增内容互不冲突时自动合并；否则给出中文原因，交给 merge-fix。
 import { parseDocument, isMap, isScalar, YAMLMap, type Document, type Pair } from 'yaml';
 import { isDeepStrictEqual } from 'node:util';

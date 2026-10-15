@@ -15,7 +15,7 @@ pi-forge 是一个 [Pi](https://github.com/earendil-works/pi-coding-agent) 插�
 - **验收测试由 worker 写，reviewer 审查。** worker 按 AC 编号把验收测试写在 `tests/acceptance/<task>/`，reviewer 对照程序算出的 AC 覆盖，核对每条 AC 有测试、测试走了 Given/When/Then 且只经允许的入口、断言没有被弱化，并运行这些测试。
 - **契约只能追加。** P1 批准后，`docs/contracts/**` 锁定。实施中新增接口、可选字段、错误码等允许，由程序做结构比较；修改或删除已有内容必须走变更请求，由你批准。
 - **人工闸门不能被 agent 自批准。** 规格、契约与计划、每个实施阶段的签收，都要你执行 `/forge-approve`。
-- **"必须改"要有出处。** reviewer 和 stage-qa 提的必须改，要引用规则、AC、契约或具体缺陷，没有出处的程序降为建议；第二轮只能确认，不能提新问题。
+- **"必须改"要有出处。** reviewer 和 stage-qa 提的必须改，要引用规则、AC、契约或具体缺陷（程序照写保存，不校验）；第二轮只能确认，不能提新问题。
 
 ### 什么时候用，什么时候直接用 pi
 
@@ -97,7 +97,7 @@ tasks:
     ac: ["Given 看板详情 When 点击归档 Then 跳转列表且该看板消失"]
 ```
 
-在主会话里直接说要加什么也可以：主会话读架构图、规则与契约，和你商定 1 到 3 个 task 后用 `forge_change` 提交，不走 P0/P1 批准。worker 实现并写测试、reviewer 审查、逐个合入主分支（合并时跑全量测试）；全部完成后程序派 architect 更新 `docs/arch/overview.md` 与 `docs/contracts/`（没有改动且没写明"无需更新"时不能提交），最后 stage-qa 全量确认，写入日志。缺陷用 `/forge-fix`；需要新的需求规格或超过 3 个 task（`limits.change_max_tasks`）时用 `/forge-build`。
+在主会话里直接说要加什么也可以：主会话读架构图、规则与契约，和你商定 1 到 3 个 task 后用 `forge_change` 提交，不走 P0/P1 批准。worker 实现并写测试、reviewer 审查、逐个合入主分支（合并时跑全量测试）；全部完成后程序派 architect 更新 `docs/arch/overview.md` 与 `docs/contracts/`（不用改时直接无改动提交），最后 stage-qa 全量确认，写入日志。缺陷用 `/forge-fix`；需要新的需求规格或超过 3 个 task（`limits.change_max_tasks`）时用 `/forge-build`。
 
 ## 阶段
 
@@ -106,11 +106,11 @@ tasks:
 | 阶段 | 谁做 | 你要做什么 |
 |---|---|---|
 | **P0 规格** | 主会话（orchestrator）和你 | 回答它的问题，确认需求。规格通过 spec-lint 后进入等待批准，你 `/forge-approve` 或 `/forge-reject "<意见>"` |
-| **P1 契约与计划** | architect（程序驱动，不经主会话） | 读批准页：阶段划分、task 数与并行度、DAG 提醒、assumptions（architect 的默认假设）和 extras（超出需求的设计）；`/forge-approve` 后程序应用命令草案、锁定契约、生成 S 阶段和 task |
+| **P1 契约与计划** | architect（程序驱动，不经主会话） | 读批准页：阶段划分、task 数与并行度、哪些 task 用强审查及原因、DAG 提醒、assumptions（architect 的默认假设）和 extras（超出需求的设计）；`/forge-approve` 后程序锁定契约、生成 S 阶段和 task |
 | **实施 S0、S1…Sn** | S0 由 architect，S1 起由 worker；reviewer、stage-qa，由程序调度 | 处理"需要你处理"里的事项（阻塞、需人工放行），并在阶段末签收 |
 | **交付** | 程序 | 不是独立阶段：批准最后一个 S 阶段的签收时，程序把集成分支 `--no-ff` 合入主分支 |
 
-- S0 是骨架阶段，只有一个 task，由 architect 亲自做：建项目骨架、依赖与锁文件，搭好 docker、数据库等环境，让命令草案里的命令真的能跑，把共享类型、错误码和统一错误响应落成代码，直接写 `rules/`，建好 `tests/acceptance/_support/`，写一个贯穿前端、API、数据库的冒烟测试；之后由 reviewer 审查。worker 的 task 从 S1 开始。S0 合入后，程序建立共享构建环境（`<项目>.worktrees/.env-shared/`）：一次性 install、运行可选的 `env_up`，之后各 worktree 的依赖目录都链接到它，不再各自 install；每个 S 阶段开始时按集成分支刷新一次。
+- S0 是骨架阶段，只有一个 task，由 architect 亲自做：建项目骨架、依赖与锁文件，搭好 docker、数据库等环境，让 `commands.yaml` 里的命令真的能跑，把共享类型、错误码和统一错误响应落成代码，直接写 `rules/`，建好 `tests/acceptance/_support/`，写一个贯穿前端、API、数据库的冒烟测试；之后由 reviewer 审查。S0 一律由你签收，批准时程序把骨架（连同规格、契约、计划）合入主分支，S1 起在合入后的集成分支上继续。worker 的 task 从 S1 开始。S0 合入后，程序建立共享构建环境（`<项目>.worktrees/.env-shared/`）：一次性 install、运行可选的 `env_up`，之后各 worktree 的依赖目录都链接到它，不再各自 install；每个 S 阶段开始时按集成分支刷新一次。
 - 阶段之间串行；同一阶段内按 DAG 并行。
 - 多个对象同时等批准时（阶段签收、变更请求），要写明对象：`/forge-approve stage:S1`、`change:C-001`。
 - **阶段签收**（`/forge report` 随时可看）汇总：演示方式、`manual_checks`（需要你自己打开应用查看的条目）、AC 覆盖率矩阵、新增的建议（`docs/review/suggestions.md`）、耗时与成本。最后一个阶段的签收材料就是交付汇报。
@@ -121,7 +121,7 @@ tasks:
 | 角色 | 做什么 | 能写什么 | bash |
 |---|---|---|---|
 | orchestrator（主会话） | 接收 PRD 与原型，和你沟通，整理规格，汇报进度，转达你的决定 | 无。规格经 `forge_spec` 由程序写入；P0 批准后的需求变化经 `forge_change_request` 提交 | 无 |
-| architect | P1 写契约、架构、计划与命令草案；S0 亲自做骨架、共享代码和 `rules/`；变更请求里改计划|P1 与变更请求：`docs/contracts/**`、`docs/arch/**`、`docs/plan/**`、`docs/rules-draft/commands.yaml`、`AGENTS.md`；术语表只能追加。S0：与 worker 相同 | full |
+| architect | P1 写契约、架构、计划与 `commands.yaml`；S0 亲自做骨架、共享代码和 `rules/`；变更请求里改计划|P1 与变更请求：`docs/contracts/**`、`docs/arch/**`、`docs/plan/**`、`commands.yaml`、`AGENTS.md`、术语表。S0：与 worker 相同 | full |
 | worker | 实现一个 task（纵向切片，前后端、迁移、单元测试，按 TDD），并写本 task 的验收测试（`tests/acceptance/<task>/`）；也做 fix 和合并冲突修复 | 工作区内任何文件（`writes` 只用于调度互斥与冲突归属；受保护路径与 `docs/spec/**` 除外）；契约文件只能追加。合并冲突修复（merge-fix）只能写冲突文件 | full |
 | reviewer | 逐任务审查（impl 一律审查，S0 也审）：读 diff、AC、契约和规则，运行本 task 自己的测试，审查 worker 写的验收测试 | 无 | allowlist（只读命令加 `test`、`acceptance`） |
 | stage-qa | 阶段末在集成分支上核对需求覆盖、跨模块一致性、抽查权限；fix 模式里复现确认 | 无（在集成分支 HEAD 的临时 worktree 里运行） | full |
@@ -136,14 +136,14 @@ tasks:
 2. **提交与等待**：worker `forge_submit` 后 task 进入 `awaiting_inputs`，等软依赖的生产方 done；程序把集成分支合进任务分支（有冲突就交回 worker 解决）。
 3. **预检**（程序，`checking`）：不再运行命令，只检查契约只做了追加；diff 越界在提交时检查。失败交回 worker，达到次数上限转 blocked。随后交给 reviewer。
 4. **审查**（`in_review`）：impl 一律审查，按风险推导强度（`auto`、`strong`）。reviewer 读 diff，核对本 task 的验收测试，bash 只放行 `test` 与 `acceptance` 两条命令，运行范围由任务说明给定（本 task 改动的单元测试；验收测试 `-- <task>`）；必须改要有出处，测试失败的出处写 `defect:`；有 must 就回到 worker，第二轮（`.rv-2`）只确认。
-5. **合并队列**：程序串行合并，选队列里第一个合格的 task；rebase 后只检查冲突标记并运行 merge_check，通过后快进到集成分支。合并之后程序在后台对集成分支跑一遍门禁命令（`limits.post_merge_test`，默认开）：变红时先重跑一次排除不稳定的测试，再在上一次通过之后的合并里二分，定位到引入回归的 task，给它建修复任务。冲突先做结构化合并：契约文件（`docs/contracts/**`）做三方合并；task 可写范围内、双方都只追加的普通文件（例如共享错误码常量）自动合并；合不了的由正在合并的 worker 自己解决。
+5. **合并队列**：程序串行合并，选队列里第一个合格的 task；rebase 后只检查冲突标记，不跑命令，通过后快进到集成分支。合并之后程序在后台对集成分支跑一遍门禁命令（`limits.post_merge_test`，默认开）：变红时先重跑一次排除不稳定的测试，再在上一次通过之后的合并里二分，定位到引入回归的 task，给它建修复任务。冲突先做结构化合并：契约文件（`docs/contracts/**`）做三方合并；task 可写范围内、双方都只追加的普通文件（例如共享错误码常量）自动合并；合不了的由正在合并的 worker 自己解决。
 
 派生 task 的命名：
 
 | 名字 | 是什么 |
 |---|---|
 | `T-003.rv`、`.rv-2` | 审查与只确认的第二轮 |
-| `T-003.fx-1`… | 修复：合并后回归测试、阶段门禁、覆盖率缺口、stage-qa 的 must 产生，接着该 task 最后一次 worker 的会话；不单独审查，由阶段门禁与 stage-qa 的确认轮核对 |
+| `T-003.fx-1`… | 修复：合并后回归测试、阶段门禁、stage-qa 的 must 产生，接着该 task 最后一次 worker 的会话；不单独审查，由阶段门禁与 stage-qa 的确认轮核对 |
 | `S1.qa`… | 阶段级的 stage-qa |
 
 别的 task 的验收测试被正当的契约追加破坏时，程序不计入当前 task 的失败，由当前 task 的 worker 一并修改那些测试（不放宽断言）。
@@ -153,9 +153,9 @@ tasks:
 一个阶段的 impl 全部 done 后，程序按顺序：
 
 1. **门禁**：在集成分支 HEAD 的临时 worktree 里运行 `implementation_gate.auto` 里配置了的命令。
-2. **覆盖率**：扫描测试名里的 `[REQ-xxx.ACn]` 标签，生成 REQ、AC、测试文件矩阵，写入 `docs/qa/<阶段>.md`。有缺口就给负责的 task 建 `.fx-n` 补测。
+2. **覆盖率**：扫描测试名里的 `[REQ-xxx.ACn]` 标签，生成 REQ、AC、测试文件矩阵，写入 `docs/qa/<阶段>.md`。只报告，签收时给你看，缺口不拦门禁。
 3. **stage-qa**：核对跨模块一致性、页面状态、测试是否形同虚设、exit 是否达成，可用 `forge_service` 启动服务。
-4. **修复**：门禁失败、覆盖率缺口、stage-qa 的 must 都生成修复或补测任务（按 task 归属，不是按角色）。修复合并后重跑门禁与覆盖率，stage-qa 再做只确认的一轮。门禁与覆盖率的修复最多 2 轮，stage-qa 最多 `qa.max_rounds` 轮。
+4. **修复**：门禁失败、stage-qa 的 must 都生成修复任务（按 task 归属，不是按角色）。修复合并后重跑门禁与覆盖率，stage-qa 再做只确认的一轮。门禁修复最多 2 轮，stage-qa 最多 `qa.max_rounds` 轮。
 5. **签收**：门禁通过时和最近一轮 stage-qa 的集成分支 HEAD 都等于当前 HEAD，才进入等你签收。
 
 轮数用尽，或问题找不到负责的 task，阶段进入 **needs_human**，先交给主会话：它可以放行进入签收（你仍要签收），或转交给你。你也可以直接：
@@ -210,7 +210,7 @@ P0 批准之后，规格不再修订；需求变化（包括签收时打回的�
 | `/forge sync` | 把主分支同步进集成分支（每个阶段开始时自动执行） |
 | `/forge abort [--yes]` | 中止当前流程、修复或小改动（集成分支保留，主分支不受影响） |
 | `/forge doctor [--fix]` | 状态完整性与前置条件检查；`--fix` 清理残留 worktree 与提示文件 |
-| `/forge rules [apply [all\|<草案>...]]` | 查看或应用待应用的草案（P1 的命令草案、知识提升来的规则草案） |
+| `/forge rules [apply [all\|<草案>...]]` | 查看或应用知识提升来的规则草案 |
 | `/forge knowledge [...]` | 项目知识库：列出、搜索、确认候选、废弃、提升为规则草案 |
 | `/forge models [resume <模型>\|all]` | 查看被暂停（额度用完、限流、配置有误）的模型；立即恢复 |
 | `/forge budget [tokens\|cost\|minutes <数值>]` | 查看或设置本流程的预算 |
@@ -227,14 +227,14 @@ P0 批准之后，规格不再修订；需求变化（包括签收时打回的�
 | 部分 | 说明 |
 |---|---|
 | `main_branch` | 主分支名 |
-| `commands` | 项目命令：`install`、`typecheck`、`lint`、`test`、`acceptance`（加 `-- <task>` 只跑某个 task）、`e2e`、`contract_lint`、`contract_test`、`codegen`、`serve`、`merge_check`、`db_create`、`db_drop`、`env_up`、`env_down`、`add_dep`。architect 在 P1 起草，批准计划时应用。所有命令都应从 `PORT`、`FORGE_PORT_BASE`、`FORGE_DB_NAME`、`FORGE_TMP` 取资源，这样并行运行互不干扰 |
+| `commands` | 旧配置；项目命令现在写在仓库根目录的 `commands.yaml`（模板 `templates/commands.yaml`）：architect 在 P1 写、S0 修正，worker 可补充，随代码合并。程序只执行 `install`、`test`、`acceptance`（加 `-- <task>` 只跑某个 task）、`serve`、`env_up`、`env_down`、`db_create`、`db_drop`、`add_dep`，其余给 agent 参考。所有命令都应从 `PORT`、`FORGE_PORT_BASE`、`FORGE_DB_NAME`、`FORGE_TMP` 取资源，这样并行运行互不干扰 |
 | `models` | 三个档位 `strong`、`medium`、`cheap` 的默认模型（`provider/model`），可选 `fallback`（兜底模型）。单个角色的实际模型用 `/forge-config` 设置，优先于这里 |
 | `escalation` | `after_failures`：同一 task 失败多次后改用升级模型；`critical_fanout`：被这么多 task 硬依赖的 task 第一次就用升级模型，审查推导为 strong |
 | `limits` | `max_parallel`（impl 并发）、`max_parallel_aux`（review、qa 并发）、`max_attempts`（只计运行失败）、`max_precheck_failures`、`max_merge_failures`、`post_merge_test`（合并后回归测试，默认开）、`port_block`（每次运行分配的连续端口数）、`run_minutes`（M 号 task 的时间预算）、`fix_max_files`、`change_max_tasks`（小改动最多几个 task，默认 3）、`continue_session` 等 |
 | `review` | `max_rounds`：审查轮数，第 2 轮只确认（impl 一律审查） |
 | `testing` | `adjust_tests`：worker 可改已有单元测试，只改不增删 |
 | `qa` | `max_rounds`：stage-qa 报告、修复、只确认 |
-| `implementation_gate` | 所有 S 阶段共用：`all_tasks_done`、`auto`（门禁里运行的命令名列表，只运行配置了的）、`coverage`（AC 覆盖率）、`qa`（是否启用 stage-qa）、`human`（是否要你签收） |
+| `implementation_gate` | 所有 S 阶段共用：`all_tasks_done`、`auto`（门禁里运行的命令名列表，只运行配置了的）、`coverage`（AC 覆盖率，只报告）、`qa`（是否启用 stage-qa）、`human`（是否要你签收） |
 | `shared_env` | 共享构建环境：`enabled`（默认开启）、`deps`（链接进各 worktree 的依赖目录，默认 `node_modules`）。S0 合入后一次性装好依赖，之后所有 worktree 链接同一份。Python 用 uv 的项目不共享 `.venv`：每个 worktree 自己 `uv sync --frozen`（包从 uv 的全局缓存链接，很快），加依赖用 `uv add` |
 | `generated_paths` | 由契约生成的代码路径 |
 | `scopes`、`roles`、`tool_groups` | 角色的可写范围、工具与 bash 档位（`full`、`readonly`、`allowlist`）、读取范围 |
@@ -251,7 +251,7 @@ P0 批准之后，规格不再修订；需求变化（包括签收时打回的�
 
 ## 已知局限与状态
 
-- **真实模型验证（M9）还没有做。** 目前所有测试用假模型，提示词（`agents/`、`skills/`）的效果、各档位模型的表现，都没有真实数据。M9 按 `docs/BUILD_PROMPT.md` 第 18 节的通过条件执行。
+- 真实模型实验只在小项目上做过（结论见 `NOTES.md` 的"真实模型实验"），还没有在大项目上验证。
 - 只在 Pi 1.0.0 上验证；M9 开始前会单独做升级评估。
 - M6、M7 的 e2e 测试写了但没有运行（按计划留到统一运行）。
 - 阶段被打回后，旧的 stage-qa 轮次仍计入 `qa.max_rounds`，被打回后可以用 `/forge accept` 放行。
@@ -260,7 +260,7 @@ P0 批准之后，规格不再修订；需求变化（包括签收时打回的�
 
 ## 开发
 
-规格是 `docs/BUILD_PROMPT.md`（不要修改）。所有偏离规格的决定、已核实的 Pi API 与版本、真实模型实验的结论都记在 `NOTES.md`。
+设计决定、已核实的 Pi API 与版本、真实模型实验的结论都记在 `NOTES.md`（最初的规格已删除，见 git 历史）。
 
 ```
 src/core/        业务逻辑，不依赖 Pi，按模块分子目录：
@@ -280,7 +280,6 @@ schemas/*.json   由 npm run gen:schemas 从 src/core/state/schemas.ts 生成
 scripts/         forge-view（事件查看器）、gen-schemas、real-build 与 baseline-build（M9 用）
 test/            unit、e2e、fixtures
 docs/            规格、入门（GETTING-STARTED.md）、流程图（flow.md）
-legacy/          pi-flow 的参考代码，不参与构建
 ```
 
 约定：状态只能由程序写；新增的检查（spec-lint、契约检查、DAG 推导、覆盖率）都是纯函数并有单元测试；只用可擦除的 TypeScript 语法（不用参数属性、enum、namespace）；标识符和文件名用英文，面向用户的提示、错误信息和文档用中文；不读取、不打印密钥。修改 `agents/`、`rules/`、`skills/` 会让子进程系统提示的稳定前缀变化，导致提示缓存失效，要在 `NOTES.md` 的"缓存提醒"里记一笔。
@@ -296,4 +295,3 @@ npm run gen:schemas               # 从 src/core/state/schemas.ts 生成 schemas
 
 测试不依赖真实 LLM：单元测试直接测纯函数；e2e 用 `test/fixtures/fake-subagent`（用脚本代替模型调用工具，仍经过真实的 guard 与 `forge_*` 工具）和 `test/fixtures/fake-llm`（假模型服务，供真实 pi 进程使用）。真实模型只在 M9 和 `scripts/real-build.ts` 中使用。
 
-复用来源是 pi-flow（运行时文件取 `31f3f15`，流程层取 `7006e7d`），拷贝或改编的文件在文件头注明来源。

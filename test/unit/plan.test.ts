@@ -18,6 +18,8 @@ const run = (edit: (p: PlanFile) => void = () => {}, over: Partial<PlanContext> 
 };
 const t = (p: PlanFile, id: string) => p.tasks.find((x) => x.id === id)!;
 const errs = (r: ReturnType<typeof run>) => r.errors.join('\n');
+/** 只提醒的项：在 warnings 里，且不产生错误 */
+const warns = (r: ReturnType<typeof run>) => { assert.deepEqual(r.errors, []); return r.warnings.join('\n'); };
 
 test('合格的计划：零错误，推导出软依赖与硬依赖，报告含阶段与关键路径', () => {
   const r = run();
@@ -44,26 +46,39 @@ test('符号语法：前缀、api 的方法与路径、fn 与 page 的格式', (
   assert.match(String(parseSymbol('api:GET x')), /api:<METHOD> <path>/);
   assert.match(String(parseSymbol('fn:currentTeam')), /fn:<module>#<name>/);
   assert.match(String(parseSymbol('page:teams')), /page:<route>/);
-  assert.match(errs(run((p) => { t(p, 'T-002').produces.push('widget:x'); })), /T-002 的 produces：符号 widget:x/);
-  assert.match(errs(run((p) => { t(p, 'T-002').produces.push('~lib:ui'); })), /produces ~lib:ui 不能带 ~/);
+  assert.match(warns(run((p) => { t(p, 'T-002').produces.push('widget:x'); })), /T-002 的 produces：符号 widget:x/);
 });
 
-test('7.3-1 符号核对：produces 在契约（page 在 screens.md）中找不到；lib: 不要求', () => {
-  assert.match(errs(run((p) => { t(p, 'T-003').produces.push('api:DELETE /api/datasources'); })), /T-003 产出的 api:DELETE \/api\/datasources 在契约中找不到/);
-  assert.match(errs(run((p) => { t(p, 'T-003').produces.push('table:sessions'); })), /table:sessions 在契约中找不到/);
-  assert.match(errs(run((p) => { t(p, 'T-003').produces.push('error:DATASOURCE_GONE'); })), /error:DATASOURCE_GONE 在契约中找不到/);
-  assert.match(errs(run((p) => { t(p, 'T-003').produces.push('fn:team#other'); })), /fn:team#other 在契约中找不到/);
-  assert.match(errs(run((p) => { t(p, 'T-003').produces.push('page:/settings'); })), /page:\/settings 在规格的 screens\.md中找不到/);
+test('7.3-1 符号核对（只提醒）：别的 task 需要的产出在契约（page 在 screens.md）中找不到时提醒；没人需要的不要求进契约；lib: 不要求', () => {
+  const used = (sym: string) => run((p) => { t(p, 'T-002').produces.push(sym); t(p, 'T-003').requires.push(sym); });
+  assert.match(warns(used('api:DELETE /api/teams')), /T-002 产出的 api:DELETE \/api\/teams 在契约中找不到/);
+  assert.match(warns(used('table:sessions')), /table:sessions 在契约中找不到/);
+  assert.match(warns(used('error:TEAM_GONE')), /error:TEAM_GONE 在契约中找不到/);
+  assert.match(warns(used('fn:team#other')), /fn:team#other 在契约中找不到/);
+  assert.match(warns(used('page:/settings')), /page:\/settings 在规格的 screens\.md中找不到/);
+  assert.doesNotMatch(warns(run((p) => { t(p, 'T-003').produces.push('api:DELETE /api/datasources'); })), /在契约中找不到/, '只有自己用的接口不必写进契约');
   assert.deepEqual(run((p) => { t(p, 'T-002').produces.push('lib:ui-kit'); }).errors, []);
 });
 
-test('7.3-1 每个 requires 都有生产方', () => {
-  assert.match(errs(run((p) => { t(p, 'T-003').requires.push('lib:charts'); })), /T-003 需要的 lib:charts 缺少生产方/);
-  assert.match(errs(run((p) => { t(p, 'T-002').requires.push('table:teams'); })), /T-002 的 requires table:teams 是它自己产出的/);
+test('强审查：批准报告列出用强模型审查的 task 与原因；多数 task 标 risk: high 时提醒', () => {
+  const r = run((p) => { t(p, 'T-003').risk = 'high'; t(p, 'T-002').layers.push('auth'); }, { limits: { max_parallel: 4, max_task_files: 12, critical_fanout: 1 } });
+  assert.deepEqual(r.report!.strong, [{ task: 'T-002', why: '底座，被 1 个 task 硬依赖；auth 层' }, { task: 'T-003', why: 'risk: high' }]);
+  assert.match(formatPlanReport(r.report!), /强审查（审查用升级模型）2 个：T-002（底座，被 1 个 task 硬依赖；auth 层）、T-003（risk: high）/);
+  assert.match(formatPlanReport(run().report!), /强审查：无/);
+  const many = run((p) => {
+    for (const id of ['T-004', 'T-005']) p.tasks.push({ ...structuredClone(t(p, 'T-003')), id, module: id, writes: [`x/${id}/**`], produces: [], ac: [], risk: 'high' });
+  });
+  assert.match(warns(many), /2 \/ 3 个 task 标了 risk: high（T-004、T-005）[\s\S]*普通增删改查的删除不算/);
+  assert.doesNotMatch(warns(run((p) => { t(p, 'T-003').risk = 'high'; })), /标了 risk: high/, '只有一个 high 不提醒');
 });
 
-test('7.3-2 同一个符号只能有一个生产方', () => {
-  assert.match(errs(run((p) => { t(p, 'T-003').produces.push('table:teams'); })), /table:teams 有多个生产方：T-002、T-003/);
+test('7.3-1 requires 没有生产方只提醒；需要自己产出的符号不加依赖', () => {
+  assert.match(warns(run((p) => { t(p, 'T-003').requires.push('lib:charts'); })), /T-003 需要的 lib:charts 没有 task 在 produces 中声明/);
+  assert.deepEqual(run((p) => { t(p, 'T-002').requires.push('table:teams'); }).errors, []);
+});
+
+test('7.3-2 同一个符号有多个生产方时提醒', () => {
+  assert.match(warns(run((p) => { t(p, 'T-003').produces.push('table:teams'); })), /table:teams 有多个生产方：T-002、T-003/);
 });
 
 test('7.3-3 生产方所在阶段不能晚于消费方', () => {
@@ -83,22 +98,22 @@ test('7.3-5 环检测', () => {
   assert.match(errs(r), /依赖存在环：T-00\d -> T-00\d -> T-00\d/);
 });
 
-test('7.3-6 AC 覆盖：MVP 非 manual AC 恰好分配一次；不存在、manual 的 AC；LATER 只警告', () => {
-  assert.match(errs(run((p) => { t(p, 'T-003').ac = ['REQ-001.AC1']; })), /MVP 验收标准 REQ-001\.AC2 没有分配给任何 task/);
-  assert.match(errs(run((p) => { t(p, 'T-002').ac.push('REQ-001.AC1'); })), /REQ-001\.AC1 分配给了多个 task：T-002、T-003/);
+test('7.3-6 AC 覆盖：没分配、重复分配、manual、LATER 只提醒；不存在的 AC 报错', () => {
+  assert.match(warns(run((p) => { t(p, 'T-003').ac = ['REQ-001.AC1']; })), /MVP 验收标准 REQ-001\.AC2 没有分配给任何 task/);
+  assert.match(warns(run((p) => { t(p, 'T-002').ac.push('REQ-001.AC1'); })), /REQ-001\.AC1 分配给了多个 task：T-002、T-003/);
   assert.match(errs(run((p) => { t(p, 'T-003').ac.push('REQ-001.AC9'); })), /ac REQ-001\.AC9 在规格中不存在/);
-  assert.match(errs(run((p) => { t(p, 'T-003').ac.push('REQ-001.AC3'); })), /REQ-001\.AC3 是 manual 条目/);
+  assert.match(warns(run((p) => { t(p, 'T-003').ac.push('REQ-001.AC3'); })), /REQ-001\.AC3 是 manual 条目/);
   const later = run((p) => { t(p, 'T-003').ac.push('REQ-003.AC1'); });
   assert.deepEqual(later.errors, []);
   assert.match(later.warnings.join(), /REQ-003\.AC1 属于非 MVP 需求 REQ-003/);
 });
 
-test('7.3-6 exit：每条 MVP 需求恰好在一个阶段 exit；exit 需求的 AC 不能分配给更晚阶段；exit 引用要存在', () => {
-  assert.match(errs(run((p) => { p.stages[1]!.exit = []; })), /MVP 需求 REQ-001 没有出现在任何阶段的 exit 中/);
-  assert.match(errs(run((p) => { p.stages[0]!.exit.push('REQ-001'); })), /需求 REQ-001 出现在多个阶段的 exit 中：S0、S1/);
+test('7.3-6 exit：需求不在 exit、在多个 exit、AC 分配给更晚阶段只提醒；exit 引用要存在', () => {
+  assert.match(warns(run((p) => { p.stages[1]!.exit = []; })), /MVP 需求 REQ-001 没有出现在任何阶段的 exit 中/);
+  assert.match(warns(run((p) => { p.stages[0]!.exit.push('REQ-001'); })), /需求 REQ-001 出现在多个阶段的 exit 中：S0、S1/);
   assert.match(errs(run((p) => { p.stages[0]!.exit.push('REQ-009'); })), /exit 引用了不存在的需求 REQ-009/);
   const late = run((p) => { p.stages[0]!.exit = ['REQ-002', 'REQ-001']; p.stages[1]!.exit = []; });
-  assert.match(errs(late), /阶段 S0 的 exit 含 REQ-001，但它的 REQ-001\.AC1 分配给了更晚阶段的 T-003/);
+  assert.match(warns(late), /阶段 S0 的 exit 含 REQ-001，但它的 REQ-001\.AC1 分配给了更晚阶段的 T-003/);
 });
 
 test('S0 只能有 1 个 task；阶段编号连续；空阶段报错', () => {
@@ -115,11 +130,8 @@ test('task 编号：格式、重复、与流程已有 task 冲突时给出下一
   assert.match(errs(run(() => {}, { existingTaskIds: ['T-001', 'T-002'] })), /T-002 已被流程里的 task 使用，请从 T-003 起编号/);
 });
 
-test('writes：不能为空，不能覆盖验收测试、规格、契约与受保护路径；超过 max_task_files 只警告', () => {
-  assert.match(errs(run((p) => { t(p, 'T-003').writes = ['tests/acceptance/T-003/**']; })), /与 tests\/acceptance\/\*\* 重叠/);
-  assert.match(errs(run((p) => { t(p, 'T-003').writes = ['docs/**']; })), /与 docs\/spec\/\*\* 重叠/);
-  assert.match(errs(run((p) => { t(p, 'T-003').writes = ['docs/contracts/paths/datasource.yaml']; })), /与 docs\/contracts\/\*\* 重叠/);
-  assert.match(errs(run((p) => { t(p, 'T-003').writes = []; })), /T-003 的 writes 不能为空/);
+test('writes 只是调度优先级：可以为空、可以含验收测试目录与文档；超过 max_task_files 只警告', () => {
+  for (const writes of [[], ['tests/acceptance/T-003/**'], ['docs/**'], ['docs/contracts/paths/datasource.yaml']]) assert.deepEqual(run((p) => { t(p, 'T-003').writes = writes; }).errors, [], writes.join());
   const many = run((p) => { t(p, 'T-003').writes = Array.from({ length: 13 }, (_, i) => `src/m${i}/**`); });
   assert.deepEqual(many.errors, []);
   assert.match(many.warnings.join(), /writes 有 13 项，超过 max_task_files=12/);
@@ -161,7 +173,7 @@ test('plan.yaml：YAML 语法错误与形状错误', () => {
   assert.equal(parsePlan(PLAN_YAML).errors.length, 0);
 });
 
-test('S0 的 writes 写出 _support/ 与 S0-smoke/ 也接受，派生时去重；别的阶段仍拒绝', () => {
+test('S0 的 writes 写出 _support/ 与 S0-smoke/ 也接受，派生时去重', () => {
   const extra = ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**', 'rules/**'];
   const r = run((p) => { t(p, 'T-002').writes.push(...extra); });
   assert.deepEqual(r.errors, []);
@@ -170,7 +182,5 @@ test('S0 的 writes 写出 _support/ 与 S0-smoke/ 也接受，派生时去重�
   const impl = deriveTasks(p, r.deps, { worker: [] }).find((x) => x.id === 'T-002')!;
   assert.equal(impl.writes.filter((w) => w === 'tests/acceptance/_support/**').length, 1);
   assert.equal(impl.writes.filter((w) => w === 'rules/**').length, 1);
-  assert.match(errs(run((p2) => { t(p2, 'T-003').writes.push('tests/acceptance/_support/**'); })), /与 tests\/acceptance\/\*\* 重叠/);
-  assert.match(errs(run((p2) => { t(p2, 'T-003').writes.push('rules/**'); })), /与 rules\/\*\* 重叠/);
 });
 

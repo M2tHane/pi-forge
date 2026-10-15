@@ -3,8 +3,6 @@ name: grilling
 description: 逐轮追问用户，直到对需求的每个分支都达成一致；事实自己查，决定交给用户
 ---
 
-> pi-forge：从 pi-flow skills/grilling 复用，只改了路径与工具名。
-
 # 逐轮追问
 
 （改编自 mattpocock/skills 的 grilling，MIT 许可，Copyright (c) 2026 Matt Pocock。）

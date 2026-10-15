@@ -1,6 +1,5 @@
-// 来源：pi-flow src/core/services.ts @ 31f3f15
 // 长时间运行的服务（第六轮 D2）：agent 不能用 & 把命令放到后台，要起开发服务器、数据库时用 forge_service。
-// 只能启动 workflow.yaml commands 里 serve 或 serve_* 命名的命令；独立进程组运行，日志写到本次运行的临时目录；
+// 命令由调用方给出（commands.yaml 里的命令，或 agent 直接给的、已过 guard 的命令）；独立进程组运行，日志写到本次运行的临时目录；
 // 记录写在临时目录的 services.json，子进程结束、超时、引擎回收运行时按记录结束整个进程组。
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';

@@ -3,8 +3,6 @@ name: domain-modeling
 description: 建立项目的术语表（docs/spec/glossary.md），只在值得时写 ADR
 ---
 
-> pi-forge：从 pi-flow skills/domain-modeling 复用，只改了路径与工具名。
-
 # 领域建模：术语表与 ADR
 
 （改编自 mattpocock/skills 的 domain-modeling，MIT 许可，Copyright (c) 2026 Matt Pocock。）

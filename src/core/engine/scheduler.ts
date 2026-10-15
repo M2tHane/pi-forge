@@ -1,5 +1,4 @@
-// 来源：pi-flow src/core/scheduler.ts @ 31f3f15
-// 调度：选哪个任务、并行几个由程序决定（第 11 节第 8 条）。纯函数。
+// 调度：选哪个任务、并行几个由程序决定。纯函数。
 import type { TaskFile } from '../state/schemas.ts';
 import { conflictsWith, remainingPath } from '../state/dag.ts';
 import { IN_FLIGHT, isAuxKind } from '../state/state-machine.ts';

@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/notify.ts @ 31f3f15
 // 外部通知（第六轮 7.5）：workflow.yaml 的 notify.command（可选）。需要用户处理的新事项、流程完成时运行一次，
 // 事件 JSON 从标准输入传入（例如 macOS 的 osascript、发到 webhook 的脚本）。独立进程组、10 秒超时，失败不影响流程。
 import { spawn } from 'node:child_process';

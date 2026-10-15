@@ -1,4 +1,4 @@
-// fix 模式（规格第 13.2、13.4 节，M7）：纯函数、fixStep 的状态推进（不跑 agent，直接改任务状态与 evidence）、/forge-fix 的拒绝规则。
+// fix 模式（M7）：纯函数、fixStep 的状态推进（不跑 agent，直接改任务状态与 evidence）、/forge-fix 的拒绝规则。
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';

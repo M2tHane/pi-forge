@@ -1,4 +1,3 @@
-// 来源：pi-flow src/tools/module-tools.ts @ 31f3f15（M1 改编）
 // forge_sync 与引擎共用同步逻辑；token 校验仅属于工具入口。
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';

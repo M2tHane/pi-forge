@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/subagent-runtime.ts @ 31f3f15
 // subagent 进程内的运行时：根据 run 环境构造 guard 上下文、拦截工具调用、执行 forge_* 工具。
 // pi-adapter 的子进程扩展与测试用 fake-subagent 共用这一实现。
 import { Value } from 'typebox/value';
@@ -15,7 +14,8 @@ import { failureSignature } from '../state/failure-signature.ts';
 import { FlowToolError, SUBAGENT_TOOLS, type RunEnv, type SubagentToolName, type ToolResult } from '../../tools/subagent-tools.ts';
 import { withoutPlaceholders } from '../security/tool-params.ts';
 
-export type GateResult = { block: false } | { block: true; reason: string; terminate: boolean };
+/** note：放行，但要追加到这次工具结果后面的提醒 */
+export type GateResult = { block: false; note?: string } | { block: true; reason: string; terminate: boolean };
 
 /** 工具结果的处理：note 追加到结果后面给模型看；terminate 时结束本次运行 */
 export type ResultCheck = { note?: string; terminate?: boolean };
@@ -75,7 +75,7 @@ export class SubagentRuntime {
     return this.store.readTask(this.env.flow, this.env.task);
   }
 
-  /** 子进程应启用的工具（第 14 节第 7 条）；只包含当前已注册的工具由调用方过滤 */
+  /** 子进程应启用的工具；只包含当前已注册的工具由调用方过滤 */
   activeTools(): string[] {
     return this.config.activeTools(this.env.role);
   }
@@ -93,7 +93,7 @@ export class SubagentRuntime {
       mainRoot: this.env.root,
       // 实现类任务可以在模块之间的接口文档里追加（只能新增，forge_submit 检查）
       ...(canAppendInterfaces(t) ? { interfaceAdditions: true } : {}),
-      // stage-qa 有 full 档 bash，在集成分支的临时 worktree 里不能越出工作区（规格第 14 节：除临时目录外不能写）
+      // stage-qa 有 full 档 bash，在集成分支的临时 worktree 里不能越出工作区（除临时目录外不能写）
       ...(t.kind === 'qa' ? { isolatedWorkspace: true } : {}),
       ...(opensWrites(t) && role.writes.length ? { openWrites: true } : {}),
       // S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时，rules/** 不算受保护路径
@@ -130,7 +130,7 @@ export class SubagentRuntime {
   async gate(call: ToolCall, cwd: string): Promise<GateResult> {
     await this.heartbeat();
     const r = await enforceToolCall(call, this.guardContext(cwd), this.store, { flow: this.env.flow, task: this.env.task, run: this.env.run });
-    if (!r.allow) return { block: true, reason: r.reason, terminate: r.terminate };
+    if (!r.allow) return { block: true, reason: r.reason, terminate: false };
     // 只统计被放行的调用：被 guard 拦下的照常计违规
     const sig = `${call.toolName}\u0000${JSON.stringify(call.input ?? null)}`;
     this.repeats = sig === this.lastCall ? this.repeats + 1 : 1;
@@ -160,7 +160,7 @@ export class SubagentRuntime {
         return { block: true, terminate: false, reason: `最近的调用里这一类 ${call.toolName} 调用已经出现 ${n} 次${writes ? '（来回改同样的内容）' : '（期间没有改过文件，结果不会变化）'}。换一个思路（读相关代码、缩小问题、换一种验证方式），或者用 forge_block 说明卡在哪里；再出现 ${WINDOW_LIMIT - n} 次本次运行会被结束。` };
       }
     }
-    return { block: false };
+    return r.warning ? { block: false, note: r.warning } : { block: false };
   }
 
   /** 结束本次运行：计一次失败（理由写进任务的 last_failure，重试时看得到），任务重新派发 */
@@ -181,7 +181,7 @@ export class SubagentRuntime {
 
   /** 是不是在跑测试、类型检查或 lint（项目配置的命令，或常见的运行器） */
   isCheckCommand(command: string): boolean {
-    const configured = ['test', 'typecheck', 'lint', 'merge_check'].map((k) => this.config.commands[k]?.trim()).filter((c): c is string => !!c && c !== 'true');
+    const configured = ['test', 'typecheck', 'lint'].map((k) => this.config.commands[k]?.trim()).filter((c): c is string => !!c && c !== 'true');
     return configured.some((c) => command.includes(c)) || CHECK_RUNNER.test(command);
   }
 

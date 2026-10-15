@@ -1,5 +1,5 @@
-// 来源：pi-flow src/core/release.ts @ 31f3f15
-// 流程最后一个闸门通过并经用户确认后，把集成分支合入主分支（第 12 节第 5 条）。中止的流程不合入，集成分支保留。
+// 把集成分支合入主分支：S0（骨架）批准时一次，流程最后一个闸门经用户确认后一次。
+// 中止的流程不再合入，集成分支保留；S0 已经合入主分支的骨架不撤回。
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
@@ -45,4 +45,16 @@ export async function mergeToMain(root: string, store: StateStore, config: FlowC
   } finally {
     if (temp) removeWorktree(root, temp);
   }
+}
+
+/**
+ * S0 批准时：骨架（连同规格、契约、计划、rules/、commands.yaml）先合入主分支，再把集成分支移到合入后的提交，
+ * 之后的阶段在它上面继续。这样主分支上就有 S0 写的规则与命令，用户也能提前看到骨架。
+ */
+export async function publishSkeleton(root: string, store: StateStore, config: FlowConfig, flowId: string): Promise<string> {
+  const integ = store.readFlow(flowId).integration_branch;
+  const before = git(root, ['rev-parse', `refs/heads/${integ}`]).trim();
+  const sha = await mergeToMain(root, store, config, flowId);
+  git(root, ['update-ref', `refs/heads/${integ}`, sha, before]);
+  return sha;
 }

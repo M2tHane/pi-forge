@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/role-settings.ts @ 31f3f15
 // 用户级角色设置（/forge-config）：每个角色的模型与思考级别。文件路径由 pi-adapter 提供（~/.pi/agent/pi-forge.json）。
 // 优先级：本文件 > workflow.yaml 的角色档位（models.<tier>）与 roles.<role>.thinking。
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';

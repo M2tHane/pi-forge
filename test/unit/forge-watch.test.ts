@@ -1,4 +1,3 @@
-// 来源：pi-flow test/unit/flow-watch.test.ts @ 31f3f15（M1 改编）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { activeMinutes, stuckTasks } from '../../src/core/insight/forge-watch.ts';

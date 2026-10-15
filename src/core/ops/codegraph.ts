@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/codegraph.ts @ 31f3f15
 // codegraph CLI 封装（colbymchenry/codegraph 1.6.0 已核实：sync -q）。
 // 只在主工作区使用（索引在 <root>/.codegraph）。第五轮起合并时一律跑全量测试，不再用 affected 选测试。
 import { execFile } from 'node:child_process';

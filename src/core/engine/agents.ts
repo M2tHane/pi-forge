@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/agents.ts @ 31f3f15
 // 角色定义：agents/<role>.md（frontmatter + 系统提示正文）。项目可在 .pi/agents/<role>.md 覆盖。
 // frontmatter 与 pi-subagents 兼容的字段：name、description、thinking；档位用 tier（不用 model，避免与 provider/id 语义冲突）。
 import { existsSync, readFileSync } from 'node:fs';

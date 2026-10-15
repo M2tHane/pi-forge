@@ -1,4 +1,3 @@
-// 来源：pi-flow src/core/checkpoints.ts @ 31f3f15
 // 自动检查点（第六轮 7.4）：运行中定时给任务工作区拍快照，存到 refs/pi-forge/checkpoints/<流程>/<任务>。
 // 用临时索引（GIT_INDEX_FILE）做 add -A、write-tree、commit-tree：包含未跟踪的新文件，不动 agent 的索引与工作区，
 // 也不和 agent 自己的 git 操作冲突。工作区被改坏或丢失时用 /forge checkpoint restore 取回；任务结束后删除。

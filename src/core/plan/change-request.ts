@@ -1,4 +1,4 @@
-// 变更请求的修订推导（规格第 5、12.3 节）：把 architect 修订后的 plan.yaml 与当前计划、流程里的 task 对比，
+// 变更请求的修订推导：把 architect 修订后的 plan.yaml 与当前计划、流程里的 task 对比，
 // 得出要落地的动作，并校验修订是否合规。全部是纯函数，不做 IO；落地由 StateStore.applyChange 在一个事务里完成。
 //
 // 规则（程序判断，不靠提示词）：
@@ -34,7 +34,7 @@ export interface DiffOptions {
 
 const NOT_STARTED = ['pending', 'ready'];
 export const isNotStarted = (t: Pick<TaskFile, 'status'>) => NOT_STARTED.includes(t.status);
-const TASK_FIELDS = ['stage', 'module', 'title', 'size', 'layers', 'ac', 'writes', 'shared', 'produces', 'requires', 'test_interface', 'manual_checks', 'review', 'risk'] as const;
+const TASK_FIELDS = ['stage', 'module', 'title', 'size', 'layers', 'ac', 'writes', 'shared', 'produces', 'requires', 'manual_checks', 'risk'] as const;
 const OPTIONAL_LISTS = new Set(['shared', 'manual_checks']);
 
 const norm = (field: string, v: unknown): string => JSON.stringify(Array.isArray(v) && !v.length && OPTIONAL_LISTS.has(field) ? undefined : v ?? null);

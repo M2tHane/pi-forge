@@ -1,4 +1,4 @@
-// 实施阶段的验收编排（规格第 11 节）：确定性门禁与覆盖率 → stage-qa → 修复 → 只确认 → 人工签收。
+// 实施阶段的验收编排：确定性门禁与覆盖率 → stage-qa → 修复 → 只确认 → 人工签收。
 // 引擎在每次 pump 时调用 stageStep；它只根据持久化的状态（任务、evidence、事件）决定下一步，崩溃后重入结果相同。
 // 阶段状态的用法：
 // - active：本阶段任务在做；各类修复（.fx-n）也在 active 时进行；
@@ -11,10 +11,11 @@ import type { StateStore } from '../state/state-store.ts';
 import { isSettled } from '../state/state-machine.ts';
 import { isOpenChange } from '../plan/change-request.ts';
 import { headSha } from '../workspace/worktree.ts';
-import { createCoverageGapRound, gateFailed, stageDef, type ImplementationChecks } from './gates.ts';
+import { gateFailed, stageDef, type ImplementationChecks } from './gates.ts';
 import { QA_INPUT, createQaTask, qaTasksOf, resolveQa } from './stage-qa.ts';
 import { isStageLevelTask } from '../workspace/stage-worktree.ts';
-import { readReviewEvidence, type ReviewInputFile } from './review-flow.ts';
+import { SUGGESTIONS_PATH, readReviewEvidence, type ReviewInputFile } from './review-flow.ts';
+import { git } from '../state/git.ts';
 import type { StageRoundOutcome } from './stage-rounds.ts';
 
 export interface AcceptanceDeps { root: string; store: StateStore; config: FlowConfig }
@@ -40,6 +41,19 @@ export function gatePassedHead(events: readonly { type: string; flow: string | n
   return null;
 }
 
+/**
+ * 两个提交之间是否只有程序记录的文档变化（审查建议、覆盖率矩阵）：这些提交不改代码，
+ * 不应让已经通过的门禁与 stage-qa 作废（否则"通过 → 记录建议 → 重新验收"会一直循环）。
+ */
+export function sameWork(root: string, a: string | null, b: string): boolean {
+  if (a === b) return true;
+  if (!a) return false;
+  try {
+    return git(root, ['diff', '--name-only', a, b]).split('\n').filter(Boolean)
+      .every((f) => f === SUGGESTIONS_PATH || f.startsWith('docs/qa/'));
+  } catch { return false; }
+}
+
 /** 本阶段除阶段级 task（S1.qa）外是否都已结束；纯函数 */
 export const stageWorkSettled = (tasks: readonly Pick<TaskFile, 'id' | 'kind' | 'for_task' | 'stage' | 'status'>[], stage: string) =>
   tasks.filter((t) => t.stage === stage && !isStageLevelTask(t)).every(isSettled);
@@ -58,7 +72,8 @@ async function backToActive(store: StateStore, flowId: string, reason: string): 
 async function finalize(d: AcceptanceDeps, flowId: string, head: string): Promise<boolean> {
   const flow = d.store.readFlow(flowId);
   const def = stageDef(d.config, flow.stage);
-  const needsHuman = !!def.gate.human || flow.stage === flow.stages.at(-1);
+  // S0 与最后一个阶段批准时要合入主分支，一律人工
+  const needsHuman = !!def.gate.human || flow.stage === 'S0' || flow.stage === flow.stages.at(-1);
   await d.store.transitionStage(flowId, { to: needsHuman ? 'awaiting_human' : 'done', trigger: 'gate_passed', actor: 'gate', needs_human: needsHuman, data: { head } });
   return !needsHuman;
 }
@@ -99,7 +114,7 @@ export async function stageStep(d: AcceptanceDeps, flowId: string, opts: { force
     case 'blocked': case 'exhausted': await toNeedsHuman(store, flowId, `stage-qa：${r.reason}`); return 'changed';
     case 'pass': {
       const head = headSha(d.root, flow.integration_branch);
-      if (gatePassedHead(store.readEvents(), flowId, stage) !== head || qaHead(store, flowId, stage) !== head) return 'gate';
+      if (!sameWork(d.root, gatePassedHead(store.readEvents(), flowId, stage), head) || !sameWork(d.root, qaHead(store, flowId, stage), head)) return 'gate';
       return await finalize(d, flowId, head) ? 'done' : 'changed';
     }
   }
@@ -112,7 +127,7 @@ function qaHead(store: StateStore, flowId: string, stage: string): string | null
 }
 
 /**
- * 确定性检查结束后（阶段在 awaiting_gate）：失败 → 按 task 建修复或补测（.fx-n），回 active；轮数用尽或无法归属 → needs_human；
+ * 确定性检查结束后（阶段在 awaiting_gate）：失败 → 按 task 建修复（.fx-n），回 active；轮数用尽或无法归属 → needs_human；
  * 通过 → 记下通过时的 HEAD；需要 stage-qa 的建一轮（或只确认的一轮），否则签收。返回阶段是否已 done（调用方进入下一阶段）。
  */
 export async function afterChecks(d: AcceptanceDeps, flowId: string, g: ImplementationChecks): Promise<{ done: boolean; note?: string }> {
@@ -126,17 +141,6 @@ export async function afterChecks(d: AcceptanceDeps, flowId: string, g: Implemen
     await backToActive(store, flowId, `${reason}\n已生成修复任务：${r.tasks.join('、')}`);
     return { done: false };
   }
-  if (g.coverage?.gaps.length) {
-    const c = await createCoverageGapRound(store, flowId, g.coverage.gaps);
-    const unowned = c.unowned.map((x) => x.ac);
-    if (c.reason || !c.tasks.length) {
-      const why = c.reason ?? (unowned.length ? `覆盖率缺口找不到负责的 task：${unowned.join('、')}` : `覆盖率缺口的补测还在进行：${c.skipped.join('、')}`);
-      await toNeedsHuman(store, flowId, `${why}\n${reason}`);
-      return { done: false, note: why };
-    }
-    await backToActive(store, flowId, `${reason}\n已生成补充测试：${c.tasks.join('、')}${unowned.length ? `（找不到负责 task：${unowned.join('、')}）` : ''}`);
-    return { done: false };
-  }
   if (!g.passed) { await toNeedsHuman(store, flowId, reason || '门禁未通过'); return { done: false, note: reason }; }
   await store.recordEvent({ flow: flowId, actor: 'gate', type: 'note', reason: `阶段 ${g.stage} 门禁与覆盖率通过`, data: { kind: GATE_PASSED, stage: g.stage, head: g.head } });
   if (!qaEnabled(d.config)) return { done: await finalize(d, flowId, g.head) };
@@ -144,7 +148,7 @@ export async function afterChecks(d: AcceptanceDeps, flowId: string, g: Implemen
   if (r.kind === 'blocked' || r.kind === 'exhausted') { await toNeedsHuman(store, flowId, `stage-qa：${r.reason}`); return { done: false }; }
   if (r.kind === 'running') return { done: false };
   if (r.kind === 'fix') { await backToActive(store, flowId, roundNote(r, 'stage-qa ')); return { done: false }; }
-  if (r.kind === 'pass' && qaHead(store, flowId, g.stage) === g.head) return { done: await finalize(d, flowId, g.head) };
+  if (r.kind === 'pass' && sameWork(d.root, qaHead(store, flowId, g.stage), g.head)) return { done: await finalize(d, flowId, g.head) };
   const qa = await createQaTask(d.root, store, d.config, flowId, g.stage, g.head);
   await store.transitionTask(flowId, qa.id, { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
   return { done: false };

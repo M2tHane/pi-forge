@@ -95,14 +95,14 @@ mkdirSync('node_modules', { recursive: true }); writeFileSync('node_modules/' + 
 appendFileSync(${JSON.stringify(log)}, 'add ' + dep + '\\n'); rmSync('.adding');
 `);
   const config = parseConfig(TEST_YAML);
-  Object.assign(config.raw.commands, {
+  Object.assign(config.raw.commands!, {
     install: `mkdir -p node_modules && echo installed > node_modules/base.txt && echo install >> ${log}`,
     env_up: `echo env_up >> ${log}`,
     add_dep: `node ${path.join(base, 'add.mjs')}`,
     db_create: `echo create $FORGE_DB_NAME >> ${log}`,
     db_drop: `echo drop $FORGE_DB_NAME >> ${log}`,
   });
-  delete config.raw.commands['codegen'];
+  delete config.raw.commands!['codegen'];
   const lines = () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
   const wt = (name: string) => { const d = path.join(worktreesRoot(root), name); git(root, 'worktree', 'add', '-q', '--detach', d, 'main'); return d; };
   return { base, root, config, lines, wt, cleanup: () => rmSync(base, { recursive: true, force: true }) };
@@ -238,8 +238,8 @@ test('withSharedEnv：并行的两次运行各有独立端口段和独立数据�
     assert.deepEqual(creates, ['forge_rv_f_t_001', 'forge_rv_f_t_002']);
     assert.deepEqual(drops, creates);
     // 没有配置 db_create：静默跳过
-    delete p.config.raw.commands['db_create'];
-    delete p.config.raw.commands['db_drop'];
+    delete p.config.raw.commands!['db_create'];
+    delete p.config.raw.commands!['db_drop'];
     await withSharedEnv(p.root, p.config, 'rv-none', async (env) => { assert.ok(env['FORGE_DB_NAME']); });
     assert.equal(p.lines().filter((l) => l.startsWith('create ')).length, 2);
   } finally { p.cleanup(); }

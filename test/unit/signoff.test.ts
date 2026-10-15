@@ -141,7 +141,7 @@ test('violationStats：按角色与规则汇总，同一 run 同一规则 3 次�
 });
 
 test('签收材料与交付汇报包含关键章节；needs_human 展示原因与三个选项', async () => {
-  const p = await setupProject({ stages: ['S1'], tasks: [mkTask('T-001', { stage: 'S1', status: 'done', manual_checks: ['打开首页看布局'], test_interface: ['GET /api/x'] })] });
+  const p = await setupProject({ stages: ['S1'], tasks: [mkTask('T-001', { stage: 'S1', status: 'done', manual_checks: ['打开首页看布局'], produces: ['api:GET /api/x'] })] });
   try {
     await p.store.setStages(p.flowId, [{ id: 'S1', goal: '登录闭环', exit: ['REQ-001'] }], 'standard');
     const text = stageSignoff(p.dir, p.store, p.config, p.flowId, 'S1');

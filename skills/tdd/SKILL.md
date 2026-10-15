@@ -3,8 +3,6 @@ name: tdd
 description: 边写测试边实现：红 → 绿循环，测试只放在约定的接口上，避开三种坏测试
 ---
 
-> pi-forge：从 pi-flow skills/tdd 复用，只改了路径与工具名。
-
 # 测试驱动开发
 
 （改编自 mattpocock/skills 的 tdd，MIT 许可，Copyright (c) 2026 Matt Pocock。）

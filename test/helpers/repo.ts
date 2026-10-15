@@ -1,4 +1,3 @@
-// 来源：pi-flow test/helpers/repo.ts @ 31f3f15
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';

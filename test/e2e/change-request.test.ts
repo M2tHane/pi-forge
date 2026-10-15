@@ -31,7 +31,7 @@ function force(p: Project, rel: string, patch: Record<string, unknown>) {
 async function project() {
   const plan = parsePlan(PLAN_YAML).plan!;
   plan.tasks.find((t) => t.id === 'T-003')!.ac = ['REQ-001.AC1'];
-  plan.tasks.push({ id: 'T-004', stage: 'S1', module: 'datasource', title: '数据源重名校验', size: 'S', layers: ['backend'], ac: ['REQ-001.AC2'], writes: ['server/src/dsimport/**'], produces: [], requires: [], test_interface: [] });
+  plan.tasks.push({ id: 'T-004', stage: 'S1', module: 'datasource', title: '数据源重名校验', size: 'S', layers: ['backend'], ac: ['REQ-001.AC2'], writes: ['server/src/dsimport/**'], produces: [], requires: [] });
   const planYaml = stringify(plan);
   const p = await setupProject({ yaml: PROJECT_YAML.replace(/  test:      ".*"/, '  test:      "true"'), stages: ['P1'], files: { ...SPEC_FILES, ...CONTRACT_FILES, 'docs/plan/plan.yaml': planYaml } });
   const check = checkPlan(plan, { catalog: parseContracts(CONTRACTS).catalog, spec: effectiveSpec(P1_SPEC), existingTaskIds: [], limits: { max_parallel: 4, max_task_files: 12 } });
@@ -53,8 +53,8 @@ function revisedPlan(plan: PlanFile): string {
   r.tasks.find((t) => t.id === 'T-003')!.title = '数据源管理（含 SSL）';
   r.stages.push({ id: 'S2', goal: '导出', exit: ['REQ-003'] });
   r.tasks.push(
-    { id: 'T-006', stage: 'S2', module: 'export', title: '导出数据源', size: 'S', layers: ['backend'], ac: ['REQ-003.AC1'], writes: ['server/src/export/**'], produces: [], requires: [], test_interface: ['HTTP /api/export'] },
-    { id: 'T-007', stage: 'S1', module: 'team', title: '团队列表：增加成员数', size: 'S', layers: ['backend'], ac: ['REQ-002.AC1'], writes: ['server/src/team/count/**'], produces: [], requires: [], test_interface: [], modifies: 'T-002' },
+    { id: 'T-006', stage: 'S2', module: 'export', title: '导出数据源', size: 'S', layers: ['backend'], ac: ['REQ-003.AC1'], writes: ['server/src/export/**'], produces: [], requires: [] },
+    { id: 'T-007', stage: 'S1', module: 'team', title: '团队列表：增加成员数', size: 'S', layers: ['backend'], ac: ['REQ-002.AC1'], writes: ['server/src/team/count/**'], produces: [], requires: [], modifies: 'T-002' },
   );
   return stringify(r);
 }

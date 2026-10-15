@@ -1,4 +1,4 @@
-// M5：契约文件冲突的结构化三方合并（第 12.2 节）。
+// M5：契约文件冲突的结构化三方合并。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from 'yaml';

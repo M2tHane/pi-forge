@@ -8,6 +8,13 @@ import type { TaskInput } from '../../src/core/state/state-store.ts';
 import { tmpRepo } from './repo.ts';
 import { TEST_YAML } from './config.ts';
 
+/** 临时的 Pi 用户目录里放一个占位的 pi-playwright（开流程前的依赖检查要求用户级安装） */
+export function stubPlaywrightSkill(agentDir: string): void {
+  const dir = path.join(agentDir, 'npm', 'node_modules', 'pi-playwright');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'pi-playwright', version: '0.1.2' }));
+}
+
 export const PROJECT_YAML = TEST_YAML
   .replace(/commands:[\s\S]*?\nlimits:/, `commands:
   install:   "true"

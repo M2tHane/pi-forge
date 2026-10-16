@@ -7,6 +7,7 @@ import {
   type ReviewPolicy,
 } from '../../src/core/stage/review.ts';
 import type { ReviewFinding } from '../../src/core/state/schemas.ts';
+import { crossTaskInputs } from '../../src/core/stage/review-flow.ts';
 import { hard, mkTask } from '../helpers/tasks.ts';
 
 const policy: ReviewPolicy = { criticalFanout: 3, maxRounds: 2 };
@@ -193,4 +194,19 @@ test('buildReviewBrief：给了 tests 与 acceptance 时，先列出要运行的
   assert.match(plain, /不含 tests\/acceptance/);
   const confirm = buildReviewBrief({ ...base, tests: { run: [{ name: 'test', shell: 'pnpm test x' }], skipped: [] }, priorMust: [{ id: 'R-1', level: 'must', basis: 'defect:x', files: ['a.ts'], location: '', problem: 'p', expected: 'e' }] });
   assert.match(confirm, /确认轮也先运行这些命令/);
+});
+
+test('跨 task 的提醒：软依赖的生产方与接口、diff 里落在已完成的其他 task 范围内的文件进第一轮说明', () => {
+  const t005 = mkTask('T-005', { status: 'done', writes: ['public/pages/products/**'] });
+  const t008 = mkTask('T-008', { status: 'done', writes: ['server/modules/inventory/**'] });
+  const t013 = mkTask('T-013', { writes: ['server/modules/exports/**', 'public/pages/products/**'], deps: [
+    { task: 'T-008', type: 'soft', reason: 'fn:inventory#changeStock' }, { task: 'T-008', type: 'soft', reason: 'api:GET /api/stock' }] });
+  const cross = crossTaskInputs([t005, t008, t013], t013, ['public/pages/products/page.js', 'server/modules/exports/csv.js', 'docs/contracts/x.md']);
+  assert.deepEqual(cross, { uses: [{ task: 'T-008', refs: ['fn:inventory#changeStock', 'api:GET /api/stock'] }], othersFiles: [{ file: 'public/pages/products/page.js', owners: ['T-005'] }] });
+  const base = { taskId: 'T-013', title: 't', reviewId: 'T-013.rv', acIds: [], acTexts: {}, contracts: { shown: [], omitted: [] }, glossary: '', deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: false }, priorMust: [] };
+  const brief = buildReviewBrief({ ...base, ...cross });
+  assert.match(brief, /## 用到的其他 task 的产物\n- T-008：fn:inventory#changeStock、api:GET \/api\/stock\n[^\n]*替身/);
+  assert.match(brief, /## 改了其他 task 负责的文件\n- public\/pages\/products\/page\.js（T-005）\n[^\n]*页面能不能打开/);
+  assert.doesNotMatch(buildReviewBrief(base), /其他 task/, '没有跨 task 的情况不加这两节');
+  assert.deepEqual(crossTaskInputs([t005], mkTask('T-001'), ['src/server/t-001/a.ts']), {});
 });

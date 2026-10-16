@@ -1,6 +1,7 @@
 // 假 LLM：OpenAI chat completions 兼容的流式服务，按脚本返回文本或工具调用。测试不依赖真实模型。
 // 脚本：<scriptsDir>/<model>.json = { steps: Step[] }；第 n 次请求（按请求中 assistant 消息数计）返回 steps[n]。
 // 每个请求追加记录到 <logFile>（JSONL），便于断言系统提示与声明的工具。
+import { createHash } from 'node:crypto';
 import http from 'node:http';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -16,7 +17,12 @@ export interface Step {
 }
 
 const isStatus = (m: { content: unknown }) => JSON.stringify(m.content ?? '').includes('[pi-forge 状态]');
-const isNotes = (m: { content: unknown }) => JSON.stringify(m.content ?? '').includes('由程序在每次请求时放回上下文');
+const isNotes = (m: { content: unknown }) => JSON.stringify(m.content ?? '').includes('由程序在上下文里没有最新笔记时');
+
+/** 相邻两次请求里，后一次只是在前一次的消息后面追加（返回第一处不是追加的位置，都是追加时为 -1） */
+export function firstNonAppend(reqs: readonly { hashes: readonly string[] }[]): number {
+  return reqs.findIndex((r, i) => i > 0 && reqs[i - 1]!.hashes.some((h, j) => r.hashes[j] !== h));
+}
 
 export interface FakeLlm { url: string; close(): Promise<void> }
 
@@ -35,6 +41,8 @@ export function startFakeLlm(opts: { scriptsDir: string; logFile?: string; port?
       if (opts.logFile) {
         appendFileSync(opts.logFile, JSON.stringify({
           model: payload.model, turn,
+          // 每条消息的摘要：检查相邻两次请求是不是只在末尾追加（提示缓存只认追加）
+          hashes: payload.messages.map((m) => createHash('sha1').update(JSON.stringify(m)).digest('hex').slice(0, 12)),
           system: payload.messages.filter((m) => m.role === 'system' || m.role === 'developer').map((m) => m.content),
           tools: (payload.tools ?? []).map((t) => t.function.name),
           // pi-forge 每次请求在末尾放回的笔记、主会话每轮的状态消息单独记录；last 是除此之外的最后一条消息

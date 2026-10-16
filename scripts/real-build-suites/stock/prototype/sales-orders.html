@@ -20,10 +20,31 @@
       <h1>销售单</h1>
       <div class="bar"><select><option>全部状态</option><option>草稿</option><option>已确认</option><option>已出库</option><option>已取消</option></select><select><option>全部客户</option></select><span class="grow"></span><button class="primary">新建销售单</button></div>
       <table><tr><th>单号</th><th>客户</th><th>仓库</th><th>金额</th><th>状态</th><th>创建时间</th></tr>
-        <tr><td><a href="purchase-order-detail.html">SO000004</a></td><td>晨光文具批发</td><td>MAIN</td><td class="num">1,850.00</td><td><span class="tag">草稿</span></td><td>10-15 09:00</td></tr>
-        <tr><td><a href="purchase-order-detail.html">SO000003</a></td><td>联华商贸</td><td>MAIN</td><td class="num">2,500.00</td><td><span class="tag ok">已出库</span></td><td>10-14 15:20</td></tr></table>
-      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有销售单，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
-      <p class="note">列表按单号倒序。点单号进入详情页 /sales-orders/:id。</p>
+        <tr><td><a href="sales-order-detail.html">SO000004</a></td><td>晨光文具批发</td><td>MAIN</td><td class="num">1,850.00</td><td><span class="tag">草稿</span></td><td>10-15 09:00</td></tr>
+        <tr><td><a href="sales-order-detail.html">SO000003</a></td><td>联华商贸</td><td>MAIN</td><td class="num">2,500.00</td><td><span class="tag info">已确认</span></td><td>10-14 15:20</td></tr>
+        <tr><td><a href="sales-order-detail.html">SO000002</a></td><td>联华商贸</td><td>EAST</td><td class="num">600.00</td><td><span class="tag ok">已出库</span></td><td>10-13 10:00</td></tr>
+        <tr class="off"><td><a href="sales-order-detail.html">SO000001</a></td><td>晨光文具批发</td><td>MAIN</td><td class="num">300.00</td><td><span class="tag">已取消</span></td><td>10-12 08:30</td></tr></table>
+      <p class="note">列表按单号倒序。点单号进入详情页 /sales-orders/:id。“新建销售单”打开空白详情页（草稿），保存后得到单号。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>加载中</h3>
+        <table><tr><th>单号</th><th>客户</th><th>仓库</th><th>金额</th><th>状态</th><th>创建时间</th></tr><tr><td colspan="6" class="msg">加载中…</td></tr></table>
+      </section>
+      <section class="state"><h3>空（还没有数据）</h3>
+        <table><tr><th>单号</th><th>客户</th><th>仓库</th><th>金额</th><th>状态</th><th>创建时间</th></tr><tr><td colspan="6" class="msg">还没有销售单。点“新建”添加。</td></tr></table>
+      </section>
+      <section class="state"><h3>筛选后没有结果</h3>
+        <table><tr><th>单号</th><th>客户</th><th>仓库</th><th>金额</th><th>状态</th><th>创建时间</th></tr><tr><td colspan="6" class="msg">没有符合条件的销售单。 <a>清除筛选</a></td></tr></table>
+      </section>
+      <section class="state"><h3>加载出错</h3>
+        <div class="alert">加载失败：服务暂时不可用（这里显示 API 返回的 message） <button>重试</button></div>
+        <table><tr><th>单号</th><th>客户</th><th>仓库</th><th>金额</th><th>状态</th><th>创建时间</th></tr><tr><td colspan="6" class="msg">—</td></tr></table>
+      </section>
+      <section class="state"><h3>只读用户（viewer）看到的样子</h3>
+        <div class="bar"><span class="grow"></span></div>
+        <table><tr><th>单号</th><th>客户</th><th>仓库</th><th>金额</th><th>状态</th><th>创建时间</th></tr><tr><td>SO000004</td><td>晨光文具批发</td><td>MAIN</td><td>1,850.00</td><td>草稿</td><td>10-15 09:00</td></tr></table>
+        <p class="note">没有新建、编辑、停用、删除，也没有单据操作按钮；查询、筛选、导出照常可用。</p>
+      </section>
+
     </main>
   </div>
 </body></html>

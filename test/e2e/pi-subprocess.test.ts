@@ -10,7 +10,7 @@ import { summarizeSession } from '../../src/core/engine/session-log.ts';
 import { readFileSync } from 'node:fs';
 import { parseConfig } from '../../src/core/state/config.ts';
 import { PROJECT_YAML } from '../helpers/project.ts';
-import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
+import { firstNonAppend, startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
 import { setupProject, DIRECT_YAML } from '../helpers/project.ts';
 import { AGENTS } from '../helpers/engine.ts';
 import { mkTask } from '../helpers/tasks.ts';
@@ -182,7 +182,7 @@ test('真实 pi 子进程：bash 命令没给超时或超过上限时改成 limi
   } finally { p.cleanup(); }
 });
 
-test('真实 pi 子进程：notes 与 history 工具可用；任务笔记由程序预填，每次请求放在消息末尾', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
+test('真实 pi 子进程：notes 与 history 工具可用；任务笔记由程序预填，开始时存进会话一次，更新后的笔记在工具结果里（不再每次请求接在末尾）', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
   const log = `/tmp/pi-forge-e2e-notes-${process.pid}.log`;
   const local = await startFakeLlm({ scriptsDir: SCRIPTS, logFile: log });
   const prev = process.env['FAKE_LLM_URL'];
@@ -196,6 +196,7 @@ test('真实 pi 子进程：notes 与 history 工具可用；任务笔记由程�
       packageAgentsDir: AGENTS,
       subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
       extraExtensions: () => [path.join(ROOT, 'test/fixtures/fake-llm/provider.ts')],
+      promptVars: () => ({ 'playwright-browser': 'C:/fake/pi-playwright/skills/playwright-browser' }),
       onError: (e) => errors.push(e),
     });
     await engine.next(p.flowId);
@@ -207,12 +208,15 @@ test('真实 pi 子进程：notes 与 history 工具可用；任务笔记由程�
     assert.deepEqual(notes.todo, ['导出 a = 1']);
     assert.equal(notes.goal[0], `任务：${t.title}`);
     assert.deepEqual(notes.current, ['正在写 a.ts']);
-    const reqs = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { model: string; turn: number; notes: unknown; tools: string[] })
+    const reqs = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { model: string; turn: number; notes: unknown; last: unknown; tools: string[]; hashes: string[] })
       .filter((r) => r.model === 'impl-notes');
     assert.ok(reqs[0]!.tools.includes('notes') && reqs[0]!.tools.includes('history'));
+    assert.doesNotMatch(JSON.stringify((reqs[0] as unknown as { system: unknown }).system), /\{\{|playwright/, 'worker 的提示里没有浏览器技能，也没有没填的占位');
     const lastText = (r: { notes: unknown }) => JSON.stringify(r.notes);
     assert.match(lastText(reqs[0]!), /任务 T-001 的笔记[\s\S]*验收：导出 a = 1/, '第一次请求就带着预填的笔记');
-    assert.match(lastText(reqs.find((r) => r.turn === 2)!), /正在写 a\.ts/, '更新后的笔记在下一次请求里');
+    assert.ok(reqs.every((r) => lastText(r) === lastText(reqs[0]!)), '每次请求里是同一条存进会话的笔记，没有每次重新接一条（提示缓存只认追加）');
+    assert.match(JSON.stringify(reqs.find((r) => r.turn === 2)!.last), /正在写 a\.ts/, '更新后的笔记在 notes 工具的结果里');
+    assert.equal(firstNonAppend(reqs), -1, '每次请求只在上一次的末尾追加（提示缓存只认追加）');
     // history search 的结果作为工具输出出现在第 3 轮请求中（倒数第二条之前），在会话文件里能找到
     const session = readFileSync(p.store.listRuns().find((r) => r.task === 'T-001')!.session_file!, 'utf8');
     assert.match(session, /找到 \d+ 条（共 \d+ 条历史）[\s\S]*forge_claim/);

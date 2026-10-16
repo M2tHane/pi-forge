@@ -23,17 +23,16 @@ test('notes：add、replace、remove、set 按顺序执行；序号越界与缺�
   assert.throws(() => applyNoteOps(full, [{ section: 'pitfalls', op: 'add', text: 'x' }]), /先合并或删除/);
 });
 
-test('notes：渲染带分区与序号；空笔记不放回上下文，接近阈值时只放提醒', () => {
+test('notes：渲染带分区与序号；空笔记不放回上下文', () => {
   const n = emptyNotes('2026-10-04T00:00:00Z');
   assert.match(renderNotes(n), /（空）/);
-  assert.equal(notesContextMessage(n, { title: '笔记', nearCompaction: false }), null);
-  assert.match(notesContextMessage(n, { title: '笔记', nearCompaction: true })!, /接近压缩阈值/);
+  assert.equal(notesContextMessage(n, { title: '笔记' }), null);
   applyNoteOps(n, [{ section: 'current', op: 'add', text: '写检索接口' }, { section: 'decisions', op: 'add', text: '用 SQLite FTS' }]);
   const text = renderNotes(n, '任务 T-001 的笔记');
   assert.match(text, /### 当前进度（current）\n1\. 写检索接口/);
   assert.match(text, /### 关键决策（decisions）\n1\. 用 SQLite FTS/);
   assert.doesNotMatch(text, /待完成/);
-  assert.match(notesContextMessage(n, { title: '任务 T-001 的笔记', nearCompaction: false })!, /由程序在每次请求时放回上下文/);
+  assert.match(notesContextMessage(n, { title: '任务 T-001 的笔记' })!, /由程序在上下文里没有最新笔记时/);
 });
 
 test('notes：初始笔记由任务说明与验收标准生成', () => {

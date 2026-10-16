@@ -48,6 +48,21 @@ export const PLUGINS: PluginSpec[] = [
   },
 ];
 
+/** 浏览器检查技能：stage-qa 用它在无界面浏览器里检查页面，没装不能开始 */
+export const PLAYWRIGHT_SKILL = {
+  pkg: 'pi-playwright',
+  tested: { min: '0.1.2', below: '0.2.0', label: '0.1.x（已验证 0.1.2）' } as Tested,
+};
+
+/** 路径统一用正斜杠：Windows 上 node、Git Bash、PowerShell 都认，写进提示和命令不用转义 */
+export const slashPath = (p: string) => p.replace(/\\/g, '/');
+
+/** 浏览器检查技能的目录（项目级安装优先，再找用户级）；没装时为 null */
+export function playwrightSkillDir(roots: readonly string[]): string | null {
+  const hit = installedPackage(PLAYWRIGHT_SKILL.pkg, roots);
+  return hit ? slashPath(path.join(hit.dir, 'skills', 'playwright-browser')) : null;
+}
+
 export const CODEGRAPH_CLI = {
   tested: { min: '1.6.0', below: '2.0.0', label: '1.x（已验证 1.6.0）' } as Tested,
   install: 'npm i -g @colbymchenry/codegraph，然后在项目里执行 codegraph init -i',
@@ -134,6 +149,16 @@ export function checkDependencies(d: DependencyDeps): DependencyItem[] {
         push('ok', p.pkg, hit.version);
       }
     }
+  }
+
+  if (d.packageRoots?.length) {
+    const p = PLAYWRIGHT_SKILL;
+    const hit = installedPackage(p.pkg, d.packageRoots);
+    // 两条独立的命令（不用 cd、&&），Windows 的 cmd 与 PowerShell 也能直接运行；没装时按用户级安装的位置给
+    const setup = `npm --prefix "${slashPath(hit?.dir ?? path.join(d.packageRoots.at(-1)!, p.pkg))}" run setup`;
+    if (!hit) push('error', p.pkg, `未安装：stage-qa 用它在无界面浏览器里检查页面。安装：pi install npm:${p.pkg}，然后 ${setup}（下载 Chromium）`);
+    else if (!inRange(hit.version, p.tested)) push('warn', p.pkg, `${hit.version} 未经验证（已验证 ${p.tested.label}）`);
+    else push('ok', p.pkg, hit.version);
   }
 
   const needCodegraph = !config || rolesUsing(config, ['codegraph']).length > 0;

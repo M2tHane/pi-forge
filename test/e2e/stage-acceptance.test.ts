@@ -12,6 +12,7 @@ import { P0_SPEC } from '../helpers/spec.ts';
 import { runFlowCommand } from '../../src/commands/forge.ts';
 import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
 import { drive, engineEnv, submitWork, writeFiles } from '../helpers/commands.ts';
+import { rejectStage } from '../../src/core/stage/stages.ts';
 
 const REQS = P0_SPEC.requirements.replace('- AC1：Given 已登录 When 创建看板 Then 返回看板编号', '- AC1：Given 已登录 When 创建看板 Then 返回看板编号\n- AC2：Given 名称为空 When 创建看板 Then 返回 400');
 const FILES = { ...Object.fromEntries(Object.entries({ ...P0_SPEC, requirements: REQS }).map(([k, v]) => [`docs/spec/${k}.md`, v])) };
@@ -103,6 +104,33 @@ test('stage-qa 超出 qa.max_rounds → needs_human；/forge accept S1 --note �
     await runFlowCommand('accept S1 --note "已知问题，下个阶段处理"', e.cmd);
     assert.equal(stageStatus(p), 'awaiting_human');
     assert.ok(p.store.readEvents().some((ev) => ev.trigger === 'accept' && ev.data?.['entity'] === 'stage'));
+  } finally { p.cleanup(); }
+});
+
+test('stage-qa 轮数用尽后用户打回、变更请求的 task 合入：开一轮只确认的 stage-qa 复验，而不是按旧结论直接交给用户；没有新改动时仍交给用户', async () => {
+  const p = await project(true);
+  const confirms: string[] = [];
+  const e = engineEnv(p, async (_role, _n, a) => {
+    await a.call('forge_claim');
+    const id = a.env.task;
+    if (id === 'T-001' || id === 'T-001.fx-1') { await writeFiles(a, { 'src/server/t-001/a.ts': `${id}\n`, 'tests/acceptance/T-001/a.test.ts': AC1_TEST + AC2_TEST }); return submitWork(a, id); }
+    if (id === 'T-002') { await writeFiles(a, { 'src/server/t-002/a.ts': '名称为空返回 400\n' }); return submitWork(a, id); }
+    if (id === 'S1.qa') { await a.call('forge_qa_report', { verdict: 'changes', issues: [must] }); return; }
+    confirms.push(id);
+    const fixed = p.store.listTasks(p.flowId).some((t) => t.id === 'T-002' && t.status === 'done');
+    await a.call('forge_qa_confirm', { items: [{ id: 'R-1', resolved: fixed, note: fixed ? '已返回 400' : '仍然创建成功' }] });
+  });
+  try {
+    await drive(e, p.flowId, 40);
+    assert.deepEqual(e.errors, []);
+    assert.equal(stageStatus(p), 'needs_human', '修复轮数用尽');
+    await rejectStage({ root: p.dir, store: p.store, config: p.config }, p.flowId, '名称为空仍然创建成功');
+    await p.store.addTasks(p.flowId, [mkTask('T-002', { stage: 'S1', writes: ['src/server/t-002/**'] })], 'engine');
+    await drive(e, p.flowId, 40);
+    assert.deepEqual(e.errors, []);
+    assert.deepEqual(confirms, ['S1.qa-2', 'S1.qa-3'], '变更合入后复验一轮');
+    assert.deepEqual(p.store.readTask(p.flowId, 'S1.qa-3').status, 'done');
+    assert.equal(stageStatus(p), 'awaiting_human');
   } finally { p.cleanup(); }
 });
 

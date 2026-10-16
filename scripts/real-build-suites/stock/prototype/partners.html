@@ -22,11 +22,52 @@
       <table><tr><th>名称</th><th>类型</th><th>联系人</th><th>电话</th><th></th></tr>
         <tr><td>晨光文具批发</td><td>供应商</td><td>李经理</td><td>021-5555 1234</td><td><a>编辑</a> <a class="danger">删除</a></td></tr>
         <tr><td>城东小学</td><td>客户</td><td>王老师</td><td>138 0000 0000</td><td><a>编辑</a> <a class="danger">删除</a></td></tr>
-        <tr><td>联华商贸</td><td>供应商、客户</td><td></td><td></td><td><a>编辑</a> <a class="danger">删除</a></td></tr></table>
-      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有往来单位，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
+        <tr><td>联华商贸</td><td>供应商和客户</td><td></td><td></td><td><a>编辑</a> <a class="danger">删除</a></td></tr></table>
       <div class="dialog"><h2>新建往来单位（弹窗）</h2><label>名称 <input></label>
         <label>类型 <select><option value="supplier">供应商</option><option value="customer">客户</option><option value="both">供应商和客户</option></select></label>
         <label>联系人 <input></label><label>电话 <input></label><div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      <p class="note">“供应商”页签显示供应商和“供应商和客户”；“客户”页签同理。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>加载中</h3>
+        <table><tr><th>名称</th><th>类型</th><th>联系人</th><th>电话</th><th></th></tr><tr><td colspan="5" class="msg">加载中…</td></tr></table>
+      </section>
+      <section class="state"><h3>空（还没有数据）</h3>
+        <table><tr><th>名称</th><th>类型</th><th>联系人</th><th>电话</th><th></th></tr><tr><td colspan="5" class="msg">还没有往来单位。点“新建”添加。</td></tr></table>
+      </section>
+      <section class="state"><h3>筛选后没有结果</h3>
+        <table><tr><th>名称</th><th>类型</th><th>联系人</th><th>电话</th><th></th></tr><tr><td colspan="5" class="msg">没有客户。 <a>清除筛选</a></td></tr></table>
+      </section>
+      <section class="state"><h3>加载出错</h3>
+        <div class="alert">加载失败：服务暂时不可用（这里显示 API 返回的 message） <button>重试</button></div>
+        <table><tr><th>名称</th><th>类型</th><th>联系人</th><th>电话</th><th></th></tr><tr><td colspan="5" class="msg">—</td></tr></table>
+      </section>
+      <section class="state"><h3>字段校验失败（400）</h3>
+        <div class="dialog"><label>名称 <input value=""><em class="err">名称不能为空</em></label>
+          <label>电话 <input value="138-0000-abcd"><em class="err">电话只能有数字、空格、- 和 +</em></label>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>名称重复（409）</h3>
+        <div class="dialog"><label>名称 <input value="晨光文具批发"><em class="err">往来单位名称已存在</em></label><div class="bar"><span class="grow"></span><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>保存中（防止重复提交）</h3>
+        <div class="dialog"><h2>新建往来单位</h2><label>名称 <input value="新华书店"></label>
+          <div class="bar"><span class="grow"></span><button disabled>取消</button><button class="primary" disabled>保存中…</button></div></div>
+      </section>
+      <section class="state"><h3>保存成功</h3>
+        <div class="toast">已保存往来单位 新华书店</div>
+      </section>
+      <section class="state"><h3>删除确认</h3>
+        <div class="dialog modal"><h2>删除往来单位</h2><p>确定删除“城东小学”？</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">删除</button></div></div>
+      </section>
+      <section class="state"><h3>删除被拒（409：出现在单据里）</h3>
+        <div class="alert">“晨光文具批发”已出现在单据里，不能删除。</div>
+      </section>
+      <section class="state"><h3>只读用户（viewer）看到的样子</h3>
+        <div class="bar"><span class="grow"></span></div>
+        <table><tr><th>名称</th><th>类型</th><th>联系人</th><th>电话</th></tr><tr><td>晨光文具批发</td><td>供应商</td><td>李经理</td><td>021-5555 1234</td></tr></table>
+        <p class="note">没有新建、编辑、停用、删除，也没有单据操作按钮；查询、筛选、导出照常可用。</p>
+      </section>
 
     </main>
   </div>

@@ -88,6 +88,8 @@ declare module '@earendil-works/pi-coding-agent' {
     getThinkingLevel(): ThinkingLevel;
     /** 以用户身份发送消息，总会触发一轮；agent 正在输出时用 deliverAs 指定排队方式（Pi 1.0.0 types.d.ts） */
     sendUserMessage(content: string, options?: { deliverAs?: 'steer' | 'followUp' }): void;
+    /** 往会话里存一条自定义消息（发给模型时转成 user 消息）；agent 正在运行时 deliverAs steer 在下一次请求前送达（Pi 1.1 types.d.ts） */
+    sendMessage(message: { customType: string; content: string; display: boolean; details?: unknown }, options?: { triggerTurn?: boolean; deliverAs?: 'steer' | 'followUp' | 'nextTurn' }): void;
     /** 设置本会话思考级别（按模型能力收窄） */
     setThinkingLevel(level: ThinkingLevel): void;
     on(event: 'session_start' | 'session_shutdown' | 'agent_end', handler: (event: unknown, ctx: ExtensionContext) => unknown): () => void;

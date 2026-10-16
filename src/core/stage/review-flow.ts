@@ -9,13 +9,13 @@ import { git, gitOk } from '../state/git.ts';
 import { commitFilesToBranch } from '../spec/intake.ts';
 import { headSha } from '../workspace/worktree.ts';
 import { acceptanceAudit, reviewTestPlan } from './review-tests.ts';
-import { writesOwnAcceptance } from '../state/paths.ts';
+import { matchesAny, writesOwnAcceptance } from '../state/paths.ts';
 import { readSpec } from '../spec/spec-flow.ts';
 import { acTexts, effectiveSpec } from '../spec/spec.ts';
 import {
   CONTRACT_SNIPPET_MAX, GLOSSARY_MAX, buildReviewBrief, contractFilesFor, fitSnippets, mustHandoff, mustOf, nextReviewId, reviewMode, reviewPolicy,
   reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, truncateDiff,
-  type ConfirmItem, type ReviewMode,
+  type ConfirmItem, type ReviewBriefInput, type ReviewMode,
 } from './review.ts';
 
 export const REVIEW_INPUT = 'review-input.json';
@@ -102,11 +102,13 @@ export async function createReviewTask(root: string, store: StateStore, config: 
     const touched = git(wt, ['diff', '--name-only', orig.base_sha, head, '--', 'docs/contracts']).split('\n').filter(Boolean);
     contracts = fitSnippets(contractFilesFor(orig.module, all, touched).map((p) => ({ path: p, content: showAt(wt, p) })).filter((f) => f.content), CONTRACT_SNIPPET_MAX);
   }
+  const cross = confirm ? {} : crossTaskInputs(tasks, orig, names(orig.base_sha));
   const brief = buildReviewBrief({
     taskId: orig.id, title: orig.title, reviewId: id, acIds: orig.ac ?? [], acTexts: acText, contracts, glossary, deviations: orig.deviations ?? [],
     range: { from, to: head }, diff, priorMust,
     tests: reviewTestPlan(config, orig, store.readFlow(flowId).integration_branch),
     ...(ownTests ? { acceptance: acceptanceAudit(orig) ?? undefined, withAcceptance: true } : {}),
+    ...cross,
   });
   const input: TaskInput = {
     id, stage: orig.stage, kind: 'review', role: 'reviewer', title: `审查：${orig.title}`, scopes: [...config.role('reviewer').scopes],
@@ -121,6 +123,18 @@ export async function createReviewTask(root: string, store: StateStore, config: 
   await store.saveEvidence(flowId, id, REVIEW_INPUT, JSON.stringify(file, null, 2), actor);
   await store.appendHandoff(flowId, id, brief, actor);
   return rv!;
+}
+
+/** 第一轮审查要看的跨 task 信息：软依赖的生产方与接口；diff 里落在已完成的其他 task 负责范围内的文件（文档与验收测试除外，最多 15 个） */
+export function crossTaskInputs(tasks: readonly TaskFile[], orig: TaskFile, files: readonly string[]): Pick<ReviewBriefInput, 'uses' | 'othersFiles'> {
+  const refs = new Map<string, string[]>();
+  for (const d of orig.depends_on) if (d.type === 'soft') refs.set(d.task, [...(refs.get(d.task) ?? []), ...(d.reason ? [d.reason] : [])]);
+  const uses = [...refs].map(([task, r]) => ({ task, refs: r.length ? r : ['（计划里没写接口）'] }));
+  const done = tasks.filter((t) => t.id !== orig.id && t.kind === 'impl' && t.status === 'done' && t.writes.length);
+  const othersFiles = files.filter((f) => !f.startsWith('docs/') && !f.startsWith('tests/acceptance/'))
+    .map((file) => ({ file, owners: done.filter((t) => matchesAny(file, t.writes)).map((t) => t.id) }))
+    .filter((f) => f.owners.length).slice(0, 15);
+  return { ...(uses.length ? { uses } : {}), ...(othersFiles.length ? { othersFiles } : {}) };
 }
 
 /** 把 suggest 追加到集成分支的 docs/review/suggestions.md（每条带 task 与 R 编号；同一条不重复追加）。与合并并发时重试。 */
@@ -189,7 +203,10 @@ export async function resolveReviews(root: string, store: StateStore, config: Fl
     } else {
       const round = reviewRoundOf(latest.id);
       const confirm = readReviewEvidence<ReviewConfirmFile>(store, flowId, latest.id, REVIEW_CONFIRM);
-      const reason = `审查第 ${round} 轮（${latest.id}）仍有 ${left.length} 条 must 未解决：${left.map(brief1).join('；')}`.slice(0, 1500);
+      // 后一轮审查者对未解决条目的说明比首轮的原问题新：stock run-02 首轮写"上限是 50"，第二轮已确认改成 30、只差测试，原因却还显示 50，主会话只好自己澄清
+      const noteOf = new Map((confirm?.items ?? []).filter((i) => !i.resolved && i.note?.trim()).map((i) => [i.id, i.note!.replace(/\s+/g, ' ').trim()]));
+      const brief = (m: ReviewFinding) => (noteOf.has(m.id) ? `${m.id}（本轮说明）${noteOf.get(m.id)!.slice(0, 240)}（原问题：${m.problem.replace(/\s+/g, ' ').slice(0, 60)}）` : brief1(m));
+      const reason = `审查第 ${round} 轮（${latest.id}）仍有 ${left.length} 条 must 未解决：${left.map(brief).join('；')}`.slice(0, 1500);
       const after = await store.transitionTask(flowId, t.id, { to: 'in_progress', trigger: 'review_changes', actor: 'engine', facts: { unresolved_must: left.length, reason } });
       const notes = (confirm?.items ?? []).filter((i) => !i.resolved && i.note?.trim()).map((i) => `- ${i.id}：${i.note!.trim()}`);
       await store.appendHandoff(flowId, t.id, [mustHandoff(round, left, after.status === 'blocked'), ...(notes.length ? [`审查者对未解决条目的说明：\n${notes.join('\n')}`] : [])].join('\n\n'), 'engine');

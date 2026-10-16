@@ -62,6 +62,8 @@ export class SubagentRuntime {
   /** 最近被放行的调用：签名与是否改文件 */
   private window: { sig: string; writes: boolean; read: boolean }[] = [];
   private lastFailure = '';
+  /** 本机的技能目录（子进程扩展按 Pi 的用户目录找到后设置），隔离工作区里也能用 */
+  toolDirs: string[] = [];
   private sameFailures = 0;
 
   constructor(env: RunEnv, store: StateStore, config: FlowConfig, now?: () => Date) {
@@ -95,6 +97,7 @@ export class SubagentRuntime {
       ...(canAppendInterfaces(t) ? { interfaceAdditions: true } : {}),
       // stage-qa 有 full 档 bash，在集成分支的临时 worktree 里不能越出工作区（除临时目录外不能写）
       ...(t.kind === 'qa' ? { isolatedWorkspace: true } : {}),
+      ...(this.toolDirs.length ? { toolDirs: this.toolDirs } : {}),
       ...(opensWrites(t) && role.writes.length ? { openWrites: true } : {}),
       // S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时，rules/** 不算受保护路径
       ...(t.writes.includes('rules/**') ? { rulesWritable: true as const } : {}),

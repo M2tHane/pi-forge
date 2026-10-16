@@ -10,7 +10,7 @@ import { Engine } from '../../src/core/engine/dispatcher.ts';
 import { resume, processAlive } from '../../src/core/ops/resume.ts';
 import { PiLauncher } from '../../src/pi-adapter/launcher.ts';
 import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
-import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
+import { setupProject, stubPlaywrightSkill, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 const PACKAGE_ROOT = new URL('../..', import.meta.url).pathname;
 
@@ -122,6 +122,7 @@ test('合并进行中强杀引擎：合并回滚到队首，重启后完成合�
 test('引擎所在的 pi 收到 SIGTERM：结束它拉起的 subagent，不留孤儿进程；/forge resume 照常恢复', { skip: !piAvailable && 'pi 不可用', timeout: 240_000 }, async () => {
   const p = await setupProject({ tasks: [mkTask('T-001', { verify: ['test'] })] });
   const agentDir = mkdtempSync(path.join(tmpdir(), 'pi-forge-agentdir-'));
+  stubPlaywrightSkill(agentDir);
   try {
     writeFileSync(path.join(agentDir, 'pi-forge.json'), JSON.stringify({ version: 1, roles: { 'worker': { model: 'fakellm/impl-slow' }, 'reviewer': { model: 'fakellm/review-pass' } } }));
     const provider = path.join(ROOT, 'test/fixtures/fake-llm/provider.ts');

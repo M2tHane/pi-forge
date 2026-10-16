@@ -9,7 +9,8 @@ import { isLightFlow, type RoleSettingsFile, type TaskFile, type ThinkingLevel }
 import type { RunOutcome, SubagentHandle, SubagentLauncher, SubagentSpec } from './launcher.ts';
 import { hashToken, isSettled } from '../state/state-machine.ts';
 import { resolveRoleModel } from '../insight/role-settings.ts';
-import { loadAgent } from './agents.ts';
+import { fillPromptVars, loadAgent } from './agents.ts';
+import { readConventions } from '../spec/spec-flow.ts';
 import { assemblePrompt, ruleFilesFor } from './prompt-assembler.ts';
 import { formatEntry, selectKnowledge } from './knowledge.ts';
 import { findSessionFile, sessionDirOf } from './session-log.ts';
@@ -111,6 +112,8 @@ export interface EngineDeps {
   onMerge?: (r: MergeResult) => void;
   /** 技能目录（skills/<name>/SKILL.md）；子进程以 --no-skills 运行，技能由提示注入 */
   packageSkillsDir?: string;
+  /** 角色提示里 {{名字}} 的值（本机的技能安装目录等，每次派发时取） */
+  promptVars?: () => Record<string, string>;
   onGate?: (r: GateOutcome) => void;
   /** 子进程结束后结束它留在 worktree 里的进程（默认开；测试可关） */
   killStrayProcesses?: boolean;
@@ -212,8 +215,19 @@ export class Engine {
     // 门禁进行中只有 stage-qa 可以就绪
     const ids = computeReady(this.d.store.listTasks(flowId), flow.stage)
       .filter((id) => flow.stage_status === 'active' || this.d.store.readTask(flowId, id).kind === 'qa');
-    for (const id of ids) await this.d.store.transitionTask(flowId, id, { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
-    return ids;
+    // promote 有几处调用不在 pump 的串行队列里（/forge next、run 结束的回调），两次同时算出同一批时，后一次会撞上已经 ready 的 task
+    //（stock run-02：程序步骤出错，T-010.rv ready -> ready）。已经不是 pending 的跳过
+    const done: string[] = [];
+    for (const id of ids) {
+      try {
+        await this.d.store.transitionTask(flowId, id, { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
+        done.push(id);
+      } catch (e) {
+        if (this.d.store.readTask(flowId, id).status !== 'pending') continue;
+        throw e;
+      }
+    }
+    return done;
   }
 
   /** /forge next：由程序选择 ready 任务并派发，不经 LLM 决策 */
@@ -455,7 +469,7 @@ export class Engine {
   private buildSpec(flowId: string, task: TaskFile, role: string, runId: string, token: string, model: string, thinking: ThinkingLevel | null, fork: { run_id: string; task: string } | null = null,
     timeout: (NonNullable<TaskFile['timeout_review']> & { budget: number }) | null = null): SubagentSpec {
     const { root, config, store } = this.d;
-    const agent = loadAgent(role, root, this.d.packageAgentsDir);
+    const agent = fillPromptVars(loadAgent(role, root, this.d.packageAgentsDir), this.d.promptVars?.() ?? {});
     const { rules } = ruleFilesFor(config, root, task.scopes, task.layers ?? [], task.worktree ?? undefined);
     const mode = ['review', 'qa'].includes(task.kind) ? 'review' : 'impl';
     const flow = store.readFlow(flowId);
@@ -480,8 +494,10 @@ export class Engine {
     // 审查 task 的 handoff 就是审查输入（完整放进提示，不按 handoff 的长度截断）
     const reviewBrief = task.kind === 'review' || task.kind === 'qa' ? store.readHandoff(flowId, task.id).replace(/^\s*## \d{4}-[^\n]*\n+/, '') : '';
     const confirmRound = (task.kind === 'review' || task.kind === 'qa') && (readReviewEvidence<ReviewInputFile>(store, flowId, task.id, task.kind === 'qa' ? QA_INPUT : REVIEW_INPUT)?.prior_must.length ?? 0) > 0;
+    // 写代码与审查代码的角色不读规格：requirements.md 的「通用约定」（字段规则）放进任务说明（stock run-03：S2 打回 3 次都是字段规则）
+    const conventions = role === 'worker' || role === 'reviewer' ? readConventions(root, flow.integration_branch) : '';
     const prompt = assemblePrompt({
-      agent, rules, skills, task, flowId, flowTasks: tasks, handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
+      agent, rules, skills, task, flowId, flowTasks: tasks, ...(conventions ? { conventions } : {}), handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
       ...(reviewBrief ? { reviewBrief, confirmRound } : {}), commands: config.commands,
       knowledge: selectKnowledge(store.readKnowledge(), task).map(formatEntry),
       ...(scratch ? { scratchDir: scratch } : {}),

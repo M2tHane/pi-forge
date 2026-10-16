@@ -54,7 +54,10 @@ test('P0 不合格规格不写集成分支（保存为草稿）；只重交改�
     assert.equal(p.git('diff', '--cached'), index);
     assert.equal(existsSync(path.join(p.dir, 'docs/spec/requirements.md')), false);
     assert.match(renderStatus(p.store, p.config), /stage:P0[\s\S]*规格：已提交；检查：通过/);
-    await assert.rejects(submitSpec(p.dir, p.store, p.flowId, P0_SPEC), /等待用户/);
+    // 等批准时也能重交（例如修警告）：重新检查后回到等批准，集成分支上是新的一份
+    assert.match((await flowSpec(p.dir, p.store, p.config, { glossary: `${P0_SPEC.glossary}\n` })).text, /requirements、screens、permissions 沿用上一次提交[\s\S]*等待用户 \/forge-approve/);
+    assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
+    assert.equal(readSpec(p.dir, ref).files.glossary, `${P0_SPEC.glossary}\n`);
     await assert.rejects(runFlowCommand('approve typo', e.cmd), /用法/);
     await assert.rejects(runFlowCommand('approve stage:P0 amend:A-001', e.cmd), /用法/);
     assert.match(await runFlowCommand('reject stage:P0 "名称要唯一"', e.cmd), /意见/);

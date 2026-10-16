@@ -68,8 +68,8 @@ test('S0 批准：骨架合入 main，集成分支移到合入后的提交，之
   } finally { p.cleanup(); }
 });
 
-test('用户打回已完成的实施阶段：不立刻重提门禁，主会话的下一步是把修改加进本阶段；有新任务变化后照常验收', async () => {
-  const p = await setupProject({ yaml: PROJECT_YAML, tasks: [mkTask('T-001')] });
+test('用户打回已完成的实施阶段：不立刻重提门禁，主会话的下一步是把修改加进本阶段（后面阶段还有没开始的 task 也一样）；有新任务变化后照常验收', async () => {
+  const p = await setupProject({ yaml: PROJECT_YAML, stages: ['S3', 'S4'], tasks: [mkTask('T-001'), mkTask('T-009', { stage: 'S4', writes: ['src/server/t-009/**'] })] });
   try {
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
       assert.ok((await a.call('forge_claim')).ok);

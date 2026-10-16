@@ -139,6 +139,7 @@ test('确认轮仍有未解决的 must 且轮数用完 → 阻塞（review_exhau
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.deepEqual([t.status, t.blocked_by, t.review_rounds], ['blocked', 'review_exhausted', 2]);
     assert.match(t.blocked_reason ?? '', /次数达到上限 2.*R-1/);
+    assert.match(t.blocked_reason ?? '', /R-1（本轮说明）仍然返回空（原问题：没有返回看板编号）/, '阻塞原因带上最新一轮的说明，不只是首轮原文');
     assert.equal(p.store.readTask(p.flowId, 'T-001.rv-2').status, 'done');
     assert.equal(e.launcher.launched.filter((s) => s.env['PI_FORGE_TASK'] === 'T-001.rv-3').length, 0);
     assert.equal(handoffs.length, 1);

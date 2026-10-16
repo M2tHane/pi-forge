@@ -15,6 +15,8 @@ const HANDOFF_TAIL = 6000;
 /** 每个上游任务的 handoff 取最近部分的字数，以及所有上游合计的上限（需求汇总者要读两份完整意见，取得较大） */
 export const UPSTREAM_TAIL = 8000;
 export const UPSTREAM_TOTAL = 16000;
+/** 任务说明里「通用约定」的字数上限 */
+export const CONVENTIONS_MAX = 12000;
 
 /**
  * global.md、任务 scopes 对应的规则文件、task 的 layers 对应的 rules/<layer>.md（按 layers 选规则），按顺序去重；路径相对项目根。
@@ -41,6 +43,8 @@ export interface AssembleInput {
   rules: RuleFile[];
   /** 本任务注入的技能（稳定内容，排在规则之后） */
   skills?: RuleFile[];
+  /** requirements.md 的「通用约定」原文（worker、reviewer 的任务说明里带上） */
+  conventions?: string;
   task: TaskFile;
   flowId: string;
   handoff: string;
@@ -136,6 +140,12 @@ export function interfaceSections(task: TaskFile, all: readonly TaskFile[]): str
 
 export interface AssembledPrompt { system: string; user: string }
 
+/** 「通用约定」一节：字段规则按 spec-from-prd 不写成 AC，worker 与 reviewer 又不读规格，只能由程序带进任务说明 */
+function conventionsPart(text: string): string {
+  const body = text.length > CONVENTIONS_MAX ? `${text.slice(0, CONVENTIONS_MAX)}\n…（已截断，完整内容见 docs/spec/requirements.md）` : text;
+  return `## 规格的通用约定（docs/spec/requirements.md 原文）\n所有接口与字段都要遵守的规则：字段长度、字符、大小写、默认值、PATCH 只改给出的字段、错误格式等。它们不写成 AC，实现、测试与审查都按这里核对；不符合是 must，出处写 \`spec:requirements.md#通用约定\`。\n\n${body}`;
+}
+
 const list = (xs: readonly string[], empty = '（无）') => (xs.length ? xs.map((x) => `- ${x}`).join('\n') : empty);
 
 /** 返工时接着上一次的对话：任务说明、上游与 handoff 都已在对话里，只说明这次为什么回来、新的临时目录与开始方式 */
@@ -187,6 +197,7 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     `# 任务 ${i.flowId}/${t.id}：${t.title}`,
     `类型：${t.kind}　阶段：${t.stage}　角色：${t.role}`,
     `## 验收标准\n${list(t.ac ?? [])}`,
+    ...(i.conventions?.trim() ? [conventionsPart(i.conventions.trim())] : []),
     `## 输入文件\n${list(t.inputs)}`,
     `## 可写范围（writes）\n${list(writes, '（只读）')}`,
     ...(commands ? [`## 项目命令\n${commands}\n提交前自己跑通本任务的测试，以及与改动相关的参考检查（有 typecheck、lint 就跑）。合并时程序不再跑这些，reviewer 会运行本任务自己的测试，全量测试在阶段门禁运行。`] : []),

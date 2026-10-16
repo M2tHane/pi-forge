@@ -18,7 +18,7 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
   const summary = `流程 ${flow.id}「${flow.title}」阶段 ${flow.stage}（${flow.stage_status}）；任务 ${tasks.length} 个，完成 ${tasks.filter((t) => t.status === 'done').length} 个。`;
   if (flow.stage === 'P0') {
     if (flow.stage_status === 'awaiting_gate') return { summary, next: '规格已提交，程序正在重读集成分支并执行 spec-lint，等待闸门结果。', tool: 'none' };
-    if (flow.stage_status === 'awaiting_human') return { summary, next: '规格已提交，spec-lint 通过。向用户概述规格，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。', tool: 'none' };
+    if (flow.stage_status === 'awaiting_human') return { summary, next: '规格已提交，spec-lint 通过。向用户概述规格，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。等待期间要修改（例如修警告）可以直接用 forge_spec 重交改动的那几份。', tool: 'none' };
     const read = flow.intake?.files.length ? '用 forge_read 阅读集成分支 docs/spec/inputs/ 的需求文档与可选原型（只就有疑问的地方向用户提问）' : '用户没有提供需求文档：按技能 grilling 详细地向用户了解需求';
     return { summary, next: `${read}；和用户确认后用 forge_spec 提交四份规格。${flow.spec?.feedback ? `\n规格被打回或检查失败，意见：${flow.spec.feedback}` : ''}`, tool: 'forge_spec' };
   }
@@ -41,7 +41,8 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
   if (tasks.some((t) => t.lease || ['awaiting_inputs', 'checking', 'in_review', 'queued_merge', 'merging'].includes(t.status)) || activeRunCount) return { summary, next: '任务由程序推进，调用 forge_wait 等待结果。', tool: 'forge_wait' };
   const blocked = tasks.filter((t) => t.status === 'blocked' && t.blocked_owner !== 'orchestrator');
   if (blocked.length) return { summary, next: `向用户报告阻塞：${blocked.map((t) => `${t.id}（${t.blocked_reason ?? ''}）`).join('；')}；请其 /forge unblock <任务>。`, tool: 'none' };
-  if (tasks.some((t) => ['pending', 'ready'].includes(t.status))) return { summary, next: '任务由程序自动派发；关闭自动派发时请用户执行 /forge next。', tool: 'forge_wait' };
+  // 只看当前阶段：后面阶段的 task 总是 pending，算进来会让打回的意见永远轮不到
+  if (tasks.some((t) => t.stage === flow.stage && ['pending', 'ready'].includes(t.status))) return { summary, next: '任务由程序自动派发；关闭自动派发时请用户执行 /forge next。', tool: 'forge_wait' };
   const rejected = pendingRejection(store, flowId, flow.stage);
   if (rejected !== null) return { summary, next: `用户打回了阶段 ${flow.stage}：${rejected}\n用 forge_change_request 把要改的内容加进本阶段（程序在有新的任务变化之前不会重新提交门禁）；需要用户澄清的先问用户。`, tool: 'none' };
   return { summary, next: '等待程序阶段检查或用户指示。', tool: 'none' };

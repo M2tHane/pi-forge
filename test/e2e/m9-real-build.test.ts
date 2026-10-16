@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
+import { stubPlaywrightSkill } from '../helpers/project.ts';
 import { parseDocument } from 'yaml';
 import { applyExperimentConfig } from '../../scripts/real-build.ts';
 
@@ -43,6 +44,7 @@ after(() => { rmSync(work, { recursive: true, force: true }); return llm?.close(
 function runScript(out: string, planner: string, extra: string[]): Promise<{ code: number | null; output: string }> {
   const agentDir = path.join(work, `agent-${path.basename(out)}`);
   mkdirSync(agentDir, { recursive: true });
+  stubPlaywrightSkill(agentDir);
   const prd = path.join(work, 'prd.md');
   writeFileSync(prd, '# PRD 原文\n团队维护看板，名称要唯一。');
   writeFileSync(path.join(work, 'change.md'), '加一个归档功能。');

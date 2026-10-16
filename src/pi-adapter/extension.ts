@@ -31,6 +31,7 @@ import { PiLauncher } from './launcher.ts';
 import { lastFailureKind, notices, snapshotOf, statusLine, visibleFlows } from '../core/ops/status-view.ts';
 import { decisionKeys, wakeMessage } from '../core/engine/decisions.ts';
 import { packageRoots, pluginExtensionsFor } from './plugins.ts';
+import { playwrightSkillDir } from '../core/workspace/dependencies.ts';
 import { installMemory } from './memory.ts';
 import { redactToolResult } from './redact-hook.ts';
 import { notifyEvents, runNotify } from '../core/ops/notify.ts';
@@ -155,6 +156,7 @@ export function engineFor(root: string): EngineHandle {
     // 测试用的额外扩展（假模型 provider）在前，随后是第三方插件；guard 所在的 subagent 扩展由引擎放在最后
     extraExtensions: (role) => [...extra, ...pluginExtensionsFor(config, role, packageRoots(root, getAgentDir())).paths],
     packageSkillsDir: path.join(PACKAGE_ROOT, 'skills'),
+    promptVars: (): Record<string, string> => { const dir = playwrightSkillDir(packageRoots(root, getAgentDir())); return dir ? { 'playwright-browser': dir } : {}; },
     mergeHooks: { afterMerge: codegraphSync },
     onError: (e) => s.notify(`pi-forge 程序步骤出错：${(e as Error).message}`, 'warning'),
   });
@@ -295,7 +297,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交规格：requirements、screens、permissions、glossary（没有界面的项目可以不交 screens）。内容长时可以分几次调用、每次交一两份，交齐后程序检查并提交。spec-lint 拒绝或用户打回后，只重交要改的那几份，没交的沿用上一次提交。通过后等待用户批准。',
+      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交规格：requirements、screens、permissions、glossary（没有界面的项目可以不交 screens）。内容长时可以分几次调用、每次交一两份，交齐后程序检查并提交。spec-lint 拒绝、用户打回或等待批准期间要修改时，只重交要改的那几份，没交的沿用上一次提交。通过后等待用户批准。',
       parameters: SpecParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
@@ -391,7 +393,7 @@ export default function piFlow(pi: ExtensionAPI): void {
   // 笔记放回上下文与压缩：每次按当前目录是否已初始化决定
   installMemory(pi, {
     active: (ctx) => initialized(ctx.cwd),
-    notesMessage: (ctx, near) => notesContextMessage(mainStore(ctx.cwd).readNotes(MAIN_NOTES_REL), { title: '主会话笔记', nearCompaction: near }),
+    notesMessage: (ctx) => notesContextMessage(mainStore(ctx.cwd).readNotes(MAIN_NOTES_REL), { title: '主会话笔记' }),
     compactAt: (ctx) => { try { return loadProjectConfig(ctx.cwd).config.compactAt; } catch { return 0.7; } },
   });
 
@@ -407,17 +409,15 @@ export default function piFlow(pi: ExtensionAPI): void {
 
   // 调度模式：系统提示只追加稳定的角色提示与技能；每轮的状态与唯一允许的下一步作为一条上下文消息放在对话末尾。
   // 状态写进系统提示时每轮都变，不能表示中途改系统提示的模型服务会收到整份新前缀，提示缓存每轮失效（Pi 1.1 extensions.md）。
+  // P0 的两份技能在所有阶段都带着（约 3k token，命中缓存时很便宜）：只在 P0 带时，离开 P0 那一轮系统提示变化，缓存整份失效
   // 同时记录轮开始时主工作区的改动
   pi.on('before_agent_start', (event, ctx) => {
     const s = sessions.get(ctx.cwd);
     if (!s?.orchestrator || !s.handle) return;
     const { store, engine, config } = s.handle;
     s.driftBefore = dirtyFiles(ctx.cwd);
-    const flowId = store.readState().active_flow;
-    const flow = flowId ? store.readFlow(flowId) : null;
-    const skills = flow?.stage === 'P0'
-      ? ['spec-from-prd', 'grilling'].map((name) => readFileSync(path.join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'), 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim()).join('\n\n') : '';
-    const stable = `${agentPrompt(ctx.cwd, 'orchestrator')}${skills ? `\n\n${skills}` : ''}`;
+    const skills = ['spec-from-prd', 'grilling'].map((name) => readFileSync(path.join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'), 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim()).join('\n\n');
+    const stable = `${agentPrompt(ctx.cwd, 'orchestrator')}\n\n${skills}`;
     event.systemPromptOptions.appendSystemPrompt = `${event.systemPromptOptions.appendSystemPrompt ?? ''}\n\n${stable}`.trim();
     const status = turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t));
     return { message: { customType: 'pi-forge-status', content: status, display: false } };

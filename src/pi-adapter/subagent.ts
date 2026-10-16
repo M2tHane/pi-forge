@@ -1,13 +1,14 @@
 // 子进程中的 pi-forge 扩展：由 dispatcher 用 -e 最后加载（guard 必须最后执行）。
 // 只在 PI_FORGE_* 环境变量齐全时生效：注册本角色可用的 forge_* 工具、收窄启用的工具、拦截所有工具调用。
 import path from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { getAgentDir, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { tolerantArgs } from './tool-args.ts';
 import { loadConfig } from '../core/state/config.ts';
 import { StateStore } from '../core/state/state-store.ts';
 import { SubagentRuntime } from '../core/engine/subagent-runtime.ts';
 import { SUBAGENT_TOOLS, runEnvFrom, type SubagentToolName } from '../tools/subagent-tools.ts';
-import { MISSING_TOOLS_REASON } from '../core/workspace/dependencies.ts';
+import { MISSING_TOOLS_REASON, playwrightSkillDir } from '../core/workspace/dependencies.ts';
+import { packageRoots } from './plugins.ts';
 import { notesContextMessage } from '../core/engine/notes.ts';
 import { taskNotesRel } from '../core/state/state-store.ts';
 import { installMemory } from './memory.ts';
@@ -32,6 +33,8 @@ export default function piFlowSubagent(pi: ExtensionAPI): void {
   const config = loadConfig(path.join(env.root, 'workflow.yaml'), process.cwd());
   const store = new StateStore(env.root, { limits: config.limits });
   const rt = new SubagentRuntime(env, store, config);
+  const skill = playwrightSkillDir(packageRoots(env.root, getAgentDir()));
+  if (skill) rt.toolDirs = [skill];
   const allowed = new Set(rt.activeTools());
 
   for (const [name, def] of Object.entries(SUBAGENT_TOOLS) as [SubagentToolName, (typeof SUBAGENT_TOOLS)[SubagentToolName]][]) {
@@ -53,7 +56,7 @@ export default function piFlowSubagent(pi: ExtensionAPI): void {
   // 结构化笔记放回上下文、按阈值压缩（第五轮）
   installMemory(pi, {
     active: () => true,
-    notesMessage: (_ctx, near) => notesContextMessage(store.readNotes(taskNotesRel(env.flow, env.task)), { title: `任务 ${env.task} 的笔记`, nearCompaction: near }),
+    notesMessage: () => notesContextMessage(store.readNotes(taskNotesRel(env.flow, env.task)), { title: `任务 ${env.task} 的笔记` }),
     compactAt: () => config.compactAt,
   });
 

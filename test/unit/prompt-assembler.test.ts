@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { loadAgent, parseAgentFile } from '../../src/core/engine/agents.ts';
-import { assemblePrompt, ruleFilesFor, upstreamSection } from '../../src/core/engine/prompt-assembler.ts';
+import { fillPromptVars, loadAgent, parseAgentFile } from '../../src/core/engine/agents.ts';
+import { assemblePrompt, CONVENTIONS_MAX, ruleFilesFor, upstreamSection } from '../../src/core/engine/prompt-assembler.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 import { mkTask } from '../helpers/tasks.ts';
@@ -192,4 +192,26 @@ test('上游 handoff 只带最后一次 run 写的段，跳过 dispatcher / engi
   assert.doesNotMatch(h, /过时/);
   assert.match(h, /用户回答：用 PG/);
   assert.match(upstreamSection([{ id: 'T-002', title: 'x', type: 'soft', status: '已完成', handoff: '纯文本笔记' }]), /纯文本笔记/);
+});
+
+test('角色提示里的技能位置由程序填入本机路径（只有 stage-qa 用浏览器，worker 的提示里没有）；没给值的占位保持原样', () => {
+  const dir = 'C:/Users/x/.pi/agent/npm/node_modules/pi-playwright/skills/playwright-browser';
+  assert.doesNotMatch(loadAgent('worker', '/nonexistent', PKG_AGENTS).prompt, /playwright/);
+  for (const role of ['stage-qa']) {
+    const raw = loadAgent(role, '/nonexistent', PKG_AGENTS);
+    assert.match(raw.prompt, /\{\{playwright-browser\}\}\/SKILL\.md/);
+    const filled = fillPromptVars(raw, { 'playwright-browser': dir });
+    assert.ok(filled.prompt.includes(`${dir}/SKILL.md`));
+    assert.doesNotMatch(filled.prompt, /\{\{|~\/\.pi/);
+  }
+  assert.equal(fillPromptVars({ ...loadAgent('worker', '/nonexistent', PKG_AGENTS), prompt: 'a {{x}} b' }, {}).prompt, 'a {{x}} b');
+});
+
+test('任务说明里的「通用约定」：给了才有，放在验收标准后面，过长截断', () => {
+  const agent = loadAgent('worker', '/nonexistent', PKG_AGENTS);
+  const base = { agent, rules: [], task: mkTask('T-001'), flowId: 'B-001', handoff: '', mode: 'impl' as const, commands: {} };
+  const with_ = assemblePrompt({ ...base, conventions: '- sku 保存为大写' }).user;
+  assert.match(with_, /## 验收标准[\s\S]*## 规格的通用约定（docs\/spec\/requirements\.md 原文）\n[^\n]*spec:requirements\.md#通用约定[^\n]*\n\n- sku 保存为大写/);
+  assert.doesNotMatch(assemblePrompt(base).user, /通用约定/);
+  assert.match(assemblePrompt({ ...base, conventions: 'x'.repeat(CONVENTIONS_MAX + 10) }).user, /已截断，完整内容见 docs\/spec\/requirements\.md/);
 });

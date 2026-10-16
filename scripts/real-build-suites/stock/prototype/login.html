@@ -1,9 +1,42 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>登录 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
-<body class="center">
-  <form class="dialog login"><h1>小仓库进销存</h1>
-    <label>用户名 <input></label><label>密码 <input type="password"></label>
-    <em class="err">用户名或密码不对</em>
-    <button class="primary">登录</button></form>
-  <p class="note">登录成功后回到登录前想打开的页面（没有就去看板）。令牌存在浏览器里，过期或退出后回到登录页。</p>
-</body></html>
+<body class="center"><div>
+    <form class="dialog login"><h1>小仓库进销存</h1>
+      <label>用户名 <input value=""></label><label>密码 <input type="password" value=""></label>
+      
+      <button class="primary">登录</button></form>
+  <p class="note">没有顶栏和导航。登录成功后回到登录前想打开的页面（没有就去看板）。令牌存在浏览器里，失效或退出后回到登录页。已登录时打开 /login 直接去看板。</p>
+  <h2 class="states-title">其他状态</h2>
+  <section class="state"><h3>没填完（页面先拦，不发请求）</h3>
+    <form class="dialog login"><h1>小仓库进销存</h1>
+      <label>用户名 <input value="admin"></label><label>密码 <input type="password" value=""></label>
+      <em class="err">请输入用户名和密码</em>
+      <button class="primary">登录</button></form>
+  </section>
+  <section class="state"><h3>登录中</h3>
+    <form class="dialog login"><h1>小仓库进销存</h1>
+      <label>用户名 <input value="admin"></label><label>密码 <input type="password" value="******"></label>
+      
+      <button class="primary" disabled>登录中…</button></form>
+  </section>
+  <section class="state"><h3>用户名或密码不对、用户已停用（401）</h3>
+    <form class="dialog login"><h1>小仓库进销存</h1>
+      <label>用户名 <input value="admin"></label><label>密码 <input type="password" value="******"></label>
+      <em class="err">用户名或密码不对（API 的 message）</em>
+      <button class="primary">登录</button></form>
+    <p class="note">密码框清空，用户名保留。</p>
+  </section>
+  <section class="state"><h3>服务连不上</h3>
+    <form class="dialog login"><h1>小仓库进销存</h1>
+      <label>用户名 <input value="admin"></label><label>密码 <input type="password" value="******"></label>
+      <em class="err">连接服务失败，请稍后重试</em>
+      <button class="primary">登录</button></form>
+  </section>
+  <section class="state"><h3>令牌失效后被送回登录页（任意页面收到 401）</h3>
+    <div class="alert info">登录已失效，请重新登录。</div>
+    <form class="dialog login"><h1>小仓库进销存</h1>
+      <label>用户名 <input value=""></label><label>密码 <input type="password" value=""></label>
+      
+      <button class="primary">登录</button></form>
+  </section>
+</div></body></html>

@@ -21,6 +21,9 @@ import { ensureIntegrationBranch } from '../../src/core/workspace/worktree.ts';
 import { renderStatus, statusLine } from '../../src/core/ops/status-view.ts';
 import { renderDetail, renderMetricsView } from '../../src/core/ops/status-detail.ts';
 import { isSettled } from '../../src/core/state/state-machine.ts';
+import { playwrightSkillDir } from '../../src/core/workspace/dependencies.ts';
+import { packageRoots } from '../../src/pi-adapter/plugins.ts';
+import { homedir } from 'node:os';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const SUITES: Record<string, Suite> = { 'mini-boards': miniBoards, 'pi-forge': piForge };
@@ -121,6 +124,7 @@ async function main(): Promise<void> {
     packageAgentsDir: path.join(ROOT, 'agents'),
     subagentExtension: path.join(ROOT, 'src/pi-adapter/subagent.ts'),
     packageSkillsDir: path.join(ROOT, 'skills'),
+    promptVars: (): Record<string, string> => { const d = playwrightSkillDir(packageRoots(dir, process.env['PI_CODING_AGENT_DIR'] ?? path.join(homedir(), '.pi', 'agent'))); return d ? { 'playwright-browser': d } : {}; },
     onError: (e) => log(`程序步骤出错：${(e as Error).stack ?? String(e)}`),
     onMerge: (r) => log(`合并：${JSON.stringify(r).slice(0, 300)}`),
     onGate: (r) => log(`闸门：${JSON.stringify(r).slice(0, 300)}`),

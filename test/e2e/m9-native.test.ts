@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
+import { stubPlaywrightSkill } from '../helpers/project.ts';
 
 const ROOT = path.join(import.meta.dirname, '../..');
 let piAvailable = true;
@@ -27,6 +28,7 @@ test('native：提问被代答并计数，变更在同一会话里提出，hidde
   const out = path.join(work, 'run');
   const agentDir = path.join(work, 'agent');
   mkdirSync(agentDir);
+  stubPlaywrightSkill(agentDir);
   writeFileSync(path.join(work, 'prd.md'), '做一个看板。');
   writeFileSync(path.join(work, 'change.md'), '加归档。');
   // 假 hidden.mjs：基础 3 个用例，其中"非法 JSON 返回 400"不计分；--change 时多 2 个变更用例，且基础用例 b 变成失败（回归）

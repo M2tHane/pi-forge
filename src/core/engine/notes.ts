@@ -79,8 +79,7 @@ export function seedTaskNotes(t: Pick<TaskFile, 'title' | 'ac'>, extraGoal: read
 const clip = (s: string) => (s.length > NOTE_ITEM_MAX ? `${s.slice(0, NOTE_ITEM_MAX - 1)}…` : s);
 
 /** 放回上下文的笔记消息；临近压缩阈值时附上提醒 */
-export function notesContextMessage(n: NotesFile | null, opts: { title: string; nearCompaction: boolean }): string | null {
-  const reminder = opts.nearCompaction ? '\n\n[提醒] 上下文接近压缩阈值。先用 notes update 记下当前进度（done、todo、current），压缩后只保留笔记与最近的对话；之前的细节可以用 history 检索。' : '';
-  if (isEmptyNotes(n) && !reminder) return null;
-  return `[pi-forge ${opts.title}，由程序在每次请求时放回上下文；用 notes 工具修改]\n${renderNotes(n, opts.title)}${reminder}`;
+export function notesContextMessage(n: NotesFile | null, opts: { title: string }): string | null {
+  if (isEmptyNotes(n)) return null;
+  return `[pi-forge ${opts.title}，由程序在上下文里没有最新笔记时（一轮开始时笔记有变化、压缩之后）放回；用 notes 工具修改]\n${renderNotes(n, opts.title)}`;
 }

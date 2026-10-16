@@ -12,13 +12,20 @@ table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; }
 th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
 th { background: #fafafa; }
 .num { text-align: right; }
+td.msg, p.msg { color: #666; text-align: center; padding: 18px; }
 tr.off { color: #999; }
 tr.low td { background: #fff4e5; }
 button { padding: 5px 12px; border: 1px solid #bbb; background: #fff; border-radius: 3px; }
 button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+button.danger-btn { background: #c0392b; color: #fff; border-color: #c0392b; }
+button:disabled { opacity: .55; }
 .danger { color: #c0392b; }
 .err { display: block; color: #c0392b; font-size: 12px; font-style: normal; }
+.alert { background: #fdecea; color: #a12b1f; border: 1px solid #f5c2bd; padding: 8px 12px; margin: 8px 0; display: flex; gap: 12px; align-items: center; }
+.alert.info { background: #eef4ff; color: #1e40af; border-color: #c7d7fe; }
+.toast { display: inline-block; background: #dcfce7; color: #166534; border: 1px solid #a7e3bd; padding: 6px 12px; border-radius: 3px; margin: 8px 0; }
 .dialog { border: 1px dashed #999; padding: 12px 16px; margin: 12px 0; max-width: 520px; background: #fcfcfc; }
+.dialog.modal { border-style: solid; box-shadow: 0 2px 8px rgba(0,0,0,.15); max-width: 380px; }
 .dialog label, .form2 label { display: block; margin: 6px 0; }
 .form2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
 .cards { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -29,7 +36,12 @@ button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
 .tabs a.on { border-color: #2563eb; }
 .tag { padding: 1px 6px; border-radius: 3px; background: #eee; }
 .tag.ok { background: #dcfce7; }
-.states { display: flex; flex-direction: column; color: #888; font-size: 12px; }
+.tag.info { background: #dbeafe; }
+.states-title { margin-top: 40px; border-top: 2px solid #ddd; padding-top: 16px; }
+.state { border-left: 3px solid #cbd5e1; padding: 2px 0 2px 14px; margin: 16px 0 24px; }
+.state h3 { font-size: 13px; color: #475569; margin: 4px 0 8px; }
+.empty-page { text-align: center; padding: 24px; color: #555; }
+.welcome { font-size: 16px; }
 .note { color: #888; font-size: 12px; }
 .cols { display: flex; gap: 24px; }
 .tree li { margin: 4px 0; }

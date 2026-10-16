@@ -21,18 +21,74 @@
       <div class="bar"><input placeholder="搜索 SKU 或名称"><select><option>全部分类</option><option>办公用品</option><option>　└ 纸张</option></select>
         <select><option>全部状态</option><option>启用</option><option>停用</option></select><span class="grow"></span><button>导出 CSV</button><button class="primary">新建商品</button></div>
       <table><tr><th>SKU</th><th>名称</th><th>分类</th><th>单位</th><th>售价</th><th>参考进价</th><th>安全库存</th><th>状态</th><th></th></tr>
-        <tr><td>A-1001</td><td>A4 打印纸</td><td>纸张</td><td>包</td><td class="num">25.00</td><td class="num">18.50</td><td class="num">50</td><td>启用</td><td><a>编辑</a> <a>停用</a> <a class="danger">删除</a></td></tr>
-        <tr class="off"><td>A-0999</td><td>旧款复印纸</td><td>纸张</td><td>包</td><td class="num">20.00</td><td class="num">15.00</td><td class="num">0</td><td>停用</td><td><a>编辑</a> <a>启用</a> <a class="danger">删除</a></td></tr></table>
-      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有商品，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
+        <tr><td>A-1001</td><td>A4 打印纸</td><td>纸张</td><td>包</td><td class="num">25.00</td><td class="num">18.50</td><td class="num">50</td><td><span class="tag ok">启用</span></td><td><a>编辑</a> <a>停用</a> <a class="danger">删除</a></td></tr>
+        <tr class="off"><td>A-0999</td><td>旧款复印纸</td><td>纸张</td><td>包</td><td class="num">20.00</td><td class="num">15.00</td><td class="num">0</td><td><span class="tag">停用</span></td><td><a>编辑</a> <a>启用</a> <a class="danger">删除</a></td></tr></table>
       <div class="dialog"><h2>新建商品 / 编辑商品（弹窗）</h2>
-        <label>SKU <input value="a-1002"><em class="err">SKU 已存在</em></label>
+        <label>SKU <input value="a-1002" placeholder="字母、数字和 -，保存为大写"></label>
         <label>名称 <input></label>
         <label>分类 <select><option>（无）</option><option>办公用品</option><option>　└ 纸张</option></select></label>
         <label>单位 <input value="个"></label>
         <label>售价（元） <input value="25.00"></label><label>参考进价（元） <input value="0.00"></label>
         <label>安全库存 <input value="0"></label><label><input type="checkbox" checked> 启用</label>
         <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
-      <p class="note">删除被单据或库存引用的商品时，API 返回 409，页面弹出提示并建议改为停用。只读用户看不到“新建、编辑、停用、删除”。</p>
+      <p class="note">分类下拉选上级分类时，列表包含它所有下级分类的商品。搜索框去掉首尾空白后为空时不带 q 参数（等于不搜索）。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>加载中</h3>
+        <table><tr><th>SKU</th><th>名称</th><th>分类</th><th>单位</th><th>售价</th><th>参考进价</th><th>安全库存</th><th>状态</th><th></th></tr><tr><td colspan="9" class="msg">加载中…</td></tr></table>
+      </section>
+      <section class="state"><h3>空（还没有数据）</h3>
+        <table><tr><th>SKU</th><th>名称</th><th>分类</th><th>单位</th><th>售价</th><th>参考进价</th><th>安全库存</th><th>状态</th><th></th></tr><tr><td colspan="9" class="msg">还没有商品。点“新建”添加。</td></tr></table>
+      </section>
+      <section class="state"><h3>筛选后没有结果</h3>
+        <table><tr><th>SKU</th><th>名称</th><th>分类</th><th>单位</th><th>售价</th><th>参考进价</th><th>安全库存</th><th>状态</th><th></th></tr><tr><td colspan="9" class="msg">没有符合条件的商品。 <a>清除筛选</a></td></tr></table>
+      </section>
+      <section class="state"><h3>加载出错</h3>
+        <div class="alert">加载失败：服务暂时不可用（这里显示 API 返回的 message） <button>重试</button></div>
+        <table><tr><th>SKU</th><th>名称</th><th>分类</th><th>单位</th><th>售价</th><th>参考进价</th><th>安全库存</th><th>状态</th><th></th></tr><tr><td colspan="9" class="msg">—</td></tr></table>
+      </section>
+      <section class="state"><h3>字段校验失败（400）</h3>
+        <div class="dialog"><h2>新建商品</h2>
+          <label>SKU <input value="A 1002"><em class="err">只能是字母、数字和 -</em></label>
+          <label>名称 <input value=""><em class="err">名称不能为空</em></label>
+          <label>售价（元） <input value="12.345"><em class="err">最多两位小数</em></label>
+          <label>分类 <select><option>纸张（已被删除）</option></select><em class="err">分类不存在</em></label>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+        <p class="note">错误显示在对应字段下，内容是 API 的 message；弹窗不关，已填的内容保留。金额格式不对（不是数字、超过两位小数）在页面先拦下，不发请求。</p>
+      </section>
+      <section class="state"><h3>SKU 重复（409）</h3>
+        <div class="dialog"><h2>新建商品</h2><label>SKU <input value="a-1001"><em class="err">SKU 已存在</em></label>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>保存中（防止重复提交）</h3>
+        <div class="dialog"><h2>新建商品</h2><label>SKU <input value="a-1002"></label><label>名称 <input value="A4 打印纸（80g）"></label>
+          <div class="bar"><span class="grow"></span><button disabled>取消</button><button class="primary" disabled>保存中…</button></div></div>
+      </section>
+      <section class="state"><h3>保存成功</h3>
+        <div class="toast">已保存商品 A-1002</div>
+        <p class="note">弹窗关闭，列表刷新；SKU 显示为大写（输入 a-1002 保存为 A-1002）。</p>
+      </section>
+      <section class="state"><h3>删除确认</h3>
+        <div class="dialog modal"><h2>删除商品</h2><p>确定删除 A-1001 A4 打印纸？删除后不能恢复。</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">删除</button></div></div>
+      </section>
+      <section class="state"><h3>删除被拒（409：被单据或库存引用）</h3>
+        <div class="alert">A-1001 已出现在单据里或还有库存，不能删除（API 的 message）。可以改为停用。</div>
+        <div class="bar"><button>改为停用</button><button>知道了</button></div>
+      </section>
+      <section class="state"><h3>停用 / 启用</h3>
+        <div class="toast">已停用 A-0999</div>
+        <p class="note">不弹确认，直接切换；行变灰，状态列变成“停用”。停用的商品不能再加进新单据。</p>
+      </section>
+      <section class="state"><h3>导出中</h3>
+        <div class="bar"><button disabled>导出中…</button></div>
+        <p class="note">浏览器下载 products.csv；失败时顶部红色提示条显示 message。</p>
+      </section>
+      <section class="state"><h3>只读用户（viewer）看到的样子</h3>
+        <div class="bar"><span class="grow"></span><button>导出 CSV</button></div>
+        <table><tr><th>SKU</th><th>名称</th><th>分类</th><th>单位</th><th>售价</th><th>参考进价</th><th>安全库存</th><th>状态</th></tr><tr><td>A-1001</td><td>A4 打印纸</td><td>纸张</td><td>包</td><td>25.00</td><td>18.50</td><td>50</td><td>启用</td></tr></table>
+        <p class="note">没有新建、编辑、停用、删除，也没有单据操作按钮；查询、筛选、导出照常可用。</p>
+      </section>
+
     </main>
   </div>
 </body></html>

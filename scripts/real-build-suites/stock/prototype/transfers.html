@@ -20,12 +20,65 @@
       <h1>调拨</h1>
       <div class="bar"><span class="grow"></span><button class="primary">新建调拨单</button></div>
       <table><tr><th>单号</th><th>调出</th><th>调入</th><th>商品数</th><th>状态</th><th></th></tr>
-        <tr><td>TR000002</td><td>MAIN</td><td>EAST</td><td class="num">2</td><td><span class="tag">草稿</span></td><td><a>编辑</a> <a>执行</a> <a>取消</a> <a class="danger">删除</a></td></tr>
-        <tr><td>TR000001</td><td>MAIN</td><td>EAST</td><td class="num">1</td><td><span class="tag ok">已完成</span></td><td></td></tr></table>
-      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有调拨单，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
-      <div class="dialog"><h2>新建调拨单（弹窗）</h2><label>调出仓库 <select><option>MAIN 总仓</option></select></label><label>调入仓库 <select><option>EAST 东区仓</option></select></label>
-        <table><tr><th>商品</th><th>数量</th><th>调出仓库现有</th></tr><tr><td><input value="A-1001"></td><td><input value="5"></td><td class="num">10</td></tr></table>
+        <tr><td>TR000003</td><td>MAIN</td><td>EAST</td><td class="num">2</td><td><span class="tag">草稿</span></td><td><a>编辑</a> <a>执行</a> <a>取消</a> <a class="danger">删除</a></td></tr>
+        <tr><td>TR000002</td><td>MAIN</td><td>EAST</td><td class="num">1</td><td><span class="tag ok">已完成</span></td><td>10-15 11:05</td></tr>
+        <tr class="off"><td>TR000001</td><td>EAST</td><td>MAIN</td><td class="num">1</td><td><span class="tag">已取消</span></td><td></td></tr></table>
+      <div class="dialog"><h2>新建 / 编辑调拨单（弹窗）</h2><label>调出仓库 <select><option>MAIN 总仓</option></select></label><label>调入仓库 <select><option>EAST 东区仓</option></select></label>
+        <table><tr><th>商品</th><th>数量</th><th>调出仓库现有</th><th></th></tr><tr><td><input value="A-1001"></td><td><input value="5"></td><td class="num">10</td><td><a class="danger">移除</a></td></tr>
+          <tr><td colspan="4"><a>+ 添加一行</a></td></tr></table>
         <label>备注 <input></label><div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      <p class="note">列表按单号倒序。只有草稿能编辑、执行、取消和删除；已完成显示执行时间。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>加载中</h3>
+        <table><tr><th>单号</th><th>调出</th><th>调入</th><th>商品数</th><th>状态</th><th></th></tr><tr><td colspan="6" class="msg">加载中…</td></tr></table>
+      </section>
+      <section class="state"><h3>空（还没有数据）</h3>
+        <table><tr><th>单号</th><th>调出</th><th>调入</th><th>商品数</th><th>状态</th><th></th></tr><tr><td colspan="6" class="msg">还没有调拨单。点“新建”添加。</td></tr></table>
+      </section>
+      <section class="state"><h3>加载出错</h3>
+        <div class="alert">加载失败：服务暂时不可用（这里显示 API 返回的 message） <button>重试</button></div>
+        <table><tr><th>单号</th><th>调出</th><th>调入</th><th>商品数</th><th>状态</th><th></th></tr><tr><td colspan="6" class="msg">—</td></tr></table>
+      </section>
+      <section class="state"><h3>校验失败（400）</h3>
+        <div class="dialog"><label>调出仓库 <select><option>MAIN 总仓</option></select></label><label>调入仓库 <select><option>MAIN 总仓</option></select><em class="err">调出和调入仓库不能相同</em></label>
+          <table><tr><th>商品</th><th>数量</th></tr><tr><td><input value="A-1001"></td><td><input value="1.5"><em class="err">数量要是 1–1000000 的整数</em></td></tr></table>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>保存中（防止重复提交）</h3>
+        <div class="dialog"><h2>新建调拨单</h2><label>调出仓库 <select><option>MAIN 总仓</option></select></label>
+          <div class="bar"><span class="grow"></span><button disabled>取消</button><button class="primary" disabled>保存中…</button></div></div>
+      </section>
+      <section class="state"><h3>保存成功</h3>
+        <div class="toast">已保存调拨单 TR000004</div>
+      </section>
+      <section class="state"><h3>执行确认</h3>
+        <div class="dialog modal"><h2>执行调拨</h2><p>TR000003：从 MAIN 调出、调入 EAST，共 2 个商品。</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">执行</button></div></div>
+      </section>
+      <section class="state"><h3>执行被拒：库存不足（409）</h3>
+        <div class="alert">库存不足：A-1001 在 MAIN 只有 3，需要 5（API 的 message）。调拨没有执行。</div>
+        <p class="note">单据仍是草稿，库存不变。</p>
+      </section>
+      <section class="state"><h3>执行成功</h3>
+        <div class="toast">TR000003 已执行</div>
+      </section>
+      <section class="state"><h3>取消确认</h3>
+        <div class="dialog modal"><h2>取消调拨单</h2><p>确定取消 TR000003？</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">取消单据</button></div></div>
+      </section>
+      <section class="state"><h3>删除确认</h3>
+        <div class="dialog modal"><h2>删除调拨单</h2><p>确定删除 TR000003？</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">删除</button></div></div>
+      </section>
+      <section class="state"><h3>状态已变化（409）</h3>
+        <div class="alert">单据状态不允许这个操作（API 的 message）。</div>
+        <p class="note">列表刷新为最新状态。</p>
+      </section>
+      <section class="state"><h3>只读用户（viewer）看到的样子</h3>
+        <div class="bar"><span class="grow"></span></div>
+        <table><tr><th>单号</th><th>调出</th><th>调入</th><th>商品数</th><th>状态</th></tr><tr><td>TR000003</td><td>MAIN</td><td>EAST</td><td>2</td><td>草稿</td></tr></table>
+        <p class="note">没有新建、编辑、停用、删除，也没有单据操作按钮；查询、筛选、导出照常可用。</p>
+      </section>
 
     </main>
   </div>

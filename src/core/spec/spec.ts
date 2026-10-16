@@ -315,3 +315,11 @@ export function acTexts(spec: EffectiveSpec, ids: readonly string[]): Record<str
   return Object.fromEntries(ids.filter((id) => all.has(id)).map((id) => [id, all.get(id)!.text]));
 }
 
+/** requirements.md 的「通用约定」一节（不含标题，到下一个二级标题为止，里面的三级标题照留）；没有这一节时为空（纯函数） */
+export function conventionsSection(requirements: string): string {
+  const lines = splitLines(requirements);
+  const start = lines.findIndex((l) => /^##\s*通用约定\s*$/.test(l));
+  if (start < 0) return '';
+  const end = lines.findIndex((l, i) => i > start && /^##\s/.test(l));
+  return lines.slice(start + 1, end < 0 ? undefined : end).join('\n').trim();
+}

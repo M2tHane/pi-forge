@@ -3,7 +3,7 @@ import type { StateStore } from '../state/state-store.ts';
 import { isLightFlow, type FlowFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
 import { commitFilesToBranch } from './intake.ts';
-import { lintSpec, type SpecFiles, type LintResult } from './spec.ts';
+import { conventionsSection, lintSpec, type SpecFiles, type LintResult } from './spec.ts';
 import { planStageTransition } from '../state/state-machine.ts';
 
 export const SPEC_PATHS = ['requirements', 'screens', 'permissions', 'glossary'] as const;
@@ -21,6 +21,11 @@ export function readSpec(root: string, branch: string): { files: SpecFiles } {
     return [name, git(root, ['show', `${ref}:${rel}`])];
   })) as unknown as SpecFiles;
   return { files };
+}
+/** 集成分支上 requirements.md 的「通用约定」；没有规格或没有这一节时为空 */
+export function readConventions(root: string, branch: string): string {
+  const obj = `refs/heads/${branch}:docs/spec/requirements.md`;
+  return gitOk(root, ['cat-file', '-e', obj]) ? conventionsSection(git(root, ['show', obj])) : '';
 }
 export function specGateLint(root: string, flow: FlowFile): LintResult {
   try {
@@ -40,7 +45,8 @@ export interface SubmitResult { ok: boolean; sha: string | null; lint: LintResul
 export async function submitSpec(root: string, store: StateStore, flowId: string, input: Partial<SpecFiles>): Promise<SubmitResult> {
   return store.transaction((tx) => {
     const flow = tx.readFlow(flowId);
-    if (store.readState().active_flow !== flowId || isLightFlow(flow) || flow.stage !== 'P0' || flow.stage_status !== 'active') throw new SpecFlowError('只能在活动流程的 P0 规格阶段为 active 时提交；已提交时请等待用户 /forge-approve 或 /forge-reject。');
+    // 等用户批准时也能重交（例如修 spec-lint 的警告），重新检查后回到等批准
+    if (store.readState().active_flow !== flowId || isLightFlow(flow) || flow.stage !== 'P0' || !['active', 'awaiting_human'].includes(flow.stage_status)) throw new SpecFlowError('只能在活动流程的 P0 规格阶段提交；程序正在检查上一次提交时请等结果。');
     const ref = `refs/heads/${flow.integration_branch}`;
     const onBranch = (rel: string) => (gitOk(root, ['cat-file', '-e', `${ref}:${rel}`]) ? git(root, ['show', `${ref}:${rel}`]) : null);
     const reused: string[] = [];
@@ -69,7 +75,7 @@ export async function submitSpec(root: string, store: StateStore, flowId: string
     const sha = commitFilesToBranch(root, flow.integration_branch, SPEC_PATHS.map((n) => ({ rel: `docs/spec/${n}.md`, content: files[n] })), `pi-forge: ${flowId} 提交规格`);
     tx.putFlow({ ...flow, stage_status: 'awaiting_gate', spec: { submitted: true, errors: [], warnings: lint.warnings.map((i) => i.message), ...(sha ? { sha } : {}) } });
     tx.event({ flow: flowId, actor: 'orchestrator', type: 'note', reason: '四份规格已提交，spec-lint 通过', data: { sha, warnings: lint.warnings, reused } });
-    tx.event({ flow: flowId, actor: 'orchestrator', type: 'transition', from: 'active', to: 'awaiting_gate', trigger: 'submit_gate', data: { entity: 'stage', stage: 'P0' } });
+    tx.event({ flow: flowId, actor: 'orchestrator', type: 'transition', from: flow.stage_status, to: 'awaiting_gate', trigger: 'submit_gate', data: { entity: 'stage', stage: 'P0' } });
     return { ok: true, sha, lint, reused, missing };
   });
 }

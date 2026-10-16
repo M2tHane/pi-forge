@@ -182,7 +182,7 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
   if (failing.length) lines.push(`最近失败：\n${failing.map((t) => `- ${t.id}（第 ${t.attempts} 次）：${one(t.last_failure!)}`).join('\n')}`);
   if (['awaiting_human', 'needs_human'].includes(flow.stage_status) && !decisions.some((d) => d.kind === 'stage')) lines.push(`等待用户：阶段 ${flow.stage}（${flow.stage_status}）→ /forge-approve 或 /forge-reject "<意见>"`);
   const gateFail = [...store.readEvents()].reverse().find((e) => e.flow === flowId && e.type === 'gate_result');
-  if (gateFail && gateFail.to === 'active' && flow.stage_status === 'active') lines.push(`阶段闸门未通过：${one(gateFail.reason ?? '', 300)}（修复后执行 /forge gate 重跑）`);
+  if (gateFail && gateFail.to === 'active' && flow.stage_status === 'active') lines.push(`阶段闸门未通过：${one(gateFail.reason ?? '', 300)}（修复任务合入后程序自动重新验收，不用叫用户执行命令）`);
   if (isLightFlow(flow) && flow.stage_status === 'needs_human') lines.push(fixHelpHint(flow.id, flow.mode));
   if (isLightFlow(flow) && isFinished(flow)) {
     const log = readFixLog(store, flowId);

@@ -178,6 +178,18 @@ export interface ReviewBriefInput {
   acceptance?: AcceptanceAudit;
   /** diff 里是否含 tests/acceptance/**（worker 自己写验收测试时含，审查者要读） */
   withAcceptance?: boolean;
+  /** 本 task 用到的其他 task 的产物（软依赖）：生产方与用到的接口 */
+  uses?: readonly { task: string; refs: readonly string[] }[];
+  /** diff 里落在其他 task 负责范围（writes）内的文件 */
+  othersFiles?: readonly { file: string; owners: readonly string[] }[];
+}
+
+/** 跨 task 的两类问题单个 diff 里看不出来，提醒审查者专门看一眼（stock run-02：采购、销售各自留了一份 changeStock 替身；T-013 给商品页加导出按钮让整页打不开） */
+function crossTaskSection(i: ReviewBriefInput): string[] {
+  const out: string[] = [];
+  if (i.uses?.length) out.push(`## 用到的其他 task 的产物\n${i.uses.map((u) => `- ${u.task}：${u.refs.join('、')}`).join('\n')}\n这些已在集成分支上（或合并前会先合入）。检查本 task 用的是它们的正式实现：没有留下替身、mock、复制的第二份实现，也没有"合入后再换"的 TODO；有就是 must（出处 contract: 或 defect:）。`);
+  if (i.othersFiles?.length) out.push(`## 改了其他 task 负责的文件\n${i.othersFiles.map((f) => `- ${f.file}（${f.owners.join('、')}）`).join('\n')}\n这些文件原来的功能要照常可用：看改动有没有破坏它们（页面能不能打开、原来的按钮和接口是否还在），需要时运行相关的测试。`);
+  return out;
 }
 
 const FENCE = '`'.repeat(3);
@@ -239,6 +251,7 @@ export function buildReviewBrief(i: ReviewBriefInput): string {
     `## 相关契约\n${contracts}`,
     `## 术语表\n${i.glossary.trim() ? i.glossary.trim() : '（无）'}`,
     `## worker 声明的偏离（已声明并且合理的不算问题）\n${i.deviations.length ? i.deviations.map((d) => `- ${d}`).join('\n') : '（无）'}`,
+    ...crossTaskSection(i),
     `本 task 涉及的 rules/<layer>.md（每个文件末尾有审查清单）已在系统提示的规则部分。`,
     ...(i.tests ? [testsSection(i.tests, false)] : []),
     ...(i.acceptance ? [acceptanceSection(i.acceptance)] : []),

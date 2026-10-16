@@ -28,6 +28,11 @@ export function parseAgentFile(text: string, file: string): AgentDef {
   };
 }
 
+/** 角色提示里的 {{名字}} 换成本机的值（例如技能的安装目录）；没有给值的保持原样 */
+export function fillPromptVars(agent: AgentDef, vars: Readonly<Record<string, string>>): AgentDef {
+  return { ...agent, prompt: agent.prompt.replace(/\{\{([\w-]+)\}\}/g, (m, k: string) => vars[k] ?? m) };
+}
+
 /** packageAgentsDir 可以是多个目录（按 path.delimiter 分隔，前面的优先），测试用来叠加夹具角色 */
 export function loadAgent(role: string, projectRoot: string, packageAgentsDir: string): AgentDef {
   for (const file of [path.join(projectRoot, '.pi', 'agents', `${role}.md`), ...packageAgentsDir.split(path.delimiter).map((d) => path.join(d, `${role}.md`))]) {

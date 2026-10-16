@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { acTexts, effectiveSpec, lintSpec, parseRequirements, UNTESTABLE_WORDS, WARNING_RULES } from '../../src/core/spec/spec.ts';
+import { acTexts, conventionsSection, effectiveSpec, lintSpec, parseRequirements, UNTESTABLE_WORDS, WARNING_RULES } from '../../src/core/spec/spec.ts';
 import type { SpecFiles } from '../../src/core/spec/spec.ts';
 
 const requirement = (id = 'REQ-001', ac = '- AC1：Given 已登录 When 创建看板 Then 返回看板编号', priority = 'MVP'): string =>
@@ -210,4 +210,11 @@ test('acTexts 返回指定生效 AC 原文，跳过缺失编号并去重', () =>
   const spec = effectiveSpec({ ...baseline, requirements: requirement('REQ-001', '- AC2（manual）：新看板出现在第一行') });
   assert.deepEqual(acTexts(spec, ['REQ-001.AC2', 'REQ-001.AC1', 'REQ-999.AC1', 'REQ-001.AC2']), { 'REQ-001.AC2': '新看板出现在第一行' });
   assert.deepEqual(acTexts(spec, []), {});
+});
+
+test('「通用约定」一节：到下一个二级标题为止，三级标题照留；没有这一节为空', () => {
+  const md = '# 需求\n\n## 需求清单\n- AC1：x\n\n## 通用约定 \r\n- 金额是整数分。\n\n### 原文字段规则\n- sku 保存为大写\n\n## 范围外\n- 打印\n';
+  assert.equal(conventionsSection(md), '- 金额是整数分。\n\n### 原文字段规则\n- sku 保存为大写');
+  assert.equal(conventionsSection('# 需求\n\n## 通用约定\n- 最后一节\n'), '- 最后一节');
+  assert.equal(conventionsSection('# 需求\n\n## 需求清单\n- AC1：x\n'), '');
 });

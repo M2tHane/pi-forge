@@ -28,14 +28,65 @@
       <div class="bar"><input placeholder="商品 SKU"><select><option>全部仓库</option></select></div>
       <table><tr><th>时间</th><th>商品</th><th>仓库</th><th>变化</th><th>原因</th><th>单据</th></tr>
         <tr><td>10-15 09:12</td><td>A-1001</td><td>MAIN</td><td class="num">+100</td><td>采购入库</td><td><a href="purchase-order-detail.html">PO000003</a></td></tr>
-        <tr><td>10-15 10:40</td><td>A-1001</td><td>MAIN</td><td class="num">-90</td><td>销售出库</td><td><a>SO000007</a></td></tr>
-        <tr><td>10-15 11:05</td><td>A-1001</td><td>MAIN</td><td class="num">-5</td><td>调出</td><td><a>TR000002</a></td></tr></table>
+        <tr><td>10-15 10:40</td><td>A-1001</td><td>MAIN</td><td class="num">-90</td><td>销售出库</td><td><a href="sales-order-detail.html">SO000007</a></td></tr>
+        <tr><td>10-15 11:05</td><td>A-1001</td><td>MAIN</td><td class="num">-5</td><td>调出</td><td><a href="transfers.html">TR000002</a></td></tr>
+        <tr><td>10-15 11:05</td><td>A-1001</td><td>EAST</td><td class="num">+5</td><td>调入</td><td><a href="transfers.html">TR000002</a></td></tr>
+        <tr><td>10-15 17:00</td><td>A-1001</td><td>MAIN</td><td class="num">-2</td><td>盘点</td><td>盘点 #3</td></tr></table>
       <h2>盘点</h2>
-      <div class="dialog"><label>仓库 <select><option>MAIN 总仓</option></select></label><label>商品 <input placeholder="输入 SKU 选择"></label>
+      <div class="dialog"><label>仓库 <select><option>MAIN 总仓</option></select></label><label>商品 <input placeholder="输入 SKU 选择" value="A-1001 A4 打印纸"></label>
         <p>当前账面：<b>10</b></p><label>盘点实数 <input value="8"></label><label>备注 <input value="破损 2 包"></label>
         <p>差异：<b class="danger">-2</b></p><div class="bar"><span class="grow"></span><button class="primary">提交盘点</button></div></div>
       <table><tr><th>时间</th><th>仓库</th><th>商品</th><th>账面</th><th>实数</th><th>差异</th><th>备注</th></tr>
         <tr><td>10-14 17:00</td><td>MAIN</td><td>A-1001</td><td class="num">10</td><td class="num">8</td><td class="num">-2</td><td>破损 2 包</td></tr></table>
+      <p class="note">库存查询只列启用的商品；某个仓库没有库存显示 0。三个页签各自有加载中、空、出错状态。盘点记录不能修改或删除。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>库存查询：加载中</h3>
+        <table><tr><th>SKU</th><th>名称</th><th>MAIN</th><th>EAST</th><th>合计</th><th>安全库存</th></tr><tr><td colspan="6" class="msg">加载中…</td></tr></table>
+      </section>
+      <section class="state"><h3>库存查询：还没有库存</h3>
+        <table><tr><th>SKU</th><th>名称</th><th>MAIN</th><th>EAST</th><th>合计</th><th>安全库存</th></tr><tr><td colspan="6" class="msg">还没有库存。采购入库或盘点后这里会显示。</td></tr></table>
+      </section>
+      <section class="state"><h3>库存查询：没有低于安全库存的商品</h3>
+        <div class="bar"><label><input type="checkbox" checked> 只看低于安全库存</label></div>
+        <table><tr><th>SKU</th><th>名称</th><th>MAIN</th><th>EAST</th><th>合计</th><th>安全库存</th></tr><tr><td colspan="6" class="msg">没有低于安全库存的商品。</td></tr></table>
+      </section>
+      <section class="state"><h3>库存查询：加载出错</h3>
+        <div class="alert">加载失败（API 的 message） <button>重试</button></div>
+      </section>
+      <section class="state"><h3>库存流水：空</h3>
+        <table><tr><th>时间</th><th>商品</th><th>仓库</th><th>变化</th><th>原因</th><th>单据</th></tr><tr><td colspan="6" class="msg">没有流水。</td></tr></table>
+      </section>
+      <section class="state"><h3>库存流水：SKU 找不到</h3>
+        <div class="bar"><input value="X-9999"></div>
+        <table><tr><th>时间</th><th>商品</th><th>仓库</th><th>变化</th><th>原因</th><th>单据</th></tr><tr><td colspan="6" class="msg">没有 SKU 为 X-9999 的商品。</td></tr></table>
+      </section>
+      <section class="state"><h3>盘点：还没选仓库和商品</h3>
+        <div class="dialog"><label>仓库 <select><option>请选择</option></select></label><label>商品 <input placeholder="输入 SKU 选择"></label>
+          <p>当前账面：—</p><label>盘点实数 <input disabled></label><div class="bar"><span class="grow"></span><button class="primary" disabled>提交盘点</button></div></div>
+      </section>
+      <section class="state"><h3>盘点：实数没有差异</h3>
+        <div class="dialog"><p>当前账面：<b>10</b></p><label>盘点实数 <input value="10"></label><p>差异：<b>0</b>（提交后会留下盘点记录，但不产生库存流水）</p>
+          <div class="bar"><span class="grow"></span><button class="primary">提交盘点</button></div></div>
+      </section>
+      <section class="state"><h3>盘点：校验失败（400）</h3>
+        <div class="dialog"><label>盘点实数 <input value="-3"><em class="err">盘点实数要是 0–1000000 的整数</em></label>
+          <div class="bar"><span class="grow"></span><button class="primary">提交盘点</button></div></div>
+      </section>
+      <section class="state"><h3>盘点：提交确认</h3>
+        <div class="dialog modal"><h2>提交盘点</h2><p>MAIN 总仓 A-1001 的库存将从 10 改为 8（差异 -2）。</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">提交</button></div></div>
+      </section>
+      <section class="state"><h3>盘点：提交成功</h3>
+        <div class="toast">盘点已提交：A-1001 库存改为 8</div>
+        <p class="note">表单清空，下方盘点记录和库存查询刷新。</p>
+      </section>
+      <section class="state"><h3>盘点记录：空</h3>
+        <table><tr><th>时间</th><th>仓库</th><th>商品</th><th>账面</th><th>实数</th><th>差异</th><th>备注</th></tr><tr><td colspan="7" class="msg">还没有盘点记录。</td></tr></table>
+      </section>
+      <section class="state"><h3>只读用户（viewer）</h3>
+        <div class="tabs"><a class="on">库存查询</a><a>库存流水</a><a>盘点</a></div>
+        <p class="note">库存查询、流水、导出照常可用；盘点页签只显示盘点记录，没有盘点表单。</p>
+      </section>
 
     </main>
   </div>

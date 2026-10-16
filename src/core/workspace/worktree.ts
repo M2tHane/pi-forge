@@ -75,8 +75,8 @@ export function removeWorktree(root: string, wt: string, branch?: string): void 
   if (branch && branchExists(root, branch)) git(root, ['branch', '-D', branch]);
 }
 
-/** 插件在工作目录中生成的产物（codegraph 索引），不应进入任务快照 */
-export const TOOL_ARTIFACTS = ['.codegraph/'];
+/** 插件在工作目录中生成的产物（codegraph 索引、playwright-browser 的快照与日志），不应进入任务快照 */
+export const TOOL_ARTIFACTS = ['.codegraph/', '.playwright-cli/'];
 /** 每个 worktree 各自生成的环境与缓存（uv 的 .venv、Python 字节码与测试缓存）：项目的 .gitignore 漏写时也不进入任务快照 */
 export const ENV_ARTIFACTS = ['.venv/', '__pycache__/', '.pytest_cache/'];
 

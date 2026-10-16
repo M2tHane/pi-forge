@@ -145,7 +145,10 @@ export async function afterChecks(d: AcceptanceDeps, flowId: string, g: Implemen
   await store.recordEvent({ flow: flowId, actor: 'gate', type: 'note', reason: `阶段 ${g.stage} 门禁与覆盖率通过`, data: { kind: GATE_PASSED, stage: g.stage, head: g.head } });
   if (!qaEnabled(d.config)) return { done: await finalize(d, flowId, g.head) };
   const r = await resolveQa(d.root, store, d.config, flowId, g.stage);
-  if (r.kind === 'blocked' || r.kind === 'exhausted') { await toNeedsHuman(store, flowId, `stage-qa：${r.reason}`); return { done: false }; }
+  // 轮数用尽后代码又变了（用户打回后变更请求的 task 合入）：再开一轮只确认的，不按改动之前的结论交给用户
+  //（stock run-03：S2 修完后门禁两次都按旧的 stage-qa 结论判用尽，修复没人复验）
+  const stale = r.kind === 'exhausted' && !sameWork(d.root, qaHead(store, flowId, g.stage), g.head);
+  if (r.kind === 'blocked' || (r.kind === 'exhausted' && !stale)) { await toNeedsHuman(store, flowId, `stage-qa：${r.reason}`); return { done: false }; }
   if (r.kind === 'running') return { done: false };
   if (r.kind === 'fix') { await backToActive(store, flowId, roundNote(r, 'stage-qa ')); return { done: false }; }
   if (r.kind === 'pass' && sameWork(d.root, qaHead(store, flowId, g.stage), g.head)) return { done: await finalize(d, flowId, g.head) };

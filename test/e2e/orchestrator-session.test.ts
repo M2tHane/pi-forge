@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { StateStore } from '../../src/core/state/state-store.ts';
 import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
-import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
+import { setupProject, stubPlaywrightSkill, PROJECT_YAML } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 
 const ROOT = path.join(import.meta.dirname, '../..');
@@ -23,6 +23,7 @@ test('调度模式：orchestrator 不能自己写代码，程序派发后 wait/s
   const p = await setupProject({ yaml: PROJECT_YAML.replace('auto_dispatch: false', 'auto_dispatch: true'),
     tasks: [mkTask('T-001', { verify: ['test'] })] });
   const agentDir = mkdtempSync(path.join(tmpdir(), 'pi-forge-agentdir-'));
+  stubPlaywrightSkill(agentDir);
   try {
     writeFileSync(path.join(agentDir, 'pi-forge.json'), JSON.stringify({ version: 1, roles: {
       orchestrator: { model: 'fakellm/orch-runtime' }, 'worker': { model: 'fakellm/impl-happy' }, 'reviewer': { model: 'fakellm/review-pass' } } }));

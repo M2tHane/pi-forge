@@ -18,9 +18,10 @@
     </nav>
     <main>
       <h1>采购单 PO000004</h1>
+      <p><a href="purchase-orders.html">← 返回列表</a></p>
       <div class="bar"><span class="tag">草稿</span><span class="grow"></span><button>删除</button><button>取消单据</button><button class="primary">确认</button></div>
       <div class="form2"><label>供应商 <select><option>晨光文具批发</option></select></label><label>入库仓库 <select><option>MAIN 总仓</option></select></label>
-        <label>备注 <input></label><p>创建：10-15 09:00 · 入库：—</p></div>
+        <label>备注 <input></label><p>创建：10-15 09:00 · 入库时间：—</p></div>
       <table><tr><th>商品</th><th>数量</th><th>进价（元）</th><th>小计</th><th></th></tr>
         <tr><td><input value="A-1001 A4 打印纸"></td><td><input value="100"></td><td><input value="18.50"></td><td class="num">1,850.00</td><td><a class="danger">移除</a></td></tr>
         <tr><td colspan="5"><a>+ 添加一行</a></td></tr>
@@ -28,8 +29,83 @@
       <div class="bar"><span class="grow"></span><button class="primary">保存草稿</button></div>
       <h2>不同状态下的按钮</h2>
       <table><tr><th>状态</th><th>可编辑</th><th>按钮</th></tr><tr><td>草稿</td><td>是</td><td>保存草稿、确认、取消单据、删除</td></tr>
-        <tr><td>已确认</td><td>否</td><td>入库（销售单：出库）、取消单据</td></tr><tr><td>已入库 / 已出库 / 已取消</td><td>否</td><td>无</td></tr></table>
-      <p class="note">销售单详情相同：“供应商”换成“客户”，“入库仓库”换成“出库仓库”，“进价”换成“售价”，“入库”换成“出库”。出库时库存不足，API 返回 409，页面显示 message（说明哪个商品差多少）。每个操作前弹确认框。</p>
+        <tr><td>已确认</td><td>否</td><td>入库、取消单据</td></tr><tr><td>已入库 / 已取消</td><td>否</td><td>无</td></tr></table>
+      <p class="note">供应商下拉只列能用的往来单位，入库仓库下拉只列启用的仓库，商品只能选启用的。每个操作前弹确认框；操作成功后页面刷新为新状态。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>新建（还没保存）</h3>
+        <div class="bar"><span class="tag">新建</span><span class="grow"></span><button class="primary">保存草稿</button></div>
+        <div class="form2"><label>供应商 <select><option>请选择</option></select></label><label>入库仓库 <select><option>请选择</option></select></label></div>
+        <table><tr><th>商品</th><th>数量</th><th>进价（元）</th><th>小计</th><th></th></tr><tr><td colspan="5" class="msg">还没有明细。<a>+ 添加一行</a></td></tr></table>
+        <p class="note">单号保存后才有。</p>
+      </section>
+      <section class="state"><h3>加载中</h3>
+        <p class="msg">加载中…</p>
+      </section>
+      <section class="state"><h3>单据不存在（404）</h3>
+        <div class="empty-page"><h2>找不到这张单据</h2><p>它可能已被删除。</p><a href="purchase-orders.html">返回列表</a></div>
+      </section>
+      <section class="state"><h3>草稿：校验失败（400）</h3>
+        <div class="form2"><label>供应商 <select><option>请选择</option></select><em class="err">请选择供应商</em></label><label>入库仓库 <select><option>OLD 旧仓（已停用）</option></select><em class="err">仓库已停用</em></label></div>
+        <table><tr><th>商品</th><th>数量</th><th>进价（元）</th><th>小计</th></tr><tr><td><input value="A-1001"></td><td><input value="0"><em class="err">数量要是 1–1000000 的整数</em></td><td><input value="18.50"></td><td></td></tr>
+          <tr><td><input value="A-1001"><em class="err">同一个商品只能出现一次</em></td><td><input value="5"></td><td><input value="18.50"></td><td></td></tr>
+          <tr><td><input value="A-0999 旧款复印纸"><em class="err">商品已停用</em></td><td><input value="1"></td><td><input value="15.00"></td><td></td></tr></table>
+        <p class="note">没有明细时提示“至少要有一行明细”。错误来自 API 的 message，显示在对应字段下；已填内容保留。</p>
+      </section>
+      <section class="state"><h3>保存中</h3>
+        <div class="bar"><span class="grow"></span><button class="primary" disabled>保存中…</button></div>
+      </section>
+      <section class="state"><h3>保存成功</h3>
+        <div class="toast">已保存草稿 PO000004</div>
+      </section>
+      <section class="state"><h3>确认单据</h3>
+        <div class="dialog modal"><h2>确认单据</h2><p>确认 PO000004 后不能再修改明细。</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">确认</button></div></div>
+      </section>
+      <section class="state"><h3>已确认</h3>
+        <div class="bar"><span class="tag info">已确认</span><span class="grow"></span><button>取消单据</button><button class="primary">入库</button></div>
+        <div class="form2"><p>供应商：晨光文具批发</p><p>入库仓库：MAIN 总仓</p><p>备注：—</p><p>创建：10-15 09:00 · 入库时间：—</p></div>
+        <table><tr><th>商品</th><th>数量</th><th>进价（元）</th><th>小计</th></tr><tr><td>A-1001 A4 打印纸</td><td class="num">100</td><td class="num">18.50</td><td class="num">1,850.00</td></tr>
+          <tr><td colspan="3" class="num">合计</td><td class="num"><b>1,850.00</b></td></tr></table>
+      </section>
+      <section class="state"><h3>入库确认</h3>
+        <div class="dialog modal"><h2>入库</h2><p>PO000004 的商品将加到 MAIN 总仓的库存里。</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">入库</button></div></div>
+      </section>
+      <section class="state"><h3>已入库</h3>
+        <div class="bar"><span class="tag ok">已入库</span><span class="grow"></span></div>
+        <div class="form2"><p>供应商：晨光文具批发</p><p>入库仓库：MAIN 总仓</p><p>备注：—</p><p>创建：10-15 09:00 · 入库时间：10-15 14:30</p></div>
+        <table><tr><th>商品</th><th>数量</th><th>进价（元）</th><th>小计</th></tr><tr><td>A-1001 A4 打印纸</td><td class="num">100</td><td class="num">18.50</td><td class="num">1,850.00</td></tr>
+          <tr><td colspan="3" class="num">合计</td><td class="num"><b>1,850.00</b></td></tr></table>
+        <p class="note">只读，没有按钮。</p>
+      </section>
+      <section class="state"><h3>取消确认</h3>
+        <div class="dialog modal"><h2>取消单据</h2><p>确定取消 PO000004？取消后不能恢复。</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">取消单据</button></div></div>
+      </section>
+      <section class="state"><h3>已取消</h3>
+        <div class="bar"><span class="tag ">已取消</span><span class="grow"></span></div>
+        <div class="form2"><p>供应商：晨光文具批发</p><p>入库仓库：MAIN 总仓</p><p>备注：—</p><p>创建：10-15 09:00 · 入库时间：—</p></div>
+        <table><tr><th>商品</th><th>数量</th><th>进价（元）</th><th>小计</th></tr><tr><td>A-1001 A4 打印纸</td><td class="num">100</td><td class="num">18.50</td><td class="num">1,850.00</td></tr>
+          <tr><td colspan="3" class="num">合计</td><td class="num"><b>1,850.00</b></td></tr></table>
+        <p class="note">只读，没有按钮。</p>
+      </section>
+      <section class="state"><h3>删除确认（只有草稿）</h3>
+        <div class="dialog modal"><h2>删除单据</h2><p>确定删除草稿 PO000004？</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">删除</button></div></div>
+        <p class="note">删除后回到列表。</p>
+      </section>
+      <section class="state"><h3>状态已变化（409）</h3>
+        <div class="alert">单据状态不允许这个操作（可能别人刚操作过）。（API 的 message）</div>
+        <p class="note">页面重新加载这张单据，显示最新状态。</p>
+      </section>
+      <section class="state"><h3>只读用户（viewer）</h3>
+        <div class="bar"><span class="tag ">草稿</span><span class="grow"></span></div>
+        <div class="form2"><p>供应商：晨光文具批发</p><p>入库仓库：MAIN 总仓</p><p>备注：—</p><p>创建：10-15 09:00 · 入库时间：—</p></div>
+        <table><tr><th>商品</th><th>数量</th><th>进价（元）</th><th>小计</th></tr><tr><td>A-1001 A4 打印纸</td><td class="num">100</td><td class="num">18.50</td><td class="num">1,850.00</td></tr>
+          <tr><td colspan="3" class="num">合计</td><td class="num"><b>1,850.00</b></td></tr></table>
+        <p class="note">任何状态都只读，没有保存、确认、入库/出库、取消、删除按钮。</p>
+      </section>
+
     </main>
   </div>
 </body></html>

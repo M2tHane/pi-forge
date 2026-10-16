@@ -22,10 +22,35 @@
       <div class="bar"><label>从 <input type="date" value="2026-10-01"></label><label>到 <input type="date" value="2026-10-15"></label><button class="primary">查询</button></div>
       <div class="cards"><div class="card"><small>出库单数</small><strong>23</strong></div><div class="card"><small>商品数量</small><strong>1,240</strong></div><div class="card"><small>销售金额</small><strong>¥ 31,560.00</strong></div></div>
       <h2>销售额前 5 的商品</h2>
-      <table><tr><th>#</th><th>SKU</th><th>名称</th><th>数量</th><th>金额</th></tr><tr><td>1</td><td>A-1001</td><td>A4 打印纸</td><td class="num">400</td><td class="num">10,000.00</td></tr></table>
+      <table><tr><th>#</th><th>SKU</th><th>名称</th><th>数量</th><th>金额</th></tr><tr><td>1</td><td>A-1001</td><td>A4 打印纸</td><td class="num">400</td><td class="num">10,000.00</td></tr>
+        <tr><td>2</td><td>B-2003</td><td>中性笔（黑）</td><td class="num">600</td><td class="num">6,000.00</td></tr></table>
       <h2>导出</h2>
       <div class="bar"><button>导出商品 CSV</button><button>导出库存 CSV</button></div>
-      <p class="note">“从”晚于“到”时日期框下显示错误，不发请求。</p>
+      <p class="note">打开页面时默认查询本月 1 日到今天。日期按 UTC 日期统计已出库的销售单。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>查询中</h3>
+        <div class="bar"><button class="primary" disabled>查询中…</button></div>
+        <div class="cards"><div class="card"><small>出库单数</small><strong>…</strong></div><div class="card"><small>商品数量</small><strong>…</strong></div><div class="card"><small>销售金额</small><strong>…</strong></div></div>
+      </section>
+      <section class="state"><h3>日期不对（页面先拦，不发请求）</h3>
+        <div class="bar"><label>从 <input type="date" value="2026-10-20"></label><label>到 <input type="date" value="2026-10-15"><em class="err">“从”不能晚于“到”</em></label><button class="primary">查询</button></div>
+        <p class="note">没填日期时提示“请选择日期”。</p>
+      </section>
+      <section class="state"><h3>这段时间没有出库</h3>
+        <div class="cards"><div class="card"><small>出库单数</small><strong>0</strong></div><div class="card"><small>商品数量</small><strong>0</strong></div><div class="card"><small>销售金额</small><strong>¥ 0.00</strong></div></div>
+        <table><tr><th>#</th><th>SKU</th><th>名称</th><th>数量</th><th>金额</th></tr><tr><td colspan="5" class="msg">这段时间没有已出库的销售单。</td></tr></table>
+      </section>
+      <section class="state"><h3>查询出错</h3>
+        <div class="alert">查询失败（API 的 message） <button>重试</button></div>
+      </section>
+      <section class="state"><h3>导出中 / 导出失败</h3>
+        <div class="bar"><button disabled>导出中…</button><button>导出库存 CSV</button></div>
+        <div class="alert">导出失败（API 的 message） <button>重试</button></div>
+      </section>
+      <section class="state"><h3>只读用户（viewer）</h3>
+        <p class="note">和其他角色一样：可以查询、可以导出。</p>
+      </section>
+
     </main>
   </div>
 </body></html>

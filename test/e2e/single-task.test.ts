@@ -63,6 +63,22 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
   } finally { p.cleanup(); }
 });
 
+test('worker 与 reviewer 的任务说明带 requirements.md 的「通用约定」原文（含三级标题，到下一节为止）', async () => {
+  const requirements = '# 需求\n\n## 需求清单\n### REQ-001 商品 [MVP]\n- AC1：Given 合法资料 When 创建 Then 成功\n\n## 通用约定\n- 字符串先去掉首尾空白再校验长度。\n\n### 原文字段规则\n- 商品 sku（1–32 个字符，保存为大写）\n\n## 范围外\n- 打印\n';
+  const p = await setupProject({ tasks: [task1()], files: { 'docs/spec/requirements.md': requirements } });
+  try {
+    const { engine, launcher, errors } = makeEngine(p, async (_role, _n, a) => implGood(a));
+    await engine.next(p.flowId);
+    await engine.idle();
+    assert.deepEqual(errors, []);
+    const [worker, reviewer] = launcher.launched;
+    for (const spec of [worker!, reviewer!]) {
+      assert.match(spec.prompt, /## 规格的通用约定[\s\S]*去掉首尾空白[\s\S]*### 原文字段规则\n- 商品 sku（1–32 个字符，保存为大写）/, spec.env['PI_FORGE_ROLE']);
+      assert.doesNotMatch(spec.prompt, /打印/, '下一节（范围外）不带');
+    }
+  } finally { p.cleanup(); }
+});
+
 test('无 token 或错 token 的提交被拒；实施角色没有验收工具', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
@@ -203,6 +219,17 @@ test('被拦下的操作只记账：同一次运行里违规 7 次也不结束�
     assert.deepEqual(p.store.listRuns().filter((r) => r.task === 'T-001').map((r) => r.outcome), ['submitted']);
     assert.notEqual(p.store.readTask(p.flowId, 'T-001').status, 'blocked');
     assert.deepEqual((await p.store.verifyIntegrity()).errors, []);
+  } finally { p.cleanup(); }
+});
+
+test('两次 promote 同时执行：不因为 ready -> ready 报错，任务只提升一次', async () => {
+  const p = await setupProject({ tasks: [task1()] });
+  try {
+    const { engine } = makeEngine(p, async () => {});
+    const [a, b] = await Promise.all([engine.promote(p.flowId), engine.promote(p.flowId)]);
+    assert.deepEqual([...a, ...b], ['T-001']);
+    assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'ready');
+    assert.equal(p.store.readEvents().filter((e) => e.task === 'T-001' && e.trigger === 'schedule').length, 1);
   } finally { p.cleanup(); }
 });
 

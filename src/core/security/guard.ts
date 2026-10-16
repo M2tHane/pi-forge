@@ -47,6 +47,8 @@ export interface GuardContext {
    * club 与 m9 的 6 次运行里 stage-qa 被拦 33 次，全是 rg 的排除通配、printenv PORT 之类与 mktemp -d /tmp/…）
    */
   isolatedWorkspace?: boolean;
+  /** 隔离工作区里也可以读、运行的技能目录（playwright-browser：stage-qa 的角色提示让它读这里的说明、运行这里的脚本） */
+  toolDirs?: readonly string[];
   homeDir?: string;
 }
 
@@ -79,7 +81,7 @@ const IMPL_FORBIDDEN: Record<string, string> = {
  */
 const GUI_BINARIES = new Set(['open', 'xdg-open', 'osascript', 'electron', 'chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'firefox', 'msedge']);
 const GUI_SUBCOMMANDS: Record<string, readonly string[]> = { playwright: ['open', 'codegen', 'show-report', 'show-trace'], cypress: ['open'], gio: ['open'] };
-export const GUI_REASON = '不能启动桌面应用或打开浏览器窗口：你只写代码、跑测试（无界面的测试照常运行；要调接口就用 forge_service 启动 serve 命令后 curl http://localhost:<端口>/…）。需要打开看效果的，写进 handoff（验收时用 manual 标给用户），由用户自己打开查看。';
+export const GUI_REASON = '不能启动桌面应用或打开浏览器窗口：你只写代码、跑测试（无界面的测试照常运行；要调接口就用 forge_service 启动 serve 命令后 curl http://localhost:<端口>/…）。页面由 stage-qa 在无界面浏览器里检查；只能靠人眼判断的写进 handoff（验收时用 manual 标给用户）。';
 
 /** 命令（已剥离 sudo、env 等包装）是否会打开图形界面 */
 export function opensGui(words: readonly string[], projectCommands: readonly string[] = []): boolean {
@@ -236,7 +238,7 @@ const GIT_READONLY = new Set([
 const GIT_IMPL_FORBIDDEN: Record<string, string> = {
   rebase: '改写历史', 'filter-branch': '改写历史', 'filter-repo': '改写历史', 'update-ref': '改写引用', replace: '改写历史',
   switch: '切换分支', worktree: '操作 worktree', clean: '删除未跟踪文件', push: '推送由引擎在合并时完成',
-  fetch: '远程分支由引擎同步', pull: '远程分支由引擎同步', remote: '修改远程配置', reflog: '改写 reflog', tag: '修改共享标签',
+  fetch: '远程分支由引擎同步', pull: '远程分支由引擎同步', remote: '修改远程配置', tag: '修改共享标签',
 };
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
 const WRAPPERS = new Set(['sudo', 'env', 'nohup', 'time', 'command', 'builtin', 'exec', 'nice', 'timeout', 'stdbuf', 'xargs']);
@@ -313,9 +315,9 @@ class Evaluator {
     if (inWs !== null) return { area: 'workspace', abs, rel: inWs };
     const inMain = within(this.main, abs);
     if (inMain !== null) return { area: 'main', abs, rel: inMain };
-    // 隔离工作区：系统临时目录算临时目录，别的任务的 worktree 除外（测试里项目本身也在系统临时目录下）
+    // 隔离工作区：系统临时目录算临时目录，别的任务的 worktree 除外（测试里项目本身也在系统临时目录下）；技能目录也可以用
     if (this.ctx.isolatedWorkspace && within(realpathSafe(worktreesRoot(this.ctx.mainRoot)), abs) === null) {
-      for (const t of SYSTEM_TMP) { const rel = within(t, abs); if (rel !== null) return { area: 'scratch', abs, rel }; }
+      for (const t of [...SYSTEM_TMP, ...(this.ctx.toolDirs ?? []).map((d) => realpathSafe(d))]) { const rel = within(t, abs); if (rel !== null) return { area: 'scratch', abs, rel }; }
     }
     return { area: 'outside', abs, rel: abs };
   }
@@ -685,6 +687,10 @@ class BashChecker {
     const dd = rest.indexOf('--');
     const beforeDd = dd >= 0 ? rest.slice(0, dd) : rest;
     switch (g.sub) {
+      // 只拦改写 reflog 的子命令；不带子命令与 show、exists 只读（stock run-03：worker 查 git reflog 找回改动被拦）
+      case 'reflog':
+        if (['expire', 'delete', 'drop'].includes(beforeDd[0] ?? '')) return deny('bash', `禁止 git reflog ${beforeDd[0]}（改写 reflog）。`);
+        return ok;
       case 'reset': {
         const okArgs = beforeDd.every((a) => a === '-q' || a === '--quiet' || (dd >= 0 && a === 'HEAD'));
         if (!okArgs) return deny('bash', '禁止 git reset 改写历史；取消暂存请用 git reset -- <文件>。');

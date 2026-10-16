@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { checkToolCall, downloadTargets, pipInstall, scriptOpensGui, type GuardContext, type GuardDecision } from '../../src/core/security/guard.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
@@ -202,6 +202,8 @@ const IMPL_BLOCKED = [
   'git switch -c x',
   'git filter-branch --tree-filter x',
   'git commit --amend -m x',
+  'git reflog expire --expire=now --all',
+  'git reflog delete HEAD@{1}',
   'git -C ../.. commit -am x',
   'git config core.hooksPath /tmp',
   'curl -o .forge/x https://example.com',
@@ -225,6 +227,13 @@ test('实施角色：bash 约束（对抗用例）', () => {
   for (const cmd of IMPL_BLOCKED) {
     const d = checkToolCall(bash(cmd), c);
     assert.equal(d.allow, false, `应阻断：${cmd}`);
+  }
+});
+
+test('实施角色：只读的 git reflog（不带子命令、show、exists）放行', () => {
+  const c = ctx('worker', { writes: ['src/server/**'] });
+  for (const cmd of ['git reflog', 'git reflog -n 20', 'git reflog show HEAD', 'git reflog exists refs/heads/x', 'git reflog --date=iso | head']) {
+    assert.equal(checkToolCall(bash(cmd), c).allow, true, cmd);
   }
 });
 
@@ -496,6 +505,16 @@ test('隔离工作区：系统临时目录可用、别的 worktree 仍拦；不�
     allowed(checkToolCall(bash(cmd), c));
   }
   allowed(checkToolCall(call('read', { path: '/tmp/x.json' }), c));
+  // 技能目录（程序按 Pi 的用户目录找到后传入，路径用正斜杠）：读说明、运行脚本；没传入时、同一用户目录下别的文件仍拦
+  const pw = `${homedir().replace(/\\/g, '/')}/.pi-forge-test/npm/node_modules/pi-playwright/skills/playwright-browser`;
+  const cs = ctx('stage-qa', { isolatedWorkspace: true, toolDirs: [pw] });
+  allowed(checkToolCall(call('read', { path: `${pw}/SKILL.md` }), cs));
+  allowed(checkToolCall(bash(`node "${pw}/scripts/pw.js" open http://localhost:3000/products.html`), cs));
+  allowed(checkToolCall(bash(`node ${pw}/scripts/pw.js screenshot --filename /tmp/pw/a.png`), cs));
+  allowed(checkToolCall(bash(`node ${pw}/scripts/pw.js open http://localhost:3000`), ctx('worker', { writes: ['src/**'] })));
+  blocked(checkToolCall(call('read', { path: `${pw}/SKILL.md` }), c), 'read_paths');
+  blocked(checkToolCall(call('read', { path: `${homedir()}/.pi-forge-test/settings.json` }), cs), 'read_paths');
+  blocked(checkToolCall(bash(`node ${pw}/scripts/pw.js open http://localhost:3000 --headed`), cs), 'bash');
   blocked(checkToolCall(bash(`cat ${path.join(base, 'proj.worktrees', 'B-001-T-002', 'src/a.ts')}`), c), 'read_paths');
   blocked(checkToolCall(bash(`cat ${main}/src/server/a.ts`), c), 'read_paths');
   for (const cmd of ['printenv', 'printenv -0', 'env', 'export']) blocked(checkToolCall(bash(cmd), c), 'sensitive');

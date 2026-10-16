@@ -1,7 +1,9 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>原型目录 · 小仓库进销存</title><link rel="stylesheet" href="style.css"></head>
-<body class="center"><div><h1>小仓库进销存 · 原型目录</h1><p>低保真线框：布局、字段、按钮和交互以这里为准，颜色和样式可以自己定。灰色说明文字是交互要求。</p>
+<body class="center"><div><h1>小仓库进销存 · 原型目录</h1><p>低保真线框：布局、字段、按钮、交互和各种状态以这里为准，颜色和样式可以自己定。灰色说明文字是交互要求。<br>
+每个页面上半部分是正常状态，最下面的“其他状态”画出加载中、空、出错、校验失败、确认框、只读用户等情况。</p>
   <ul>
+    <li><a href="common-states.html">通用状态（没登录、令牌失效、没有权限、提示条）</a></li>
     <li><a href="login.html">登录</a> <code>/login</code></li>
     <li><a href="dashboard.html">看板</a> <code>/</code></li>
     <li><a href="products.html">商品</a> <code>/products</code></li>
@@ -14,5 +16,6 @@
     <li><a href="transfers.html">调拨</a> <code>/transfers</code></li>
     <li><a href="reports.html">报表</a> <code>/reports</code></li>
     <li><a href="users.html">用户（admin）</a> <code>/users</code></li>
-    <li><a href="purchase-order-detail.html">采购单详情（销售单详情相同）</a> <code>/purchase-orders/:id</code></li>
+    <li><a href="purchase-order-detail.html">采购单详情</a> <code>/purchase-orders/:id</code></li>
+    <li><a href="sales-order-detail.html">销售单详情</a> <code>/sales-orders/:id</code></li>
   </ul></div></body></html>

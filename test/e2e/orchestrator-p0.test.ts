@@ -5,9 +5,9 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { setupProject } from '../helpers/project.ts';
+import { setupProject, stubPlaywrightSkill } from '../helpers/project.ts';
 import { StateStore } from '../../src/core/state/state-store.ts';
-import { startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
+import { firstNonAppend, startFakeLlm, type FakeLlm } from '../fixtures/fake-llm/server.ts';
 const ROOT = path.join(import.meta.dirname, '../..');
 const SCRIPTS = path.join(ROOT, 'test/fixtures/fake-llm/scripts');
 const LOG = path.join(tmpdir(), `pi-forge-p0-llm-${process.pid}.log`);
@@ -33,6 +33,7 @@ async function session(cwd: string, agentDir: string, prompts: string[]) {
 test('真实 pi print：forge_read 读 PRD；不合格规格被拒，合格规格等待批准；打回后新进程恢复仍注入输入和意见，用户批准进入 P1', { skip: !piAvailable && 'pi 不可用', timeout: 420_000 }, async () => {
   const p = await setupProject();
   const agentDir = mkdtempSync(path.join(tmpdir(), 'pi-forge-p0-agentdir-'));
+  stubPlaywrightSkill(agentDir);
   try {
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
     writeFileSync(path.join(p.dir, 'prd.md'), '# PRD 原文\n团队维护看板，名称要唯一。');
@@ -53,6 +54,7 @@ test('真实 pi print：forge_read 读 PRD；不合格规格被拒，合格规�
     assert.match(JSON.stringify(requests[0].status), /docs\/spec\/inputs\/prd\/prd.md/);
     assert.match(system, /## 第二步：写四份文件/); // spec-from-prd 全文
     assert.match(system, /## 按轮提问/); // grilling 全文
+    assert.equal(firstNonAppend(requests), -1, '主会话每次请求只在上一次的末尾追加（提示缓存只认追加）');
     assert.match(JSON.stringify(requests[1].last), /PRD 原文.*团队维护看板/);
     assert.match(JSON.stringify(requests[2].last), /spec-lint 未通过.*\[MVP\]、\[LATER\] 或 \[NO\]/);
     assert.match(JSON.stringify(requests[3].last), /等待用户 \/forge-approve/);

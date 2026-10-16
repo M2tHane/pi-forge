@@ -19,13 +19,43 @@
     <main>
       <h1>商品分类</h1>
       <div class="cols"><div>
-        <ul class="tree"><li>办公用品 <a>添加下级</a> <a>改名</a> <a class="danger">删除</a>
-          <ul><li>纸张 <a>添加下级</a> <a>改名</a> <a class="danger">删除</a></li><li>书写工具 <a>添加下级</a> <a>改名</a> <a class="danger">删除</a></li></ul></li>
-          <li>清洁用品 <a>添加下级</a> <a>改名</a> <a class="danger">删除</a></li></ul>
+        <ul class="tree"><li>办公用品 <a>添加下级</a> <a>编辑</a> <a class="danger">删除</a>
+          <ul><li>纸张 <a>添加下级</a> <a>编辑</a> <a class="danger">删除</a></li><li>书写工具 <a>添加下级</a> <a>编辑</a> <a class="danger">删除</a></li></ul></li>
+          <li>清洁用品 <a>添加下级</a> <a>编辑</a> <a class="danger">删除</a></li></ul>
         <button class="primary">新建顶级分类</button></div>
-      <div class="dialog"><h2>移动分类</h2><label>名称 <input value="纸张"></label><label>上级 <select><option>（无，顶级）</option><option>办公用品</option></select></label>
-        <em class="err">不能把分类移到它自己的下级</em><div class="bar"><span class="grow"></span><button class="primary">保存</button></div></div></div>
-      <p class="note">点分类名在右侧编辑。有下级或有商品的分类删除时提示“请先移走下级分类和商品”。</p>
+      <div class="dialog"><h2>编辑分类（右侧面板）</h2><label>名称 <input value="纸张"></label><label>上级 <select><option>（无，顶级）</option><option selected>办公用品</option><option>清洁用品</option></select></label>
+        <div class="bar"><span class="grow"></span><button class="primary">保存</button></div></div></div>
+      <p class="note">点“编辑”在右侧面板改名称或移动到别的上级。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>加载中</h3>
+        <p class="msg">加载中…</p>
+      </section>
+      <section class="state"><h3>空</h3>
+        <p class="msg">还没有分类。点“新建顶级分类”添加。</p>
+        <button class="primary">新建顶级分类</button>
+      </section>
+      <section class="state"><h3>加载出错</h3>
+        <div class="alert">加载失败（API 的 message） <button>重试</button></div>
+      </section>
+      <section class="state"><h3>名称重复（409，不区分大小写）</h3>
+        <div class="dialog"><label>名称 <input value="纸张"><em class="err">分类名称已存在</em></label><div class="bar"><span class="grow"></span><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>移动会成环（400）</h3>
+        <div class="dialog"><label>名称 <input value="办公用品"></label><label>上级 <select><option>纸张</option></select><em class="err">不能把分类移到它自己或它的下级下面</em></label>
+          <div class="bar"><span class="grow"></span><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>删除确认</h3>
+        <div class="dialog modal"><h2>删除分类</h2><p>确定删除“清洁用品”？</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">删除</button></div></div>
+      </section>
+      <section class="state"><h3>删除被拒（409：有下级或有商品）</h3>
+        <div class="alert">“办公用品”下面还有下级分类或商品，不能删除。请先移走下级分类和商品。</div>
+      </section>
+      <section class="state"><h3>只读用户（viewer）</h3>
+        <ul class="tree"><li>办公用品<ul><li>纸张</li><li>书写工具</li></ul></li><li>清洁用品</li></ul>
+        <p class="note">只显示分类树，没有添加、编辑、删除和新建按钮。</p>
+      </section>
+
     </main>
   </div>
 </body></html>

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>通用状态 · 小仓库进销存（原型）</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <header class="top"><b>小仓库进销存</b><span class="grow"></span><span>张三（仓管员 clerk）</span><a href="login.html">退出</a></header>
+  <div class="frame">
+    <nav class="side">
+      <a href="dashboard.html">看板</a>
+      <a href="products.html">商品</a>
+      <a href="categories.html">分类</a>
+      <a href="partners.html">往来单位</a>
+      <a href="warehouses.html">仓库</a>
+      <a href="stock.html">库存</a>
+      <a href="purchase-orders.html">采购单</a>
+      <a href="sales-orders.html">销售单</a>
+      <a href="transfers.html">调拨</a>
+      <a href="reports.html">报表</a>
+      <a href="users.html">用户（admin）</a>
+    </nav>
+    <main>
+      <h1>通用状态</h1>
+      <p>所有页面共用的状态。各页面自己的状态写在各页面最下面的“其他状态”里。</p>
+
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>没登录：打开任何页面（除了 /login）</h3>
+        <p class="note">直接跳到 /login；登录后回到原来要打开的页面。</p>
+      </section>
+      <section class="state"><h3>令牌失效（任意请求 401，例如被管理员停用、已在别处退出）</h3>
+        <p class="note">清掉本地令牌，跳到 /login，登录页顶部提示“登录已失效，请重新登录”。</p>
+      </section>
+      <section class="state"><h3>没有权限（403）</h3>
+        <div class="alert">你的角色没有权限做这个操作（API 的 message）。</div>
+        <p class="note">按钮已按角色隐藏，正常不会出现；出现时只提示，不跳转。</p>
+      </section>
+      <section class="state"><h3>页面路径不存在</h3>
+        <div class="empty-page"><h2>页面不存在</h2><a href="dashboard.html">回到看板</a></div>
+      </section>
+      <section class="state"><h3>操作成功提示</h3>
+        <div class="toast">已保存</div>
+        <p class="note">右上角绿色提示，3 秒后自动消失。</p>
+      </section>
+      <section class="state"><h3>操作失败提示</h3>
+        <div class="alert">操作失败：（API 的 message）</div>
+        <p class="note">红色提示条，显示在页面顶部，点 × 关闭；不会自动消失。</p>
+      </section>
+      <section class="state"><h3>顶栏：不同角色</h3>
+        <div class="top"><b>小仓库进销存</b><span class="grow"></span><span>admin（管理员 admin）</span><a>退出</a></div>
+        <div class="top"><b>小仓库进销存</b><span class="grow"></span><span>boss（只读 viewer）</span><a>退出</a></div>
+        <p class="note">只有 admin 的导航里有“用户”。</p>
+      </section>
+      <section class="state"><h3>退出</h3>
+        <p class="note">点“退出”调用 /api/logout，清掉本地令牌，回到 /login（不弹确认）。</p>
+      </section>
+
+    </main>
+  </div>
+</body></html>

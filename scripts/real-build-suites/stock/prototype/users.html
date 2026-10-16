@@ -20,13 +20,55 @@
       <h1>用户管理</h1>
       <div class="bar"><span class="grow"></span><button class="primary">新建用户</button></div>
       <table><tr><th>用户名</th><th>角色</th><th>状态</th><th></th></tr>
-        <tr><td>admin</td><td>管理员</td><td>启用</td><td><a>改密码</a>（自己：不能删除、停用、降级）</td></tr>
-        <tr><td>zhangsan</td><td>仓管员</td><td>启用</td><td><a>编辑</a> <a>改密码</a> <a>停用</a> <a class="danger">删除</a></td></tr>
-        <tr class="off"><td>boss</td><td>只读</td><td>停用</td><td><a>编辑</a> <a>启用</a> <a class="danger">删除</a></td></tr></table>
-      <div class="dialog"><h2>新建用户（弹窗）</h2><label>用户名 <input placeholder="小写字母、数字、下划线"></label><label>初始密码 <input type="password"></label>
+        <tr><td>admin（你）</td><td>管理员</td><td><span class="tag ok">启用</span></td><td><a>改密码</a></td></tr>
+        <tr><td>zhangsan</td><td>仓管员</td><td><span class="tag ok">启用</span></td><td><a>编辑</a> <a>改密码</a> <a>停用</a> <a class="danger">删除</a></td></tr>
+        <tr class="off"><td>boss</td><td>只读</td><td><span class="tag">停用</span></td><td><a>编辑</a> <a>启用</a> <a class="danger">删除</a></td></tr></table>
+      <div class="dialog"><h2>新建用户（弹窗）</h2><label>用户名 <input placeholder="3–20 个字符：小写字母、数字、下划线"></label><label>初始密码 <input type="password" placeholder="6–64 个字符"></label>
         <label>角色 <select><option value="clerk">仓管员</option><option value="viewer">只读</option><option value="admin">管理员</option></select></label>
         <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
-      <p class="note">只有 admin 在导航里看到“用户”；其他角色直接打开 /users 显示“没有权限”。</p>
+      <p class="note">只有 admin 在导航里看到“用户”。自己那一行不显示删除、停用和改角色。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>加载中</h3>
+        <table><tr><th>用户名</th><th>角色</th><th>状态</th><th></th></tr><tr><td colspan="4" class="msg">加载中…</td></tr></table>
+      </section>
+      <section class="state"><h3>加载出错</h3>
+        <div class="alert">加载失败：服务暂时不可用（这里显示 API 返回的 message） <button>重试</button></div>
+        <table><tr><th>用户名</th><th>角色</th><th>状态</th><th></th></tr><tr><td colspan="4" class="msg">—</td></tr></table>
+      </section>
+      <section class="state"><h3>非 admin 打开 /users（403）</h3>
+        <div class="empty-page"><h2>没有权限</h2><p>只有管理员可以管理用户。</p><a href="dashboard.html">回到看板</a></div>
+      </section>
+      <section class="state"><h3>字段校验失败（400）</h3>
+        <div class="dialog"><label>用户名 <input value="Zhang San"><em class="err">用户名只能是小写字母、数字、下划线，3–20 个字符</em></label>
+          <label>初始密码 <input type="password" value="123"><em class="err">密码要 6–64 个字符</em></label>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>用户名重复（409）</h3>
+        <div class="dialog"><label>用户名 <input value="zhangsan"><em class="err">用户名已存在</em></label><div class="bar"><span class="grow"></span><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>编辑用户（弹窗）</h3>
+        <div class="dialog"><h2>编辑用户 zhangsan</h2><label>角色 <select><option selected>仓管员</option><option>只读</option><option>管理员</option></select></label>
+          <label><input type="checkbox" checked> 启用</label><div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>改密码（弹窗）</h3>
+        <div class="dialog"><h2>改密码：zhangsan</h2><label>新密码 <input type="password"></label>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>对自己的操作被拒（409）</h3>
+        <div class="alert">不能删除自己，也不能停用自己或把自己改成非管理员（API 的 message）。</div>
+      </section>
+      <section class="state"><h3>停用确认</h3>
+        <div class="dialog modal"><h2>停用用户</h2><p>停用 zhangsan 后，这个用户已经登录的会话会立即失效。</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">停用</button></div></div>
+      </section>
+      <section class="state"><h3>删除确认</h3>
+        <div class="dialog modal"><h2>删除用户</h2><p>确定删除 boss？</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">删除</button></div></div>
+      </section>
+      <section class="state"><h3>保存成功</h3>
+        <div class="toast">已保存用户 lisi</div>
+      </section>
+
     </main>
   </div>
 </body></html>

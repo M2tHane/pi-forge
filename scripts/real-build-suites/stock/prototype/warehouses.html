@@ -20,11 +20,51 @@
       <h1>仓库</h1>
       <div class="bar"><span class="grow"></span><button class="primary">新建仓库</button></div>
       <table><tr><th>代码</th><th>名称</th><th>状态</th><th></th></tr>
-        <tr><td>MAIN</td><td>总仓</td><td>启用</td><td><a>编辑</a> <a>停用</a> <a class="danger">删除</a></td></tr>
-        <tr><td>EAST</td><td>东区仓</td><td>启用</td><td><a>编辑</a> <a>停用</a> <a class="danger">删除</a></td></tr></table>
-      <div class="states"><span>加载中：表格区显示“加载中…”</span><span>空：显示“还没有仓库，点“新建”添加”</span><span>出错：顶部红色提示条，内容是 API 的 message，带“重试”</span></div>
-      <div class="dialog"><h2>新建仓库（弹窗）</h2><label>代码 <input placeholder="字母和数字，自动转大写"></label><label>名称 <input></label>
+        <tr><td>MAIN</td><td>总仓</td><td><span class="tag ok">启用</span></td><td><a>编辑</a> <a>停用</a> <a class="danger">删除</a></td></tr>
+        <tr><td>EAST</td><td>东区仓</td><td><span class="tag ok">启用</span></td><td><a>编辑</a> <a>停用</a> <a class="danger">删除</a></td></tr>
+        <tr class="off"><td>OLD</td><td>旧仓</td><td><span class="tag">停用</span></td><td><a>编辑</a> <a>启用</a> <a class="danger">删除</a></td></tr></table>
+      <div class="dialog"><h2>新建仓库（弹窗）</h2><label>代码 <input value="west2" placeholder="字母和数字，保存为大写"></label><label>名称 <input value="西区二仓"></label>
         <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      <p class="note">代码可以输入小写或大小写混合，保存后显示为大写（west2 → WEST2）。停用的仓库不出现在新建或修改单据的仓库下拉里。</p>
+      <h2 class="states-title">其他状态</h2>
+      <section class="state"><h3>加载中</h3>
+        <table><tr><th>代码</th><th>名称</th><th>状态</th><th></th></tr><tr><td colspan="4" class="msg">加载中…</td></tr></table>
+      </section>
+      <section class="state"><h3>空（还没有数据）</h3>
+        <table><tr><th>代码</th><th>名称</th><th>状态</th><th></th></tr><tr><td colspan="4" class="msg">还没有仓库。点“新建”添加。</td></tr></table>
+      </section>
+      <section class="state"><h3>加载出错</h3>
+        <div class="alert">加载失败：服务暂时不可用（这里显示 API 返回的 message） <button>重试</button></div>
+        <table><tr><th>代码</th><th>名称</th><th>状态</th><th></th></tr><tr><td colspan="4" class="msg">—</td></tr></table>
+      </section>
+      <section class="state"><h3>字段校验失败（400）</h3>
+        <div class="dialog"><label>代码 <input value="west-2"><em class="err">代码只能是字母和数字</em></label><label>名称 <input value=""><em class="err">名称不能为空</em></label>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>代码重复（409）</h3>
+        <div class="dialog"><label>代码 <input value="main"><em class="err">仓库代码已存在</em></label><div class="bar"><span class="grow"></span><button class="primary">保存</button></div></div>
+      </section>
+      <section class="state"><h3>保存中（防止重复提交）</h3>
+        <div class="dialog"><h2>新建仓库</h2><label>代码 <input value="west2"></label>
+          <div class="bar"><span class="grow"></span><button disabled>取消</button><button class="primary" disabled>保存中…</button></div></div>
+      </section>
+      <section class="state"><h3>保存成功</h3>
+        <div class="toast">已保存仓库 WEST2</div>
+        <p class="note">列表里代码显示为 WEST2。</p>
+      </section>
+      <section class="state"><h3>删除确认</h3>
+        <div class="dialog modal"><h2>删除仓库</h2><p>确定删除 OLD 旧仓？</p>
+          <div class="bar"><span class="grow"></span><button>取消</button><button class="danger-btn">删除</button></div></div>
+      </section>
+      <section class="state"><h3>删除被拒（409：有库存或出现在单据里）</h3>
+        <div class="alert">MAIN 总仓还有库存或已出现在单据里，不能删除。可以改为停用。</div>
+        <div class="bar"><button>改为停用</button><button>知道了</button></div>
+      </section>
+      <section class="state"><h3>只读用户（viewer）看到的样子</h3>
+        <div class="bar"><span class="grow"></span></div>
+        <table><tr><th>代码</th><th>名称</th><th>状态</th></tr><tr><td>MAIN</td><td>总仓</td><td>启用</td></tr><tr><td>OLD</td><td>旧仓</td><td>停用</td></tr></table>
+        <p class="note">没有新建、编辑、停用、删除，也没有单据操作按钮；查询、筛选、导出照常可用。</p>
+      </section>
 
     </main>
   </div>

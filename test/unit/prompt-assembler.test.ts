@@ -79,7 +79,7 @@ test('给出 worktree 时，规则先取 worktree 里的文件，没有再用项
 test('提示组装顺序：角色提示 → 规则 → 任务与输入 → handoff 与打回意见；稳定前缀与任务无关', () => {
   const agent = { name: 'worker', tier: 'strong', thinking: null, description: '', prompt: 'ROLE-PROMPT' };
   const rules = [{ path: 'rules/global.md', content: 'RULE-G' }, { path: 'rules/backend.md', content: 'RULE-B' }];
-  const t1 = mkTask('T-001', { title: '导出 API', ac: ['POST /exports 参数非法返回 422'], inputs: ['docs/contracts/export.ts'],
+  const t1 = mkTask('T-001', { title: '导出 API', ac: ['POST /exports 参数非法返回 422'], description: '导出数据用 docs/contracts/export.ts 的格式',
     last_failure: 'src/a.ts:3 缺少校验，应返回 422', base_sha: 'abc123' });
   const p1 = assemblePrompt({ agent, rules, task: t1, flowId: 'B-001', handoff: '## 上次做到 X', mode: 'impl', commands: config.commands });
   const p2 = assemblePrompt({ agent, rules, task: mkTask('T-002'), flowId: 'B-001', handoff: '', mode: 'impl', commands: config.commands });
@@ -94,6 +94,9 @@ test('提示组装顺序：角色提示 → 规则 → 任务与输入 → hando
   assert.ok(idx.indexOf(Math.max(...idx)) === idx.length - 1, '打回意见应在最后');
   assert.ok(u.indexOf('forge_claim') >= 0);
   assert.ok(!p1.system.includes('T-001'));
+  assert.match(u, /## 计划里的说明（architect 写的）\n导出数据用/);
+  assert.doesNotMatch(u, /输入文件/);
+  assert.doesNotMatch(p2.user, /计划里的说明/, '没有说明时不出这一节');
 });
 
 test('返工接着上一次的对话：用户消息只有续做说明，系统提示不变', () => {

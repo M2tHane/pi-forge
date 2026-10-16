@@ -295,6 +295,7 @@ export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['
   for (const t of plan.tasks) {
     out.push({
       id: t.id, stage: t.stage, kind: 'impl', role: t.stage === 'S0' ? 'architect' : 'worker', title: t.title, scopes: [...scopes.worker],
+      ...(t.description?.trim() ? { description: t.description.trim() } : {}),
       depends_on: (deps.get(t.id) ?? []).map((d) => ({ ...d })), inputs: [],
       writes: [...new Set([...t.writes, ...(t.stage === 'S0' ? S0_EXTRA_WRITES : []), ownAcceptanceGlob(t.id)])], verify: [...(opts.verify ?? [])],
       ...(t.module ? { module: t.module } : {}), ...(t.size ? { size: t.size } : {}), layers: [...t.layers], ac: [...t.ac], produces: [...t.produces], requires: [...t.requires],

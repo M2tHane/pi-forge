@@ -8,8 +8,8 @@ tier: strong
 
 ## 开始
 
-1. forge_claim 确认任务。读任务说明（负责的 AC 原文、输入文件、计划的改动范围；有则还有『本阶段及之前已交付的接口』）、AGENTS.md、docs/arch/overview.md、glossary、
-   输入文件里列出的契约与页面、screens.md 中本 task 的页面。
+1. forge_claim 确认任务。读任务说明（负责的 AC、计划里的说明、计划的改动范围；有则还有『本阶段及之前已交付的接口』）、AGENTS.md、docs/arch/overview.md、glossary、
+   本 task 用到的契约、screens.md 中本 task 的页面。
 2. 看笔记（每次请求都附在消息末尾）：目标与 AC 已经填好，todo 是逐条的 AC。
 
 ## 开发
@@ -20,7 +20,7 @@ tier: strong
   严格按契约实现：路径、字段名、状态码、错误码都以 openapi.yaml 与 errors/*.yaml 为准，不要自己发明。
 - 完成一部分就跑相关测试，然后 `git commit` 一次，并用 notes 更新笔记（把条目从 todo 移到 done，更新 current）。本地提交就是检查点。
 - 命名用 glossary 的术语。只有项目配置了 commands.codegen 时，生成的类型或客户端才用它生成，不要手写一份；没配置就不要自己造生成器、类型检查器或 lint 脚本。
-- 界面按 screens.md 与输入文件里的原型实现：页面结构、交互，以及加载、空、错误、无权限四种状态都要有。样式遵循 rules/ui.md。不要把原型文件拷进产品代码。
+- 界面按 screens.md 与它引用的原型实现：页面结构、交互，以及加载、空、错误、无权限四种状态都要有。样式遵循 rules/ui.md。不要把原型文件拷进产品代码。
 - 依赖目录是共享构建环境的链接：缺依赖用 forge_add_dependency(name, version?)，不要自己运行 install/add；要升级、删除或改动已有依赖的版本，先改好依赖清单再调用 forge_private_deps，之后可以直接用包管理器。
 - 依赖的 task 刚合入、或想提前发现冲突时，调用 forge_sync 把集成分支的最新代码合进来。
 - `requires` 里带 `~` 的符号表示生产方可能还没写完：对着契约或生成的 mock 开发。你提交后，程序会等生产方合入，再把它同步进来跑预检；同步有冲突时会回到你的会话。

@@ -75,7 +75,8 @@
 - 实施角色（bash full）的 bash 只按禁止列表拦（用户决定，10-14，列表写在 `guard.ts` 的 `IMPL_FORBIDDEN` 注释）：判断不了的（解析不了的命令、命令名或 rm/mv 参数含变量、`sh -c`、`eval`）放行，cd 不拦，兜底是提交时的 diff 检查；sed -i、tee 只查写入位置；`git reflog` 只拦 expire、delete、drop（run-03：只读的 reflog 被当成改写拦下）；共享依赖目录里用包管理器改依赖、uv 项目用 pip 只在结果后面提醒。只读角色仍按允许列表，但可以读其他提交。读取不限范围（含 `.forge/`），只拦敏感文件；`read_paths`、`max_violations_per_run` 已不再使用。`forge_service` 可以直接给命令（与 bash 同样检查）。
 - 所有带 bash 的角色都可以联网（用户决定，10-14）：curl、wget 不限主机；实施角色的下载目标按写路径检查（不能写主工作区与受保护路径），只读角色不能把内容写进文件，stage-qa 在临时 worktree 里不另加限制；`git fetch`、`pull` 仍禁止（远程分支由引擎同步）。
 - 工具的可选参数里的占位值（''、`N/A`、null）当作没传；`bash_allow` 没在 commands 定义的命令只告警；guard 的变量代入也作用于命令替换；`git` 设 `core.quotePath=false`。
-- worker 与 reviewer 的任务说明带 requirements.md 的「通用约定」原文（截到下一个二级标题，最多 1.2 万字）：字段长度、字符、大小写、默认值、PATCH 语义按 spec-from-prd 不写成 AC，契约也不重复，而这两个角色不读规格，只有 stage-qa 读（stock run-01 到 run-03 字段规则都要到阶段验收或我打回才被发现，run-03 的 S2 因此打回 3 次）。放在任务说明而不是系统提示，不影响缓存。
+- worker 与 reviewer 的任务说明带 requirements.md 的「通用约定」原文（截到下一个二级标题，最多 1.2 万字）：字段长度、字符、大小写、默认值、PATCH 语义按 spec-from-prd 不写成 AC，契约也不重复，而 worker 只按自己的 REQ 编号 grep 规格、读不到这一节，reviewer 只拿到 AC 原文（stock run-01 到 run-03 字段规则都要到阶段验收或我打回才被发现，run-03 的 S2 因此打回 3 次）。放在任务说明而不是系统提示，不影响缓存。
+- 计划里每个 task 的 `description` 原样带进 worker 与 reviewer 的任务说明（「计划里的说明」一节），变更请求修订未开始的 task 时也会更新它：之前解析计划时当多写的字段丢掉了，stock run-03 的 15 个 task 都写了（118–832 字），修改 task T-015、T-019 要改什么只写在这里，worker 靠翻 architect 的提交才找到，T-017 没去翻。任务说明不再列「输入文件」（程序从不填，一直是「（无）」）。
 - 任务说明带「已交付的接口」一节（计划不再写 test_interface：worker 自己写验收测试，不再限定入口，10-14）；上游 handoff 只带上游最后一次 run 写的段。
 
 ### 预检、审查与合并
@@ -142,3 +143,4 @@
 - 10-15：`agents/orchestrator.md` 改了一句（worker 与 stage-qa 会用无界面浏览器）；主会话的系统提示改为所有阶段都带 P0 的两份技能。主会话的缓存失效一次，之后离开 P0 不再失效。
 - 10-16：`agents/worker.md` 去掉浏览器检查一句，`agents/orchestrator.md` 改一句（只有 stage-qa 用浏览器）。worker 与主会话的缓存各失效一次。
 - 10-16：`skills/acceptance-tests`、`skills/tdd`、`skills/code-review`、`skills/stage-qa`、`agents/reviewer.md` 改了页面测试的要求（不开浏览器，页面交给 stage-qa）。worker、reviewer、stage-qa 与 S0 的 architect 缓存各失效一次。
+- 10-16：`agents/worker.md` 开始一步改为读「计划里的说明」、不再提输入文件；`skills/plan-dag` 加 `description` 一行，`skills/change-request` 加一条；forge_claim 的工具说明去掉「输入文件」。worker 与 architect 的缓存各失效一次。

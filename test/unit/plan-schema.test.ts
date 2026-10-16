@@ -35,13 +35,14 @@ test('计划拒绝缺字段、未知字段、错误类型、负整数、空阶�
     { tasks: [{ ...plan().tasks[0], acceptance: ['旧字段'] }] },
   ]) assert.ok(validate('plan', { ...plan(), ...change }).length);
 });
-test('parsePlan：多写的字段忽略，列表字段与 exit 缺省为空，module 与 size 可省略', async () => {
-  const { parsePlan } = await import('../../src/core/plan/plan.ts');
-  const r = parsePlan(['size_estimate: { loc: 100 }', 'note: 随手写的', 'stages:', '  - { id: S0, goal: 骨架 }', 'tasks:', '  - { id: T-001, stage: S0, title: 骨架, description: 多写的, owner: architect }'].join('\n'));
+test('parsePlan：多写的字段忽略，列表字段与 exit 缺省为空，module 与 size 可省略；description 保留给 worker', async () => {
+  const { parsePlan, deriveTasks } = await import('../../src/core/plan/plan.ts');
+  const r = parsePlan(['size_estimate: { loc: 100 }', 'note: 随手写的', 'stages:', '  - { id: S0, goal: 骨架 }', 'tasks:', '  - { id: T-001, stage: S0, title: 骨架, description: 夹具用固定数据, owner: architect }'].join('\n'));
   assert.deepEqual(r.errors, []);
   assert.deepEqual(r.plan!.stages[0]!.exit, []);
   assert.deepEqual(r.plan!.tasks[0]!.writes, []);
-  assert.equal((r.plan!.tasks[0] as Record<string, unknown>)['description'], undefined);
+  assert.equal((r.plan!.tasks[0] as Record<string, unknown>)['owner'], undefined);
+  assert.equal(deriveTasks(r.plan!, new Map(), { worker: [] })[0]!.description, '夹具用固定数据');
   assert.ok(parsePlan('stages: []\ntasks: []').errors.length, '空阶段与空任务仍然拒绝');
 });
 test('M1 只校验形状：重复编号、未知阶段、符号和 AC 暂由后续语义检查处理', () => {

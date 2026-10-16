@@ -155,6 +155,8 @@ export const TaskFile = Type.Object({
   stage: Type.String({ minLength: 1 }),
   kind: TaskKind,
   title: Type.String({ minLength: 1 }),
+  /** 计划里 architect 写的说明，原样放进 worker 与 reviewer 的任务说明 */
+  description: Type.Optional(Type.String()),
   role: Type.String({ minLength: 1 }),
   scopes: Type.Array(Type.String()),
   depends_on: Type.Array(Dependency),
@@ -471,6 +473,8 @@ export const PlanFile = Type.Object({
     stage: Type.String({ minLength: 1 }),
     module: Type.Optional(Type.String({ minLength: 1 })),
     title: Type.String({ minLength: 1 }),
+    /** 给 worker 与 reviewer 的说明（实现要点、测试数据怎么准备、修改 task 要改什么） */
+    description: Type.Optional(Type.String()),
     size: Type.Optional(TaskSize),
     layers: StringList,
     ac: StringList,

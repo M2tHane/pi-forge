@@ -34,7 +34,7 @@ export interface DiffOptions {
 
 const NOT_STARTED = ['pending', 'ready'];
 export const isNotStarted = (t: Pick<TaskFile, 'status'>) => NOT_STARTED.includes(t.status);
-const TASK_FIELDS = ['stage', 'module', 'title', 'size', 'layers', 'ac', 'writes', 'shared', 'produces', 'requires', 'manual_checks', 'risk'] as const;
+const TASK_FIELDS = ['stage', 'module', 'title', 'description', 'size', 'layers', 'ac', 'writes', 'shared', 'produces', 'requires', 'manual_checks', 'risk'] as const;
 const OPTIONAL_LISTS = new Set(['shared', 'manual_checks']);
 
 const norm = (field: string, v: unknown): string => JSON.stringify(Array.isArray(v) && !v.length && OPTIONAL_LISTS.has(field) ? undefined : v ?? null);

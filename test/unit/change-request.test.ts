@@ -181,8 +181,9 @@ test('checkPlan：modifies 只在变更请求里允许；重复列出原 task �
 test('materializeChange：新增 task 带自己的验收目录，修改 task 硬依赖原 task，取消，阶段整体替换', () => {
   const r = diff((p) => {
     p.tasks.find((t) => t.id === 'T-003')!.title = '新标题';
+    p.tasks.find((t) => t.id === 'T-003')!.description = '改用分页';
     p.tasks = p.tasks.filter((t) => t.id !== 'T-005');
-    p.tasks.push(pt('T-010', 'S1', { ac: ['REQ-1.AC8'] }), pt('T-011', 'S1', { modifies: 'T-004', ac: ['REQ-1.AC9'] }));
+    p.tasks.push(pt('T-010', 'S1', { ac: ['REQ-1.AC8'] }), pt('T-011', 'S1', { modifies: 'T-004', ac: ['REQ-1.AC9'], description: 'PATCH 只改给出的字段' }));
     p.stages.push({ id: 'S3', goal: 'x', exit: [] }); p.tasks.push(pt('T-012', 'S3'));
   });
   const plan = next(OLD, (p) => { p.tasks.push(pt('T-010', 'S1'), pt('T-011', 'S1', { modifies: 'T-004' })); });
@@ -193,8 +194,10 @@ test('materializeChange：新增 task 带自己的验收目录，修改 task 硬
   assert.deepEqual(byId.get('T-011')!.verify, ['test']);
   for (const id of ['T-010', 'T-011', 'T-012']) assert.ok(byId.get(id)!.writes.includes(`tests/acceptance/${id}/**`), id);
   assert.match(ops.handoffs['T-011']!, /修改 task（变更请求 C-001）/);
+  // 修改 task 要改什么只写在 description 里，必须带到 task 上
+  assert.equal(byId.get('T-011')!.description, 'PATCH 只改给出的字段');
   assert.deepEqual(ops.cancels.map((c) => c.id), ['T-005']);
-  assert.deepEqual(ops.patches.map((p) => p.id), ['T-003']);
+  assert.deepEqual(ops.patches, [{ id: 'T-003', patch: { title: '新标题', description: '改用分页' } }]);
   assert.deepEqual(ops.stages!.stages.map((s) => s.id), ['S0', 'S1', 'S2', 'S3']);
   // 与 deriveTasks 的一致性：没有 modifies 的新增 task 和 P1 落地的生成方式相同
   const derived = deriveTasks({ ...plan, tasks: [pt('T-010', 'S1', { ac: ['REQ-1.AC8'] })] }, new Map(), { worker: ['code'] }, { verify: ['test'] });

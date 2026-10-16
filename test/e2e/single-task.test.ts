@@ -63,9 +63,9 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
   } finally { p.cleanup(); }
 });
 
-test('worker 与 reviewer 的任务说明带 requirements.md 的「通用约定」原文（含三级标题，到下一节为止）', async () => {
+test('worker 与 reviewer 的任务说明带 requirements.md 的「通用约定」原文（含三级标题，到下一节为止）与计划里的说明', async () => {
   const requirements = '# 需求\n\n## 需求清单\n### REQ-001 商品 [MVP]\n- AC1：Given 合法资料 When 创建 Then 成功\n\n## 通用约定\n- 字符串先去掉首尾空白再校验长度。\n\n### 原文字段规则\n- 商品 sku（1–32 个字符，保存为大写）\n\n## 范围外\n- 打印\n';
-  const p = await setupProject({ tasks: [task1()], files: { 'docs/spec/requirements.md': requirements } });
+  const p = await setupProject({ tasks: [{ ...task1(), description: '删除保护用固定夹具验证' }], files: { 'docs/spec/requirements.md': requirements } });
   try {
     const { engine, launcher, errors } = makeEngine(p, async (_role, _n, a) => implGood(a));
     await engine.next(p.flowId);
@@ -75,6 +75,7 @@ test('worker 与 reviewer 的任务说明带 requirements.md 的「通用约定�
     for (const spec of [worker!, reviewer!]) {
       assert.match(spec.prompt, /## 规格的通用约定[\s\S]*去掉首尾空白[\s\S]*### 原文字段规则\n- 商品 sku（1–32 个字符，保存为大写）/, spec.env['PI_FORGE_ROLE']);
       assert.doesNotMatch(spec.prompt, /打印/, '下一节（范围外）不带');
+      assert.match(spec.prompt, /## 计划里的说明（architect 写的）\n删除保护用固定夹具验证/, spec.env['PI_FORGE_ROLE']);
     }
   } finally { p.cleanup(); }
 });

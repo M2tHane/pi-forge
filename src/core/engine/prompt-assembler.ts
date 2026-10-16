@@ -197,8 +197,8 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     `# 任务 ${i.flowId}/${t.id}：${t.title}`,
     `类型：${t.kind}　阶段：${t.stage}　角色：${t.role}`,
     `## 验收标准\n${list(t.ac ?? [])}`,
+    ...(t.description?.trim() ? [`## 计划里的说明（architect 写的）\n${t.description.trim()}`] : []),
     ...(i.conventions?.trim() ? [conventionsPart(i.conventions.trim())] : []),
-    `## 输入文件\n${list(t.inputs)}`,
     `## 可写范围（writes）\n${list(writes, '（只读）')}`,
     ...(commands ? [`## 项目命令\n${commands}\n提交前自己跑通本任务的测试，以及与改动相关的参考检查（有 typecheck、lint 就跑）。合并时程序不再跑这些，reviewer 会运行本任务自己的测试，全量测试在阶段门禁运行。`] : []),
   ];

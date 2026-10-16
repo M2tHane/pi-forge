@@ -55,7 +55,6 @@ export function flowClaim(ctx: ToolContext): ToolResult {
     `已确认：${ctx.env.flow}/${t.id}「${t.title}」由你（${ctx.env.role}，run ${ctx.env.run}）负责，租约到 ${t.lease!.expires_at}。`,
     `状态：${t.status}　工作目录：${t.worktree ?? '（无）'}　基线：${t.base_sha ?? '（无）'}`,
     `验收标准：\n${(t.ac ?? []).map((a) => `- ${a}`).join('\n') || '（无）'}`,
-    `输入文件：\n${t.inputs.map((a) => `- ${a}`).join('\n') || '（无）'}`,
     opensWrites(t)
       ? `计划的改动范围（用于调度与合并冲突归属；工作区内任何文件都可以改，只有受保护路径与 docs/spec/ 除外）：\n${t.writes.map((a) => `- ${a}`).join('\n')}`
       : `可写范围：\n${(t.conflict_files ?? t.writes).map((a) => `- ${a}`).join('\n')}`,
@@ -385,7 +384,7 @@ export function flowHistory(ctx: ToolContext, p: Static<typeof HistoryParams>): 
 }
 
 export const SUBAGENT_TOOLS = {
-  forge_claim: { params: ClaimParams, description: '确认任务与租约，返回任务说明、输入文件、验收标准与可写范围。开始工作前先调用。', run: (c: ToolContext) => flowClaim(c) },
+  forge_claim: { params: ClaimParams, description: '确认任务与租约，返回任务说明、验收标准与可写范围。开始工作前先调用。', run: (c: ToolContext) => flowClaim(c) },
   forge_note: { params: NoteParams, description: '追加 handoff 笔记（做到哪、下一步、踩过的坑、未决问题；需求讨论的意见）。提交前必须至少写一次。', run: (c: ToolContext, p: Static<typeof NoteParams>) => flowNote(c, p) },
   forge_submit: { params: SubmitParams, description: '提交本任务：改动进入合并队列（reviewer 读 diff 并运行本任务自己的测试；全量测试在阶段门禁运行）；只读任务提交结论。程序会检查改动是否都在可写范围内。', run: (c: ToolContext, p: Static<typeof SubmitParams>) => flowSubmit(c, p) },
   forge_block: { params: BlockParams, description: '遇到歧义或需要越界时标记任务阻塞：先交给主会话决定，它解决不了再转给用户。需要提问时，一次只问一个问题，附上你建议的答案。', run: (c: ToolContext, p: Static<typeof BlockParams>) => flowBlock(c, p) },

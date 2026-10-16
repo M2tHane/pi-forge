@@ -113,6 +113,7 @@ export async function createReviewTask(root: string, store: StateStore, config: 
   const input: TaskInput = {
     id, stage: orig.stage, kind: 'review', role: 'reviewer', title: `审查：${orig.title}`, scopes: [...config.role('reviewer').scopes],
     depends_on: [], inputs: [], writes: [], verify: [], for_task: orig.id, ac: [...(orig.ac ?? [])],
+    ...(orig.description ? { description: orig.description } : {}),
     ...(orig.module ? { module: orig.module } : {}),
     ...(orig.layers?.length ? { layers: [...orig.layers] } : {}),
     // 标记：strong 在派发时使用升级模型（dispatcher.planModel）

@@ -246,3 +246,33 @@ test('审查者调用 forge_block：只有审查 task 阻塞，原 task 留在�
     assert.deepEqual(pendingDecisions(p.store, p.flowId).map((d) => d.id), ['T-001.rv']);
   } finally { p.cleanup(); }
 });
+
+test('审查通过后合并冲突交回 worker：解决后直接排队合并，不再审查', async () => {
+  const p = await setupProject({ yaml: YAML, files: { ...FILES, 'src/server/index.js': '// routes\n' }, tasks: [mkTask('T-001', { review: 'auto' }), mkTask('T-002', { review: 'auto' })] });
+  const runs: Record<string, number> = {};
+  const e = makeEngine(p, async (role, _nth, a) => {
+    if (role === 'reviewer') return void await a.call('forge_review_report', { verdict: 'pass', issues: [] });
+    const id = a.env.task;
+    runs[id] = (runs[id] ?? 0) + 1;
+    await a.call('forge_claim');
+    // 第一次两个任务改同一行；冲突交回后删掉冲突标记，两边的行都保留
+    const content = runs[id] === 1 ? `// routes (${id})\nroute ${id}\n`
+      : (await a.call('read', { path: 'src/server/index.js' })).text.split('\n').filter((l: string) => !/^(<{7}|={7}|>{7})/.test(l)).join('\n').replace(/\n*$/, '\n');
+    assert.ok((await a.call('write', { path: 'src/server/index.js', content })).ok);
+    await a.call('forge_note', { text: `完成 ${id}` });
+    assert.ok((await a.call('forge_submit', { summary: `提交 ${id}` })).ok);
+  }, SETTINGS);
+  try {
+    await drive(p, e);
+    assert.deepEqual(e.errors, []);
+    for (const id of ['T-001', 'T-002']) assert.equal(p.store.readTask(p.flowId, id).status, 'done', id);
+    const loser = Object.keys(runs).find((id) => runs[id] === 2);
+    assert.ok(loser, JSON.stringify(runs));
+    const triggers = p.store.readEvents().filter((ev) => ev.task === loser && ev.type === 'transition').map((ev) => ev.trigger);
+    assert.ok(triggers.includes('merge_conflict') && triggers.at(-3) === 'precheck_pass_skip', triggers.join());
+    const reviews = e.launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'reviewer').map((s) => s.env['PI_FORGE_TASK']).sort();
+    assert.deepEqual(reviews, ['T-001.rv', 'T-002.rv']);
+    const index = p.git('show', `flow/${p.flowId}/integration:src/server/index.js`);
+    assert.match(index, /route T-001/); assert.match(index, /route T-002/);
+  } finally { p.cleanup(); }
+});

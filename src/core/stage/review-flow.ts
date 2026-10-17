@@ -50,7 +50,9 @@ export function unresolvedAfter(store: StateStore, flowId: string, rvId: string)
 
 /**
  * 预检通过后是否需要审查，以及强度（impl 一律审查，审查者运行本 task 自己的测试）。
- * 已有审查记录时：上一轮有未解决的 must 则继续确认轮（沿用强度）；上一轮通过后又返工（例如合并冲突由 worker 解决）要重新审查，因为合并时不再跑测试。
+ * 已有审查记录时：上一轮有未解决的 must 则继续确认轮（沿用强度）；上一轮已通过、之后又返工（合并冲突由 worker 解决）的不再审查，
+ * 解决得对不对由阶段门禁的全量测试与验收测试检查，与 merge-fix 一样。重新审查会是新的第一轮，提出之前各轮没提的问题
+ * （stock run-04：5 次冲突后的审查有 3 次提了新的 must，T-004 因此用完轮数交给用户）。
  * 没有记录时按 review.ts 的规则推导。
  */
 export function decideReview(store: StateStore, config: FlowConfig, flowId: string, t: TaskFile): ReviewMode {
@@ -59,7 +61,7 @@ export function decideReview(store: StateStore, config: FlowConfig, flowId: stri
   if (prior) {
     if (prior.status !== 'done') return prior.review ?? 'auto';
     const left = unresolvedAfter(store, flowId, prior.id);
-    return left && left.length === 0 && t.kind !== 'impl' ? 'skip' : prior.review ?? 'auto';
+    return left && left.length === 0 ? 'skip' : prior.review ?? 'auto';
   }
   return reviewMode(t, tasks, reviewPolicy(config));
 }

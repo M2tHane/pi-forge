@@ -246,6 +246,8 @@ const WRAPPERS = new Set(['sudo', 'env', 'nohup', 'time', 'command', 'builtin', 
 const SYSTEM_TMP = [...new Set(['/tmp', tmpdir()].map((d) => realpathSafe(d)))];
 
 const ok: GuardDecision = { allow: true };
+// stock run-04：stage-qa 用 env | grep PORT 找端口被拦 3 次
+const ENV_DENIED = '禁止打印全部环境变量（可能含密钥）。查看某个变量用 printenv 加变量名，例如 printenv PORT。';
 const deny = (rule: GuardRule, reason: string): GuardDecision => ({ allow: false, rule, reason });
 
 type Area = { area: 'workspace' | 'main' | 'scratch' | 'outside'; abs: string; rel: string };
@@ -483,7 +485,7 @@ class BashChecker {
       }
       if (base === 'sudo') return { decision: deny('bash', `禁止使用 sudo：${IMPL_FORBIDDEN['sudo']}。`) };
       const rest = stripWrapper(base, words.slice(1));
-      if (!rest.length && base === 'env') return { decision: deny('sensitive', '禁止打印环境变量（可能含密钥）。') };
+      if (!rest.length && base === 'env') return { decision: deny('sensitive', ENV_DENIED) };
       words = rest;
     }
     const name = path.basename(words[0]!.text);
@@ -503,7 +505,7 @@ class BashChecker {
 
     // 点名查看（printenv PORT）放行，只拦打印全部：stage-qa 反复用 printenv PORT FORGE_DB_NAME 查端口与库名
     if (['printenv', 'set', 'export', 'declare'].includes(name) && (name === 'printenv' ? args.every((w) => w.text.startsWith('-')) : args.length === 0 || args[0]?.text === '-p')) {
-      return { decision: deny('sensitive', '禁止打印环境变量（可能含密钥）。') };
+      return { decision: deny('sensitive', ENV_DENIED) };
     }
 
     // 5. 敏感读取（参数）
@@ -657,6 +659,9 @@ class BashChecker {
       return deny('bash', `只读档位不能执行 ${name === 'git' ? 'git rm / git mv' : name}。要删除或改名 writes 内的文件：用 write 在新路径写入内容，把不要的旧文件内容清空（写入空字符串）。空文件在契约检查与提交时视为不存在。`);
     }
     if (name === 'curl' || name === 'wget') return this.checkDownload(name, args, this.ev.ctx.cwd);
+    // 按行号读文件片段与语法检查不写文件（stock run-04：reviewer 的 sed -n '1,60p' 被拦 22 次、node --check 3 次）
+    if (name === 'sed' && sedPrintsLines(args)) return ok;
+    if (name === 'node' && ['--check', '-c'].includes(args[0]?.text ?? '') && args.length > 1 && args.every((w, i) => i === 0 || !w.text.startsWith('-'))) return ok;
     if (!READONLY_COMMANDS.has(name)) return no(name);
     const flags = args.map((w) => w.text);
     const positional = flags.filter((f) => !f.startsWith('-'));
@@ -667,7 +672,9 @@ class BashChecker {
     if (name === 'date' && flags.some((f) => f === '-s' || f.startsWith('--set'))) return no('date -s');
     if (name === 'git') {
       const g = parseGit(args);
-      if (g.globals.length) return no(`git ${g.globals[0]}`);
+      // -C 与 cd 等价（cd 不拦）；--git-dir、--work-tree 仍拦
+      const globals = g.globals.filter((x) => x !== '-C');
+      if (globals.length) return no(`git ${globals[0]}`);
       if (!g.sub || !GIT_READONLY.has(g.sub)) return no(`git ${g.sub ?? ''}`);
       if (g.rest.some((w) => w.text.startsWith('--output') || w.text === '-o' && g.sub !== 'log')) return no('git --output');
       if (g.sub === 'branch' && g.rest.some((w) => !['-a', '-r', '-v', '-vv', '--list', '-l', '--show-current', '--all', '--remotes'].includes(w.text))) {
@@ -805,6 +812,20 @@ export function allowlistPrefixes(commands: readonly string[]): string[][] {
 export function allowedByList(words: readonly Word[], prefixes: readonly string[][]): boolean {
   const texts = words.map((w) => w.text);
   return prefixes.some((p) => p.length <= texts.length && p.every((w, i) => texts[i] === w));
+}
+
+/** sed 的脚本只有按行号打印（sed -n '10,40p;$p' 文件）：不写文件、不执行命令；-i、w、e 等别的写法都不算 */
+function sedPrintsLines(args: readonly Word[]): boolean {
+  const scripts: Word[] = [];
+  const operands: Word[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i]!.text;
+    if (t === '-e') { const s = args[++i]; if (!s) return false; scripts.push(s); }
+    else if (t.startsWith('-')) { if (!['-n', '--quiet', '--silent'].includes(t)) return false; }
+    else operands.push(args[i]!);
+  }
+  if (!scripts.length && operands[0]) scripts.push(operands[0]);
+  return scripts.length > 0 && scripts.every((s) => !s.dynamic && s.text.split(';').every((c) => !c.trim() || /^\s*(\d+|\$)(\s*,\s*(\d+|\$))?\s*p\s*$/.test(c)));
 }
 
 function parseGit(args: Word[]): { globals: string[]; sub: string | null; rest: Word[] } {

@@ -477,6 +477,14 @@ test('只读档位：可以读其他提交（git show、log -p、diff <版本>�
     'git blame HEAD~1 -- src/a.ts', 'git diff', 'git log --oneline -5', 'git status', 'git ls-files']) allowed(checkToolCall(bash(cmd), c));
 });
 
+test('只读档位：按行号打印的 sed、node --check、git -C 放行；sed 改文件、写文件、执行命令的写法仍拦', () => {
+  const c = ctx('reviewer');
+  for (const cmd of ['sed -n 1,60p docs/spec/requirements.md', "sed -n '212,216p' src/a.js", "cat -A src/a.js | sed -n '8,16p'", "sed -n -e '1,5p' -e '$p' src/a.js",
+    "sed -n '10p;20,30p' src/a.js", 'node --check src/a.js', 'node -c src/a.js && echo ok', 'git -C . diff --stat', `git -C ${wt} diff HEAD~1 --stat`]) allowed(checkToolCall(bash(cmd), c));
+  for (const cmd of ["sed -i '' 1d src/a.js", "sed -n '1,5w out.txt' src/a.js", "sed 's/a/b/' src/a.js", "sed -n '1e rm x' src/a.js", 'sed -n "$S" src/a.js',
+    'node src/a.js', 'node --check', 'node --check --eval x', 'node -e 1', 'git --git-dir=/tmp/x log', 'git -C . commit -m x']) blocked(checkToolCall(bash(cmd), c), 'bash');
+});
+
 test('隔离工作区（stage-qa 的临时 worktree）：读写与 bash 参数不能越出工作区，不能碰 .forge/', () => {
   const c = ctx('stage-qa', { isolatedWorkspace: true });
   for (const d of [
@@ -519,7 +527,7 @@ test('隔离工作区：系统临时目录可用、别的 worktree 仍拦；不�
   blocked(checkToolCall(bash(`cat ${main}/src/server/a.ts`), c), 'read_paths');
   for (const cmd of ['printenv', 'printenv -0', 'env', 'export']) blocked(checkToolCall(bash(cmd), c), 'sensitive');
   allowed(checkToolCall(bash('printenv PORT'), ctx('worker')));
-  blocked(checkToolCall(bash('env | grep -i port'), ctx('worker')), 'sensitive');
+  blocked(checkToolCall(bash('env | grep -i port'), ctx('worker')), 'sensitive', /printenv PORT/);
 });
 
 test('受保护路径的目录本身（worktree 里的 .git 文件）与会匹配到它的隐藏文件通配都拦；forge_service 直接给的命令同样检查', () => {

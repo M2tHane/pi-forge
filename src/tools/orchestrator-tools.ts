@@ -184,7 +184,9 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
  */
 export async function flowWait(store: StateStore, engine: Engine, p: Static<typeof WaitParams>, config?: FlowConfig): Promise<ToolResult> {
   const flowId = activeFlowId(store);
-  const statuses = () => new Map(store.listTasks(flowId).map((t) => [t.id, t.status as string]));
+  // 等架构师回答的任务仍算进行中：提问与回答由程序推进，回答后它接着 in_progress
+  const seen = (t: TaskFile): string => t.status === 'blocked' && t.blocked_by === 'architect' ? 'in_progress' : t.status;
+  const statuses = () => new Map(store.listTasks(flowId).map((t) => [t.id, seen(t)]));
   const flowState = () => { const f = store.readFlow(flowId); return `${f.stage}|${f.stage_status}|${store.readState().active_flow ?? ''}`; };
   const actionKeys = () => new Set(config ? actionsNeeded(store, config).map((a) => a.key) : []);
   const reviewing = () => new Set(store.listTasks(flowId).filter(awaitingReview).map((t) => `${t.id}:${t.timeouts ?? 0}`));
@@ -193,7 +195,7 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
   const beforeFlow = flowState();
   const beforeActions = actionKeys();
   const deadline = Date.now() + (p.timeout_s ?? 1200) * 1000;
-  const settled = (id: string) => ['done', 'blocked', 'cancelled'].includes(store.readTask(flowId, id).status);
+  const settled = (id: string) => ['done', 'blocked', 'cancelled'].includes(seen(store.readTask(flowId, id)));
   if (p.task_id && settled(p.task_id)) return { text: `${p.task_id} 已是 ${store.readTask(flowId, p.task_id).status}。\n\n${statusText(store, engine, flowId)}`, details: { changed: [] } };
   // 上次等待之后架构师已经回答了主会话的问题：直接交给它
   const ready = await takeAnswers(store, flowId);
@@ -203,8 +205,8 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
     // 运行超时等主会话复核
     for (const k of reviewing()) if (!beforeReview.has(k)) return true;
     if (p.task_id) return now.get(p.task_id) !== before.get(p.task_id);
-    // 子 agent 向架构师提问、架构师回答由程序推进，不唤醒主会话（主会话自己的提问在回答完成时唤醒）
-    const internal = new Set(store.listTasks(flowId).filter((t) => (t.kind === 'consult' && t.for_task) || (t.status === 'blocked' && t.blocked_by === 'architect')).map((t) => t.id));
+    // 子 agent 的咨询任务由程序推进，不唤醒主会话（主会话自己的提问在回答完成时唤醒）
+    const internal = new Set(store.listTasks(flowId).filter((t) => t.kind === 'consult' && t.for_task).map((t) => t.id));
     for (const [id, s] of now) {
       if (s === before.get(id) || internal.has(id)) continue;
       // impl 一律有审查任务，.rv 的新建与完成由程序驱动，不单独唤醒（结论体现在被审查任务的状态上）；审查者 blocked 时只有 .rv 阻塞，要唤醒
@@ -226,7 +228,7 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
   try { store.readFlow(flowId); } catch { flowGone = true; }
   if (flowGone || (store.readState().active_flow !== flowId && store.openLightFlow()?.id !== flowId)) return { text: `流程 ${flowId} 已结束或不再是活动流程。`, details: { changed: [] } };
   const tasks = store.listTasks(flowId);
-  const changed = tasks.filter((t) => before.get(t.id) !== t.status).map((t) => t.id);
+  const changed = tasks.filter((t) => before.get(t.id) !== seen(t)).map((t) => t.id);
   const desc = (id: string) => {
     const t = tasks.find((x) => x.id === id)!;
     return `${id}：${before.get(id) ?? '（新任务）'} → ${t.status}${t.status === 'blocked' ? `（${one(t.blocked_reason ?? '')}）` : t.last_failure && t.status === 'in_progress' ? `（${one(t.last_failure)}）` : ''}`;

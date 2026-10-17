@@ -44,6 +44,7 @@ test('子 agent 提问（answer）：任务等架构师、不交给主会话 →
       const t1 = p.store.readTask(p.flowId, 'T-001');
       seen['waiting'] = [t1.status, t1.blocked_by, t1.blocked_owner ?? null];
       seen['decisions'] = pendingDecisions(p.store, p.flowId).length;
+      seen['wait'] = (await flowWait(p.store, e.engine, { task_id: 'T-001', timeout_s: 1 }, p.config)).text;
       assert.match(p.store.readHandoff(p.flowId, a.env.task), /提问方：T-001[\s\S]*类型：answer[\s\S]*分页参数叫什么/);
       await writeFiles(a, { 'docs/arch/decisions.md': '# 架构决定\n- T-001 问分页参数：用 page 与 size\n' });
       const r = await a.call('forge_answer', { text: '用 page（从 1 开始）与 size（默认 20）。' });
@@ -60,6 +61,7 @@ test('子 agent 提问（answer）：任务等架构师、不交给主会话 →
     assert.deepEqual(e.errors, []);
     assert.deepEqual(seen['waiting'], ['blocked', 'architect', null], '提问的任务在等架构师，不交给主会话');
     assert.equal(seen['decisions'], 0, '"等架构师"不出现在主会话的待决定事项里');
+    assert.match(seen['wait'] as string, /^等待超时/, '等这个任务的 forge_wait 不因它在等架构师就返回');
     const c = p.store.readTask(p.flowId, 'T-002');
     assert.deepEqual([c.kind, c.role, c.stage, c.for_task, c.status], ['consult', 'architect', 'S1', 'T-001', 'done']);
     assert.ok(!p.store.listTasks(p.flowId).some((t) => t.id.startsWith('T-002.rv')), '咨询不审查');

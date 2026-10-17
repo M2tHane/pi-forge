@@ -52,6 +52,7 @@
 
 ### 需求与架构
 - 需求输入只认固定位置（10-17 改造）：`docs/PRD.md` 与 `docs/prototype/`（至少一个 .html），缺了 `/forge-build` 只提示、不建流程；两者原样提交到集成分支（路径不变），之后所有 agent 从集成分支读。PRD 是需求的唯一依据，不再改写成规格：P0、`forge_spec`、spec-lint、技能 spec-from-prd 与 grilling 已删，build 流程从 S0 开始。程序只解析 REQ 编号、`- ACn` 验收标准与"页面"表（`spec/prd.ts`）；解析不出、缺 AC、编号重复、原型文件不存在只警告。
+- `/forge init` 把示例 PRD 与两页原型复制到 `docs/examples/`（用户决定 10-17），写进 .gitignore、不提交：示例进了 git 会出现在每个任务的 worktree 里，agent 可能把示例需求当成本项目的需求。显式的 `/forge init` 在项目还没有 `.codegraph/` 时执行 `codegraph init -y` 建索引（codegraph 1.6.2 已核实），失败只提示；`/forge-build` 等命令自动初始化时不建，避免意外等很久。
 - 实施任务不能改 `docs/PRD.md` 与 `docs/prototype/`（原来不能改的是 `docs/spec/`）：需求是用户在流程外定的，agent 改了就没有依据可对照。审查材料不再带术语表；PRD 的「通用约定」照旧放进开发 agent 与 reviewer 的任务说明。
 - 架构阶段 S0（10-17 改造）：原来的 P1（契约与计划）与 S0（骨架）合并成 S0 的一个 impl task，architect 一次做完技术栈、骨架、公共代码、domain 划分与接口、OpenAPI 与页面接口对照、rules、commands.yaml、`docs/plan.md`；由程序派发（不经主会话），经审查、合并、门禁后等用户批准，打回时新 task 接着原会话返工。原因：P1 与 S0 分开时契约写完要等一次批准才落成代码，骨架又常发现契约要改。task 编号全流程连续，含此前流程与 `tests/acceptance/` 的目录名。
 - 鉴权拆成接口与实现（用户决定 10-17）：S0 只定鉴权接口（校验令牌、当前用户、检查权限）、角色与权限的表达、请求入口的中间件，和只用于开发与测试的桩；真实实现（用户增删改查、登录退出、令牌签发与校验、停用后令牌立即失效）是 identity domain，放第 1 批。别的 domain 只依赖接口、开发时用桩，和 identity 并行；「接入真实接口」与批次门禁时真实鉴权已合入，所有接口在真实鉴权下再跑一遍。plan.md 里有 domain 写 `after: [identity]` 或 identity 不在第 1 批时只提醒。原因：stock run-01 登录 → 分类 → 商品三环依赖把 4 个能并行的任务拖成串行。

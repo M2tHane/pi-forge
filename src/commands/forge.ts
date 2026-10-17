@@ -6,6 +6,7 @@ import type { StateStore } from '../core/state/state-store.ts';
 import type { Engine } from '../core/engine/dispatcher.ts';
 import { isLightFlow, type RoleSettingsFile } from '../core/state/schemas.ts';
 import { initProject, formatInit } from '../core/ops/init.ts';
+import { codegraphInit } from '../core/ops/codegraph.ts';
 import { doctor, formatDoctor } from '../core/ops/doctor.ts';
 import { resume, type DecisionAnswer } from '../core/ops/resume.ts';
 import { buildInputProblems, formatPreflight } from '../core/spec/preflight.ts';
@@ -147,7 +148,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
   const sub = argv[0] ?? 'status';
   switch (sub) {
     case 'init': {
-      const r = await initProject(env.root, env.packageRoot, env.dependencies?.());
+      const r = await initProject(env.root, env.packageRoot, env.dependencies?.(), codegraphInit);
       return `${formatInit(r)}\n\n前置条件：\n${formatPreflight(r.preflight)}\n\n下一步：执行 /forge-config 为各角色选择模型，然后 /forge-build 开始。`;
     }
     case 'doctor': {

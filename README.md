@@ -44,7 +44,7 @@ pi install /path/to/pi-forge        # 加 -l 写入项目的 .pi/settings.json
 
 ### 初始化项目
 
-在项目的 git 仓库根目录运行 `/forge init`。它生成 `workflow.yaml`、`AGENTS.md`、`rules/global.md`、`docs/PRD.md` 模板、`docs/prototype/README.md` 与 `tests/acceptance/` 骨架，把 `.codegraph/` 写进 `.gitignore`，初始化 `.forge/` 并提交一次。可以重复执行，不覆盖已有文件。`/forge-build` 和 `/forge-fix` 在项目没有初始化时会自动执行它。
+在项目的 git 仓库根目录运行 `/forge init`。它生成 `workflow.yaml`、`AGENTS.md`、`rules/global.md`、`docs/PRD.md` 模板、`docs/prototype/README.md` 与 `tests/acceptance/` 骨架，把 `.codegraph/` 与 `docs/examples/` 写进 `.gitignore`，初始化 `.forge/` 并提交一次。完整的示例 PRD 与可点击原型放在 `docs/examples/`，只供参考、不提交（免得 agent 把示例需求当成本项目的需求）。项目还没有 `.codegraph/` 时，它会执行 `codegraph init -y` 建立代码索引；没装 codegraph 或失败时只提示，不影响初始化。可以重复执行，不覆盖已有文件。`/forge-build` 和 `/forge-fix` 在项目没有初始化时会自动执行它（这时不建索引）。
 
 然后用 `/forge-config` 为各角色选模型和思考级别（保存在 `~/.pi/agent/pi-forge.json`，见 `/forge-config help`）。建议 reviewer 用和开发角色不同的模型，并设一个兜底模型，服务中断时任务换它继续。
 
@@ -52,7 +52,7 @@ pi install /path/to/pi-forge        # 加 -l 写入项目的 .pi/settings.json
 
 ### 新项目
 
-1. 写 `docs/PRD.md`（照 `/forge init` 生成的模板）。程序只读三样东西，格式要照写：
+1. 写 `docs/PRD.md`（照 `/forge init` 生成的模板，完整示例见 `docs/examples/PRD.md`）。程序只读三样东西，格式要照写：
    - 每条需求的标题带编号 `REQ-xxx`，例如 `### 6.3 商品  REQ-003`；
    - 验收标准写在需求下面，每条一行，以 `- ACn` 开头，例如 `- AC1 Given … When … Then …`，程序据此组成 `REQ-003.AC1`；
    - 「页面」一节的表格：`页面 | 原型文件 | 对应需求`，原型文件写相对路径，例如 `docs/prototype/products.html`。

@@ -62,7 +62,7 @@ pi-forge 是 Pi（`@earendil-works/pi-coding-agent`，一个终端里的编程 a
 
 ### 4. 你会在哪些地方出手
 
-- **流程开始前**：写 PRD、做原型，自己点一遍。
+- **流程开始前**：写 PRD、做原型，自己点一遍。`/forge init` 会在 `docs/examples/` 放一份示例 PRD 与原型供参考（不提交），并执行 `codegraph init -y` 建立代码索引（没装 codegraph 时只提示）。
 - **批准架构**：看批准页（计划说明、风险与假设、各项提醒），`/forge-approve` 或 `/forge-reject "<意见>"`。
 - **每批签收**：浏览器验收通过后，看 `/forge report`，`/forge-approve` 签收或打回。
 - **主会话转交给你的事**：程序遇到需要拿主意的情况（任务阻塞、门禁修复轮数用尽），先交给主会话决定，它解决不了才转给你。

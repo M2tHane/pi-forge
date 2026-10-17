@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务列表 - 小组待办（原型）</title>
+<!-- 示例原型：对应 PRD 的 REQ-002、REQ-003、REQ-004。顶部的灰色条只用来切换演示状态，不是页面的一部分。 -->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f4f5f7; color: #222; }
+  .demo { background: #e5e7eb; padding: 6px 12px; font-size: 13px; color: #555; }
+  .demo button { margin-left: 6px; }
+  header { display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 12px 24px; border-bottom: 1px solid #e5e7eb; }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: #2563eb; margin-left: 12px; }
+  main { max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  .new { display: flex; gap: 8px; }
+  .new input, .new select { padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font: inherit; }
+  .new input { flex: 1; min-width: 0; }
+  button { padding: 8px 14px; border: 1px solid #ccc; border-radius: 4px; background: #fff; font: inherit; cursor: pointer; }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .field-error { color: #d93025; font-size: 13px; min-height: 18px; }
+  .filters { margin: 8px 0 12px; }
+  .filters button.on { background: #222; border-color: #222; color: #fff; }
+  ul { list-style: none; padding: 0; margin: 0; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  li { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid #f0f0f0; }
+  li:first-child { border-top: 0; }
+  li .title { flex: 1; }
+  li.done .title { text-decoration: line-through; color: #999; }
+  li .meta { color: #888; font-size: 13px; }
+  li .del { border: 0; color: #d93025; padding: 4px 6px; }
+  .pager { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 12px; }
+  .state { background: #fff; border-radius: 8px; padding: 40px 16px; text-align: center; color: #555; }
+  .skeleton li span { display: block; height: 14px; width: 60%; background: #eceff3; border-radius: 4px; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #b3261e; color: #fff; padding: 8px 14px; border-radius: 4px; display: none; }
+  .toast.show { display: block; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="demo">演示状态：
+  <button data-state="list">有数据</button>
+  <button data-state="loading">加载中</button>
+  <button data-state="empty">空</button>
+  <button data-state="error">出错</button>
+  <button data-state="forbidden">无权限</button>
+  <button id="demo-403">删除被拒（403）</button>
+  <label><input type="checkbox" id="as-admin"> 以管理员身份查看</label>
+</div>
+<header>
+  <h1>小组待办</h1>
+  <div>alice <a href="login.html">退出</a></div>
+</header>
+<main>
+  <!-- REQ-003 新建任务 -->
+  <form class="new" id="new">
+    <input id="title" maxlength="100" placeholder="写下要做的事，回车添加">
+    <select id="assignee"><option value="">负责人（可选）</option><option>alice</option><option>bob</option><option>carol</option></select>
+    <button class="primary" type="submit">添加</button>
+  </form>
+  <div class="field-error" id="title-error"></div>
+
+  <!-- REQ-002 筛选：选中的筛选写进网址 ?status= -->
+  <div class="filters" id="filters">
+    <button data-filter="all" class="on">全部</button>
+    <button data-filter="open">未完成</button>
+    <button data-filter="done">已完成</button>
+  </div>
+
+  <div id="view-list">
+    <ul id="list"></ul>
+    <div class="pager"><button disabled>上一页</button><span>第 1 / 2 页</span><button>下一页</button></div>
+  </div>
+  <ul class="skeleton" id="view-loading" hidden><li><span></span></li><li><span></span></li><li><span></span></li></ul>
+  <div class="state" id="view-empty" hidden>还没有任务，新建第一条吧<br><br><button class="primary" onclick="document.getElementById('title').focus()">新建任务</button></div>
+  <div class="state" id="view-error" hidden>任务加载失败，请检查网络<br><br><button onclick="show('list')">重试</button></div>
+  <div class="state" id="view-forbidden" hidden>没有权限查看这个团队的任务<br><br><button onclick="history.back()">返回</button></div>
+</main>
+<div class="toast" id="toast" role="alert"></div>
+<script>
+  const me = 'alice';
+  let tasks = [
+    { id: 1, title: '准备周会材料', assignee: 'alice', creator: 'alice', done: false, at: '2026-10-16 09:30' },
+    { id: 2, title: '更新部署文档', assignee: 'bob', creator: 'bob', done: false, at: '2026-10-15 17:02' },
+    { id: 3, title: '回复客户邮件', assignee: '', creator: 'carol', done: false, at: '2026-10-15 11:40' },
+    { id: 4, title: '整理上周的 bug 列表', assignee: 'alice', creator: 'alice', done: true, at: '2026-10-14 15:20' },
+  ];
+  const $ = (id) => document.getElementById(id);
+  const isAdmin = () => $('as-admin').checked;
+  let filter = new URLSearchParams(location.search).get('status') || 'all';
+
+  function show(state) {
+    for (const s of ['list', 'loading', 'empty', 'error', 'forbidden']) $('view-' + s).hidden = s !== state;
+    if (state === 'list') render();
+  }
+  function render() {
+    document.querySelectorAll('[data-filter]').forEach((b) => b.classList.toggle('on', b.dataset.filter === filter));
+    const rows = tasks
+      .filter((t) => filter === 'all' || (filter === 'done') === t.done)
+      .sort((a, b) => a.done - b.done || b.at.localeCompare(a.at)); // 未完成在前，同组内按创建时间倒序
+    $('list').innerHTML = rows.map((t) => `
+      <li class="${t.done ? 'done' : ''}">
+        <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggle(${t.id})" aria-label="完成">
+        <span class="title"></span>
+        <span class="meta">${t.assignee ? '负责人 ' + t.assignee + ' · ' : ''}${t.at}</span>
+        ${t.creator === me || isAdmin() ? `<button class="del" onclick="remove(${t.id})">删除</button>` : ''}
+      </li>`).join('');
+    // 标题用 textContent 写入，避免用户输入被当成 HTML
+    $('list').querySelectorAll('.title').forEach((el, i) => { el.textContent = rows[i].title; });
+  }
+  function toggle(id) { const t = tasks.find((x) => x.id === id); t.done = !t.done; render(); }
+  function remove(id) {
+    if (!confirm('确定删除这条任务？')) return;
+    tasks = tasks.filter((x) => x.id !== id);
+    tasks.length ? render() : show('empty');
+  }
+  function toast(msg) { $('toast').textContent = msg; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 2500); }
+
+  $('new').onsubmit = (e) => {
+    e.preventDefault();
+    const title = $('title').value.trim();
+    $('title-error').textContent = title ? '' : '标题不能为空';
+    if (!title) return;
+    const now = new Date(); const pad = (n) => String(n).padStart(2, '0');
+    tasks.unshift({ id: Date.now(), title, assignee: $('assignee').value, creator: me, done: false,
+      at: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}` });
+    $('title').value = '';
+    show('list');
+  };
+  $('filters').onclick = (e) => {
+    const f = e.target.dataset && e.target.dataset.filter;
+    if (!f) return;
+    filter = f;
+    history.replaceState(null, '', f === 'all' ? location.pathname : '?status=' + f);
+    render();
+  };
+  document.querySelectorAll('[data-state]').forEach((b) => b.onclick = () => show(b.dataset.state));
+  $('as-admin').onchange = render;
+  // 演示：别人创建的任务被直接调用删除接口时返回 403，页面只提示、不跳转
+  $('demo-403').onclick = () => toast('没有权限删除这条任务');
+  show('list');
+</script>
+</body>
+</html>

@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node
 import path from 'node:path';
 import { initProject, formatInit } from '../../src/core/ops/init.ts';
 import { preflight } from '../../src/core/spec/preflight.ts';
+import { codegraphInit } from '../../src/core/ops/codegraph.ts';
 import { doctor } from '../../src/core/ops/doctor.ts';
 import { StateStore } from '../../src/core/state/state-store.ts';
 import { nextStep, turnContext, newDrift } from '../../src/core/engine/context-injector.ts';
@@ -27,7 +28,8 @@ test('/forge init：生成骨架、.gitignore、.forge 与初始提交；重复�
     }
     assert.ok(!existsSync(path.join(r.dir, 'docs/interfaces')), '不再生成 docs/interfaces/');
     assert.match(readFileSync(path.join(r.dir, 'workflow.yaml'), 'utf8'), new RegExp(`^project: ${path.basename(r.dir)}$`, 'm'));
-    assert.equal(readFileSync(path.join(r.dir, '.gitignore'), 'utf8'), 'node_modules/\n\n# pi-forge\n.codegraph/\n');
+    assert.equal(readFileSync(path.join(r.dir, '.gitignore'), 'utf8'), 'node_modules/\n\n# pi-forge\n.codegraph/\ndocs/examples/\n');
+    assert.equal(first.index, null, '没传建索引函数时不建索引');
     assert.ok(first.commit);
     assert.equal(r.git('status', '--porcelain', '--', '.', ':(exclude).gitignore'), '', '骨架已提交');
     assert.match(r.git('log', '--format=%s'), /pi-forge: 初始化项目骨架/);
@@ -50,6 +52,52 @@ test('/forge init：生成骨架、.gitignore、.forge 与初始提交；重复�
     assert.deepEqual(third.created, []);
     assert.equal(third.commit, null);
   } finally { r.cleanup(); }
+});
+
+test('/forge init：示例放进 docs/examples/ 且不提交；.gitignore 缺哪行补哪行；没有 .codegraph/ 时建一次索引', async () => {
+  const r = tmpRepo();
+  try {
+    writeFileSync(path.join(r.dir, '.gitignore'), 'node_modules/\n# pi-forge\n.codegraph/\n');
+    let calls = 0;
+    const fakeIndex = async (root: string) => { calls++; mkdirSync(path.join(root, '.codegraph')); return '代码索引：已建立（假）'; };
+    const first = await initProject(r.dir, PKG, undefined, fakeIndex);
+    for (const f of ['docs/examples/PRD.md', 'docs/examples/prototype/login.html', 'docs/examples/prototype/tasks.html']) {
+      assert.ok(existsSync(path.join(r.dir, f)), f);
+      assert.ok(first.created.includes(f), f);
+    }
+    assert.equal(r.git('ls-files', '--', 'docs/examples'), '', '示例不提交');
+    assert.equal(r.git('status', '--porcelain', '--', 'docs/examples'), '', '示例被 .gitignore 忽略');
+    assert.equal(readFileSync(path.join(r.dir, '.gitignore'), 'utf8'), 'node_modules/\n# pi-forge\n.codegraph/\ndocs/examples/\n', '只补缺的 docs/examples/');
+    assert.ok(first.created.includes('.gitignore（追加 docs/examples/）'));
+    assert.equal(calls, 1);
+    assert.equal(first.index, '代码索引：已建立（假）');
+    assert.match(formatInit(first), /docs\/examples\//);
+    assert.match(formatInit(first), /代码索引：已建立（假）/);
+
+    // 用户改了示例：不覆盖、不报告差异；已有 .codegraph/ 时不再建索引
+    writeFileSync(path.join(r.dir, 'docs/examples/PRD.md'), '# 改过\n');
+    const second = await initProject(r.dir, PKG, undefined, fakeIndex);
+    assert.equal(calls, 1);
+    assert.equal(second.index, null);
+    assert.ok(!second.differs.some((d) => d.startsWith('docs/examples/')));
+    assert.equal(readFileSync(path.join(r.dir, 'docs/examples/PRD.md'), 'utf8'), '# 改过\n');
+  } finally { r.cleanup(); }
+});
+
+test('/forge init：没装 codegraph 时只在输出里提示', async () => {
+  const r = tmpRepo();
+  const prev = process.env['PI_FORGE_CODEGRAPH_BIN'];
+  process.env['PI_FORGE_CODEGRAPH_BIN'] = path.join(r.dir, 'no-such-codegraph');
+  try {
+    const rep = await initProject(r.dir, PKG, undefined, codegraphInit);
+    assert.match(rep.index ?? '', /没有找到 codegraph.*codegraph init -y/);
+    assert.ok(!existsSync(path.join(r.dir, '.codegraph')));
+    assert.match(formatInit(rep), /没有找到 codegraph/);
+  } finally {
+    if (prev === undefined) delete process.env['PI_FORGE_CODEGRAPH_BIN'];
+    else process.env['PI_FORGE_CODEGRAPH_BIN'] = prev;
+    r.cleanup();
+  }
 });
 
 test('/forge init 在非 git 目录与子目录中报错', async () => {

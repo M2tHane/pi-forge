@@ -93,7 +93,7 @@ export function preflight(d: PreflightDeps): PreflightItem[] {
     ...(d.packageRoots ? { packageRoots: d.packageRoots } : {}), ...(d.probe ? { probe: d.probe } : {}) });
   for (const i of deps) {
     if (i.item === 'codegraph' && i.level === 'ok' && !existsSync(path.join(d.root, '.codegraph'))) {
-      push('warn', 'codegraph', `${i.detail} 已安装但项目未索引，执行 codegraph init -i`);
+      push('warn', 'codegraph', `${i.detail} 已安装但项目未索引，执行 /forge init 或 codegraph init -y`);
     } else {
       push(i.level, i.item, i.item === 'codegraph' && i.level === 'ok' ? `${i.detail}，已索引` : i.detail);
     }

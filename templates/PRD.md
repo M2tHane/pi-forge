@@ -6,6 +6,7 @@ pi-forge 只从这份文档里读三样东西，格式必须照下面写：
 2. 验收标准写在该需求下面，每条一行，以「- ACn」开头，例如「- AC1 Given … When … Then …」。程序据此组成 REQ-003.AC1。
 3. 「页面」一节的表格：页面 | 原型文件 | 对应需求。原型文件写相对路径，例如 docs/prototype/products.html。
 其余各节程序不检查，但架构师与各 agent 都会读。写好后把可点击的 HTML 原型放进 docs/prototype/，再执行 /forge-build。
+完整示例见 docs/examples/（/forge init 生成，只供参考，不提交）。
 -->
 
 ## 1. 概述

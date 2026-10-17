@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 - 小组待办（原型）</title>
+<!-- 示例原型：对应 PRD 的 REQ-001。顶部的灰色条只用来切换演示状态，不是页面的一部分。 -->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f4f5f7; color: #222; }
+  .demo { background: #e5e7eb; padding: 6px 12px; font-size: 13px; color: #555; }
+  .demo button { margin-left: 6px; }
+  main { max-width: 360px; margin: 64px auto; padding: 0 16px; }
+  h1 { font-size: 22px; text-align: center; margin-bottom: 24px; }
+  form { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  label { display: block; margin-top: 12px; font-weight: 600; }
+  input { width: 100%; padding: 8px 10px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; font: inherit; }
+  input.invalid { border-color: #d93025; }
+  .field-error { color: #d93025; font-size: 13px; min-height: 18px; }
+  .form-error { display: none; background: #fdecea; color: #b3261e; padding: 8px 10px; border-radius: 4px; }
+  .form-error.show { display: block; }
+  button[type=submit] { width: 100%; margin-top: 16px; padding: 10px; border: 0; border-radius: 4px; background: #2563eb; color: #fff; font: inherit; cursor: pointer; }
+  button[type=submit][disabled] { background: #93b4f5; cursor: wait; }
+  .hint { color: #777; font-size: 13px; text-align: center; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="demo">演示：
+  <button data-demo="ok">登录成功</button>
+  <button data-demo="wrong">密码错误</button>
+  <button data-demo="network">网络出错</button>
+</div>
+<main>
+  <h1>小组待办</h1>
+  <form id="login" novalidate>
+    <div class="form-error" id="form-error" role="alert"></div>
+    <label for="email">邮箱</label>
+    <input id="email" name="email" type="email" autocomplete="username" placeholder="alice@example.com">
+    <div class="field-error" id="email-error"></div>
+    <label for="password">密码</label>
+    <input id="password" name="password" type="password" autocomplete="current-password">
+    <div class="field-error" id="password-error"></div>
+    <button type="submit" id="submit">登录</button>
+  </form>
+  <p class="hint">账号由管理员分配；没有账号请联系管理员。</p>
+</main>
+<script>
+  // 演示用：选择「登录成功 / 密码错误 / 网络出错」后点「登录」，看各状态的表现
+  let outcome = 'ok';
+  document.querySelectorAll('[data-demo]').forEach((b) => b.onclick = () => { outcome = b.dataset.demo; });
+  const $ = (id) => document.getElementById(id);
+  $('login').onsubmit = (e) => {
+    e.preventDefault();
+    $('form-error').classList.remove('show');
+    let empty = false;
+    for (const id of ['email', 'password']) {
+      const blank = !$(id).value.trim();
+      $(id).classList.toggle('invalid', blank);
+      $(id + '-error').textContent = blank ? '必填' : '';
+      empty = empty || blank;
+    }
+    if (empty) return; // 有空字段时不发请求
+    $('submit').disabled = true;
+    $('submit').textContent = '登录中…';
+    setTimeout(() => {
+      $('submit').disabled = false;
+      $('submit').textContent = '登录';
+      if (outcome === 'ok') { location.href = 'tasks.html'; return; }
+      $('form-error').textContent = outcome === 'wrong' ? '邮箱或密码错误' : '网络出错，请稍后重试';
+      $('form-error').classList.add('show');
+      if (outcome === 'wrong') $('password').value = '';
+    }, 600);
+  };
+</script>
+</body>
+</html>

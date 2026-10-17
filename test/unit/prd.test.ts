@@ -1,6 +1,8 @@
 // docs/PRD.md 的解析与检查（纯函数）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { acMap, acTexts, checkPrd, conventionsSection, pageOf, parsePrd, prototypePath } from '../../src/core/spec/prd.ts';
 
 const PRD = [
@@ -85,4 +87,17 @@ test('prototypePath、pageOf、conventionsSection', () => {
   assert.equal(pageOf(prd, 'nope'), undefined);
   assert.equal(conventionsSection(PRD), '- 名称最长 50 个字符\n- 金额保留两位小数');
   assert.equal(conventionsSection('# 无'), '');
+});
+
+test('templates/examples 的示例 PRD 照约定写成：解析无警告，页面表的原型都在示例里', () => {
+  const root = new URL('../..', import.meta.url).pathname;
+  const md = readFileSync(path.join(root, 'templates/examples/PRD.md'), 'utf8');
+  const prd = parsePrd(md);
+  assert.ok(prd.reqs.length >= 3);
+  assert.ok(prd.reqs.every((r) => r.acs.length >= 2));
+  assert.ok(prd.pages.length >= 2);
+  // 照抄到 docs/ 后原型在 docs/prototype/ 下；示例里对应 templates/examples/prototype/
+  const exists = (rel: string) => rel.startsWith('docs/prototype/') && existsSync(path.join(root, 'templates/examples/prototype', rel.slice('docs/prototype/'.length)));
+  assert.deepEqual(checkPrd(prd, exists), []);
+  assert.ok(conventionsSection(md).length > 0);
 });

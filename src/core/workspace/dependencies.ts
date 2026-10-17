@@ -65,7 +65,7 @@ export function playwrightSkillDir(roots: readonly string[]): string | null {
 
 export const CODEGRAPH_CLI = {
   tested: { min: '1.6.0', below: '2.0.0', label: '1.x（已验证 1.6.0）' } as Tested,
-  install: 'npm i -g @colbymchenry/codegraph，然后在项目里执行 codegraph init -i',
+  install: 'npm i -g @colbymchenry/codegraph，然后在项目里执行 codegraph init -y',
   links: ['https://www.npmjs.com/package/@colbymchenry/codegraph'],
 };
 

@@ -1,4 +1,4 @@
-// 运行时资源隔离：每次运行、预检、门禁分配一段端口、一个数据库名与一个临时目录，经环境变量注入。
+// 运行时资源隔离：每次运行、门禁、合并验证分配一段端口、一个数据库名与一个临时目录，经环境变量注入。
 // 登记在 <项目>.worktrees/.resources.json（不在 .forge/ 内），文件锁保护；正常结束时释放，resume 与 doctor --fix 回收残留。
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -14,7 +14,7 @@ export const PORT_RANGE = { start: 41000, end: 60000 } as const;
 const DB_COMMAND_TIMEOUT_MS = 120_000;
 
 export interface ResourceEntry {
-  /** run id；预检、门禁等程序步骤用带前缀的标签（pc-、gate-、merge-） */
+  /** run id；门禁等程序步骤用带前缀的标签（gate-、merge-） */
   run: string;
   /** 分配时的引擎进程；子进程 run 另以 run 记录判断是否结束 */
   pid: number;
@@ -176,7 +176,7 @@ export async function reclaimResources(root: string, isStale: (e: ResourceEntry)
 export const resourceOptions = (config: { commands: Record<string, string>; limits: { port_block?: number | undefined } }): AllocateOptions =>
   ({ commands: config.commands, ...(config.limits.port_block ? { block: config.limits.port_block } : {}) });
 
-/** 带资源执行一个程序步骤（预检、门禁、合并验证），结束后释放 */
+/** 带资源执行一个程序步骤（门禁、合并验证），结束后释放 */
 export async function withResources<T>(root: string, label: string, o: AllocateOptions, fn: (env: Record<string, string>, e: ResourceEntry) => Promise<T>): Promise<T> {
   const e = await allocateResources(root, label, o);
   try { return await fn(resourceEnv(e), e); } finally { await releaseResources(root, label, o.commands); }

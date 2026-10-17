@@ -3,7 +3,6 @@
 // 纯业务实现，不依赖 Pi；由 pi-adapter 注册为 Pi 工具，测试中由 fake-subagent 直接调用。run token 只来自环境变量，模型看不到也不需要传。
 import { listResources, resourceEnv } from '../core/workspace/resources.ts';
 import { gitOk } from '../core/state/git.ts';
-import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Type, type Static } from 'typebox';
 import type { StateStore } from '../core/state/state-store.ts';

@@ -106,7 +106,6 @@ export class MergeQueue {
     try {
       if (this.hooks.beforeMerge) await this.hooks.beforeMerge();
       const mq = this.store.readMergeQueue();
-      const flowTasks = this.store.listTasks(flowId);
       const head = mq.queue.find((e) => e.flow === flowId);
       if (mq.merging || !head) return null;
       const batch = head === mq.queue[0] ? await this.mergeBatch(flowId) : null;
@@ -345,7 +344,7 @@ export class MergeQueue {
     const full = this.mergeVerifyPlan(flowId, t);
     const results: { command: string; exit_code: number }[] = [];
     if (!full.length) return { ok: true as const, results, reason: '' };
-    // 同一棵代码树上、命令内容相同、已经通过的命令（通常是预检跑过的）沿用结果，并写沿用记录
+    // 同一棵代码树上、命令内容相同、已经通过的命令（例如合并后回归测试跑过的）沿用结果，并写沿用记录
     const tree = cleanTreeOf(wt);
     const reused = reusableRuns(this.store.readEvents(), flowId, tree, full);
     if (reused.size) await this.store.saveEvidence(flowId, t.id, `merge-a${t.merge_failures ?? 0}-reused.txt`, reuseText(tree!, reused), 'merge-queue');

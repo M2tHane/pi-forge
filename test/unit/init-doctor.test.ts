@@ -22,7 +22,7 @@ test('/forge init：生成骨架、.gitignore、.forge 与初始提交；重复�
   try {
     writeFileSync(path.join(r.dir, '.gitignore'), 'node_modules/');
     const first = await initProject(r.dir, PKG);
-    for (const f of ['workflow.yaml', 'AGENTS.md', 'rules/global.md', 'docs/contracts/paths/.gitkeep', 'docs/contracts/components/.gitkeep', 'docs/contracts/errors/.gitkeep', 'docs/PRD.md', 'docs/prototype/README.md', 'docs/arch/.gitkeep', 'docs/plan/.gitkeep', 'tests/acceptance/.gitkeep', '.forge/state.json']) {
+    for (const f of ['workflow.yaml', 'AGENTS.md', 'rules/global.md', 'docs/contracts/.gitkeep', 'docs/PRD.md', 'docs/prototype/README.md', 'docs/arch/.gitkeep', 'tests/acceptance/.gitkeep', '.forge/state.json']) {
       assert.ok(existsSync(path.join(r.dir, f)), f);
     }
     assert.ok(!existsSync(path.join(r.dir, 'docs/interfaces')), '不再生成 docs/interfaces/');

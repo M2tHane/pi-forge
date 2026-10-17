@@ -12,17 +12,18 @@ import { buildViewData, renderViewHtml, ROLES } from '../../scripts/forge-view-d
 const SECRET = 'sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx';
 
 async function build() {
-  const p = await setupProject({ stages: ['P0', 'P1'] });
+  const p = await setupProject({ stages: ['S0'] });
   const { store, flowId } = p;
   await store.setStages(flowId, [{ id: 'S1', goal: '做出登录', exit: ['登录可用'] }]);
   await store.addTasks(flowId, [
-    mkTask('T-001', { stage: 'S1', module: 'auth', ac: ['REQ-001.AC1'], review: 'auto' }),
+    mkTask('T-001', { stage: 'S1', role: 'backend', domain: 'auth', ac: ['REQ-001.AC1'], review: 'auto' }),
+    mkTask('T-002', { stage: 'S1', kind: 'consult', role: 'architect', for_task: 'T-001' }),
     mkTask('T-001.rv', { stage: 'S1', kind: 'review', role: 'reviewer', for_task: 'T-001', writes: [] }),
     mkTask('T-001.fx-1', { stage: 'S1', kind: 'fix', role: 'worker', for_task: 'T-001' }),
     mkTask('S1.qa', { stage: 'S1', kind: 'qa', role: 'stage-qa', writes: [] }),
   ], 'architect');
-  await store.appendHandoff(flowId, 'T-001', `完成登录。临时密钥 ${SECRET} 不要提交。`, 'worker');
-  await store.createRun({ run_id: 'r-1', flow: flowId, task: 'T-001', role: 'worker', model: 'm/x', started_at: new Date().toISOString(), ended_at: null,
+  await store.appendHandoff(flowId, 'T-001', `完成登录。临时密钥 ${SECRET} 不要提交。`, 'backend');
+  await store.createRun({ run_id: 'r-1', flow: flowId, task: 'T-001', role: 'backend', model: 'm/x', started_at: new Date().toISOString(), ended_at: null,
     tokens: { input: 10, output: 5, cache_read: null, cache_write: null }, outcome: null, token_hash: hashToken('t'), violations: 0 });
   return p;
 }
@@ -32,23 +33,24 @@ test('buildViewData：阶段、角色、派生任务、度量都在，且已打�
   try {
     const d = buildViewData(p.store, p.dir);
     assert.deepEqual(d.roles, [...ROLES]);
-    assert.equal(d.roles.length, 5);
+    assert.equal(d.roles.length, 7);
     const F = d.flows.find((f) => f.flow.id === p.flowId)!;
     assert.equal(F.kind, 'build');
-    assert.deepEqual(F.stageRows.map((s) => s.id), ['P0', 'P1', 'S1']);
+    assert.deepEqual(F.stageRows.map((s) => s.id), ['S0', 'S1']);
     const s1 = F.stageRows.find((s) => s.id === 'S1')!;
     assert.equal(s1.goal, '做出登录');
     assert.deepEqual(s1.exit, ['登录可用']);
-    assert.equal(s1.tasks, 4);
+    assert.equal(s1.tasks, 5);
     const byId = new Map(F.tasks.map((t) => [t.id, t]));
-    assert.equal(byId.get('T-001')!.module, 'auth');
+    assert.equal(byId.get('T-001')!.domain, 'auth');
+    assert.equal(byId.get('T-002')!.kind, 'consult');
     assert.deepEqual(byId.get('T-001')!.ac, ['REQ-001.AC1']);
     assert.equal(byId.get('T-001.rv')!.for_task, 'T-001');
     assert.equal(byId.get('T-001.rv')!.kind, 'review');
     assert.equal(byId.get('S1.qa')!.role, 'stage-qa');
-    // 用到的角色都在六个角色之内
+    // 用到的角色都在角色表之内
     for (const t of F.tasks) assert.ok((d.roles as string[]).includes(t.role), t.role);
-    assert.equal(d.runs[0]!.role, 'worker');
+    assert.equal(d.runs[0]!.role, 'backend');
     assert.ok(F.metrics, '度量存在');
     assert.ok(Array.isArray((F.metrics as { stages: unknown[] }).stages));
     assert.ok(d.transitions.some((t) => t.trigger === 'review_changes' && t.to === 'in_progress' && t.counter === 'review_rounds'));

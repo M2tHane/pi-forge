@@ -11,7 +11,7 @@ import lockfile from 'proper-lockfile';
 import type { FlowConfig } from '../state/config.ts';
 import { git } from '../state/git.ts';
 import {
-  LOCKFILES, MANIFESTS, addableToShared, classifyDeps, defaultAddCommand, depNameOfKey, depSnapshot, depSpecProblem, hasManifest, listWorkspaceFiles, lockHash,
+  LOCKFILES, MANIFESTS, addableToShared, classifyDeps, defaultAddCommand, depSnapshot, depSpecProblem, hasManifest, listWorkspaceFiles, lockHash,
   type DepSnapshot,
 } from './dep-files.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions, type AllocateOptions, type ResourceEntry } from './resources.ts';
@@ -217,15 +217,6 @@ export async function syncSharedEnv(root: string, config: FlowConfig, ref: strin
   });
 }
 
-/** 停掉共享环境：运行 env_down（可选），删除元数据与目录。给 doctor --fix 与测试用 */
-export async function removeSharedEnv(root: string, config: FlowConfig): Promise<void> {
-  const down = config.commands['env_down']?.trim();
-  const dir = sharedEnvDir(root);
-  if (down && existsSync(dir)) await runShell(down, dir, 120_000, { FORGE_SHARED_ENV: dir }).catch(() => {});
-  rmSync(sharedEnvMetaPath(root), { force: true });
-  rmSync(dir, { recursive: true, force: true });
-}
-
 function setDepInPackageJson(file: string, name: string, spec: string, section: string): void {
   const text = readFileSync(file, 'utf8');
   const j = JSON.parse(text) as Record<string, Record<string, string> | unknown>;
@@ -264,17 +255,6 @@ export async function addDependencyForWorktree(root: string, config: FlowConfig,
     for (const l of LOCKFILES) if (existsSync(path.join(dir, l)) && existsSync(path.join(wt, l))) { copyFileSync(path.join(dir, l), path.join(wt, l)); notes.push(`${l} 已同步（包含共享环境里别的任务追加过的依赖）`); }
   } else notes.push('没有根目录 package.json，请自己在工作区的依赖清单里补上这一项');
   return `${r.installed.length ? `已装进共享环境：${r.installed.join('、')}` : `${p.name} 共享环境里已经有了`}。${notes.join('；')}。依赖目录是共享链接，不要在工作区里再运行 install/add。`;
-}
-
-/** /forge doctor 与状态详情里的共享环境状态行 */
-export function shareStatusLines(root: string, config: FlowConfig): string[] {
-  const m = readSharedEnv(root);
-  if (!sharedEnvEnabled(config)) return ['共享构建环境：已关闭（shared_env.enabled: false）'];
-  if (!m) return ['共享构建环境：尚未建立（S0 结束后建立）'];
-  return [
-    `共享构建环境：${sharedEnvDir(root)}（依赖目录 ${m.deps.join('、')}；对齐 ${m.ref.slice(0, 8)}；建于 ${m.created_at}；env_up ${m.env_up === 'ok' ? '已运行' : '未配置'}）`,
-    ...(m.added.length ? [`  任务追加的依赖：${m.added.slice(-8).map((a) => `${a.name}@${a.spec}（${a.by}）`).join('、')}`] : []),
-  ];
 }
 
 /**

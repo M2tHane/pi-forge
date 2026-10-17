@@ -257,7 +257,6 @@ test('转移不修改 task、facts、patch，包含 lease 嵌套对象', () => {
 interface StageCase { from: StageStatus; to: StageStatus; trigger: StageTrigger; facts?: Partial<StageFacts>; reject?: Partial<StageFacts> }
 const stages: StageCase[] = [
   { from: 'active', to: 'awaiting_gate', trigger: 'submit_gate' },
-  { from: 'awaiting_human', to: 'awaiting_gate', trigger: 'submit_gate' },
   { from: 'awaiting_gate', to: 'active', trigger: 'gate_failed', reject: { reason: '' } },
   { from: 'awaiting_gate', to: 'awaiting_human', trigger: 'gate_passed', facts: { needs_human: true }, reject: { needs_human: false } },
   { from: 'awaiting_gate', to: 'done', trigger: 'gate_passed', facts: { needs_human: false }, reject: { needs_human: true } },

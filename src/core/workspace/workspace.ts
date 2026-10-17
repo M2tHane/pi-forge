@@ -10,7 +10,6 @@ import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, 
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
-import { git } from '../state/git.ts';
 import { worktreesRoot } from './worktree.ts';
 import { failureSummary, runShell } from './verify-runner.ts';
 

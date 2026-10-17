@@ -1,6 +1,6 @@
 # 项目命令：怎么装依赖、跑测试、启动服务。architect 在 S0 按技术栈填写，开发 agent 加工具时补充；随代码一起合并，合入即生效。
 # 程序只执行 install、test、acceptance、serve（及 serve_*）、env_up、env_down、db_create、db_drop、add_dep；
-# 其余（typecheck、lint、e2e、codegen……）写在这里给 agent 参考，worker 与审查者自己决定要不要跑，程序不跑。
+# 其余（typecheck、lint、e2e、codegen……）写在这里给 agent 参考，开发 agent 与审查者自己决定要不要跑，程序不跑。
 # 用不到的不要写；跑不了的命令要删掉或改对。所有命令都从 PORT、FORGE_PORT_BASE、FORGE_DB_NAME、FORGE_TMP 取资源。
 commands:
   # install:    "npm ci"                    # 准备依赖：S0 之后在共享构建环境里装一次，worktree 链接复用

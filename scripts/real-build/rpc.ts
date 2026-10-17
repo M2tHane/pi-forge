@@ -1,4 +1,4 @@
-// 以 RPC 模式拉起 pi 的最小客户端（M9 real-build 用）。
+// 以 RPC 模式拉起 pi 的最小客户端（real-build.ts 用）。
 // 已核实（Pi 1.1.0 docs/rpc.md、rpc-commands.md、rpc-extension-ui.md、json.md）：
 // - 严格 JSONL，只按 LF 切分（不能用 readline：U+2028/2029 会被误切）；stdin 每条命令一行 JSON。
 // - prompt 的响应只表示"已接受/已处理"（data.disposition）；一轮模型工作结束看 agent_settled。
@@ -79,7 +79,7 @@ export class RpcProcess {
 
   /** 发一条命令并等它的响应（按 id 对应）；超时返回 success:false */
   request(cmd: Record<string, unknown>, timeoutMs = 60_000): Promise<RpcRecord> {
-    const id = `m9-${this.nextId++}`;
+    const id = `rb-${this.nextId++}`;
     return new Promise((resolve) => {
       const timer = setTimeout(() => { this.waiting.delete(id); resolve({ type: 'response', success: false, error: `等待响应超时（${timeoutMs} ms）` }); }, timeoutMs);
       this.waiting.set(id, (r) => { clearTimeout(timer); resolve(r); });

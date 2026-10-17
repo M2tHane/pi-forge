@@ -35,82 +35,85 @@
 - 签收被打回后，旧的 stage-qa 轮次仍计入 `qa.max_rounds`，可 `/forge accept` 放行。
 - 共享构建环境不卸载任务删掉的依赖；测试留下的数据文件不再清理，靠 `.gitignore` 与审查。
 - 合并后回归测试与阶段门禁跑同一组命令：测试慢的项目每次合并多一次全量检查（后台运行，可用 `limits.post_merge_test: false` 关掉）。没有主会话的运行（`scripts/real-tasks`）里，交给主会话的决定没人处理，要用户直接处理。
-- 没接命令或没审阅的：变更请求的 `cancelled`（`StateStore.cancelChange`）；`scripts/forge-view.*` 只做过渲染冒烟；`scripts/ablation/` 是 M8 的消融工具，很多臂的机制已删。
+- `scripts/forge-view.*` 只做过渲染冒烟。`scripts/real-tasks/`（跳过主会话的驱动）没跟新流程适配，还是把 worker 任务直接种进 S1。
+- 批次任务没有 `ac`：plan.md 没有 domain → REQ 的对应，程序只在任务说明里列本批需求，开发 agent 自己去 PRD 里找 AC。
+- 签收前主会话用 `forge_ask_architect(kind=change)` 时，架构师的修改不经重新验收就进集成分支，只靠提示词约束（打回后才用 change）。
+- 页面归属按路径里出现的页面 id 认：后端目录名含页面 id、又没有别的归属时会归给页面任务。
 
 ## 偏离规格
 
 ### 基线与命名
 - 产品与命名空间用 forge（`.forge/`、`forge_*`、`/forge*`）；领域名词 flow（流程实例）照用，如 `FlowFile`、集成分支 `flow/<id>/integration`。
 - 主会话角色叫 orchestrator，不用规格的 main（用户决定）。
-- 主会话的系统提示只放稳定的角色提示与技能（P0 的技能进入 P1 时去掉，变一次）；每轮的状态与下一步作为一条上下文消息放在对话末尾（用户要求优化缓存，10-14）。原来写在系统提示末尾，每轮都变，记账 API 实验里主会话缓存命中只有 26%。
+- 主会话的系统提示只放稳定的角色提示与技能；每轮的状态与下一步作为一条上下文消息放在对话末尾（用户要求优化缓存，10-14）。原来写在系统提示末尾，每轮都变，记账 API 实验里主会话缓存命中只有 26%。
 - 笔记（主会话与子进程的结构化笔记）只在上下文里没有最新一份时存进会话：一轮开始时笔记变了、压缩之后；notes 工具的结果本身带着完整笔记，接近压缩阈值的提醒也只存一次。原来每次请求都把笔记临时接在末尾，请求不再是上一次的追加，magpie 转发的 gpt 只认追加，从第一次写笔记起缓存不再增长（stock run-02：主会话每次约 9 万 token 只命中 9344，命中约 9%；architect 同样走 gpt，命中停在系统提示加第一条消息的约 1.7 万，整体 33%；GLM 的 worker 不受影响，87%）。e2e 用假模型检查主会话与子进程的相邻请求只在末尾追加。
 - `.npmrc` 设 `legacy-peer-deps=true`：锁文件里没有 Pi 的 peer 依赖。
-- `.forge` 迁移链 v1→v2（删 `.at`、争议）、v2→v3（删范围申请）。
+- `.forge` 迁移链 v1→v2（删 `.at`、争议）、v2→v3（删范围申请）、v3→v4（10-17 改造）。v4 不迁移旧流程，只把文件改到能过新 schema（等待输入、预检中的任务转阻塞），好让 `/forge abort` 能执行；有未结束的旧流程时 `/forge-resume` 与 `/forge doctor` 提示中止后用新流程重建。
 
-### 规格与计划
+### 需求与架构
 - 需求输入只认固定位置（10-17 改造）：`docs/PRD.md` 与 `docs/prototype/`（至少一个 .html），缺了 `/forge-build` 只提示、不建流程；两者原样提交到集成分支（路径不变），之后所有 agent 从集成分支读。PRD 是需求的唯一依据，不再改写成规格：P0、`forge_spec`、spec-lint、技能 spec-from-prd 与 grilling 已删，build 流程从 S0 开始。程序只解析 REQ 编号、`- ACn` 验收标准与"页面"表（`spec/prd.ts`）；解析不出、缺 AC、编号重复、原型文件不存在只警告。
-- 实施任务不能改 `docs/PRD.md` 与 `docs/prototype/`（原来不能改的是 `docs/spec/`）：需求是用户在流程外定的，agent 改了就没有依据可对照。审查材料不再带术语表；PRD 的「通用约定」照旧放进 worker 与 reviewer 的任务说明。
+- 实施任务不能改 `docs/PRD.md` 与 `docs/prototype/`（原来不能改的是 `docs/spec/`）：需求是用户在流程外定的，agent 改了就没有依据可对照。审查材料不再带术语表；PRD 的「通用约定」照旧放进开发 agent 与 reviewer 的任务说明。
 - 架构阶段 S0（10-17 改造）：原来的 P1（契约与计划）与 S0（骨架）合并成 S0 的一个 impl task，architect 一次做完技术栈、骨架、公共代码、domain 划分与接口、OpenAPI 与页面接口对照、rules、commands.yaml、`docs/plan.md`；由程序派发（不经主会话），经审查、合并、门禁后等用户批准，打回时新 task 接着原会话返工。原因：P1 与 S0 分开时契约写完要等一次批准才落成代码，骨架又常发现契约要改。task 编号全流程连续，含此前流程与 `tests/acceptance/` 的目录名。
-- S0 提交时只拦两类（`plan/batches.ts`、`plan/plan-flow.ts`）：缺必需文件（AGENTS.md、overview、domains、openapi、page-api、commands.yaml 要有 test、plan.md），plan.md 的 yaml 区块解析不过或调度做不下去（批次 id 或 domain 重名、after 不存在、指向更晚批次、成环、空批次）；PRD 的警告、REQ 没进批次、页面 id 找不到只提醒，显示在批准页。批准时先按 yaml 生成批次阶段 S1…Sn 与任务（每个 domain 一个、第 1 批的前端基础、页面按顺序串成链并接着同一会话、每批一个「接入真实接口」任务，它不单独审查，由本批浏览器验收检查），再 `--no-ff` 合入主分支。
-- 改造期间暂留（第 4 步随变更请求删）：变更请求仍走 `docs/plan/plan.yaml`、`forge_propose_plan`、旧计划解析与 plan-dag 技能；新流程的项目没有 plan.yaml，变更请求在新流程里用不了。
+- S0 提交时只拦两类（`plan/batches.ts`、`plan/plan-flow.ts`）：缺必需文件（AGENTS.md、overview、domains、openapi、page-api、commands.yaml 要有 test、plan.md），plan.md 的 yaml 区块解析不过或调度做不下去（批次 id 或 domain 重名、after 不存在、指向更晚批次、成环、空批次）；PRD 的警告、REQ 没进批次、页面 id 找不到只提醒，显示在批准页。批准时先按 yaml 生成批次阶段 S1…Sn 与任务（每个 domain 一个 backend 任务、第 1 批的前端基础、页面按顺序串成链并接着同一会话、每批一个「接入真实接口」任务，后三种是 frontend；「接入真实接口」不单独审查，由本批浏览器验收检查），再 `--no-ff` 合入主分支。
 - 项目命令写在仓库根目录的 `commands.yaml`（用户决定 10-14）：architect 在 S0 写，开发 agent 可以补充，随代码合并、合入即生效；程序只执行 install、test、acceptance、serve（及 serve_*）、env_up/env_down、db_create/db_drop、add_dep，其余只给 agent 参考。`workflow.yaml` 只放流程配置。规则由 S0 直接写。
-- 契约只能追加（`plan/contract-diff.ts`）：集合位置可新增键，数组（含 required、enum）不能变，新列须可空或有默认值；可追加可选参数；不限制只改本模块的契约。基线是任务 worktree 与集成分支的合并基点。空文件视为不存在（architect 清空即可）。只在 `forge_submit` 时检查一次。
-- 计划与契约只拦调度不了的（10-14 约束清点）：编号与阶段写错、S0 不是 1 个 task、依赖有环或依赖更晚阶段、契约不是合法 YAML。plan.yaml 多写的字段忽略、列表字段可缺；AC 与需求的分配、produces/requires、契约文件布局与命名都只提醒；writes 可以为空、可以含验收测试目录；术语表可以改。
+- 契约与架构文档只由 architect 改（10-17 改造）：backend、frontend 不能写 `docs/contracts/**`、`docs/arch/**`、`docs/plan.md`、`AGENTS.md`（guard 拦），要改用 `forge_ask_architect`；plan.md 的 `shared` 文件不拦，提交时检查对它们的改动是否只追加，不是就在审查材料里提醒（只提醒）。原来在 `forge_submit` 时检查契约只追加（contract-diff），已删。
 - 契约只写前后端之间的边界（10-14 用户决定，10-17 改造后）：`openapi.yaml` 只写前端调用的 HTTP 接口，`page-api.md` 写每个页面用哪些接口；domain 之间的接口写成代码（接口与 DTO，空实现）；校验细则以 PRD 为准不重复。原因：club 实验 92 行需求写出约 2100 行契约，字段规则写了三遍，各模块接口都没有别的 task 调用。
-- 计划的提示（10-15，stock 实验后）：被多个 task 依赖的横切能力（登录与权限）放进 S0 或更早的阶段；`~` 软依赖也要等生产方审查合并后才能预检与合并，阶段内依赖链尽量一层（登录 → 分类 → 商品三环把 4 个并行 task 拖成串行）；S0 的符号不写进 requires；不建只做集成验收的 task。
-- 计划不再有 `review` 与 `test_interface`（用户决定 10-14，旧计划里写了也忽略）：审查强度只由程序推导（底座、auth 层、`risk: high`），批准页列出强审查的 task 与原因；`risk: high` 只给权限与鉴权、金额计算、不可恢复的批量数据操作，过半 task 标 high 时提醒。原因：club 实验里 5 个增删改查 task 全被标成 strong 与 high（技能原写"删除数据时写 high"）。
+- task 的 `review` 只由程序写：「接入真实接口」是 skip，其余由程序推导（底座、auth 层、`risk: high` 用强审查）。原因：club 实验里 architect 把 5 个增删改查 task 全标成 strong 与 high。
 
 ### S0 与构建环境
-- S0 的唯一 task 由 architect 做（bash full，worker 的工具）：建骨架、直接写 `rules/`（对它豁免受保护路径）、把共享类型与错误响应落成代码；S0 合入后 rules 生效。
+- S0 的唯一 impl task 由 architect 做（bash full，worker 的工具）：建骨架、直接写 `rules/`（对它豁免受保护路径）、把共享类型与错误响应落成代码；S0 合入后 rules 生效。
 - S0 一律人工签收；批准时集成分支（PRD、原型与架构产出）先 `--no-ff` 合入主分支，集成分支再移到合入后的提交，之后的阶段照常在它上面做（用户决定 10-14）。代价：之后中止流程，主分支上的骨架不撤回；批准 S0 时主工作区不能有未提交的改动。
 - Python 用 uv 的项目不共享 `.venv`（可编辑安装指向安装时的源码目录，共享会让各 worktree 测到旧代码）：每个 worktree 自己 `uv sync --frozen`，包从 uv 的全局缓存链接；guard 提醒不要用 pip 装包，加依赖用 `uv add`。`.venv/`、`__pycache__/`、`.pytest_cache/` 写进本地 exclude。
 - 每个 S 阶段开始时建立或刷新共享构建环境 `<项目>.worktrees/.env-shared/`，worktree 链接依赖目录，不再各自 install；只追加根 package.json 依赖时装进共享环境（`forge_add_dependency`），改版本等用私有副本（`forge_private_deps`）。端口段（41000–60000）与数据库按运行分配。没有共享环境时（S0 期间）各工作区自己 install，只读工作区按锁文件哈希缓存。
 
 ### 调度与运行
-- 两个池：实施 task 用 `max_parallel`，review、qa 用 `max_parallel_aux`。writes 只是调度优先级，重叠的也会并行（用户决定）。
-- worker 与 S0 的 architect 可写工作区内任何文件，只排除受保护路径与 `docs/PRD.md`、`docs/prototype/`（用户决定）；没有范围申请。
-- 主会话的上下文（10-15，stock 实验：主会话 $20.6，占全部费用一半以上，gpt 缓存命中 12%）：P0 之后的状态不再带规格检查的警告（57 条约 4500 字，每次 forge_wait 都带）；forge_wait 超时又没有变化时只回两行概况。提交变更请求后立刻推进引擎，起草修订的 architect 不再等下一个任务结束才派发。主会话的系统提示在所有阶段都带 P0 的两份技能（约 3k token），离开 P0 时系统提示不变，缓存不失效。
+- 三个池（10-17 改造）：backend 用 `max_parallel_backend`（plan.md 写了就覆盖，批准时存进 flow），frontend 固定 1 个（前端按页面顺序做），aux（review、qa、consult）用 `max_parallel_aux`；S0 的 architect 与轻流程的 worker 用 `max_parallel`。按关键路径挑任务；writes 不影响调度，依赖只有 hard（writes 互斥与软依赖已删）。
+- 写代码的角色可写工作区内任何文件，只排除受保护路径与 `docs/PRD.md`、`docs/prototype/`（用户决定），backend、frontend 另外不能写契约与架构文档（见上）；没有范围申请。
+- 主会话的上下文（10-15，stock 实验：主会话 $20.6，占全部费用一半以上，gpt 缓存命中 12%）：forge_wait 超时又没有变化时只回两行概况；状态里不带 PRD 检查的警告（只在批准页显示）。
 - 失败处理：`run_timeout` 计入 attempts，由程序按进展决定接着做、从头做或交给用户；同样的失败连续两次先换升级模型，再换兜底模型（`models.fallback`、`/forge-config fallback` 或表格最后一行，所有角色共用，用户决定 10-14），都试过仍一样就阻塞；没有升级模型时，失败达到次数直接用兜底模型。任务要用的模型被暂停时改用兜底模型继续，原模型恢复后换回。子进程没提交就结束时按错误原文分类（`engine/failure-class.ts`）：额度、限流、配置错误暂停这个模型、不计任务失败（额度与配置要手动恢复），运行环境出错直接 blocked，其余计一次失败、带提示重试。运行中原地打转会结束本次运行并计一次失败；被 guard 拦下只记账，不因次数结束运行；没有按谱系的总预算（10-14 约束清点）。
 - 子进程结束后清理它留下的进程，跳过仍在运行的 run 的进程树（审查、修复常与原任务共用 worktree）。
 - 提升 pending → ready 时跳过已经不是 pending 的 task：有几处提升不在调度的串行队列里（`/forge next`、run 结束的回调），两处同时算出同一批时，后一个会报 ready → ready（stock run-02）。
-- 需要拿主意的事先交给主会话（用户决定，10-14）：程序或子进程造成的阻塞（审查轮数用尽、合并失败、反复失败、子进程提问）、S 阶段门禁用尽、变更请求的修订，都由 orchestrator 用 `forge_decide` 决定（retry、accept、approve、reject，或转交用户）；它转交的、以及同一 task 它已决定 2 次之后的阻塞才等用户。用户始终可以直接处理；规格与阶段签收仍只由用户批准。出现新的待决定事项时给主会话发一条消息让它开始一轮（它这一轮已结束时没有别的东西会叫醒它）。
+- 需要拿主意的事先交给主会话（用户决定，10-14）：程序或子进程造成的阻塞（审查轮数用尽、合并失败、反复失败、子进程提问）、批次门禁用尽，都由 orchestrator 用 `forge_decide` 决定（retry、accept，或转交用户；签收打回后还有 fix，见批次验收）；它转交的、以及同一 task 它已决定 2 次之后的阻塞才等用户。用户始终可以直接处理；架构批准与批次签收仍只由用户做；等架构师回答的阻塞不交给主会话。出现新的待决定事项时给主会话发一条消息让它开始一轮（它这一轮已结束时没有别的东西会叫醒它）。
 - 实施角色（bash full）的 bash 只按禁止列表拦（用户决定，10-14，列表写在 `guard.ts` 的 `IMPL_FORBIDDEN` 注释）：判断不了的（解析不了的命令、命令名或 rm/mv 参数含变量、`sh -c`、`eval`）放行，cd 不拦，兜底是提交时的 diff 检查；sed -i、tee 只查写入位置；`git reflog` 只拦 expire、delete、drop（run-03：只读的 reflog 被当成改写拦下）；共享依赖目录里用包管理器改依赖、uv 项目用 pip 只在结果后面提醒。只读角色仍按允许列表，但可以读其他提交；按行号打印的 `sed -n 'a,bp'`、`node --check`、`git -C`（与 cd 等价）也放行（stock run-04：reviewer 被拦的 34 次里这三种占 29 次）。读取不限范围（含 `.forge/`），只拦敏感文件；`read_paths`、`max_violations_per_run` 已不再使用。`forge_service` 可以直接给命令（与 bash 同样检查）。
 - 所有带 bash 的角色都可以联网（用户决定，10-14）：curl、wget 不限主机；实施角色的下载目标按写路径检查（不能写主工作区与受保护路径），只读角色不能把内容写进文件，stage-qa 在临时 worktree 里不另加限制；`git fetch`、`pull` 仍禁止（远程分支由引擎同步）。
 - 工具的可选参数里的占位值（''、`N/A`、null）当作没传；`bash_allow` 没在 commands 定义的命令只告警；guard 的变量代入也作用于命令替换；`git` 设 `core.quotePath=false`。
-- worker 与 reviewer 的任务说明带 requirements.md 的「通用约定」原文（截到下一个二级标题，最多 1.2 万字）：字段长度、字符、大小写、默认值、PATCH 语义按 spec-from-prd 不写成 AC，契约也不重复，而 worker 只按自己的 REQ 编号 grep 规格、读不到这一节，reviewer 只拿到 AC 原文（stock run-01 到 run-03 字段规则都要到阶段验收或我打回才被发现，run-03 的 S2 因此打回 3 次）。放在任务说明而不是系统提示，不影响缓存。
-- 计划里每个 task 的 `description` 原样带进 worker 与 reviewer 的任务说明（「计划里的说明」一节），变更请求修订未开始的 task 时也会更新它：之前解析计划时当多写的字段丢掉了，stock run-03 的 15 个 task 都写了（118–832 字），修改 task T-015、T-019 要改什么只写在这里，worker 靠翻 architect 的提交才找到，T-017 没去翻。任务说明不再列「输入文件」（程序从不填，一直是「（无）」）。
+- 开发 agent 与 reviewer 的任务说明带 PRD「通用约定」一节的原文（截到下一个二级标题，最多 1.2 万字）：字段长度、字符、大小写、默认值、PATCH 语义不写成 AC，契约也不重复，而开发 agent 只按自己的 REQ 编号 grep PRD、读不到这一节，reviewer 只拿到 AC 原文（stock run-01 到 run-03 字段规则都要到阶段验收或我打回才被发现，run-03 的 S2 因此打回 3 次）。放在任务说明而不是系统提示，不影响缓存。
+- 批次任务的说明由程序生成：domain 或页面、本批需求、原型路径与 page-api.md 的位置；页面任务的审查材料带原型路径与 page-api.md 里这一页。任务说明不列「输入文件」（程序从不填，一直是「（无）」）。
 - 任务说明带「已交付的接口」一节（计划不再写 test_interface：worker 自己写验收测试，不再限定入口，10-14）；上游 handoff 只带上游最后一次 run 写的段。
 
-### 预检、审查与合并
-- 每个 task 不跑预检命令，合并时也不跑测试（用户决定，省时间）：实现类任务的预检不做检查。每次合并后在后台对集成分支跑一遍门禁命令（`limits.post_merge_test`，默认开，用户决定 10-14）：变红时同一提交重跑一次排除不稳定，再在上一次通过之后的合并里二分，给第一个变红的合并建 `.fx-n`（同一 task 最多 2 次，之后交给门禁）；阶段门禁等它跑完，并沿用同一棵代码树上通过的结果。fix 流程没有阶段门禁，合并时仍跑 typecheck、lint、test。
-- 没有 test-author（用户决定）：worker 自己写 `tests/acceptance/<T>/` 的验收测试。impl 一律审查，fix、doc、merge-fix 不审查；审查通过后因合并冲突交回 worker 的，解决后不再审查，由阶段门禁检查（stock run-04：冲突后的审查是新的首轮，5 次里 3 次提了之前各轮没提的 must，T-004 因此用完轮数交给用户）；reviewer 读 diff，运行本 task 的单元测试与验收测试，检查每条 AC 都有带编号的测试且没被写弱。must 写明出处（`rule:`、`ac:`、`contract:`、`defect:`），程序不校验、不降级（10-14 用户决定：校验时去主分支找规则文件，S0 写的规则还在集成分支上，真缺陷被降成建议漏过）；确认轮不能新增问题，按关闭条件的目的判断（修在别处、有对应测试也算解决）。
+### 提交、审查与合并
+- 提交与合并时不跑命令（用户决定，省时间）。`forge_submit` 先把集成分支合进任务分支：冲突时不提交、列出文件，agent 在同一次运行里解决；没冲突时需要审查的进审查，不需要的直接排队合并（10-17 改造，代替等待输入、预检与冲突后重新派发）。每次合并后在后台对集成分支跑一遍门禁命令（`limits.post_merge_test`，默认开，用户决定 10-14）：变红时同一提交重跑一次排除不稳定，再在上一次通过之后的合并里二分，给第一个变红的合并建 `.fx-n`（同一 task 最多 2 次，之后交给门禁）；阶段门禁等它跑完，并沿用同一棵代码树上通过的结果。fix 流程没有阶段门禁，合并时仍跑 typecheck、lint、test。
+- 没有 test-author（用户决定）：worker 自己写 `tests/acceptance/<T>/` 的验收测试。impl 都审查（「接入真实接口」除外），fix、doc、merge-fix、consult 不审查；审查通过后因合并冲突交回 worker 的，解决后不再审查，由阶段门禁检查（stock run-04：冲突后的审查是新的首轮，5 次里 3 次提了之前各轮没提的 must，T-004 因此用完轮数交给用户）；reviewer 读 diff，运行本 task 的单元测试与验收测试，检查每条 AC 都有带编号的测试且没被写弱。must 写明出处（`rule:`、`ac:`、`contract:`、`defect:`），程序不校验、不降级（10-14 用户决定：校验时去主分支找规则文件，S0 写的规则还在集成分支上，真缺陷被降成建议漏过）；确认轮不能新增问题，按关闭条件的目的判断（修在别处、有对应测试也算解决）。
+- 审查的 must 只限：本 task 的测试失败、违反 PRD 的 AC 或通用约定、违反契约、违反规则清单、安全问题、确定的缺陷，其余是 suggest（10-17 改造）。前端按页面对照原型与 page-api.md 审，后端按 domain 审。
 - 页面 AC 的验收测试不开浏览器：只测页面路径返回 HTML、页面用到的接口、前端模块的纯逻辑；打开页面看交互与状态交给 stage-qa 的浏览器检查，reviewer 与 stage-qa 不因为没有浏览器测试判 must（run-03：reviewer 要求页面状态测试，worker 自己搭浏览器脚本，一次返工 50 分钟，脚本写死本机路径）。菜单、页面清单、路由表不断言完整列表，只断言本 task 的项（run-04：T-003 的测试写死了页面清单，之后加页面的 task 都改这一行，13 次冲突返工都在这里）。
 - 审查者 forge_block 时只阻塞审查 task，原 task 留在审查中等它，forge_wait 会因审查 task 阻塞醒来（club run-02：原 task 一并阻塞，主会话对两者各 retry 一次，worker 与 reviewer 在同一个 worktree 里同时运行）。验收测试的 Given 可以用夹具直接写存储（准备所需的接口还没交付时），When 与 Then 走公开入口。
 - 浏览器检查（用户决定，10-15；10-16 只留给 stage-qa：run-03 的 worker 用了 469 次浏览器命令，把浏览器脚本写进项目验收测试并写死本机路径，没看到因此发现的缺陷；stage-qa 用它发现了登录页空顶栏与启停清零金额）：pi-playwright 必须安装（项目级或用户级），没装不能开始流程；stage-qa 的角色提示固定写着这一节（子进程 `--no-skills`），技能位置用占位 `{{playwright-browser}}`，派发时换成按 Pi 用户目录（`getAgentDir()`）找到的实际路径，路径用正斜杠（Windows、macOS、Linux 的 node 与常见 shell 都认），同一台机器上提示不变；安装提示是两条独立命令（不用 cd、&&）。stage-qa 在隔离工作区里也能读、运行这个目录（子进程按同样的方法找到后传给 guard）；`.playwright-cli/` 记进本地 exclude（stock run-02：商品页打不开、错误条一直显示，只有在浏览器里看才发现）。
-- 首轮审查说明列出本 task 软依赖的上游及其接口（要求用真实实现，不留替身或"合入后再换"）和 diff 里属于其他已完成 task 范围的文件（要求确认原功能还在）（stock run-02：T-013 改了商品页，页面在用到 `state` 前就引用了它，打不开；软依赖的替身合入后一直没换，审查只看本 task 的 AC，都没发现）。
+- 首轮审查说明列出 diff 里属于其他已完成 task 范围的文件，要求确认原功能还在（stock run-02：T-013 改了商品页，页面在用到 `state` 前就引用了它，打不开，审查只看本 task 的 AC 没发现）。
 - 合并：rebase；双方都只插入行的冲突由程序三方合并，合不了的交回正在合并的 worker（用户决定）；受保护文件冲突、主工作区有改动等阻塞先交给主会话；任务分支相对集成分支没有改动的阻塞为 `no_changes`，确认后视为完成（impl、fix、doc 提交时就没有改动的，直接完成，10-14）；提交不要求先写 handoff（提交说明自动记入），handoff 超长截断；doc、merge-fix 可以改验收测试；其他种类与主分支同步冲突走 merge-fix。之后只查冲突标记，build 流程不跑命令（轻流程跑 test；合并后验证失败的知识候选因此只在轻流程出现）。同一棵代码树的同一条命令只验证一次。工具不存在导致的命令失败按跳过处理并提醒。
 
-### 阶段验收
+### 批次验收
 - 门禁命令与覆盖率 → stage-qa → 修复 → 重跑 → stage-qa 只确认一轮 → 签收；门禁通过时与最近一轮 qa 的 HEAD 到当前 HEAD 之间只有程序记录的文档（审查建议、`docs/qa/`）时才签收。只依据持久化状态，崩溃后重入结果相同。原来要求 HEAD 相等：club 实验里 qa 带建议通过 → 建议提交让 HEAD 变化 → 重新验收，循环了 6 轮。
-- 用户打回 S 阶段后，在本阶段有新的任务变化之前不重新提交门禁，主会话的下一步是用变更请求把修改加进本阶段（stock 实验：task 都已完成，打回 6 秒后又回到等签收，打回白费）。判断"还有 task 等派发"只看当前阶段：后面阶段的 task 总是 pending，算进来时打回意见轮不到主会话（stock run-02）。审查轮数用尽的阻塞原因带上最新一轮审查者的说明，不只是首轮原文（run-02：首轮写"上限是 50"，第二轮已改成 30 只差测试，主会话看到的还是 50）。
-- stage-qa 轮数用尽后集成分支又有了改动（用户打回、变更请求的 task 合入），门禁通过后再开一轮只确认的 stage-qa，不按改动之前的结论交给用户；没有新改动时照常交给用户（stock run-03：S2 修完后门禁两次都按旧结论判用尽，修复没人复验）。
-- 门禁失败建 `.fx-n`，2 轮；覆盖率只报告（签收时给用户看），缺口不拦门禁（10-14 约束清点：按 AC 逐条补测试是测试代码膨胀的原因之一）。修复归属先看各 task 合入时实际改动的文件，再看 writes，兜底给本阶段最后合入的 impl。
+- 用户打回批次后，在本阶段有新的任务变化之前不重新提交门禁；主会话判断归属：能明确归属的用 `forge_decide` 的 fix 交给负责的任务（建 `.fx-n`，接着它的会话），归属不清或涉及多个任务的用 `forge_ask_architect(kind=change)` 交给架构师（10-17 改造，代替变更请求；stock 实验：task 都已完成，打回 6 秒后又回到等签收，打回白费）。判断"还有 task 等派发"只看当前阶段：后面阶段的 task 总是 pending，算进来时打回意见轮不到主会话（stock run-02）。审查轮数用尽的阻塞原因带上最新一轮审查者的说明，不只是首轮原文（run-02：首轮写"上限是 50"，第二轮已改成 30 只差测试，主会话看到的还是 50）。
+- stage-qa 轮数用尽后集成分支又有了改动（打回后的修复、架构师的修改合入），门禁通过后再开一轮只确认的 stage-qa，不按改动之前的结论交给用户；没有新改动时照常交给用户（stock run-03：S2 修完后门禁两次都按旧结论判用尽，修复没人复验）。
+- 门禁失败建 `.fx-n`，2 轮；默认跑 test、acceptance、arch_check、contract_check，commands.yaml 没定义的跳过；覆盖率只报告（签收时给用户看），缺口不拦门禁（10-14 约束清点：按 AC 逐条补测试是测试代码膨胀的原因之一）。
+- 问题归属（10-17 改造）：先看已完成任务实际改过的文件，再看 plan 的 paths（task.writes），页面文件归页面任务。一条问题只交给一个任务：唯一归属时接着那个任务的会话修，多个或找不到时交给一个 S0 architect 的修复任务（stock run-04 的 S4：同一条问题按文件拆成两个修复，两边各用一种做法修了同一个问题）。stage-qa 每条 must 附复现步骤、失败的请求或控制台报错、怀疑的归属（只在说明里要求，不拦）。
 - stage-qa 在集成分支 HEAD 的临时 worktree 里运行，路径不能越出这个 worktree（主工作区、别的 worktree、`.forge/` 都拦）；系统临时目录可用，不查敏感文件（用户决定，10-14：club 与 m9 的 6 次运行里 stage-qa 被拦 33 次，全是 `rg -g '!*.pem'`、`printenv PORT` 与 `mktemp -d /tmp/…`）。
 - 所有角色点名查看环境变量（`printenv PORT`）放行，只拦打印全部（不带参数的 `printenv`、`env`、`export` 等，拦下时提示用 `printenv 变量名`）：子进程继承 Pi 的全部环境变量，里面可能有 API key（用户决定，10-14）。
 - 最后一个阶段批准时存交付汇报再 `--no-ff` 合入主分支；`/forge-status --metrics` 含速度、返工（含没提交就结束的 run 按类别计数）、成本、被拦下的操作。
 
-### 变更请求、fix 与小改动
-- 变更请求 drafting → proposed → approved/rejected，同时只能有一个；修订就绪后先由主会话审核（最多打回到第 3 轮），它可以转交用户；proposed 时就暂停被调整的 task，阶段门禁等待；architect 的说明带发起 task 的改动与 handoff；已开始的 task 用 `modifies` 新增后续 task；上一次修订加的修改 task 原样保留 `modifies` 不算新加（stock 实验：第二次变更请求因此被拒）。
-- fix 与小改动都是单阶段 `X1` 的轻流程，直接合入主分支，最后由 X1.qa 确认（最多两轮）；同一时间只能有一个，build 运行时拒绝。小改动（用户决定）：`/forge-change --from <yaml>` 或 `forge_change`，1–3 个 impl task，不走 P0/P1 批准；实现合入后程序强制 architect 的「更新架构图与契约」task，不需要改时直接无改动提交。
+### 架构师问答、fix 与小改动
+- 架构师问答（10-17 改造，代替变更请求）：backend、frontend 与主会话用 `forge_ask_architect(question, kind: answer|change)` 提问。子 agent 提问时程序先建 consult 任务（architect），再把提问任务转为阻塞（blocked_by architect，不交给主会话）；architect 接着最近一次 architect 会话（S0 或上一个咨询；没有或太大时开新会话并带 `docs/arch/decisions.md`），用 `forge_answer` 回答，有改动时经合并队列合入；之后程序把回答写进提问任务的 handoff、把集成分支同步进它的 worktree，让它接着原会话继续。主会话提问的回答在下一次 forge_wait 返回。consult 串行、不审查，改动由批次门禁的 contract_check 与 stage-qa 兜底；S0 与咨询用同一份技能列表，接着 S0 会话时提示缓存不失效。
+- fix 与小改动都是单阶段 `X1` 的轻流程，直接合入主分支，最后由 X1.qa 确认（最多两轮）；同一时间只能有一个，build 运行时拒绝。小改动（用户决定）：`/forge-change --from <yaml>` 或 `forge_change`，1–3 个 impl task，不经批准，仍用 worker 角色；实现合入后程序强制 architect 的「更新架构图与契约」task，不需要改时直接无改动提交。
 
 ### 删掉与没做的
+- 10-17 改造删除（用户决定，见改造计划）：P0 规格与 `forge_spec`、P1 与 plan.yaml、变更请求（`forge_change_request`、`forge_propose_plan`、`/forge-approve change:`）、预检与等待输入、软依赖与 writes 互斥、契约只追加检查（contract-diff、contract-check）、`scripts/ablation/`、`scripts/m9/`。原因：需求由用户在流程外写定，契约与计划由 architect 在 S0 一次做完并经批准；之后的技术问题走架构师问答。
 - 10-12 删除（用户决定）：feature、adopt、规格修订、精简模式、test-author 与 `.at`、争议、范围申请。原因：后续功能由 agent 读架构图与 rules 完成，不走重流程。旧 workflow.yaml 里已删的键与工具只告警。
 - 10-14 删除 researcher 角色（用户决定）：没有流程会派它，所有带 bash 的角色都已能联网。`web` 工具组（pi-web-access）留在模板里，默认不分配给任何角色，要用时在角色 tools 里加 `"@web"`。
 - 10-13 删除 pi-serena：扩展工具只能只读或联网，写文件只用内置 write/edit。
 - 10-13 评估「Stage 级共享工作区 + CAS」，不做：实验里 worktree 准备只要几秒、没有合并冲突，时间花在模型思考；共享工作区会让半成品互相干扰、失败算错人，bash 写入也无法纳入 CAS。
 
 ### 提示词与代码组织
-- worker 带 `simplicity`、`receiving-feedback`、`acceptance-tests`，reviewer 带 `simplicity`、`acceptance-tests`；单元测试写法与过度工程只作 suggest；规则编号 `R<n>`，每文件不超过 5 条。
+- backend、frontend、worker 带 `tdd`、`simplicity`、`receiving-feedback`、`acceptance-tests`，reviewer 带 `code-review`、`tdd`、`simplicity`、`acceptance-tests`；单元测试写法与过度工程只作 suggest；规则编号 `R<n>`，每个文件不超过 6 条规则、5 条审查清单。
 - `src/core/` 无环分层（state → security/workspace → verify/insight → spec → acceptance → plan → stage → engine → ops），`test/unit/core-layers.test.ts` 检查。测试分组见 `scripts/test-groups.ts`。
 
 ## 真实模型实验
@@ -154,3 +157,5 @@
 - 10-16：`skills/acceptance-tests` 的"不要断言"表加一行（菜单、页面清单、路由表不断言完整列表）。worker、reviewer 与 S0 的 architect 缓存各失效一次。
 - 10-17：改造第 1 步：`agents/orchestrator.md` 删掉 P0 一节；删除 `skills/spec-from-prd`、`skills/grilling`，主会话系统提示不再带这两份技能；主会话工具去掉 `forge_spec`。主会话的缓存失效一次。worker 与 reviewer 任务说明里「通用约定」的标题改了，审查材料去掉术语表（都在用户消息里，不影响系统提示缓存）。
 - 10-17：改造第 2 步：重写 `agents/architect.md`（只剩 S0 与暂留的变更请求一节）、`skills/design-contract`（openapi 与 page-api）、`skills/write-rules`（commands.yaml 与 rules/backend、frontend）、`skills/domain-modeling`（domain 划分与 domains.md，不再写术语表）；新增 `skills/plan-batches`，S0 的 architect 不再带 plan-dag 与 tdd。architect 的缓存失效一次，其他角色不受影响。
+
+- 10-17：改造第 3–5 步：新增 `agents/backend.md`、`frontend.md`；改 `agents/architect.md`（咨询与修复两节，删变更请求）、`orchestrator.md`、`reviewer.md`、`stage-qa.md`、`worker.md`，`skills/tdd`、`stage-qa`、`code-review`、`acceptance-tests`、`receiving-feedback`、`simplicity` 与 `rules/global.md`；删除 `skills/change-request`、`plan-dag`；architect 的咨询与 S0 用同一份技能列表。所有子进程角色与主会话的缓存各失效一次。

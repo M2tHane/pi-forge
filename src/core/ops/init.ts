@@ -25,7 +25,7 @@ export function skeleton(packageRoot: string, projectName: string): Map<string, 
   // 需求文档模板与原型目录说明：用户在流程外照着写好，/forge-build 才开始
   files.set('docs/PRD.md', t('templates/PRD.md'));
   files.set('docs/prototype/README.md', t('templates/prototype/README.md'));
-  for (const dir of ['docs/contracts/paths', 'docs/contracts/components', 'docs/contracts/errors', 'docs/arch', 'docs/plan', 'tests/acceptance']) files.set(`${dir}/.gitkeep`, '');
+  for (const dir of ['docs/contracts', 'docs/arch', 'tests/acceptance']) files.set(`${dir}/.gitkeep`, '');
   return files;
 }
 

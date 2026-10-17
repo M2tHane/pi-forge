@@ -384,8 +384,7 @@ export interface StageFacts {
   delegated?: boolean;
 }
 export const STAGE_TRANSITIONS: readonly StageRule[] = [
-  // 等签收时也能重交：P0 规格提交后主会话还想修 spec-lint 的警告，原来只能请用户打回（stock run-02）
-  { from: ['active', 'awaiting_human'], to: 'awaiting_gate', trigger: 'submit_gate' },
+  { from: ['active'], to: 'awaiting_gate', trigger: 'submit_gate' },
   { from: ['awaiting_gate'], to: 'active', trigger: 'gate_failed', check: reasonRequired },
   { from: ['awaiting_gate'], to: 'awaiting_human', trigger: 'gate_passed', check: (f) => need(f.needs_human === true, '该阶段不需要人工批准') },
   { from: ['awaiting_gate'], to: 'done', trigger: 'gate_passed', check: (f) => need(f.needs_human === false, '该阶段需要人工批准') },

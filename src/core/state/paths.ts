@@ -15,8 +15,6 @@ type WritesOf = { id: string; for_task?: string | undefined; writes: readonly st
 export const writesOwnAcceptance = (t: WritesOf) => t.writes.includes(ownAcceptanceGlob(t.for_task ?? t.id));
 /** 该 task 自己的验收目录名（impl 编号） */
 export const acceptanceDirOf = (t: Pick<WritesOf, 'id' | 'for_task'>) => t.for_task ?? t.id;
-/** 该 task 自己的验收目录 glob */
-export const selfTestGlobOf = (t: Pick<WritesOf, 'id' | 'for_task'>) => ownAcceptanceGlob(t.for_task ?? t.id);
 /** 下一个可用的主任务编号 T-xxx（只看主编号，.rv / .fx 等派生编号不占号） */
 export function nextPlanTaskId(ids: readonly string[]): string {
   const n = Math.max(0, ...ids.map((id) => Number(id.match(/^T-(\d+)/)?.[1] ?? 0))) + 1;
@@ -35,17 +33,6 @@ export function normalizeRelPath(root: string, p: string): string | null {
 
 export function matchesAny(rel: string, globs: readonly string[]): boolean {
   return globs.some((g) => minimatch(rel, g, MM));
-}
-
-/**
- * writes 属于单元测试 / 测试代码的路径（纯函数；也用于判断单个文件）：任一路径段是 test、tests、__tests__、spec、specs、e2e，
- * 或文件名带 test / spec 标记（a.test.js、foo_test.go、test-utils.js）。不用 globsOverlap：`src/**\/*.js` 与 `*.test.*` 会被误判为重叠。
- */
-export function isTestWrite(w: string): boolean {
-  const segs = w.split('/').filter(Boolean);
-  if (segs.slice(0, -1).some((x) => /^(?:tests?|__tests__|specs?|e2e)$/.test(x))) return true;
-  const last = segs.at(-1) ?? '';
-  return /^(?:tests?|__tests__|specs?|e2e)$/.test(last) || /(?:^|[._-])(?:test|spec)s?(?:[._-]|$)/.test(last);
 }
 
 /**

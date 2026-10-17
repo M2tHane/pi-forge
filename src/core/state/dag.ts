@@ -239,10 +239,3 @@ export function dagReport(tasks: readonly (StatTask & { stage?: string })[], war
     max_width: s.maxWidth, hard_ratio: Math.round(s.hardRatio * 100) / 100, warnings: w,
   };
 }
-
-export function formatDagReport(r: DagReport): string {
-  return [
-    `任务数 ${r.task_count}，关键路径长度 ${r.critical_path_length}（${r.critical_path.join(' → ')}），最大并行宽度 ${r.max_width}，硬依赖占比 ${Math.round(r.hard_ratio * 100)}%`,
-    ...r.warnings.map((x) => `! ${x}`),
-  ].join('\n');
-}

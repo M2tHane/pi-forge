@@ -156,7 +156,7 @@ details summary { cursor: pointer; color: var(--text-secondary); }
     <div class="row">
       <div class="card grow">
         <h2>任务 DAG</h2>
-        <div class="hint">按阶段（P0、P1、S1…）分列，阶段内按硬依赖分层。左侧色条是角色，圆点是状态。派生任务以小标签挨着原任务：at / at-n 验收测试、rv 审查、fx-n 修复；阶段级的 S1.rv、S1.qa 排在阶段标题下。实线是硬依赖，虚线是软依赖。点击任务或标签查看详情。</div>
+        <div class="hint">按阶段（S0、S1…）分列，阶段内按依赖分层。左侧色条是角色，圆点是状态。派生任务以小标签挨着原任务：rv 审查、fx-n 修复；阶段验收 S1.qa 排在阶段标题下。卡片第二行方括号里是 domain、页面或模块。点击任务或标签查看详情。</div>
         <div class="legend" id="dagLegend"></div>
         <div style="overflow:auto"><svg id="dag"></svg></div>
       </div>
@@ -167,7 +167,7 @@ details summary { cursor: pointer; color: var(--text-secondary); }
   <section class="panel" id="p-tl">
     <div class="card">
       <h2>运行时间线</h2>
-      <div class="hint">每一行是一个角色，每一段是一次子进程运行（实施、审查等），颜色表示结果。竖线是阶段闸门。悬停查看模型、token、轮数。</div>
+      <div class="hint">每一行是一个角色，每一段是一次子进程运行（实施、审查、咨询等），颜色表示结果。竖线是阶段闸门。悬停查看模型、token、轮数。</div>
       <div class="legend" id="tlLegend"></div>
       <div class="timeline-wrap"><svg id="tl"></svg></div>
     </div>
@@ -211,78 +211,70 @@ const fmtDur = (ms) => ms >= 3600e3 ? (ms / 3600e3).toFixed(1) + ' 小时' : ms 
 const time = (iso) => iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
 
 // —— 词表 ——
-// 任务状态（第 8.1 节，12 个）
+// 任务状态（9 个）
 const ST = {
   pending: { l: '待前置', c: 'var(--idle)', icon: '○' }, ready: { l: '可派发', c: 'var(--idle)', icon: '◔' },
-  in_progress: { l: '实施中', c: 'var(--s-impl)', icon: '●' }, awaiting_inputs: { l: '等输入', c: 'var(--warning)', icon: '◌' },
-  checking: { l: '预检中', c: 'var(--s-verify)', icon: '●' }, in_review: { l: '审查中', c: 'var(--s-review)', icon: '●' },
-  disputed: { l: '争议中', c: 'var(--serious)', icon: '⚑' }, queued_merge: { l: '排队合并', c: 'var(--s-verify)', icon: '●' },
+  in_progress: { l: '实施中', c: 'var(--s-impl)', icon: '●' }, in_review: { l: '审查中', c: 'var(--s-review)', icon: '●' },
+  queued_merge: { l: '排队合并', c: 'var(--s-verify)', icon: '●' },
   merging: { l: '合并中', c: 'var(--s-verify)', icon: '●' }, done: { l: '已完成', c: 'var(--good)', icon: '✓' },
   blocked: { l: '阻塞', c: 'var(--critical)', icon: '⛔' }, cancelled: { l: '已取消', c: 'var(--idle)', icon: '✕' },
 };
-// 七个角色：颜色用于任务、时间线和成本
+// 角色：颜色用于任务、时间线和成本；worker 只做 fix 与小改动
 const ROLE = {
-  orchestrator: ['主会话', '#8a63d2'], architect: ['架构师', '#2a78d6'], worker: ['实施者', '#1baf7a'], 'test-author': ['测试作者', '#d99a1c'],
+  orchestrator: ['主会话', '#8a63d2'], architect: ['架构师', '#2a78d6'], backend: ['后端', '#1baf7a'], frontend: ['前端', '#d99a1c'], worker: ['修复者', '#5c8a8a'],
   reviewer: ['审查者', '#eb6834'], 'stage-qa': ['阶段验收', '#d0457a'],
 };
 const roleL = (r) => (ROLE[r] || [r])[0];
 const roleC = (r) => (ROLE[r] || [r, '#898781'])[1];
 const roleIdx = (r) => { const i = D.roles.indexOf(r); return i < 0 ? D.roles.length : i; };
-const KIND = { impl: '实现', doc: '文档', acctest: '验收测试', review: '审查', qa: '阶段验收', fix: '修复', 'merge-fix': '合并修复' };
+const KIND = { impl: '实现', doc: '文档', review: '审查', qa: '阶段验收', fix: '修复', 'merge-fix': '合并修复', consult: '架构师咨询' };
+const BLOCKED = { review_exhausted: '审查轮次用尽', merge_exhausted: '合并失败次数用尽', attempts: '失败次数用尽', agent: 'agent 求助', dispatcher: '程序阻塞', user: '用户阻塞', integration_broken: '集成分支坏了', no_changes: '合并时没有改动', architect: '等架构师' };
+const blockedL = (b) => BLOCKED[b] ?? b;
 const STAGE_ST = { active: '进行中', awaiting_gate: '闸门检查中', needs_human: '需要你处理', awaiting_human: '等你批准', done: '已通过', aborted: '已中止', pending: '未开始' };
-const stageName = (id) => id === 'S0' || id === 'P0' || id === 'P1' ? '架构' : /^S/.test(id) ? '开发' : '';
+const stageName = (id) => id === 'S0' ? '架构' : /^S/.test(id) ? '开发' : '';
 const TRIG = {
   schedule: ['程序', '硬依赖都完成、所属阶段在进行中，任务变为可派发'],
-  dispatch: ['程序', '派发：建 worktree、颁发 token 与租约、拉起子进程（实施池与辅助池各有并行上限）'],
-  submit: ['实施者', 'forge_submit：程序检查 diff 不越出可写范围、已写 handoff；有未完成的 .at 时先等输入'],
-  inputs_ready: ['程序', '验收测试与集成分支已同步进任务分支，进入预检'],
-  sync_conflict: ['程序', '同步集成分支时冲突，退回实施处理'],
-  precheck_fail: ['程序', '预检（verify、契约检查、范围）失败，退回实施（计一次 precheck_failures）'],
-  precheck_pass: ['程序', '预检通过：按审查要求进入审查或排队合并'],
-  precheck_pass_skip: ['程序', '预检通过且免审查，直接排队合并'],
-  precheck_fail_handoff: ['程序', '只交付文档类的任务预检后直接完成'],
-  review_changes: ['审查者', '审查打回：每条意见带位置、问题、期望（计一次 review_rounds）'],
+  dispatch: ['程序', '派发：建 worktree、颁发 token 与租约、拉起子进程（实施池、后端 domain、前端、辅助池各有并行上限）'],
+  submit: ['agent', 'forge_submit：程序先把集成分支同步进任务分支（冲突交回原 agent），需要审查的进审查，否则直接排队合并'],
+  review_changes: ['审查者', '审查打回：每条 must 带位置、问题、期望（计一次 review_rounds）'],
   review_pass: ['审查者', '审查通过，排队合并'],
-  review_exhausted: ['程序', '审查轮次用尽，交给用户'],
+  review_exhausted: ['程序', '审查轮次用尽，转阻塞'],
   merge_start: ['合并队列', '轮到队首，开始 squash、rebase'],
   merge_done: ['合并队列', 'rebase 成功、合并后验证通过、快进集成分支'],
   merge_verify_fail: ['合并队列', '合并后验证失败，退回实施（计一次 merge_failures）'],
-  merge_blocked: ['合并队列', '冲突无法自动处理（例如涉及契约）'],
+  merge_conflict: ['合并队列', '合并时文本冲突，交回原任务处理（计一次 merge_failures）'],
+  merge_blocked: ['合并队列', '合并无法继续（例如没有改动），转阻塞'],
   merge_requeue: ['恢复', '崩溃恢复时把未完成的合并放回队首'],
-  dispute: ['实施者', '实施者认为验收测试有误，提交争议，交给 test-author 裁决'],
-  dispute_fixed: ['test-author', '裁决：测试确实有误，已修改（.at-n），实施者重新预检'],
-  dispute_upheld: ['test-author', '裁决：测试正确（没改），实施者继续实现'],
-  dispute_escalated: ['程序', '争议次数超限，交给用户裁决'],
-  decide_keep: ['用户', '裁决保持测试不变'],
-  decide_fix: ['用户', '裁决改测试，新建 .at-n'],
-  accept: ['用户', '接受当前状态，直接排队合并'],
-  foreign_tests_broken: ['程序', '别的任务的契约追加破坏了本任务的验收测试，等 .at-n 修好'],
-  block: ['agent', 'forge_block：遇到歧义或无法完成，交给用户'],
-  unblock: ['用户', '/forge answer、/forge unblock 回答后继续'],
+  accept: ['用户', '放行：审查轮次用尽的直接排队合并；合并时没有改动的视为完成'],
+  block: ['agent', 'forge_block 或程序、用户阻塞任务'],
+  unblock: ['用户', '/forge answer、/forge unblock 回答后继续（主会话代为决定时也可以）'],
+  hand_to_user: ['主会话', '主会话看过后把阻塞转交给用户'],
+  ask: ['agent', 'forge_ask_architect：提问后结束本次运行，任务等架构师回答'],
+  answered: ['程序', '咨询任务完成，回答写进 handoff，提问的任务接着原会话继续'],
+  report: ['agent', '审查、阶段验收提交结论，或没有改动的任务直接完成'],
+  cancel: ['用户', '取消未开始或阻塞的任务'],
   lease_expired: ['程序', '租约到期且工作区干净，回到可派发（计一次失败）'],
   run_failed: ['程序', '子进程没提交就结束（崩溃、放弃；计一次失败）'],
   run_interrupted: ['恢复', '会话中断，只计中断次数'],
   run_paused: ['程序', '模型额度用完或服务不可用：不计失败，暂停该模型'],
   run_timeout: ['程序', '运行超过时间预算被结束（计一次失败），等主会话复核'],
-  report: ['审查者', '审查或 stage-qa 提交结论，直接完成'],
-  cancel: ['用户', '取消未开始或阻塞的任务'],
 };
 // 运行结果：标签是具体结果，颜色按大类（图例按大类显示）
 const OUT = {
   submitted: ['提交', 'var(--good)', '提交 / 审查通过'], approved: ['审查通过', 'var(--good)', '提交 / 审查通过'], noted: ['记录', 'var(--idle)', '记录（主会话）'],
   rejected: ['审查打回', 'var(--serious)', '审查打回 / 阻塞求助'], blocked: ['阻塞求助', 'var(--serious)', '审查打回 / 阻塞求助'],
   failed: ['失败', 'var(--critical)', '失败 / 被结束'], killed: ['被结束', 'var(--critical)', '失败 / 被结束'], lease_expired: ['租约过期', 'var(--critical)', '失败 / 被结束'], timeout: ['超时', 'var(--critical)', '失败 / 被结束'],
-  unavailable: ['模型不可用', 'var(--warning)', '模型不可用（暂停）'], running: ['运行中', 'var(--s-impl)', '运行中'],
+  unavailable: ['模型不可用', 'var(--warning)', '模型不可用（暂停）'], asked: ['问架构师', 'var(--warning)', '问架构师'], running: ['运行中', 'var(--s-impl)', '运行中'],
 };
 // 用户界面只显示高层阶段：架构 → 开发 → 交付
 const PHASE = { arch: '架构', impl: '开发', delivery: '交付' };
-const phaseOf = (stage) => stage === 'S0' || stage === 'P0' || stage === 'P1' ? 'arch' : 'impl';
+const phaseOf = (stage) => stage === 'S0' ? 'arch' : 'impl';
 const chip = (status) => { const s = ST[status] || { l: status, c: 'var(--idle)', icon: '' }; return `<span class="chip"><i style="background:${s.c}"></i>${s.icon} ${esc(s.l)}</span>`; };
 const roleChip = (role) => `<span class="chip"><i style="background:${roleC(role)}"></i>${esc(roleL(role))}</span>`;
 const outcomeOf = (r) => r.outcome ?? (r.ended_at ? 'failed' : 'running');
-// 派生任务：T-003.at / .at-2 验收测试、.rv 审查、.fx-1 修复；阶段级：S1.rv、S1.qa
-const DERIVED = /\.(at|rv|fx)(-\d+)?$/;
-const STAGE_LEVEL = /^[A-Za-z][A-Za-z0-9_]*\.(rv|qa)(-\d+)?$/;
+// 派生任务：T-003.rv 审查、.fx-1 修复；阶段级：S1.qa
+const DERIVED = /\.(rv|fx)(-\d+)?$/;
+const STAGE_LEVEL = /^[A-Za-z][A-Za-z0-9_]*\.qa(-\d+)?$/;
 
 
 // —— 提示框 ——
@@ -351,8 +343,8 @@ function renderHeader(F, runs, evs) {
     [fmtN(sum('input') + sum('output')), '输入 + 输出 token'],
     [fmtN(sum('cache_read')), '缓存读'],
     [n('review_changes'), '审查打回'],
-    [n('precheck_fail') + n('merge_verify_fail'), '预检 / 合并验证失败'],
-    [n('dispute'), '争议'],
+    [n('merge_verify_fail') + n('merge_conflict'), '合并退回'],
+    [n('ask'), '问架构师'],
     [evs.filter((e) => e.type === 'violation').length, '被拦下的违规'],
     [runs.filter((r) => r.forked_from).length, '接着上次对话的返工'],
   ];
@@ -361,13 +353,13 @@ function renderHeader(F, runs, evs) {
 
 // —— 状态机 ——
 const POS = {
-  pending: [70, 120], ready: [220, 120], in_progress: [400, 120], checking: [590, 120], in_review: [770, 120],
-  queued_merge: [920, 120], merging: [1070, 120], done: [1200, 120],
-  awaiting_inputs: [400, 340], disputed: [590, 340], blocked: [770, 340], cancelled: [150, 340],
+  pending: [70, 120], ready: [250, 120], in_progress: [440, 120], in_review: [630, 120],
+  queued_merge: [820, 120], merging: [1010, 120], done: [1190, 120],
+  blocked: [630, 340], cancelled: [150, 340],
 };
 function renderSM(tasks, evs) {
   const svg = $('#sm'); svg.innerHTML = '';
-  $('#smLegend').innerHTML = ['in_progress', 'checking', 'in_review', 'done', 'blocked', 'awaiting_inputs', 'pending'].map((s) => `<span><i class="sw" style="background:${ST[s].c}"></i>${ST[s].icon} ${ST[s].l}${s === 'checking' ? '（含排队合并、合并中）' : s === 'pending' ? '（含可派发、已取消）' : ''}</span>`).join('');
+  $('#smLegend').innerHTML = ['in_progress', 'in_review', 'queued_merge', 'done', 'blocked', 'pending'].map((s) => `<span><i class="sw" style="background:${ST[s].c}"></i>${ST[s].icon} ${ST[s].l}${s === 'queued_merge' ? '（含合并中）' : s === 'pending' ? '（含可派发、已取消）' : ''}</span>`).join('');
   const defs = svgEl('defs', {}, svg);
   const mk = svgEl('marker', { id: 'arr', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
   svgEl('path', { d: 'M0,0 L10,5 L0,10 z', fill: 'var(--axis)' }, mk);
@@ -427,13 +419,12 @@ function renderSM(tasks, evs) {
   }
   const steps = [
     ['待前置 → 可派发', '硬依赖都完成、所属阶段进行中后由程序晋升；自动派发开启时程序马上派发。'],
-    ['可派发 → 实施中', '建独立 worktree，颁发 token 与租约，拉起子进程（guard 约束可写范围、受保护路径与命令）。实施池与辅助池（验收测试、审查、阶段验收）各有并行上限。'],
-    ['实施中 → 预检中', '实施者 forge_note 写 handoff 后 forge_submit；程序检查 diff 不越界。有验收测试（.at）还没完成时先在"等输入"，同步好测试后再进入预检。'],
-    ['预检', '程序先跑 verify、契约检查和范围检查：失败退回实施（precheck_fail，计 precheck_failures）；通过后按审查要求进入审查，免审查直接排队合并。'],
-    ['审查中', '只读审查者（.rv）forge_approve；打回带位置、问题、期望（review_changes，计 review_rounds），轮次用尽转阻塞。'],
-    ['争议', '实施者认为验收测试有误时 dispute：test-author 裁决，改了测试（dispute_fixed，新建 .at-n）或维持（dispute_upheld）；超限交给用户。'],
-    ['排队合并 → 合并中 → 已完成', '串行：squash、rebase 到集成分支、合并后验证、快进。失败退回实施（merge_verify_fail，计 merge_failures）。'],
-    ['阶段闸门与阶段验收', '本阶段任务全部完成后程序跑全量测试闸门（失败自动生成修复任务，最多两轮）；S 阶段再由 stage-qa（S1.qa）验收，通过后等你签收。'],
+    ['可派发 → 实施中', '建独立 worktree，颁发 token 与租约，拉起子进程（guard 只拦受保护路径与命令）。实施池、后端 domain、前端与辅助池（审查、阶段验收、架构师咨询）各有并行上限。'],
+    ['实施中 → 提交', 'agent 写 handoff 后 forge_submit；程序先把集成分支同步进任务分支，冲突交回原 agent。需要审查的进审查，不需要的直接排队合并。'],
+    ['审查中', '只读审查者（.rv）提交结论；打回带位置、问题、期望（review_changes，计 review_rounds），轮次用尽转阻塞。'],
+    ['等架构师', 'agent 用 forge_ask_architect 提问后任务转阻塞（等架构师），程序新建架构师咨询任务；咨询完成后程序把回答交回，任务接着原会话继续（answered）。'],
+    ['排队合并 → 合并中 → 已完成', '串行：squash、rebase 到集成分支、合并后验证、快进。验证失败或文本冲突退回实施（merge_verify_fail、merge_conflict，计 merge_failures）。'],
+    ['阶段闸门与批次验收', '本阶段任务全部完成后程序跑全量测试闸门（失败自动生成修复任务，最多两轮）；S1…Sn 再由 stage-qa（S1.qa）验收，通过后等你签收。'],
   ];
   $('#pathSteps').innerHTML = steps.map(([a, b]) => `<li><b>${esc(a)}</b>：${esc(b)}</li>`).join('');
 }
@@ -443,8 +434,7 @@ function renderDAG(F, runs, evs) {
   const { flow, tasks, handoffs } = F;
   const svg = $('#dag'); svg.innerHTML = '';
   $('#dagLegend').innerHTML = D.roles.map((r) => `<span><i class="sw" style="background:${roleC(r)}"></i>${esc(roleL(r))}</span>`).join('') +
-    ['in_progress', 'in_review', 'checking', 'done', 'blocked', 'pending'].map((s) => `<span><i class="sw" style="background:${ST[s].c};border-radius:50%"></i>${ST[s].l}</span>`).join('') +
-    '<span><svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="var(--text-secondary)" stroke-width="1.5"/></svg>硬依赖</span><span><svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="var(--text-secondary)" stroke-width="1.5" stroke-dasharray="5 3"/></svg>软依赖</span>';
+    ['in_progress', 'in_review', 'queued_merge', 'done', 'blocked', 'pending'].map((s) => `<span><i class="sw" style="background:${ST[s].c};border-radius:50%"></i>${ST[s].l}</span>`).join('');
   const ids = new Set(tasks.map((t) => t.id));
   const baseOf = (t) => t.for_task ?? t.id.replace(DERIVED, '');
   const derivedOf = new Map(), stageLevel = new Map(), main = [];
@@ -468,7 +458,7 @@ function renderDAG(F, runs, evs) {
       if (depth.has(id)) return depth.get(id);
       if (seen.has(id)) return 0; seen.add(id);
       const t = group.find((g) => g.id === id);
-      const v = 1 + Math.max(0, ...t.depends_on.filter((d) => d.type === 'hard').map((d) => anchor(d.task)).filter((a) => a && a !== id && gids.has(a)).map((a) => go(a, seen)));
+      const v = 1 + Math.max(0, ...t.depends_on.map((d) => anchor(d.task)).filter((a) => a && a !== id && gids.has(a)).map((a) => go(a, seen)));
       depth.set(id, v); return v;
     };
     for (const t of group) go(t.id);
@@ -520,10 +510,10 @@ function renderDAG(F, runs, evs) {
   for (const t of main) for (const d of t.depends_on) {
     const from = anchor(d.task);
     const a = from && pos.get(from), b = pos.get(t.id);
-    if (!a || !b || from === t.id || seen.has(`${from}>${t.id}>${d.type}`)) continue;
-    seen.add(`${from}>${t.id}>${d.type}`);
+    if (!a || !b || from === t.id || seen.has(`${from}>${t.id}`)) continue;
+    seen.add(`${from}>${t.id}`);
     const x1 = a[0] + W, y1 = a[1] + H / 2, x2 = b[0], y2 = b[1] + H / 2;
-    const p = svgEl('path', { d: `M${x1},${y1} C${x1 + 40},${y1} ${x2 - 40},${y2} ${x2 - 2},${y2}`, fill: 'none', stroke: 'var(--text-muted)', 'stroke-width': 1.5, 'stroke-dasharray': d.type === 'soft' ? '5 3' : '', 'marker-end': 'url(#arr2)', 'stroke-opacity': 0.7 }, svg);
+    const p = svgEl('path', { d: `M${x1},${y1} C${x1 + 40},${y1} ${x2 - 40},${y2} ${x2 - 2},${y2}`, fill: 'none', stroke: 'var(--text-muted)', 'stroke-width': 1.5, 'marker-end': 'url(#arr2)', 'stroke-opacity': 0.7 }, svg);
     edges.push({ from, to: t.id, p });
   }
   for (const t of main) {
@@ -535,11 +525,12 @@ function renderDAG(F, runs, evs) {
     svgEl('circle', { cx: x0 + W - 12, cy: y0 + 14, r: 5.5, fill: s.c }, g);
     const a = svgEl('text', { x: x0 + 14, y: y0 + 19, 'font-size': 12, 'font-weight': 600 }, g);
     a.textContent = `${t.id} · ${KIND[t.kind] ?? t.kind}${t.attempts ? ` · 返工 ${t.attempts}` : ''}`;
-    const title = (t.module ? `[${t.module}] ` : '') + t.title;
+    const area = t.domain ?? t.page ?? t.module;
+    const title = (area ? `[${area}] ` : '') + t.title;
     const b = svgEl('text', { x: x0 + 14, y: y0 + 38, 'font-size': 12, class: 'sec' }, g); b.textContent = title.length > 20 ? title.slice(0, 20) + '…' : title;
     const c = svgEl('text', { x: x0 + 14, y: y0 + 54, 'font-size': 10.5, class: 'muted' }, g);
-    c.textContent = `${s.l}${t.blocked_by ? ' · ' + t.blocked_by : ''}`;
-    hover(g, () => `${t.id} ${t.title}\n${KIND[t.kind] ?? t.kind} · ${roleL(t.role)} · ${s.l}\n可写：${(t.conflict_files ?? t.writes).join('、')}`);
+    c.textContent = `${s.l}${t.blocked_by ? ' · ' + blockedL(t.blocked_by) : ''}`;
+    hover(g, () => `${t.id} ${t.title}\n${KIND[t.kind] ?? t.kind} · ${roleL(t.role)} · ${s.l}\n路径：${(t.conflict_files ?? t.writes).join('、')}`);
     mkPick(g, t);
     // 派生任务挨着原任务：最多显示 4 个，其余合并成 +N
     const ds = (derivedOf.get(t.id) ?? []).sort((p, q) => p.id.localeCompare(q.id, undefined, { numeric: true }));
@@ -547,9 +538,9 @@ function renderDAG(F, runs, evs) {
     ds.slice(0, ds.length > 4 ? 3 : 4).forEach((d) => { dx += chipSvg(svg, dx, y0 + H - 22, d, suffix(d)) + 4; });
     if (ds.length > 4) { const more = svgEl('text', { x: dx + 2, y: y0 + H - 9, 'font-size': 10.5, class: 'sec' }, svg); more.textContent = `+${ds.length - 3}`; hover(more, () => ds.slice(3).map((d) => `${d.id} ${(ST[d.status] || {}).l ?? d.status}`).join('\n')); }
   }
-  const cnt = (t) => `${t.precheck_failures ?? 0}/${t.review_rounds ?? 0}/${t.merge_failures ?? 0}`;
-  $('#taskTable').innerHTML = `<tr><th>任务</th><th>阶段</th><th>类型</th><th>角色</th><th>模块</th><th>状态</th><th class="num" title="预检失败 / 审查轮次 / 合并失败">p/r/m</th><th class="num">争议</th><th class="num">运行</th><th>依赖</th></tr>` +
-    tasks.map((t) => `<tr><td>${esc(t.id)} ${esc(t.title)}</td><td>${esc(t.stage)}</td><td>${esc(KIND[t.kind] ?? t.kind)}</td><td>${roleChip(t.role)}</td><td>${esc(t.module ?? '')}</td><td>${chip(t.status)}${t.blocked_by ? ` <span class="hint">${esc(t.blocked_by)}</span>` : ''}</td><td class="num">${cnt(t)}</td><td class="num">${Object.values(t.disputes ?? {}).reduce((a, b) => a + b, 0) || ''}</td><td class="num">${runs.filter((r) => r.task === t.id).length}</td><td>${t.depends_on.map((d) => `<span ${d.type === 'soft' ? 'class="hint"' : ''}>${esc(d.task)}${d.type === 'soft' ? '（软）' : ''}</span>`).join('、')}</td></tr>`).join('');
+  const cnt = (t) => `${t.review_rounds ?? 0}/${t.merge_failures ?? 0}`;
+  $('#taskTable').innerHTML = `<tr><th>任务</th><th>阶段</th><th>类型</th><th>角色</th><th>domain / 页面 / 模块</th><th>状态</th><th class="num" title="审查轮次 / 合并失败">r/m</th><th class="num">运行</th><th>依赖</th></tr>` +
+    tasks.map((t) => `<tr><td>${esc(t.id)} ${esc(t.title)}</td><td>${esc(t.stage)}</td><td>${esc(KIND[t.kind] ?? t.kind)}</td><td>${roleChip(t.role)}</td><td>${esc(t.domain ?? t.page ?? t.module ?? '')}</td><td>${chip(t.status)}${t.blocked_by ? ` <span class="hint">${esc(blockedL(t.blocked_by))}</span>` : ''}</td><td class="num">${cnt(t)}</td><td class="num">${runs.filter((r) => r.task === t.id).length}</td><td>${t.depends_on.map((d) => esc(d.task)).join('、')}</td></tr>`).join('');
 }
 
 function showTask(F, t, runs, evs) {
@@ -558,20 +549,19 @@ function showTask(F, t, runs, evs) {
   const te = evs.filter((e) => e.task === t.id && (e.type === 'transition' || e.type === 'violation'));
   const derived = tasks.filter((x) => x.for_task === t.id || (x.id !== t.id && x.id.replace(DERIVED, '') === t.id));
   const ev = F.evidence[t.id] ?? {};
-  const rd = t.acctest_round;
   $('#dagSide').innerHTML = `<h2>${esc(t.id)} ${esc(t.title)}</h2>${chip(t.status)} ${roleChip(t.role)}
     <dl class="kv" style="margin-top:8px">
       <dt>类型</dt><dd>${esc(KIND[t.kind] ?? t.kind)}${t.review ? ` · 审查 ${esc(t.review)}` : ''}${t.risk ? ` · 风险 ${esc(t.risk)}` : ''}${t.size ? ` · ${esc(t.size)}` : ''}</dd>
       <dt>阶段 / 模块</dt><dd>${esc(t.stage)}${t.module ? ` / ${esc(t.module)}` : ''}</dd>
+      ${t.domain ? `<dt>domain</dt><dd>${esc(t.domain)}</dd>` : ''}
+      ${t.page ? `<dt>页面</dt><dd>${esc(t.page)}</dd>` : ''}
       ${t.for_task ? `<dt>派生自</dt><dd>${esc(t.for_task)}</dd>` : ''}
       ${derived.length ? `<dt>派生任务</dt><dd>${derived.map((d) => `${esc(d.id)}（${esc((ST[d.status] || { l: d.status }).l)}）`).join('、')}</dd>` : ''}
-      ${rd ? `<dt>验收测试返工</dt><dd>${esc(rd.kind)}${rd.test ? ` · ${esc(rd.test)}` : ''}${rd.from_task ? ` · 来自 ${esc(rd.from_task)}` : ''}</dd>` : ''}
-      <dt>可写范围</dt><dd>${esc((t.conflict_files ?? t.writes).join('、') || '无')}</dd>
+      <dt>路径</dt><dd>${esc((t.conflict_files ?? t.writes).join('、') || '无')}</dd>
       <dt>verify</dt><dd>${esc(t.verify.join('、') || '无')}</dd>
-      <dt>计数</dt><dd>预检失败 ${t.precheck_failures ?? 0} · 审查轮次 ${t.review_rounds ?? 0} · 合并失败 ${t.merge_failures ?? 0} · 争议 ${Object.entries(t.disputes ?? {}).map(([k, v]) => `${esc(k)}×${v}`).join('、') || 0}</dd>
+      <dt>计数</dt><dd>审查轮次 ${t.review_rounds ?? 0} · 合并失败 ${t.merge_failures ?? 0}</dd>
       <dt>返工 / 中断</dt><dd>${t.attempts} / ${t.interruptions ?? 0}</dd>
-      ${t.waits_for?.length ? `<dt>等待</dt><dd>${t.waits_for.map(esc).join('、')}</dd>` : ''}
-      ${t.blocked_by ? `<dt>阻塞类别</dt><dd>${esc(t.blocked_by)}</dd>` : ''}
+      ${t.blocked_by ? `<dt>阻塞类别</dt><dd>${esc(blockedL(t.blocked_by))}</dd>` : ''}
       ${t.blocked_reason ? `<dt>阻塞原因</dt><dd>${esc(t.blocked_reason)}</dd>` : ''}
       ${t.last_failure ? `<dt>上次未通过</dt><dd>${esc(t.last_failure.slice(0, 600))}</dd>` : ''}
     </dl>
@@ -625,11 +615,11 @@ function renderTimeline(flow, runs, evs, tasks) {
     if (b - a > 34) { const t = svgEl('text', { x: a + 4, y: 28 + i * lane + 13, 'font-size': 10, fill: '#fff', style: 'fill:#fff;pointer-events:none' }, svg); t.textContent = r.task ?? ''; }
     hover(rect, () => {
       const task = tasks.find((t) => t.id === r.task);
-      return `${r.run_id}\n${r.task ?? '—'} ${task ? task.title : ''}\n${r.role} · ${r.model ?? '未知模型'}${r.review_mode ? `（审查档 ${r.review_mode}）` : ''}${r.escalated ? ' · 升级模型' : ''}${r.forked_from ? ' · 接着上次对话' : ''}\n结果：${label}\n开始 ${time(r.started_at)}，耗时 ${r.ended_at ? fmtDur(Date.parse(r.ended_at) - Date.parse(r.started_at)) : '运行中'}\n输入 ${fmtN(r.tokens.input)} · 输出 ${fmtN(r.tokens.output)} · 缓存读 ${fmtN(r.tokens.cache_read)}${r.turns != null ? ` · ${r.turns} 轮` : ''}${r.violations ? `\n违规 ${r.violations} 次` : ''}`;
+      return `${r.run_id}\n${r.task ?? '—'} ${task ? task.title : ''}\n${r.role} · ${r.model ?? '未知模型'}${r.escalated ? ' · 升级模型' : ''}${r.forked_from ? ' · 接着上次对话' : ''}\n结果：${label}\n开始 ${time(r.started_at)}，耗时 ${r.ended_at ? fmtDur(Date.parse(r.ended_at) - Date.parse(r.started_at)) : '运行中'}\n输入 ${fmtN(r.tokens.input)} · 输出 ${fmtN(r.tokens.output)} · 缓存读 ${fmtN(r.tokens.cache_read)}${r.turns != null ? ` · ${r.turns} 轮` : ''}${r.violations ? `\n违规 ${r.violations} 次` : ''}`;
     });
   }
   $('#runTable').innerHTML = `<tr><th>运行</th><th>任务</th><th>角色</th><th>模型</th><th>结果</th><th>开始</th><th class="num">耗时</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存读</th><th class="num">轮</th></tr>` +
-    [...runs].sort((a, b) => a.started_at.localeCompare(b.started_at)).map((r) => `<tr><td>${esc(r.run_id)}${r.forked_from ? ' ↻' : ''}${r.escalated ? ' ⬆' : ''}</td><td>${esc(r.task ?? '—')}</td><td>${esc(r.role)}</td><td>${esc((r.model ?? '').split('/').pop())}${r.review_mode ? `（${esc(r.review_mode)}）` : ''}</td><td>${esc((OUT[outcomeOf(r)] || [outcomeOf(r)])[0])}</td><td>${time(r.started_at)}</td><td class="num">${r.ended_at ? fmtDur(Date.parse(r.ended_at) - Date.parse(r.started_at)) : '运行中'}</td><td class="num">${fmtN(r.tokens.input)}</td><td class="num">${fmtN(r.tokens.output)}</td><td class="num">${fmtN(r.tokens.cache_read)}</td><td class="num">${r.turns ?? '—'}</td></tr>`).join('');
+    [...runs].sort((a, b) => a.started_at.localeCompare(b.started_at)).map((r) => `<tr><td>${esc(r.run_id)}${r.forked_from ? ' ↻' : ''}${r.escalated ? ' ⬆' : ''}</td><td>${esc(r.task ?? '—')}</td><td>${esc(r.role)}</td><td>${esc((r.model ?? '').split('/').pop())}</td><td>${esc((OUT[outcomeOf(r)] || [outcomeOf(r)])[0])}</td><td>${time(r.started_at)}</td><td class="num">${r.ended_at ? fmtDur(Date.parse(r.ended_at) - Date.parse(r.started_at)) : '运行中'}</td><td class="num">${fmtN(r.tokens.input)}</td><td class="num">${fmtN(r.tokens.output)}</td><td class="num">${fmtN(r.tokens.cache_read)}</td><td class="num">${r.turns ?? '—'}</td></tr>`).join('');
 }
 
 // —— 成本 ——
@@ -647,10 +637,10 @@ function renderCost(F, runs, evs, tasks) {
   $('#costBars').innerHTML = rows.map((r) => `<div class="bar-row"><span>${esc(r.role)}</span><div class="bar-track"><div class="bar" style="width:${(r.input + r.output) / max * 100}%;background:${roleC(r.role)}" title="${esc(r.role)}：${fmtN(r.input + r.output)}"></div></div><span class="hint" style="text-align:right">${fmtN(r.input + r.output)}</span></div>`).join('') || '<div class="hint">没有运行</div>';
   $('#costTable').innerHTML = `<tr><th>角色</th><th class="num">运行</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存读</th><th class="num">运行时长</th><th class="num">平均轮</th></tr>` +
     rows.map((r) => `<tr><td>${esc(r.role)}</td><td class="num">${r.runs}</td><td class="num">${fmtN(r.input)}</td><td class="num">${fmtN(r.output)}</td><td class="num">${fmtN(r.cache)}</td><td class="num">${fmtDur(r.ms)}</td><td class="num">${r.tr ? (r.turns / r.tr).toFixed(1) : '—'}</td></tr>`).join('');
-  const kinds = { precheck_fail: '预检失败', review_changes: '审查打回', merge_verify_fail: '合并验证失败', dispute: '争议', run_failed: '运行失败', block: '阻塞' };
+  const kinds = { review_changes: '审查打回', merge_verify_fail: '合并验证失败', merge_conflict: '合并冲突', run_failed: '运行失败', block: '阻塞' };
   const rw = tasks.map((t) => { const c = {}; for (const k of Object.keys(kinds)) c[k] = evs.filter((e) => e.task === t.id && e.trigger === k).length; return { t, c, total: Object.values(c).reduce((a, b) => a + b, 0) }; }).filter((x) => x.total).sort((a, b) => b.total - a.total);
   $('#reworkTable').innerHTML = `<tr><th>任务</th>${Object.values(kinds).map((k) => `<th class="num">${k}</th>`).join('')}<th class="num">合计</th></tr>` +
-    (rw.map((x) => `<tr><td>${esc(x.t.id)} ${esc(x.t.title)}</td>${Object.keys(kinds).map((k) => `<td class="num">${x.c[k] || ''}</td>`).join('')}<td class="num"><b>${x.total}</b></td></tr>`).join('') || '<tr><td class="hint" colspan="8">没有返工</td></tr>');
+    (rw.map((x) => `<tr><td>${esc(x.t.id)} ${esc(x.t.title)}</td>${Object.keys(kinds).map((k) => `<td class="num">${x.c[k] || ''}</td>`).join('')}<td class="num"><b>${x.total}</b></td></tr>`).join('') || '<tr><td class="hint" colspan="7">没有返工</td></tr>');
 }
 
 // —— 事件 ——
@@ -686,7 +676,7 @@ function renderStages(F) {
       <td>${r.tasks ? `${r.tasks}（${Object.entries(r.by_status).map(([k, v]) => `${esc((ST[k] || { l: k }).l)} ${v}`).join('、')}）` : '—'}</td>
       <td>${r.gate_rounds.length ? r.gate_rounds.map((g) => `<div>${time(g.at)} ${esc(g.command)}<br><span class="hint">修复 ${g.tasks.map(esc).join('、')}</span></div>`).join('') : '—'}</td>
       <td>${r.approved ? `${time(r.approved.at)}${r.approved.note ? '<br><span class="hint">' + esc(r.approved.note) + '</span>' : ''}` : ''}</td></tr>`).join('') +
-    `<tr><td colspan="7" class="hint">${flow.plan_mode ? `计划模式 ${esc(flow.plan_mode)} · ` : ''}集成分支 ${esc(flow.integration_branch)}${flow.sync ? ` · 同步主分支：${esc(flow.sync.status)}（${esc(flow.sync.stage)}）` : ''}${flow.plan_rework ? ` · P1 打回：${esc(flow.plan_rework.reason)}` : ''}</td></tr>`;
+    `<tr><td colspan="7" class="hint">集成分支 ${esc(flow.integration_branch)}${flow.sync ? ` · 同步主分支：${esc(flow.sync.status)}（${esc(flow.sync.stage)}）` : ''}${flow.plan_rework ? ` · S0 打回：${esc(flow.plan_rework.reason)}` : ''}</td></tr>`;
   $('#stageTrTable').innerHTML = `<tr><th>来自</th><th>触发</th><th>去往</th></tr>` +
     D.stageTransitions.map((r) => `<tr><td>${r.from.map((s) => esc(STAGE_ST[s] ?? s)).join('、')}</td><td>${esc(r.trigger)}${r.humanOnly ? ' <span class="hint">仅用户</span>' : ''}</td><td>${esc(STAGE_ST[r.to] ?? r.to)}</td></tr>`).join('');
 }
@@ -699,12 +689,12 @@ function renderMetrics(F) {
     for (const id of ['#mTiles', '#mSpeed', '#mRework', '#mQuality', '#mCost', '#mTaskBars']) $(id).innerHTML = id === '#mTiles' ? '<div class="hint">这个流程暂时算不出度量。</div>' : '';
     return;
   }
-  const rwSum = (r) => r.precheck_failures + r.review_rejects + r.merge_verify_failures + r.disputes + r.acctest_rounds + r.gate_fixes + r.qa_fixes;
+  const rwSum = (r) => r.review_rejects + r.merge_verify_failures + r.gate_fixes + r.qa_fixes;
   const agent = m.stages.reduce((a, s) => a + s.agent_min, 0);
   const tiles = [
     [fm(agent, ' 分钟'), '速度：agent 时间'], [fm(m.queue_avg_min, ' 分钟'), '速度：平均排队'],
     [rwSum(m.rework), '返工：合计'], [m.rework.review_rejects, '返工：审查打回'],
-    [m.quality.ac_coverage_pct == null ? '—' : m.quality.ac_coverage_pct + '%', '质量：AC 覆盖率'], [m.quality.acceptance_tests, '质量：验收测试'],
+    [m.quality.ac_coverage_pct == null ? '—' : m.quality.ac_coverage_pct + '%', '质量：AC 覆盖率'],
     [m.quality.qa_must, '质量：qa must'], [m.quality.fix_after_delivery, '质量：交付后 fix'],
     [fmtN(m.cost.tokens), '成本：token'], [m.cost.cost == null ? '—' : '$' + m.cost.cost.toFixed(2), '成本：金额'],
   ];
@@ -712,10 +702,10 @@ function renderMetrics(F) {
   $('#mSpeed').innerHTML = `<tr><th>阶段</th><th class="num">agent</th><th class="num">墙钟</th><th class="num">等你</th><th class="num">完成</th><th class="num">取消</th><th class="num">关键路径 实际</th><th class="num">理论</th><th class="num">倍数</th></tr>` +
     (m.stages.map((s) => `<tr><td>${esc(s.stage)}</td><td class="num">${fm(s.agent_min)}</td><td class="num">${fm(s.wall_min)}</td><td class="num">${fm(s.human_min)}</td><td class="num">${s.tasks_done}</td><td class="num">${s.tasks_cancelled || ''}</td><td class="num">${fm(s.critical_actual_min)}</td><td class="num">${fm(s.critical_theory_min)}</td><td class="num">${fm(s.critical_ratio)}</td></tr>`).join('') || '<tr><td colspan="9" class="hint">还没有实施阶段</td></tr>');
   const rows = [['合计', m.rework], ...Object.entries(m.rework_by_stage)];
-  $('#mRework').innerHTML = `<tr><th>阶段</th><th class="num">预检失败</th><th class="num">审查打回</th><th class="num">合并验证失败</th><th class="num">争议</th><th class="num">.at-n</th><th class="num">门禁修复</th><th class="num">qa 修复</th></tr>` +
-    rows.map(([k, r]) => `<tr><td>${k === '合计' ? '<b>合计</b>' : esc(k)}</td>${[r.precheck_failures, r.review_rejects, r.merge_verify_failures, r.disputes, r.acctest_rounds, r.gate_fixes, r.qa_fixes].map((v) => `<td class="num">${v || ''}</td>`).join('')}</tr>`).join('');
+  $('#mRework').innerHTML = `<tr><th>阶段</th><th class="num">审查打回</th><th class="num">合并验证失败</th><th class="num">门禁修复</th><th class="num">qa 修复</th></tr>` +
+    rows.map(([k, r]) => `<tr><td>${k === '合计' ? '<b>合计</b>' : esc(k)}</td>${[r.review_rejects, r.merge_verify_failures, r.gate_fixes, r.qa_fixes].map((v) => `<td class="num">${v || ''}</td>`).join('')}</tr>`).join('');
   $('#mQuality').innerHTML = `<dt>AC 覆盖率</dt><dd>${m.quality.ac_coverage_pct == null ? '— （读不到覆盖率矩阵）' : m.quality.ac_coverage_pct + '%'}</dd>
-    <dt>验收测试</dt><dd>${m.quality.acceptance_tests} 个已完成</dd><dt>stage-qa must</dt><dd>${m.quality.qa_must} 条</dd><dt>交付后 /forge-fix</dt><dd>${m.quality.fix_after_delivery} 次</dd>`;
+    <dt>stage-qa must</dt><dd>${m.quality.qa_must} 条</dd><dt>交付后 /forge-fix</dt><dd>${m.quality.fix_after_delivery} 次</dd>`;
   const cs = Object.entries(m.cost_by_stage);
   const costRow = (k, c) => `<tr><td>${k}</td><td class="num">${c.runs}</td><td class="num">${fmtN(c.tokens)}</td><td class="num">${c.cost == null ? '—' : '$' + c.cost.toFixed(2)}</td><td class="num">${fmtDur(c.duration_ms)}</td></tr>`;
   $('#mCost').innerHTML = `<tr><th>阶段</th><th class="num">运行</th><th class="num">token</th><th class="num">金额</th><th class="num">运行时长</th></tr>` + costRow('<b>合计</b>', m.cost) + cs.map(([k, c]) => costRow(esc(k), c)).join('');

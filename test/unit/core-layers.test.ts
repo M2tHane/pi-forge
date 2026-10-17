@@ -14,11 +14,11 @@ const LAYERS: Record<string, number> = {
   workspace: 2, // worktree、依赖准备、命令运行、资源分配、服务、只读 forge_read
   verify: 3, // 验证缓存、测试调整
   insight: 3, // 成本、预算、角色模型、停滞检测
-  spec: 4, // 规格与 intake、预检
+  spec: 4, // PRD 解析与检查、入库、启动前检查
   acceptance: 5, // 验收测试流程、覆盖率、阶段修复
   plan: 6, // 架构阶段与计划批次、小改动的迷你计划、只追加合并、规则草案
   stage: 7, // 阶段流程、闸门、审查、签收、合入
-  engine: 8, // 调度、子进程、合并队列、预检、知识与笔记
+  engine: 8, // 调度、子进程、合并队列、架构师咨询、知识与笔记
   ops: 9, // 斜杠命令与状态展示：init、doctor、resume、status-view 等
 };
 

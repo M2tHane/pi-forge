@@ -1,26 +1,26 @@
 // pi-forge 视图的数据提取（纯读取，不修改 .forge/）：forge-view.ts 与单元测试共用。
-// 所有内嵌的自由文本（handoff、备注、证据摘录、事件原因、变更内容）一律经 redactDeep 打码后才进入页面。
+// 所有内嵌的自由文本（handoff、备注、证据摘录、事件原因）一律经 redactDeep 打码后才进入页面。
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { StateStore, handoffRel, evidenceRel } from '../src/core/state/state-store.ts';
 import { STAGE_TRANSITIONS, TRANSITIONS } from '../src/core/state/state-machine.ts';
 import { flowMetrics } from '../src/core/stage/signoff.ts';
 import { redactDeep, redactSecrets } from '../src/core/security/redact.ts';
+import { REVIEW_REPORT } from '../src/core/stage/review-flow.ts';
+import { QA_REPORT } from '../src/core/stage/stage-qa.ts';
+import { ANSWER_FILE } from '../src/core/engine/consult.ts';
 import type { FlowFile, TaskFile } from '../src/core/state/schemas.ts';
 
-/** 六个角色（test-author 已删除） */
-export const ROLES = ['orchestrator', 'architect', 'worker', 'reviewer', 'stage-qa'] as const;
+/** 角色（worker 只做 fix 与小改动） */
+export const ROLES = ['orchestrator', 'architect', 'backend', 'frontend', 'worker', 'reviewer', 'stage-qa'] as const;
 
 const HANDOFF_TAIL = 3000;
 const EVIDENCE_TAIL = 1500;
-const EVIDENCE_FILES = ['qa-report.json', 'review.json', 'precheck.log', 'verify.log'];
+const EVIDENCE_FILES = [REVIEW_REPORT, QA_REPORT, ANSWER_FILE];
 
 const tail = (text: string, n: number) => (text.length > n ? text.slice(-n) : text);
 
-/** 流程类型：build、feature、fix 之外，含 ADOPT 阶段的是接管（adopt） */
-export const flowKind = (flow: FlowFile): string => flow.mode;
-
-/** 阶段列表：P0、P1、S 阶段（带目标与出口）、其余阶段；每项带状态与闸门轮次 */
+/** 阶段列表：S0 架构、S1…Sn 批次（带目标与出口）、其余阶段；每项带状态与闸门轮次 */
 function stageRows(flow: FlowFile, tasks: readonly TaskFile[]) {
   const plan = new Map((flow.s_stages ?? []).map((s) => [s.id, s]));
   const idx = flow.stages.indexOf(flow.stage);
@@ -57,7 +57,7 @@ export function buildViewData(store: StateStore, root: string, now = new Date())
     try { metrics = flowMetrics(store, id, now, root); } catch {
       try { metrics = flowMetrics(store, id, now); } catch { metrics = null; }
     }
-    return { flow, kind: flowKind(flow), stageRows: stageRows(flow, tasks), tasks, handoffs, evidence, metrics };
+    return { flow, kind: flow.mode, stageRows: stageRows(flow, tasks), tasks, handoffs, evidence, metrics };
   });
   const events = store.readEvents().map(({ entities: _e, prev_hash: _p, hash: _h, ...e }) => e);
   const data = {

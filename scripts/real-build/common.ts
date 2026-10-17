@@ -1,6 +1,4 @@
-// M9 脚本共用的纯函数与小工具（M9 实验方案，原 docs/M9-PLAN.md，见 git 历史）：
-// hidden.mjs 输出解析与计分、回归、agent 时间、问句识别、项目自带测试的结果解析、summary.json 的类型。
-// real-build.ts 与 native.ts 都写同一种 summary.json，score.ts 汇总它。
+// real-build.ts 用的纯函数与小工具：hidden.mjs 输出解析与计分、回归、agent 时间、项目自带测试的结果解析、summary.json 的类型。
 import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -139,8 +137,7 @@ export function blockedIntervals(events: readonly EventLike[], flowId: string, e
   return out;
 }
 
-/** 流程到达 done 的时刻（最后一个转入 done 的阶段事件）；没有为 null */
-/** 流程交付的时刻：最后一个阶段转为 done（P0、P1 等前面阶段的 done 不算） */
+/** 流程交付的时刻：最后一个阶段转为 done（前面阶段的 done 不算）；没有为 null */
 export function flowDoneMs(events: readonly EventLike[], flowId: string, lastStage: string): number | null {
   let at: number | null = null;
   for (const e of events) if (e.flow === flowId && e.data?.['entity'] === 'stage' && e.data['stage'] === lastStage && e.to === 'done') at = Date.parse(e.ts);
@@ -153,11 +150,9 @@ export interface AgentTime {
   human_ms: number;
   /** task 处于 blocked 等人回答的时长（事件日志） */
   blocked_ms: number;
-  /** P0 里主会话等待回答的时长（脚本记录） */
-  p0_ms: number;
-  /** wall − human − blocked − p0 */
+  /** wall − human − blocked */
   agent_ms: number;
-  /** /forge-status --metrics 的口径：各阶段 wall − human（不扣 blocked 与 P0 等待），用来核对 */
+  /** /forge-status --metrics 的口径：各阶段 wall − human（不扣 blocked），用来核对 */
   metrics_agent_ms: number;
 }
 
@@ -165,7 +160,7 @@ export interface AgentTime {
  * 一次 /forge-build 的 agent 时间。startMs 是发出命令的时刻；endMs 取流程到达 done 的时刻（没有就用 fallbackEndMs）。
  * 轮询状态的几秒落在 awaiting_human / blocked 区间里，已一并扣除。
  */
-export function agentTime(events: readonly FlowEvent[], flow: Pick<FlowFile, 'id' | 'stages' | 'created_at'>, startMs: number, fallbackEndMs: number, p0Intervals: readonly Interval[]): AgentTime {
+export function agentTime(events: readonly FlowEvent[], flow: Pick<FlowFile, 'id' | 'stages' | 'created_at'>, startMs: number, fallbackEndMs: number): AgentTime {
   const endMs = flowDoneMs(events, flow.id, flow.stages.at(-1)!) ?? fallbackEndMs;
   const wall = Math.max(0, endMs - startMs);
   const dur = stageDurations(events, flow.id, flow.stages[0]!, flow.created_at, endMs);
@@ -173,24 +168,10 @@ export function agentTime(events: readonly FlowEvent[], flow: Pick<FlowFile, 'id
   let metricsAgent = 0;
   for (const d of dur.values()) { human += d.human_ms; metricsAgent += Math.max(0, d.wall_ms - d.human_ms); }
   const blocked = unionMs(blockedIntervals(events, flow.id, endMs), startMs, endMs);
-  const p0 = unionMs(p0Intervals, startMs, endMs);
-  return { wall_ms: wall, human_ms: human, blocked_ms: blocked, p0_ms: p0, agent_ms: Math.max(0, wall - human - blocked - p0), metrics_agent_ms: metricsAgent };
-}
-
-/** N 组：墙钟减去脚本代答的间隔（一轮结束到下一轮发出之间的时间） */
-export function nativeAgentMs(startMs: number, endMs: number, answerGaps: readonly Interval[]): number {
-  return Math.max(0, endMs - startMs - unionMs(answerGaps, startMs, endMs));
+  return { wall_ms: wall, human_ms: human, blocked_ms: blocked, agent_ms: Math.max(0, wall - human - blocked), metrics_agent_ms: metricsAgent };
 }
 
 export const toMin = (ms: number): number => Math.round((ms / 60_000) * 100) / 100;
-
-// —— 问句识别（N 组；第 4 节"原生 Pi 停下提问"） ——
-
-/** 最后一条消息以问句结尾，或含"请确认""是否需要"等 */
-export function looksLikeQuestion(text: string): boolean {
-  const tail = text.slice(-300);
-  return /[？?]\s*$|请确认|是否需要|要不要|你希望|请告诉我|需要我|please confirm|would you like|do you want/i.test(tail);
-}
 
 // —— 项目自带测试 ——
 
@@ -221,7 +202,6 @@ export interface PhaseSummary {
   wall_min: number;
   human_wait_min: number;
   blocked_wait_min: number;
-  p0_wait_min: number;
   agent_min: number;
   /** /forge-status --metrics 口径的 agent 时间，用来核对 */
   metrics_agent_min: number | null;
@@ -231,7 +211,7 @@ export interface PhaseSummary {
 
 export interface Summary {
   schema: 1;
-  arm: 'N' | 'A0' | 'A1';
+  arm: 'A0' | 'A1';
   run_id: string;
   started_at: string;
   ended_at: string;
@@ -250,9 +230,6 @@ export interface Summary {
   score: RunScore;
   project_tests: { after_build: TestSummary | null; after_change: TestSummary | null };
   interventions: {
-    p0_questions: number;
-    p0_text_turns: number;
-    p0_text_numbered: number;
     gates: number;
     extra: Record<string, number>;
     extra_total: number;

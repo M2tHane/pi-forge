@@ -8,7 +8,7 @@ export const ENGINE_GIT_ENV = {
 
 /**
  * 路径按 UTF-8 原样输出（core.quotePath=false）：默认会把中文等非 ASCII 路径转义并加引号，按行解析时读不到文件
- * （M9 冒烟：feature 规格文件名是中文，P1 预检按 ref 读规格时漏掉了增量需求）。用环境变量注入，不改参数。
+ * （M9 冒烟：规格文件名是中文，按 ref 读文件时漏掉了它）。用环境变量注入，不改参数。
  */
 const QUOTE_PATH_ENV = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.quotePath', GIT_CONFIG_VALUE_0: 'false' };
 

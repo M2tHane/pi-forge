@@ -84,7 +84,6 @@ export class SubagentRuntime {
 
   guardContext(cwd: string): GuardContext {
     const t = this.task();
-    const flow = this.store.readFlow(this.env.flow);
     const role = this.config.role(this.env.role);
     return {
       config: this.config,

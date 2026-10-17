@@ -1,6 +1,6 @@
 // 社团管理 API 的隐藏测试（requirement.md 的验收）：在交付的项目上 `npm start`，按需求逐条调用 HTTP 接口。
 // 用法：node hidden.mjs <项目目录>
-// 输出格式给 scripts/m9/common.ts 的 parseHidden：每组 "## 组名（通过/总数）"，每条 "✓ 标题" 或 "✗ 标题：原因"，最后 "合计：x/y"。
+// 输出格式给 scripts/real-build/common.ts 的 parseHidden：每组 "## 组名（通过/总数）"，每条 "✓ 标题" 或 "✗ 标题：原因"，最后 "合计：x/y"。
 // 用例按顺序共用同一份数据，前面的创建失败时后面的会跟着失败。
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';

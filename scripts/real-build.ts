@@ -20,14 +20,13 @@ import { renderDetail } from '../src/core/ops/status-detail.ts';
 import { flowMetrics, renderMetrics } from '../src/core/stage/signoff.ts';
 import { sessionsRoot } from '../src/core/engine/session-log.ts';
 import { StateStore } from '../src/core/state/state-store.ts';
-import { worktreesRoot } from '../src/core/workspace/worktree.ts';
 import { packageRoots, pluginExtensionsFor } from '../src/pi-adapter/plugins.ts';
 import {
   agentTime, parseTestSummary, runHidden, runProjectTests, scoreRun, sessionUsage, toMin,
-  type HiddenResult, type Interval, type PhaseSummary, type RunStatus, type Summary, type TestSummary,
-} from './m9/common.ts';
-import { RpcProcess, type RpcRecord } from './m9/rpc.ts';
-import { apply, decide, extraTotal, initialState, type Action, type Snapshot, type SimState, type UiRequest } from './m9/simulator.ts';
+  type HiddenResult, type PhaseSummary, type RunStatus, type Summary, type TestSummary,
+} from './real-build/common.ts';
+import { RpcProcess, type RpcRecord } from './real-build/rpc.ts';
+import { apply, decide, extraTotal, initialState, type Action, type Snapshot, type SimState, type UiRequest } from './real-build/user.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXTENSION = path.join(ROOT, 'src/pi-adapter/extension.ts');
@@ -62,7 +61,7 @@ export function parseArgs(argv: string[]): Options {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
   const all = (k: string): string[] => argv.flatMap((a, i) => (a === k && argv[i + 1] ? [argv[i + 1]!] : []));
   const arm = get('--arm');
-  if (arm !== 'A0' && arm !== 'A1') throw new Error('--arm 必须是 A0 或 A1（N 组用 scripts/m9/native.ts）');
+  if (arm !== 'A0' && arm !== 'A1') throw new Error('--arm 必须是 A0 或 A1');
   const need = (k: string) => { const v = get(k); if (!v) throw new Error(`缺少 ${k}`); return path.resolve(v); };
   const plannerModel = get('--planner-model') ?? 'magpie/codex/gpt-6.1-sol';
   if (argv.includes('--change-only') && !get('--change')) throw new Error('--change-only 需要 --change');
@@ -116,22 +115,17 @@ function git(cwd: string, args: string[]): string {
 const gitTry = (cwd: string, args: string[]): string | null => { try { return git(cwd, args); } catch { return null; } };
 
 /** 把 .forge/ 整理成 simulator 的快照（只读）。flowId 是本阶段对应的流程 */
-export function readSnapshot(store: StateStore, root: string, flowId: string | null, extra: { nowMs: number; turnEnded: boolean; lastAssistantText: string; ui?: UiRequest | null }): Snapshot {
-  const base: Snapshot = { nowMs: extra.nowMs, turnEnded: extra.turnEnded, lastAssistantText: extra.lastAssistantText, ui: extra.ui ?? null, flow: null, tasks: [] };
+export function readSnapshot(store: StateStore, flowId: string | null, extra: { nowMs: number; ui?: UiRequest | null }): Snapshot {
+  const base: Snapshot = { nowMs: extra.nowMs, ui: extra.ui ?? null, flow: null, tasks: [] };
   if (!flowId) return base;
   const flow = store.readFlow(flowId);
   const tasks = store.listTasks(flowId);
   return {
     ...base,
-    flow: {
-      id: flow.id, mode: flow.mode, stage: flow.stage, stageStatus: flow.stage_status, version: flow.version,
-      specSubmitted: flow.spec?.submitted === true,
-      delegated: stageDelegated(store, flow),
-    },
+    flow: { id: flow.id, stage: flow.stage, stageStatus: flow.stage_status, version: flow.version, delegated: stageDelegated(store, flow) },
     tasks: tasks.map((t) => ({
       id: t.id, status: t.status, blockedBy: t.blocked_by ?? null, blockedReason: t.blocked_reason, version: t.version, blockedOwner: t.blocked_owner ?? null,
     })),
-    otherApprovals: [],
   };
 }
 
@@ -215,7 +209,7 @@ export async function main(argv: string[]): Promise<number> {
   // --ext 显式给出的插件包（例如装在实验目录里、不写全局配置的 ask_user）不算缺失
   plugins.missing = plugins.missing.filter((pkg) => !o.ext.some((e) => e.endsWith(`/node_modules/${pkg}`)));
   if (plugins.missing.length) {
-    const msg = `主会话缺少插件 ${plugins.missing.join('、')}：没有 ask_user，P0 会退回文字提问（pi install npm:${plugins.missing[0]}）`;
+    const msg = `主会话缺少插件 ${plugins.missing.join('、')}：主会话的提问会退回文字（pi install npm:${plugins.missing[0]}）`;
     notes.push(msg);
     log(`警告：${msg}`);
   }
@@ -231,17 +225,16 @@ export async function main(argv: string[]): Promise<number> {
   const live = { running: false, turnEnded: false, turnEndedAt: 0, lastText: '', lastNotify: '', inFlight: false, lastDetail: '', lastToolError: '', sameToolErrors: 0 };
   // 方案修订 1：主会话同一工具连续报同一个错误达到这个次数，算卡住（RPC 一直有输出，30 分钟无活动的规则发现不了）
   const SAME_TOOL_ERROR_LIMIT = 10;
-  const p0Intervals: Interval[] = [];
   let phase: Phase | null = null;
   let stopping = false;
   const phases: Phase[] = [];
   const intervene = (a: Exclude<Action, { kind: 'stuck' }>, result: Record<string, unknown> = {}) => {
-    const snap = phase?.flowId ? safe(() => readSnapshot(store, project, phase!.flowId, { nowMs: Date.now(), turnEnded: false, lastAssistantText: '' })) : null;
+    const snap = phase?.flowId ? safe(() => readSnapshot(store, phase!.flowId, { nowMs: Date.now() })) : null;
     appendFileSync(interventionsFile, `${JSON.stringify({
       ts: new Date().toISOString(), elapsed_s: Math.round((Date.now() - runStart) / 1000), phase: phase?.name ?? null,
       category: a.category, counts: a.counts, key: a.key, kind: a.kind,
       ...(a.kind === 'prompt' ? { command: a.message } : { ui_id: a.id, answer: a.summary }),
-      note: a.note, ...(a.numbered !== undefined ? { numbered_questions: a.numbered } : {}),
+      note: a.note,
       state: snap ? { flow: snap.flow && { id: snap.flow.id, stage: snap.flow.stage, status: snap.flow.stageStatus }, blocked: snap.tasks.filter((t) => t.status === 'blocked').map((t) => t.id) } : null,
       ...result,
     })}\n`);
@@ -286,9 +279,8 @@ export async function main(argv: string[]): Promise<number> {
 
   function handleUi(r: RpcRecord): void {
     const ui: UiRequest = { id: String(r['id']), method: r['method'] as UiRequest['method'], title: String(r['title'] ?? ''), ...(Array.isArray(r['options']) ? { options: r['options'] as string[] } : {}) };
-    const snap = safe(() => readSnapshot(store, project, phase?.flowId ?? null, { nowMs: Date.now(), turnEnded: false, lastAssistantText: live.lastText, ui }))
-      ?? ({ nowMs: Date.now(), turnEnded: false, flow: null, tasks: [], ui } as Snapshot);
-    const asked = Date.now();
+    const snap = safe(() => readSnapshot(store, phase?.flowId ?? null, { nowMs: Date.now(), ui }))
+      ?? ({ nowMs: Date.now(), flow: null, tasks: [], ui } as Snapshot);
     const action = decide(snap, sim);
     if (!action || action.kind === 'stuck') {
       rpc.respondUi(ui.id, { cancelled: true });
@@ -298,7 +290,6 @@ export async function main(argv: string[]): Promise<number> {
     if (action.kind !== 'ui_response') { rpc.respondUi(ui.id, { cancelled: true }); return; }
     sim = apply(sim, action, Date.now());
     rpc.respondUi(action.id, action.response);
-    if (snap.flow?.stage === 'P0' || !snap.flow) p0Intervals.push([asked, Date.now()]);
     intervene(action);
     log(`UI ${ui.method}「${(ui.title ?? '').slice(0, 60)}」→ ${action.summary.slice(0, 60)}（${action.category}）`);
   }
@@ -334,7 +325,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       let flow;
       try { flow = store.readFlow(p.flowId); } catch { continue; }
-      // 只认最后一个实施阶段的 done：阶段切换的瞬间（P0、P1 刚批准）stage_status 也会短暂是 done，此前会被误判为已交付
+      // 只认最后一个实施阶段的 done：阶段切换的瞬间（架构阶段刚批准）stage_status 也会短暂是 done，此前会被误判为已交付
       if (flow.stage_status === 'done' && flow.stage === flow.stages.at(-1) && /^S\d+$/.test(flow.stage)) { p.delivered = true; return; }
       if (flow.stage_status === 'aborted') { fail('flow_aborted', `流程 ${flow.id} 已中止`); return; }
       if (elapsed() > maxMs) { fail('timeout', `超过硬上限 ${o.maxMin} 分钟`); return; }
@@ -345,7 +336,7 @@ export async function main(argv: string[]): Promise<number> {
       // 活动：事件日志、子进程会话、主会话 RPC 输出
       lastActivity = Math.max(lastActivity, rpc.lastRecordAt, safe(() => statSync(path.join(project, '.forge', 'events.jsonl')).mtimeMs) ?? 0, newestMtime(sessionsRoot(project)));
       if (now - lastDetailAt > 60_000) { lastDetailAt = now; live.lastDetail = safe(() => renderDetail(store, config)) ?? live.lastDetail; }
-      const snap = safe(() => readSnapshot(store, project, p.flowId, { nowMs: now, turnEnded: live.turnEnded, lastAssistantText: live.lastText }));
+      const snap = safe(() => readSnapshot(store, p.flowId, { nowMs: now }));
       if (!snap) continue;
       const action = live.inFlight ? null : decide(snap, sim);
       if (action?.kind === 'stuck') { fail(action.failure === 'limit' ? 'limit' : action.failure === 'repeat' ? 'repeat' : 'out_of_table', action.reason); return; }
@@ -353,7 +344,6 @@ export async function main(argv: string[]): Promise<number> {
         sim = apply(sim, action, now);
         intervene(action);
         log(`${action.category}：${action.message.slice(0, 100)}`);
-        if (action.category === 'p0_question') p0Intervals.push([live.turnEndedAt || now, now]);
         live.turnEnded = false;
         live.inFlight = true;
         void rpc.request({ type: 'prompt', message: action.message }, 600_000).then((r) => {
@@ -465,7 +455,7 @@ export async function main(argv: string[]): Promise<number> {
     for (const p of phases) if (!p.delivered && p.hidden === null && st.failure?.status !== 'stopped_early') { if (p.endMs === null) await finishPhase(p); await score(p); }
   } else for (const p of phases) if (p.endMs === null) await finishPhase(p);
 
-  const summary = buildSummary({ o, runId, startedAt, sha, dirty: dirty === null ? null : dirty.length > 0, piVersion, phases, store, project, sim, failure: st.failure, notes, p0Intervals, scoringMs, mainSessions });
+  const summary = buildSummary({ o, runId, startedAt, sha, dirty: dirty === null ? null : dirty.length > 0, piVersion, phases, store, project, sim, failure: st.failure, notes, scoringMs, mainSessions });
   writeFileSync(path.join(out, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
   log(`完成：${summary.status}；基础 ${summary.score.base.passed}/${summary.score.base.total}，变更 ${summary.score.change ? `${summary.score.change.passed}/${summary.score.change.total}` : '—'}，回归 ${summary.score.regression}，agent 时间 ${summary.agent_min} 分钟`);
   return summary.status === 'delivered' ? 0 : 1;
@@ -479,18 +469,18 @@ function killRuns(store: StateStore): void {
 
 function buildSummary(i: {
   o: Options; runId: string; startedAt: Date; sha: string | null; dirty: boolean | null; piVersion: string; phases: Phase[]; store: StateStore; project: string;
-  sim: SimState; failure: { kind: string; reason: string; status: RunStatus } | null; notes: string[]; p0Intervals: Interval[]; scoringMs: number; mainSessions: string;
+  sim: SimState; failure: { kind: string; reason: string; status: RunStatus } | null; notes: string[]; scoringMs: number; mainSessions: string;
 }): Summary {
   const events = safe2(() => i.store.readEvents()) ?? [];
   const phaseSummaries: PhaseSummary[] = [];
   for (const p of i.phases) {
     const flow = p.flowId ? safe2(() => i.store.readFlow(p.flowId!)) : null;
     const end = p.endMs ?? Date.now();
-    if (!flow) { phaseSummaries.push({ name: p.name, flow: p.flowId, delivered: false, wall_min: toMin(end - p.startMs), human_wait_min: 0, blocked_wait_min: 0, p0_wait_min: 0, agent_min: toMin(end - p.startMs), metrics_agent_min: null, metrics_diff_over_2min: false }); continue; }
-    const t = agentTime(events, flow, p.startMs, end, i.p0Intervals);
+    if (!flow) { phaseSummaries.push({ name: p.name, flow: p.flowId, delivered: false, wall_min: toMin(end - p.startMs), human_wait_min: 0, blocked_wait_min: 0, agent_min: toMin(end - p.startMs), metrics_agent_min: null, metrics_diff_over_2min: false }); continue; }
+    const t = agentTime(events, flow, p.startMs, end);
     const agent = toMin(t.agent_ms);
     const metrics = toMin(t.metrics_agent_ms);
-    phaseSummaries.push({ name: p.name, flow: p.flowId, delivered: p.delivered, wall_min: toMin(t.wall_ms), human_wait_min: toMin(t.human_ms), blocked_wait_min: toMin(t.blocked_ms), p0_wait_min: toMin(t.p0_ms), agent_min: agent, metrics_agent_min: metrics, metrics_diff_over_2min: Math.abs(agent - metrics) > 2 });
+    phaseSummaries.push({ name: p.name, flow: p.flowId, delivered: p.delivered, wall_min: toMin(t.wall_ms), human_wait_min: toMin(t.human_ms), blocked_wait_min: toMin(t.blocked_ms), agent_min: agent, metrics_agent_min: metrics, metrics_diff_over_2min: Math.abs(agent - metrics) > 2 });
   }
   const agentMin = Math.round(phaseSummaries.reduce((a, p) => a + p.agent_min, 0) * 100) / 100;
   const build = i.phases.find((p) => p.name === 'build');
@@ -513,7 +503,6 @@ function buildSummary(i: {
     score: scoreRun(build?.hidden ?? null, change?.hidden ?? null),
     project_tests: { after_build: build?.tests ?? null, after_change: change?.tests ?? null },
     interventions: {
-      p0_questions: i.sim.counts.p0_question, p0_text_turns: i.sim.counts.p0_text_turns, p0_text_numbered: i.sim.counts.p0_text_numbered,
       gates: i.sim.counts.gate, extra: i.sim.counts.extra, extra_total: extraTotal(i.sim.counts),
     },
     // 子进程按 run 记录累计；主会话（orchestrator）从它的会话文件累计，两者相加

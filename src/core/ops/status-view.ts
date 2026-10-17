@@ -128,7 +128,6 @@ function phaseBar(flow: FlowFile, cur: PhaseOrDone): string {
 const MODE_LABEL: Record<FlowFile['mode'], string> = { build: '新项目', fix: '修复', change: '小改动' };
 /** S0 是架构阶段，其余直接用编号 */
 const stageName = (id: string) => (id === 'S0' ? 'S0 架构' : id);
-const isLastStage = (flow: Pick<FlowFile, 'stage' | 'stages'>) => flow.stage === flow.stages.at(-1);
 
 /** 开发阶段的批次条：S1 ✓ → [S2] → S3 */
 function stageBar(flow: FlowFile): string {

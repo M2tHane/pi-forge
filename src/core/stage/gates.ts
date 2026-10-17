@@ -1,9 +1,8 @@
-// 阶段闸门（gate）：all_tasks_done、S1/F1 必须有任务提案、在集成分支 HEAD 上执行 auto 命令并保存 evidence。
-// 通过后：需要人工 → awaiting_human；否则 → done。最后一个阶段一律需要人工（之后合入主分支）。
+// 阶段门禁（gate）：在集成分支 HEAD 上执行 auto 命令并保存 evidence，覆盖率只报告。
+// 通过后：需要人工 → awaiting_human；否则 → done。S0 与最后一个阶段一律需要人工（批准时合入主分支）。
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
-import { isSettled } from '../state/state-machine.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowEvent } from '../state/schemas.ts';
 import { git } from '../state/git.ts';
@@ -34,36 +33,6 @@ export function stageDef(config: FlowConfig, stage: string) {
     auto: (gate?.auto ?? [...DEFAULT_GATE_AUTO]).filter((name) => !!config.commands[name]?.trim()),
     human: gate?.human ?? true,
   } };
-}
-
-export async function runStageGate(root: string, store: StateStore, config: FlowConfig, flowId: string, timeoutMs?: number): Promise<GateOutcome> {
-  const flow = store.readFlow(flowId);
-  if (flow.stage_status !== 'awaiting_gate') throw new Error(`阶段 ${flow.stage} 不在 awaiting_gate 状态`);
-  if (isLightFlow(flow)) throw new Error('修复与小改动流程不使用阶段闸门');
-  const def = stageDef(config, flow.stage);
-  const isLast = flow.stage === flow.stages.at(-1);
-  // S0 与最后一个阶段批准时要合入主分支，一律人工
-  const needsHuman = !!def.gate.human || isLast || flow.stage === 'S0';
-  const reasons: string[] = [];
-  let failed: GateOutcome['failed'];
-
-  const open = store.listTasks(flowId).filter((t) => t.stage === flow.stage && !isSettled(t));
-  if (open.length) reasons.push(`本阶段还有未完成的任务：${open.map((t) => `${t.id}（${t.status}）`).join('、')}`);
-  else {
-    const checks = await runImplementationChecks(root, store, config, flowId, timeoutMs);
-    reasons.push(...checks.reasons);
-    failed = checks.failed;
-  }
-
-  const passed = reasons.length === 0;
-  if (passed) {
-    await store.transitionStage(flowId, { to: needsHuman ? 'awaiting_human' : 'done', trigger: 'gate_passed', actor: 'gate', needs_human: needsHuman });
-  } else if ((flow.gate_rounds ?? []).filter((r) => r.stage === flow.stage).length >= MAX_GATE_ROUNDS) {
-    await store.transitionStage(flowId, { to: 'needs_human', trigger: 'gate_exhausted', actor: 'gate', reason: reasons.join('；') });
-  } else {
-    await store.transitionStage(flowId, { to: 'active', trigger: 'gate_failed', actor: 'gate', reason: reasons.join('；') });
-  }
-  return { stage: flow.stage, passed, needsHuman, reasons, ...(failed ? { failed } : {}) };
 }
 
 export interface ImplementationChecks {

@@ -1,4 +1,4 @@
-// 审查者要运行的、本 task 范围内的测试：预检不再跑命令，由审查者读 diff 并运行本 task 自己的单元测试与验收测试；
+// 审查者要运行的、本 task 范围内的测试：提交时程序不跑命令，由审查者读 diff 并运行本 task 自己的单元测试与验收测试；
 // 全量 test 与全量 acceptance 留到阶段门禁。这里只做纯计算（选哪些命令、哪些文件），命令写进审查任务说明，审查者按说明运行。
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';

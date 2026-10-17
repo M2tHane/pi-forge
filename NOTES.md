@@ -37,7 +37,6 @@
 - 合并后回归测试与阶段门禁跑同一组命令：测试慢的项目每次合并多一次全量检查（后台运行，可用 `limits.post_merge_test: false` 关掉）。没有主会话的运行（`scripts/real-tasks`）里，交给主会话的决定没人处理，要用户直接处理。
 - `scripts/forge-view.*` 只做过渲染冒烟。`scripts/real-tasks/`（跳过主会话的驱动）没跟新流程适配，还是把 worker 任务直接种进 S1。
 - 批次任务没有 `ac`：plan.md 没有 domain → REQ 的对应，程序只在任务说明里列本批需求，开发 agent 自己去 PRD 里找 AC。
-- 签收前主会话用 `forge_ask_architect(kind=change)` 时，架构师的修改不经重新验收就进集成分支，只靠提示词约束（打回后才用 change）。
 - 页面归属按路径里出现的页面 id 认：后端目录名含页面 id、又没有别的归属时会归给页面任务。
 
 ## 偏离规格
@@ -97,6 +96,7 @@
 - 门禁命令与覆盖率 → stage-qa → 修复 → 重跑 → stage-qa 只确认一轮 → 签收；门禁通过时与最近一轮 qa 的 HEAD 到当前 HEAD 之间只有程序记录的文档（审查建议、`docs/qa/`）时才签收。只依据持久化状态，崩溃后重入结果相同。原来要求 HEAD 相等：club 实验里 qa 带建议通过 → 建议提交让 HEAD 变化 → 重新验收，循环了 6 轮。
 - 用户打回批次后，在本阶段有新的任务变化之前不重新提交门禁；主会话判断归属：能明确归属的用 `forge_decide` 的 fix 交给负责的任务（建 `.fx-n`，接着它的会话），归属不清或涉及多个任务的用 `forge_ask_architect(kind=change)` 交给架构师（10-17 改造，代替变更请求；stock 实验：task 都已完成，打回 6 秒后又回到等签收，打回白费）。判断"还有 task 等派发"只看当前阶段：后面阶段的 task 总是 pending，算进来时打回意见轮不到主会话（stock run-02）。审查轮数用尽的阻塞原因带上最新一轮审查者的说明，不只是首轮原文（run-02：首轮写"上限是 50"，第二轮已改成 30 只差测试，主会话看到的还是 50）。
 - stage-qa 轮数用尽后集成分支又有了改动（打回后的修复、架构师的修改合入），门禁通过后再开一轮只确认的 stage-qa，不按改动之前的结论交给用户；没有新改动时照常交给用户（stock run-03：S2 修完后门禁两次都按旧结论判用尽，修复没人复验）。
+- 等签收（awaiting_human）时又有任务合入集成分支（例如主会话没打回就让架构师修改），程序退回 active 重新验收：看最近一次验收出结果之后有没有任务的合入事件，从 needs_human 放行前合入的也算，批准时合入主分支不算。原来这些修改不经验收就随签收进主分支，只靠提示词约束（10-17）。
 - 门禁失败建 `.fx-n`，2 轮；默认跑 test、acceptance、arch_check、contract_check，commands.yaml 没定义的跳过；覆盖率只报告（签收时给用户看），缺口不拦门禁（10-14 约束清点：按 AC 逐条补测试是测试代码膨胀的原因之一）。
 - 问题归属（10-17 改造）：先看已完成任务实际改过的文件，再看 plan 的 paths（task.writes），页面文件归页面任务。一条问题只交给一个任务：唯一归属时接着那个任务的会话修，多个或找不到时交给一个 S0 architect 的修复任务（stock run-04 的 S4：同一条问题按文件拆成两个修复，两边各用一种做法修了同一个问题）。stage-qa 每条 must 附复现步骤、失败的请求或控制台报错、怀疑的归属（只在说明里要求，不拦）。
 - stage-qa 在集成分支 HEAD 的临时 worktree 里运行，路径不能越出这个 worktree（主工作区、别的 worktree、`.forge/` 都拦）；系统临时目录可用，不查敏感文件（用户决定，10-14：club 与 m9 的 6 次运行里 stage-qa 被拦 33 次，全是 `rg -g '!*.pem'`、`printenv PORT` 与 `mktemp -d /tmp/…`）。
@@ -104,7 +104,7 @@
 - 最后一个阶段批准时存交付汇报再 `--no-ff` 合入主分支；`/forge-status --metrics` 含速度、返工（含没提交就结束的 run 按类别计数）、成本、被拦下的操作。
 
 ### 架构师问答、fix 与小改动
-- 架构师问答（10-17 改造，代替变更请求）：backend、frontend 与主会话用 `forge_ask_architect(question, kind: answer|change)` 提问。子 agent 提问时程序先建 consult 任务（architect），再把提问任务转为阻塞（blocked_by architect，不交给主会话）；architect 接着最近一次 architect 会话（S0 或上一个咨询；没有或太大时开新会话并带 `docs/arch/decisions.md`），用 `forge_answer` 回答，有改动时经合并队列合入；之后程序把回答写进提问任务的 handoff、把集成分支同步进它的 worktree，让它接着原会话继续。主会话提问的回答在下一次 forge_wait 返回。consult 串行、不审查，改动由批次门禁的 contract_check 与 stage-qa 兜底；S0 与咨询用同一份技能列表，接着 S0 会话时提示缓存不失效。
+- 架构师问答（10-17 改造，代替变更请求）：backend、frontend 与主会话用 `forge_ask_architect(question, kind: answer|change)` 提问。子 agent 提问时程序先建 consult 任务（architect），再把提问任务转为阻塞（blocked_by architect，不交给主会话）；architect 接着最近一次 architect 会话（S0 或上一个咨询；没有或太大时开新会话并带 `docs/arch/decisions.md`），用 `forge_answer` 回答，有改动时经合并队列合入；之后程序把回答写进提问任务的 handoff、把集成分支同步进它的 worktree，让它接着原会话继续。主会话提问的回答在下一次 forge_wait 返回；forge_wait 把等架构师的任务当作进行中（给了 task_id 也不因它在等架构师就返回）。consult 串行、不审查，改动由批次门禁的 contract_check 与 stage-qa 兜底；S0 与咨询用同一份技能列表，接着 S0 会话时提示缓存不失效。
 - fix 与小改动都是单阶段 `X1` 的轻流程，直接合入主分支，最后由 X1.qa 确认（最多两轮）；同一时间只能有一个，build 运行时拒绝。小改动（用户决定）：`/forge-change --from <yaml>` 或 `forge_change`，1–3 个 impl task，不经批准，仍用 worker 角色；实现合入后程序强制 architect 的「更新架构图与契约」task，不需要改时直接无改动提交。
 
 ### 删掉与没做的

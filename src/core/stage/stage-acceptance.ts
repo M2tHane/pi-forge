@@ -55,6 +55,20 @@ export function sameWork(root: string, a: string | null, b: string): boolean {
   } catch { return false; }
 }
 
+/**
+ * 本阶段最近一次验收出结果（门禁通过转签收，或用尽转 needs_human）之后合入集成分支的任务；纯函数。
+ * 从 needs_human 放行后也按这一次的结果算，放行之前合入的同样要重新验收。
+ */
+export function mergedSinceAcceptance(events: readonly { type: string; flow: string | null; to?: string | undefined; task?: string | undefined; data?: Record<string, unknown> | undefined }[], flowId: string, stage: string): string[] {
+  let i = events.length - 1;
+  for (; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.flow === flowId && e.type === 'gate_result' && e.data?.['stage'] === stage && (e.to === 'awaiting_human' || e.to === 'needs_human')) break;
+  }
+  if (i < 0) return [];
+  return [...new Set(events.slice(i + 1).filter((e) => e.flow === flowId && e.type === 'merge' && e.task).map((e) => e.task!))];
+}
+
 /** 本阶段除阶段级 task（S1.qa）外是否都已结束；纯函数 */
 export const stageWorkSettled = (tasks: readonly Pick<TaskFile, 'id' | 'kind' | 'for_task' | 'stage' | 'status'>[], stage: string) =>
   tasks.filter((t) => t.stage === stage && !isStageLevelTask(t)).every(isSettled);
@@ -101,6 +115,13 @@ export async function stageStep(d: AcceptanceDeps, flowId: string, opts: { force
     if (!opts.force && opts.gateFailedWithoutChange()) return 'wait';
     await store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
     return 'gate';
+  }
+  if (flow.stage_status === 'awaiting_human') {
+    // 等签收时又有任务合入（例如主会话让架构师改了公共内容）：之前的验收对应的不是现在的代码，退回 active 重新验收
+    const merged = mergedSinceAcceptance(store.readEvents(), flowId, stage);
+    if (!merged.length) return 'wait';
+    await store.transitionStage(flowId, { to: 'active', trigger: 'reopen', actor: 'engine', reason: `验收之后 ${merged.join('、')} 合入了集成分支，重新验收后再签收` });
+    return stageStep(d, flowId, opts);
   }
   if (flow.stage_status !== 'awaiting_gate') return 'wait';
   // awaiting_gate 且没有检查在跑：stage-qa 在跑或已结束；崩溃后没有 qa 的，重跑检查

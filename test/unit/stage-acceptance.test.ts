@@ -8,7 +8,7 @@ import { mkTask } from '../helpers/tasks.ts';
 import { PRD_FILES } from '../helpers/prd.ts';
 import { commitToBranch } from '../helpers/engine.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
-import { afterChecks, gatePassedHead, sameWork, stageStep, stageWorkSettled } from '../../src/core/stage/stage-acceptance.ts';
+import { afterChecks, gatePassedHead, mergedSinceAcceptance, sameWork, stageStep, stageWorkSettled } from '../../src/core/stage/stage-acceptance.ts';
 import { taskRel } from '../../src/core/state/state-store.ts';
 import { QA_INPUT, QA_REPORT } from '../../src/core/stage/stage-qa.ts';
 import { evidenceRel } from '../../src/core/state/state-store.ts';
@@ -40,6 +40,17 @@ test('gatePassedHead 取最近一次通过时的 HEAD，阶段被打回后作废
   const t = (id: string, kind: string, status: string) => ({ id, kind, status, stage: 'S1' }) as never;
   assert.equal(stageWorkSettled([t('T-001', 'impl', 'done'), t('S1.qa', 'qa', 'in_progress')], 'S1'), true);
   assert.equal(stageWorkSettled([t('T-001', 'impl', 'done'), t('T-001.fx-1', 'fix', 'ready')], 'S1'), false);
+});
+
+test('mergedSinceAcceptance：最近一次验收出结果之后合入的任务；从 needs_human 放行前合入的也算', () => {
+  const gate = (to: string, stage = 'S1') => ({ type: 'gate_result', flow: 'B-001', to, data: { stage } });
+  const merge = (task: string) => ({ type: 'merge', flow: 'B-001', task, data: {} });
+  const accept = { type: 'transition', flow: 'B-001', to: 'awaiting_human', data: { stage: 'S1' } };
+  assert.deepEqual(mergedSinceAcceptance([merge('T-001'), gate('awaiting_human')], 'B-001', 'S1'), [], '验收之前的合入不算');
+  assert.deepEqual(mergedSinceAcceptance([gate('awaiting_human'), merge('T-002'), merge('T-002'), merge('T-003')], 'B-001', 'S1'), ['T-002', 'T-003']);
+  assert.deepEqual(mergedSinceAcceptance([gate('needs_human'), merge('T-002'), accept], 'B-001', 'S1'), ['T-002'], '放行前合入的要重新验收');
+  assert.deepEqual(mergedSinceAcceptance([gate('awaiting_human', 'S2'), merge('T-002')], 'B-001', 'S1'), [], '别的阶段的验收不算');
+  assert.deepEqual(mergedSinceAcceptance([gate('awaiting_human'), { type: 'merge', flow: 'B-001', data: {} }], 'B-001', 'S1'), [], '批准时合入主分支（没有 task）不算');
 });
 
 test('不跑 stage-qa：通过 → 签收（awaiting_human，最后一个阶段）', async () => {

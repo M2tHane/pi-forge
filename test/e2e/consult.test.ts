@@ -192,3 +192,31 @@ test('签收打回：主会话把能归属的修改交给负责的任务（fix�
     await assert.rejects(decide('T-001', '已经重新验收过了'), /fix 只用于/);
   } finally { p.cleanup(); }
 });
+
+test('等签收时主会话让架构师修改（没打回）：修改合入后程序退回 active 重新验收，验收通过后再等签收', async () => {
+  const p = await setupProject({ yaml: YAML, stages: ['S1'], tasks: [mkTask('T-001', { stage: 'S1' })] });
+  const e = engineEnv(p, async (role, _nth, a) => {
+    await a.call('forge_claim');
+    if (role === 'architect') {
+      await writeFiles(a, { 'src/shared/sort.ts': 'export const byName = 1;\n' });
+      assert.ok((await a.call('forge_answer', { text: '加了公共的 byName 排序。' })).ok);
+      return;
+    }
+    return submitWork(a, a.env.task, { [`src/server/${a.env.task.toLowerCase()}/a.ts`]: `${a.env.task}\n` });
+  });
+  try {
+    await drive(e, p.flowId);
+    assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
+    await flowAskArchitectMain(p.store, p.config, e.engine, { question: '列表需要一个公共排序', kind: 'change' });
+    await drive(e, p.flowId);
+    assert.deepEqual(e.errors, []);
+    assert.equal(p.store.readTask(p.flowId, 'T-002').status, 'done');
+    const events = p.store.readEvents().filter((x) => x.flow === p.flowId);
+    const merge = events.findIndex((x) => x.type === 'merge' && x.task === 'T-002');
+    const reopen = events.findIndex((x) => x.trigger === 'reopen');
+    assert.ok(merge >= 0 && reopen > merge, '咨询的修改合入后退回 active');
+    assert.match(events[reopen]!.reason ?? '', /T-002 合入了集成分支/);
+    assert.ok(events.slice(reopen).some((x) => x.type === 'gate_result' && x.to === 'awaiting_human'), '重新跑了门禁');
+    assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human', '重新验收通过后再等签收');
+  } finally { p.cleanup(); }
+});

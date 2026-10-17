@@ -371,7 +371,7 @@ export function planTransition(task: TaskFile, to: TaskStatus, trigger: Trigger,
 }
 
 // —— 阶段状态机 ——
-export type StageTrigger = 'submit_gate' | 'gate_failed' | 'gate_passed' | 'gate_exhausted' | 'gate_rerun' | 'accept' | 'approve' | 'reject' | 'abort';
+export type StageTrigger = 'submit_gate' | 'gate_failed' | 'gate_passed' | 'gate_exhausted' | 'gate_rerun' | 'accept' | 'approve' | 'reject' | 'reopen' | 'abort';
 interface StageRule {
   from: readonly StageStatus[]; to: StageStatus; trigger: StageTrigger;
   humanOnly?: boolean; check?: (f: StageFacts) => string[];
@@ -393,6 +393,8 @@ export const STAGE_TRANSITIONS: readonly StageRule[] = [
   { from: ['needs_human'], to: 'awaiting_gate', trigger: 'gate_rerun', humanOnly: true },
   { from: ['awaiting_human'], to: 'done', trigger: 'approve', humanOnly: true },
   { from: ['awaiting_human', 'needs_human'], to: 'active', trigger: 'reject', humanOnly: true, check: reasonRequired },
+  // 等签收时又有任务合入集成分支：程序退回 active 重新验收
+  { from: ['awaiting_human'], to: 'active', trigger: 'reopen', check: reasonRequired },
   { from: ['active', 'awaiting_gate', 'awaiting_human', 'needs_human'], to: 'aborted', trigger: 'abort', humanOnly: true },
 ];
 export function planStageTransition(from: StageStatus, to: StageStatus, trigger: StageTrigger, facts: StageFacts): string[] {

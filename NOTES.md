@@ -36,7 +36,7 @@
 - 共享构建环境不卸载任务删掉的依赖；测试留下的数据文件不再清理，靠 `.gitignore` 与审查。
 - 合并后回归测试与阶段门禁跑同一组命令：测试慢的项目每次合并多一次全量检查（后台运行，可用 `limits.post_merge_test: false` 关掉）。没有主会话的运行（`scripts/real-tasks`）里，交给主会话的决定没人处理，要用户直接处理。
 - `scripts/forge-view.*` 只做过渲染冒烟。`scripts/real-tasks/`（跳过主会话的驱动）没跟新流程适配，还是把 worker 任务直接种进 S1。
-- 批次任务没有 `ac`：plan.md 没有 domain → REQ 的对应，程序只在任务说明里列本批需求，开发 agent 自己去 PRD 里找 AC。
+- 页面任务没有 `ac`：PRD 不区分页面 AC 与接口 AC，程序只在任务说明里列页面表的对应需求；没写 `reqs` 的 domain 同样没有 AC 清单。
 - 页面归属按路径里出现的页面 id 认：后端目录名含页面 id、又没有别的归属时会归给页面任务。
 
 ## 偏离规格
@@ -56,6 +56,7 @@
 - 架构阶段 S0（10-17 改造）：原来的 P1（契约与计划）与 S0（骨架）合并成 S0 的一个 impl task，architect 一次做完技术栈、骨架、公共代码、domain 划分与接口、OpenAPI 与页面接口对照、rules、commands.yaml、`docs/plan.md`；由程序派发（不经主会话），经审查、合并、门禁后等用户批准，打回时新 task 接着原会话返工。原因：P1 与 S0 分开时契约写完要等一次批准才落成代码，骨架又常发现契约要改。task 编号全流程连续，含此前流程与 `tests/acceptance/` 的目录名。
 - 鉴权拆成接口与实现（用户决定 10-17）：S0 只定鉴权接口（校验令牌、当前用户、检查权限）、角色与权限的表达、请求入口的中间件，和只用于开发与测试的桩；真实实现（用户增删改查、登录退出、令牌签发与校验、停用后令牌立即失效）是 identity domain，放第 1 批。别的 domain 只依赖接口、开发时用桩，和 identity 并行；「接入真实接口」与批次门禁时真实鉴权已合入，所有接口在真实鉴权下再跑一遍。plan.md 里有 domain 写 `after: [identity]` 或 identity 不在第 1 批时只提醒。原因：stock run-01 登录 → 分类 → 商品三环依赖把 4 个能并行的任务拖成串行。
 - S0 提交时只拦两类（`plan/batches.ts`、`plan/plan-flow.ts`）：缺必需文件（AGENTS.md、overview、domains、openapi、page-api、commands.yaml 要有 test、plan.md），plan.md 的 yaml 区块解析不过或调度做不下去（批次 id 或 domain 重名、after 不存在、指向更晚批次、成环、空批次）；PRD 的警告、REQ 没进批次、页面 id 找不到只提醒，显示在批准页。批准时先按 yaml 生成批次阶段 S1…Sn 与任务（每个 domain 一个 backend 任务、第 1 批的前端基础、页面按顺序串成链并接着同一会话、每批一个「接入真实接口」任务，后三种是 frontend；「接入真实接口」不单独审查，由本批浏览器验收检查），再 `--no-ff` 合入主分支。
+- 后端任务的 `ac` 由 plan.md 里 domain 的 `reqs` 展开成这些需求的全部 AC（10-17）：审查按它核对每条 AC 有没有测试，覆盖矩阵按它填负责的任务。原来批次任务都没有 `ac`，开发 agent 自己去 PRD 里找本 domain 的 AC，审查也不核对。页面任务不分，见已知局限。
 - 项目命令写在仓库根目录的 `commands.yaml`（用户决定 10-14）：architect 在 S0 写，开发 agent 可以补充，随代码合并、合入即生效；程序只执行 install、test、acceptance、serve（及 serve_*）、env_up/env_down、db_create/db_drop、add_dep，其余只给 agent 参考。`workflow.yaml` 只放流程配置。规则由 S0 直接写。
 - 契约与架构文档只由 architect 改（10-17 改造）：backend、frontend 不能写 `docs/contracts/**`、`docs/arch/**`、`docs/plan.md`、`AGENTS.md`（guard 拦），要改用 `forge_ask_architect`；plan.md 的 `shared` 文件不拦，提交时检查对它们的改动是否只追加，不是就在审查材料里提醒（只提醒）。原来在 `forge_submit` 时检查契约只追加（contract-diff），已删。
 - 契约只写前后端之间的边界（10-14 用户决定，10-17 改造后）：`openapi.yaml` 只写前端调用的 HTTP 接口，`page-api.md` 写每个页面用哪些接口；domain 之间的接口写成代码（接口与 DTO，空实现）；校验细则以 PRD 为准不重复。原因：club 实验 92 行需求写出约 2100 行契约，字段规则写了三遍，各模块接口都没有别的 task 调用。
@@ -163,3 +164,4 @@
 
 - 10-17：改造第 3–5 步：新增 `agents/backend.md`、`frontend.md`；改 `agents/architect.md`（咨询与修复两节，删变更请求）、`orchestrator.md`、`reviewer.md`、`stage-qa.md`、`worker.md`，`skills/tdd`、`stage-qa`、`code-review`、`acceptance-tests`、`receiving-feedback`、`simplicity` 与 `rules/global.md`；删除 `skills/change-request`、`plan-dag`；architect 的咨询与 S0 用同一份技能列表。所有子进程角色与主会话的缓存各失效一次。
 - 10-17：鉴权拆分：`agents/architect.md`（鉴权只定接口与桩）、`agents/backend.md`、`agents/frontend.md`、`skills/domain-modeling`、`skills/plan-batches`、`skills/acceptance-tests`。architect、backend、frontend、reviewer 的缓存各失效一次。
+- 10-17：`agents/architect.md`、`agents/backend.md`、`skills/plan-batches` 各改一处（domain 的 `reqs`，后端任务的 AC 来自「验收标准」）。architect 与 backend 的缓存各失效一次。

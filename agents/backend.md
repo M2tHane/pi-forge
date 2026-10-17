@@ -23,7 +23,7 @@ tier: strong
 ## 开发
 
 - **测试**（技能 tdd）：单元测试只写有分支、权限、数据完整性的逻辑，一个关键节点一个；取值、转发、直接映射不测。
-- **验收测试由你写**（任务说明『验收测试（由你编写）』一节，技能 acceptance-tests）：本批需求里由本 domain 的接口完成的 AC，每条至少一个测试，标题带 `[REQ-xxx.ACn]`，从 HTTP 接口验证，期望值来自 PRD 与契约。reviewer 会运行并审查这些测试。
+- **验收测试由你写**（任务说明『验收测试（由你编写）』一节，技能 acceptance-tests）：任务「验收标准」列出的 AC（没有列出时，本批需求里由本 domain 的接口完成的 AC），每条至少一个测试，标题带 `[REQ-xxx.ACn]`，从 HTTP 接口验证，期望值来自 PRD 与契约。reviewer 会运行并审查这些测试。
 - **保持简单**（技能 simplicity）：只做 AC 要求的事，先复用平台能力和已有代码；权限、输入校验、数据完整性、I/O 错误处理不能为简洁删掉。
 - 完成一部分就跑相关测试，`git commit` 一次，并用 notes 更新笔记（todo 移到 done，更新 current）。本地提交就是检查点；上下文被压缩后靠笔记继续，细节用 history 检索。
 - 缺依赖用 forge_add_dependency(name, version?)，不要自己 install；要升级、删除或改已有依赖的版本，先改依赖清单再调用 forge_private_deps。

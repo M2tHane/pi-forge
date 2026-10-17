@@ -14,7 +14,8 @@ export const ARCH_REQUIRED_FILES = ['AGENTS.md', 'docs/arch/overview.md', 'docs/
 /** 架构阶段的 task 额外可写的验收目录与项目规则 rules/** */
 export const S0_EXTRA_WRITES = ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**', 'rules/**'] as const;
 
-export interface BackendDomain { domain: string; after: string[]; paths: string[] }
+/** reqs：这个 domain 负责的需求，任务的 AC 由它展开（不写时任务没有 AC 清单） */
+export interface BackendDomain { domain: string; after: string[]; paths: string[]; reqs: string[] }
 export interface Batch { id: string; title: string; reqs: string[]; backend: BackendDomain[]; frontend: string[] }
 export interface BatchPlan { max_parallel_backend?: number; batches: Batch[]; shared: string[] }
 type PlanStage = NonNullable<FlowFile['s_stages']>[number];
@@ -71,9 +72,11 @@ export function parseBatchPlan(md: string): { plan: BatchPlan | null; errors: st
       if (!name) { errors.push(`${at}.backend[${j}] 缺少 domain`); continue; }
       const after = isObj(d) ? strings(d['after']) : [];
       const paths = isObj(d) ? strings(d['paths']) : [];
+      const dreqs = isObj(d) ? strings(d['reqs']) : [];
       if (!after) errors.push(`${at}.backend[${j}].after 应是 domain 名的列表`);
       if (!paths) errors.push(`${at}.backend[${j}].paths 应是路径的列表`);
-      backend.push({ domain: name, after: after ?? [], paths: paths ?? [] });
+      if (!dreqs) errors.push(`${at}.backend[${j}].reqs 应是需求编号的列表`);
+      backend.push({ domain: name, after: after ?? [], paths: paths ?? [], reqs: dreqs ?? [] });
     }
     return { id, title: typeof b['title'] === 'string' ? b['title'].trim() : '', reqs: reqs ?? [], backend, frontend: frontend ?? [] };
   });
@@ -121,7 +124,7 @@ export function checkBatchPlan(plan: BatchPlan, prd: Prd): { errors: string[]; w
   const known = new Set(prd.reqs.map((r) => r.id));
   const missing = prd.reqs.filter((r) => !planned.has(r.id)).map((r) => r.id);
   if (missing.length) warnings.push(`PRD 里这些需求没有出现在任何批次：${missing.join('、')}`);
-  const unknownReqs = [...planned].filter((r) => !known.has(r));
+  const unknownReqs = [...new Set([...planned, ...plan.batches.flatMap((b) => b.backend.flatMap((d) => d.reqs))])].filter((r) => !known.has(r));
   if (unknownReqs.length && prd.reqs.length) warnings.push(`批次里这些需求编号在 PRD 里找不到：${unknownReqs.join('、')}`);
   const unknownPages = plan.batches.flatMap((b) => b.frontend).filter((p) => !pageOf(prd, p));
   if (unknownPages.length) warnings.push(`这些页面 id 在 PRD 的页面表里找不到对应项：${[...new Set(unknownPages)].join('、')}`);
@@ -176,8 +179,11 @@ export function deriveBatchTasks(plan: BatchPlan, prd: Prd, firstId: number, opt
       placed.add(next.d.domain);
     }
     for (const { d, deps } of ordered) {
-      const t = mk('backend', `后端 ${d.domain}`, `后端 domain「${d.domain}」的整条链路：领域模型、服务、仓储、数据访问、controller、DTO、本 domain 的迁移与测试。职责、表与对外接口见 docs/arch/domains.md，HTTP 接口严格按 docs/contracts/openapi.yaml。${reqs}`,
-        deps.map((a) => hard(domainTask.get(a)!, `需要 domain ${a}`)), d.paths, { domain: d.domain });
+      // 页面任务不分 AC：PRD 不区分页面 AC 与接口 AC，分给页面任务会让审查按接口 AC 要前端的测试
+      const ac = d.reqs.flatMap((id) => prd.reqs.find((r) => r.id === id)?.acs.map((a) => `${id}.${a.id}`) ?? []);
+      const own = d.reqs.length ? `本 domain 负责的需求：${d.reqs.join('、')}（AC 见「验收标准」）。` : '';
+      const t = mk('backend', `后端 ${d.domain}`, `后端 domain「${d.domain}」的整条链路：领域模型、服务、仓储、数据访问、controller、DTO、本 domain 的迁移与测试。职责、表与对外接口见 docs/arch/domains.md，HTTP 接口严格按 docs/contracts/openapi.yaml。${own}${reqs}`,
+        deps.map((a) => hard(domainTask.get(a)!, `需要 domain ${a}`)), d.paths, { domain: d.domain, ...(ac.length ? { ac } : {}) });
       domainTask.set(d.domain, t.id);
       tasks.push(t);
     }

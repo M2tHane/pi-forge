@@ -26,7 +26,7 @@ tier: strong
 10. **commands.yaml、rules/backend.md、rules/frontend.md**（按技能 write-rules）。commands.yaml 里的命令要真的能跑：在你的 worktree 里逐个跑过，跑不了的改对或删掉。
 11. **测试基础**：测试夹具、`tests/acceptance/_support/` 验收测试支持库（含按角色拿令牌的登录助手，桩与真实鉴权下都能用），加一条前端 → API → 数据库的冒烟测试 `tests/acceptance/S0-smoke/`（按技能 acceptance-tests），并确认它通过。
 12. **AGENTS.md**：约 100 行的目录，写信息在哪、常用命令、不能碰什么。
-13. **docs/plan.md**（按技能 plan-batches）：批次、每批的 domain 与页面顺序，以及「风险与假设」一节。identity 放第 1 批，别的 domain 不写 `after: [identity]`。
+13. **docs/plan.md**（按技能 plan-batches）：批次、每批的 domain 与页面顺序，以及「风险与假设」一节。identity 放第 1 批，别的 domain 不写 `after: [identity]`；每个 domain 写 `reqs`（它负责的需求）。
 14. **docs/arch/decisions.md**：记下这次难以撤销的决定，一条几行（之后回答问题、修改公共内容时也追加在这里）。
 15. 用 forge_note 写 handoff（公共代码在哪、怎么扩充、命令怎么用），再 forge_submit。
 

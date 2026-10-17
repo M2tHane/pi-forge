@@ -22,7 +22,7 @@ test('parseBatchPlan：字段与默认值；backend 可以只写 domain 名；�
   assert.equal(ok.plan!.max_parallel_backend, 2);
   assert.deepEqual(ok.plan!.shared, ['src/shared/**']);
   assert.deepEqual(ok.plan!.batches[0]!.backend.map((d) => [d.domain, d.after, d.paths]), [['user', [], ['src/server/user/**']], ['inventory', ['catalog'], []], ['catalog', [], ['src/server/catalog/**']]]);
-  assert.deepEqual(planOf('batches:\n  - id: B1\n    backend: [user]').plan!.batches[0], { id: 'B1', title: '', reqs: [], backend: [{ domain: 'user', after: [], paths: [] }], frontend: [] });
+  assert.deepEqual(planOf('batches:\n  - id: B1\n    backend: [user]').plan!.batches[0], { id: 'B1', title: '', reqs: [], backend: [{ domain: 'user', after: [], paths: [], reqs: [] }], frontend: [] });
   assert.match(parseBatchPlan('# 计划').errors.join(), /缺少「## 程序读取的部分」/);
   assert.match(planOf('batches: [').errors.join(), /不是合法的 YAML/);
   assert.match(planOf('batches: []').errors.join(), /至少要有一个批次/);
@@ -100,4 +100,18 @@ test('deriveBatchTasks：每批一个阶段；domain 任务按 after 排序与�
   assert.deepEqual(tasks.map((t) => t.role), ['backend', 'backend', 'backend', 'frontend', 'frontend', 'frontend', 'frontend', 'backend', 'frontend', 'frontend']);
   assert.deepEqual(tasks.map((t) => t.layers![0]), tasks.map((t) => t.role));
   assert.deepEqual(tasks.map((t) => t.domain ?? t.page ?? null), ['user', 'catalog', 'inventory', null, 'login', 'products', null, 'purchase', 'purchase-orders', null]);
+});
+
+test('domain 的 reqs：后端任务的 AC 由它展开；没写 reqs 的 domain 与页面任务没有 AC；PRD 里找不到的编号只提醒', () => {
+  const r = planOf('batches:\n  - id: B1\n    reqs: [REQ-001, REQ-002]\n    backend:\n      - { domain: user, reqs: [REQ-001] }\n      - { domain: catalog }\n    frontend: [login]');
+  assert.deepEqual(r.plan!.batches[0]!.backend.map((d) => [d.domain, d.reqs]), [['user', ['REQ-001']], ['catalog', []]]);
+  assert.deepEqual(planOf('batches:\n  - id: B1\n    backend:\n      - { domain: user, reqs: REQ-001 }').errors, ['batches[0].backend[0].reqs 应是需求编号的列表']);
+  const { tasks } = deriveBatchTasks(r.plan!, prd, 2);
+  const user = tasks.find((t) => t.domain === 'user')!;
+  assert.deepEqual(user.ac, ['REQ-001.AC1']);
+  assert.match(user.description!, /本 domain 负责的需求：REQ-001（AC 见「验收标准」）。本批需求：REQ-001、REQ-002/);
+  assert.equal(tasks.find((t) => t.domain === 'catalog')!.ac, undefined);
+  assert.ok(tasks.filter((t) => t.role === 'frontend').every((t) => t.ac === undefined), '页面任务不分 AC');
+  const ghost = planOf('batches:\n  - id: B1\n    reqs: [REQ-001]\n    backend:\n      - { domain: user, reqs: [REQ-009] }').plan!;
+  assert.ok(checkBatchPlan(ghost, prd).warnings.includes('批次里这些需求编号在 PRD 里找不到：REQ-009'));
 });

@@ -21,6 +21,7 @@ description: 写 docs/plan.md：按批次排 domain 与页面顺序，最后一�
 - **identity 放第 1 批，别的 domain 不写 `after: [identity]`。** 它们只依赖 S0 定的鉴权接口，开发和测试时用桩，和 identity 并行；本批「接入真实接口」与批次门禁时 identity 已经合入，所有接口都在真实鉴权下再跑一遍。（stock run-01：登录 → 分类 → 商品三环依赖，把 4 个本可以并行的任务拖成了串行。）
 - `after` 只写真的要等对方代码完成才能开发的 domain。domain 之间的接口在 S0 已经定好、有空实现，多数 domain 不需要 `after`。`after` 可以指向前面批次的 domain（视为已满足）。
 - `frontend` 是页面 id 的列表，按开发顺序写；页面 id 和 PRD「页面」表里的一致。先写布局、列表这类被别的页面复用的，再写详情和表单。
+- `reqs`：这个 domain 负责的需求，和 domains.md 的「对应需求」一致。程序把这些需求的 AC 列进后端任务的「验收标准」，开发 agent 每条写验收测试，reviewer 逐条核对；不写时任务没有 AC 清单。页面任务不分 AC，按 PRD 页面表的对应需求做。
 - `paths`（可选）：这个 domain 的代码目录。只用来在批次验收时判断问题该交给谁修，不限制写入。
 - `shared`：几个任务都要追加的公共文件（错误码、枚举、路由注册、菜单）。开发 agent 只能往里追加，要修改找你。
 
@@ -36,15 +37,15 @@ batches:
     title: 基础资料
     reqs: [REQ-001, REQ-002, REQ-003]
     backend:
-      - { domain: catalog, paths: ["src/main/java/**/domain/catalog/**"] }
-      - { domain: partner }
-      - { domain: inventory, after: [catalog] }
+      - { domain: catalog, reqs: [REQ-001], paths: ["src/main/java/**/domain/catalog/**"] }
+      - { domain: partner, reqs: [REQ-002] }
+      - { domain: inventory, reqs: [REQ-003], after: [catalog] }
     frontend: [login, layout, products, partners]
   - id: B2
     title: 单据
     reqs: [REQ-006, REQ-007]
     backend:
-      - { domain: purchase, after: [inventory] }
+      - { domain: purchase, reqs: [REQ-006, REQ-007], after: [inventory] }
     frontend: [purchase-orders, purchase-order-detail]
 shared: ["types/**", "src/main/resources/db/common/**"]
 ```
@@ -53,4 +54,4 @@ shared: ["types/**", "src/main/resources/db/common/**"]
 
 提交时退回（改了再提交）：缺少「## 程序读取的部分」或不是合法的 YAML、批次 id 重复、domain 重名、`after` 指向不存在的 domain 或更晚的批次、`after` 成环、批次既没有 backend 也没有 frontend。
 
-只提醒（看过再决定要不要改）：PRD 里的 REQ 没进任何批次、批次里的 REQ 或页面 id 在 PRD 里找不到、有 domain 写了 `after: [identity]`、identity 不在第 1 批。
+只提醒（看过再决定要不要改）：PRD 里的 REQ 没进任何批次、批次或 domain 里的 REQ、页面 id 在 PRD 里找不到、有 domain 写了 `after: [identity]`、identity 不在第 1 批。

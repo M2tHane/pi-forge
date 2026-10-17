@@ -5,8 +5,7 @@ import { isProtectedFor, matchesAny, openWriteAllowed, opensWrites } from './pat
 import { failureSignature } from './failure-signature.ts';
 
 export type Trigger =
-  | 'schedule' | 'dispatch' | 'submit' | 'inputs_ready' | 'sync_conflict'
-  | 'precheck_fail' | 'precheck_pass' | 'precheck_pass_skip'
+  | 'schedule' | 'dispatch' | 'submit'
   | 'review_changes' | 'review_pass' | 'review_exhausted'
   | 'merge_start' | 'merge_done' | 'merge_verify_fail' | 'merge_conflict' | 'merge_blocked' | 'merge_requeue'
   | 'accept' | 'block' | 'unblock' | 'lease_expired'
@@ -21,7 +20,7 @@ export interface Facts {
   now: Date;
   limits: {
     max_attempts: number; max_parallel: number; max_continuations?: number;
-    max_parallel_aux?: number; max_precheck_failures?: number; max_merge_failures?: number;
+    max_parallel_aux?: number; max_parallel_backend?: number; max_merge_failures?: number;
     review_max_rounds?: number;
   };
   /** 发起者：human、orchestrator、engine、dispatcher、run:<id> 等 */
@@ -30,34 +29,20 @@ export interface Facts {
   stage_active?: boolean;
   /** 依赖任务的真实状态，只认 done */
   status_of?: ReadonlyMap<string, string>;
-  /** 实施池中的运行数；M4 前由现有单池提供 */
+  /** 与本任务同一个池（poolOf）里正在运行的任务数 */
   running_count?: number;
-  /** 辅助池中的运行数；缺省沿用单池运行数 */
-  aux_running_count?: number;
-  /** 与在途任务 writes 重叠的任务编号（只作调度优先级与报告，不再拒绝派发） */
-  conflicting_running?: string[];
   /** 是否已有其他任务占用合并名额 */
   merging_other?: string | null;
   /** 是否是队列里第一个合格任务，保留原字段名供运行时集成 */
   queue_head?: boolean;
-  /** 所有软依赖生产方是否 done；缺省由 status_of 推导 */
-  soft_deps_done?: boolean;
-  /** 集成分支与验收测试是否已成功同步进任务分支 */
-  inputs_synced?: boolean;
-  /** 同步产生的实际冲突文件 */
+  /** 合并冲突的文件 */
   conflict_files?: string[];
-  /** 预检命令是否全部通过 */
-  precheck_ok?: boolean;
-  /** 根据模式、kind、风险、契约追加与配置推导的审查要求 */
+  /** 提交时推导的审查要求（review-flow.decideReview） */
   review_required?: boolean;
   /** 最近一轮审查尚未解决的 must 数量 */
   unresolved_must?: number;
   /** 只读辅助任务是否已提交通过形状校验的结构化结论 */
   structured_report?: boolean;
-  /** 程序验证为本模块契约的纯追加文件，可以越出 writes */
-  contract_additions?: string[];
-  /** 修改或删除了契约已有内容的文件；保留原名供运行时集成 */
-  interface_rewrites?: string[];
   /** 程序验证为只改已有测试的文件；验收目录仍不能放行 */
   test_adjustments?: string[];
   /** 合并时任务分支相对集成分支没有改动（多半已被别的任务做了）：阻塞原因记为 no_changes，确认后可以直接视为完成 */
@@ -84,13 +69,30 @@ interface Rule {
   check: (t: TaskFile, f: Facts) => string[];
   effect?: (t: TaskFile, f: Facts) => void;
   failure?: boolean;
-  counter?: 'precheck_failures' | 'review_rounds' | 'merge_failures';
+  counter?: 'review_rounds' | 'merge_failures';
 }
 /** 辅助池（review、qa）的任务种类；并发上限用 limits.max_parallel_aux，与实施池分开计数 */
 export const isAuxKind = (kind: string): boolean => kind === 'review' || kind === 'qa';
-export const IN_FLIGHT: readonly TaskStatus[] = [
-  'in_progress', 'awaiting_inputs', 'checking', 'in_review', 'queued_merge', 'merging',
-];
+/**
+ * 调度池：backend（max_parallel_backend）、frontend（固定 1 个，前端按页面顺序做）、aux（审查与验收，max_parallel_aux），
+ * 其余（架构阶段的 architect、轻流程的 worker）用 max_parallel。fix、merge-fix 跟着角色进对应的池。
+ */
+export type Pool = 'impl' | 'backend' | 'frontend' | 'aux';
+export const poolOf = (t: Pick<TaskFile, 'kind' | 'role'>): Pool =>
+  isAuxKind(t.kind) ? 'aux' : t.role === 'backend' ? 'backend' : t.role === 'frontend' ? 'frontend' : 'impl';
+export type PoolLimits = Pick<Facts['limits'], 'max_parallel' | 'max_parallel_aux' | 'max_parallel_backend'>;
+export function poolLimit(pool: Pool, l: PoolLimits): number {
+  switch (pool) {
+    case 'aux': return l.max_parallel_aux ?? l.max_parallel;
+    case 'backend': return l.max_parallel_backend ?? l.max_parallel;
+    case 'frontend': return 1;
+    case 'impl': return l.max_parallel;
+  }
+}
+/** 流程的并发上限：docs/plan.md 写了 max_parallel_backend 时覆盖 workflow.yaml */
+export const flowLimits = <L extends PoolLimits>(l: L, flow: { max_parallel_backend?: number | undefined }): L =>
+  flow.max_parallel_backend ? { ...l, max_parallel_backend: flow.max_parallel_backend } : l;
+export const IN_FLIGHT: readonly TaskStatus[] = ['in_progress', 'in_review', 'queued_merge', 'merging'];
 export const isSettled = (t: { status: TaskStatus }) => t.status === 'done' || t.status === 'cancelled';
 export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 const need = (cond: boolean | undefined, msg: string): string[] => cond ? [] : [msg];
@@ -108,7 +110,6 @@ const workerKind = (t: TaskFile) => ['impl', 'fix', 'doc', 'merge-fix'].includes
 export const canFinishWithoutChanges = (t: Pick<TaskFile, 'kind'>) => ['impl', 'fix', 'doc'].includes(t.kind);
 const pipelineOnly = (t: TaskFile) => need(workerKind(t), '只有实现、修复、文档或合并修复任务可以走此流水线');
 const mergeOnly = pipelineOnly;
-const softDone = (t: TaskFile, f: Facts) => f.soft_deps_done ?? t.depends_on.filter((d) => d.type === 'soft').every((d) => f.status_of?.get(d.task) === 'done');
 const started = (t: TaskFile) => !!(t.worktree || t.branch);
 
 function leaseValid(lease: Lease | null, f: Facts, what: string): string[] {
@@ -119,28 +120,21 @@ function leaseValid(lease: Lease | null, f: Facts, what: string): string[] {
   return [];
 }
 
-/** 保留给工具层与运行时的能力判断；具体契约文件必须由程序验证后通过 contract_additions 提供。 */
-/** 契约只能追加的任务：impl 与 fix；architect 自己写契约（架构阶段与它的修复），不受这条限制 */
-export const canAppendInterfaces = (t: Pick<TaskFile, 'kind' | 'role'>) => (t.kind === 'impl' || t.kind === 'fix') && t.role !== 'architect';
-
 function submitErrors(t: TaskFile, f: Facts): string[] {
   const errors = leaseValid(t.lease, f, '提交被拒');
   const diff = f.diff_files;
   if (!diff) errors.push('缺少 worktree diff');
   else if (!diff.length) errors.push('worktree 没有改动，无可提交内容');
   else {
-    // S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时放行（其余受保护路径不变）
-    const protectedFiles = diff.filter((p) => isProtectedFor(p, t.writes));
+    // S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时放行；backend、frontend 另有架构师负责的路径
+    const protectedFiles = diff.filter((p) => isProtectedFor(p, t.writes, t.role));
     if (protectedFiles.length) errors.push(`diff 含受保护路径：${protectedFiles.join('、')}`);
     const allowed = [...t.writes, ...(t.shared ?? [])];
     const adjusted = new Set(f.test_adjustments ?? []);
-    const additions = new Set(canAppendInterfaces(t) ? f.contract_additions ?? [] : []);
-    // impl / fix 不受 writes 限制（只有 docs/spec 与受保护路径除外）
+    // impl / fix 不受 writes 限制（只有 PRD、原型与受保护路径除外）
     const inAllowed = (p: string) => opensWrites(t) ? openWriteAllowed(p) : matchesAny(p, allowed);
-    const outside = diff.filter((p) => !inAllowed(p) && !adjusted.has(p) &&
-      !(additions.has(p) && matchesAny(p, ['docs/contracts/**'])));
+    const outside = diff.filter((p) => !inAllowed(p) && !adjusted.has(p));
     if (outside.length) errors.push(`diff 越出任务 writes：${outside.join('、')}`);
-    if (f.interface_rewrites?.length) errors.push(`契约只能追加，不能修改或删除已有内容：${f.interface_rewrites.join('、')}`);
   }
   return errors;
 }
@@ -168,7 +162,6 @@ function unblockEffect(t: TaskFile, f: Facts): void {
         t.lease_expirations = 0;
         delete t.timeouts;
         break;
-      case 'precheck_exhausted': t.precheck_failures = 0; break;
       case 'review_exhausted': t.review_rounds = 0; break;
       case 'merge_exhausted': t.merge_failures = 0; break;
       case 'dispatcher': delete t.interruptions; break;
@@ -192,45 +185,23 @@ export const TRANSITIONS: readonly Rule[] = [
   {
     from: ['ready'], to: 'in_progress', trigger: 'dispatch',
     check: (t, f) => {
-      const aux = ['review', 'qa'].includes(t.kind);
-      const count = aux ? f.aux_running_count ?? f.running_count : f.running_count;
-      const limit = aux ? f.limits.max_parallel_aux ?? f.limits.max_parallel : f.limits.max_parallel;
+      const limit = poolLimit(poolOf(t), f.limits);
       return [
-        ...need((count ?? Infinity) < limit, `并发已达上限 ${limit}`),
+        ...need((f.running_count ?? Infinity) < limit, `并发已达上限 ${limit}`),
         ...need(!!t.worktree && !!t.branch, '尚未建立 worktree 与任务分支'),
         ...need(!!t.base_sha, '尚未记录 base_sha'), ...need(!!t.lease, '尚未颁发 token 与租约'),
         ...need(!!t.lease && Date.parse(t.lease.expires_at) > f.now.getTime(), '颁发的租约已过期'),
       ];
     },
   },
+  // 提交：程序已把集成分支同步进任务分支（forge_submit 里做，有冲突时不提交、交回原 agent），需要审查的进 in_review，不需要的直接排队合并
   {
-    from: ['in_progress'], to: 'awaiting_inputs', trigger: 'submit',
-    check: (t, f) => [...pipelineOnly(t), ...submitErrors(t, f)], effect: submitted,
+    from: ['in_progress'], to: 'in_review', trigger: 'submit',
+    check: (t, f) => [...pipelineOnly(t), ...submitErrors(t, f), ...need(f.review_required === true, '此任务不需要审查')], effect: submitted,
   },
   {
-    from: ['awaiting_inputs'], to: 'checking', trigger: 'inputs_ready',
-    check: (t, f) => [
-      ...pipelineOnly(t), ...need(f.actor === 'engine', '只有 engine 可以开始预检'),
-      ...need(softDone(t, f), '软依赖生产方尚未 done'),
-      ...need(f.inputs_synced, '输入尚未同步成功'), ...need(!f.conflict_files?.length, '输入同步仍有冲突'),
-    ],
-  },
-  {
-    from: ['awaiting_inputs'], to: 'in_progress', trigger: 'sync_conflict',
-    check: (t, f) => [...pipelineOnly(t), ...need(!!f.conflict_files?.length, '同步没有冲突文件')],
-    effect: (t, f) => { t.lease = null; t.conflict_files = [...f.conflict_files!]; },
-  },
-  {
-    from: ['checking'], to: 'in_progress', trigger: 'precheck_fail', counter: 'precheck_failures',
-    check: (t, f) => [...pipelineOnly(t), ...need(f.precheck_ok === false, '预检并未失败'), ...reasonRequired(f)],
-  },
-  {
-    from: ['checking'], to: 'in_review', trigger: 'precheck_pass',
-    check: (t, f) => [...pipelineOnly(t), ...need(f.precheck_ok === true, '预检尚未通过'), ...need(f.review_required === true, '此任务不需要审查')],
-  },
-  {
-    from: ['checking'], to: 'queued_merge', trigger: 'precheck_pass_skip',
-    check: (t, f) => [...pipelineOnly(t), ...need(f.precheck_ok === true, '预检尚未通过'), ...need(f.review_required === false, '此任务需要审查')],
+    from: ['in_progress'], to: 'queued_merge', trigger: 'submit',
+    check: (t, f) => [...pipelineOnly(t), ...submitErrors(t, f), ...need(f.review_required === false, '此任务需要审查')], effect: submitted,
   },
   {
     from: ['in_review'], to: 'in_progress', trigger: 'review_changes', counter: 'review_rounds',
@@ -247,7 +218,7 @@ export const TRANSITIONS: readonly Rule[] = [
   },
   {
     from: ['queued_merge'], to: 'merging', trigger: 'merge_start',
-    check: (t, f) => [...mergeOnly(t), ...need(!f.merging_other, `已有任务在合并中：${f.merging_other}`), ...need(f.queue_head === true, '不是队列里第一个合格任务'), ...need(softDone(t, f), '软依赖生产方尚未 done')],
+    check: (t, f) => [...mergeOnly(t), ...need(!f.merging_other, `已有任务在合并中：${f.merging_other}`), ...need(f.queue_head === true, '不是队列里第一个合格任务')],
   },
   {
     from: ['merging'], to: 'done', trigger: 'merge_done',
@@ -355,10 +326,10 @@ export function planTransition(task: TaskFile, to: TaskStatus, trigger: Trigger,
     next[counter] = (next[counter] ?? 0) + 1;
     next.lease = null;
     next.last_failure = facts.reason ?? null;
-    const limit = counter === 'precheck_failures' ? facts.limits.max_precheck_failures ?? 3 : counter === 'merge_failures' ? facts.limits.max_merge_failures ?? 2 : facts.limits.review_max_rounds ?? 2;
+    const limit = counter === 'merge_failures' ? facts.limits.max_merge_failures ?? 2 : facts.limits.review_max_rounds ?? 2;
     if (next[counter]! >= limit) {
       effective = 'blocked';
-      blocked(next, { ...facts, reason: `次数达到上限 ${limit}：${facts.reason ?? trigger}` }, counter === 'precheck_failures' ? 'precheck_exhausted' : counter === 'merge_failures' ? 'merge_exhausted' : 'review_exhausted');
+      blocked(next, { ...facts, reason: `次数达到上限 ${limit}：${facts.reason ?? trigger}` }, counter === 'merge_failures' ? 'merge_exhausted' : 'review_exhausted');
     }
   }
   if (rule.failure) {

@@ -103,17 +103,18 @@ test('需要你处理：停滞按引擎的等待规则报告——fix 不等硬�
   try {
     await force('T-001', { status: 'done' });
     await force('T-002', { status: 'blocked', blocked_by: 'agent', blocked_reason: '测试写不出来' });
-    await force('T-001.fx-1', { status: 'awaiting_inputs' });
+    await force('T-001.fx-1', { status: 'in_review' });
     const waits = () => actionsNeeded(p.store, p.config).filter((a) => /在等/.test(a.text));
     assert.deepEqual(waits(), [], 'T-002 硬依赖 T-001：不是 fx-1 等的对象，不该报"在等它"');
     await force('T-001', { status: 'in_progress' });
     assert.deepEqual(waits(), [], 'T-001 没 done 时也一样');
-    // 软依赖已阻塞才是真的在等：要报，并给出 unblock 命令
-    await force('T-001.fx-1', { depends_on: [{ task: 'T-002', type: 'soft' }] });
+    // pending 等在已阻塞的依赖上是排队常态（T-002 自己有一条带解除命令的项）；等到已取消的才报
+    await force('T-001.fx-1', { status: 'pending', depends_on: [{ task: 'T-002', type: 'hard' }] });
+    assert.deepEqual(waits(), []);
+    await force('T-002', { status: 'cancelled' });
     const w = waits();
     assert.equal(w.length, 1);
-    assert.match(w[0]!.text, /T-001\.fx-1 在等 T-002，但 T-002 已阻塞：测试写不出来/);
-    assert.equal(w[0]!.command, '/forge unblock T-002');
+    assert.match(w[0]!.text, /T-001\.fx-1 在等 T-002，但 T-002 已取消/);
   } finally { p.cleanup(); }
 });
 

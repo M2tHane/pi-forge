@@ -147,10 +147,10 @@ export function deriveBatchTasks(plan: BatchPlan, prd: Prd, firstId: number, opt
     const stage = `S${i + 1}`;
     stages.push({ id: stage, goal: b.title ? `${b.id} ${b.title}` : b.id, exit: [...b.reqs] });
     const reqs = b.reqs.length ? `本批需求：${b.reqs.join('、')}（验收标准见 docs/PRD.md）。` : '';
-    // layers 决定注入哪份 rules/<layer>.md
+    // 角色 backend / frontend 决定调度池与角色提示；layers 决定注入哪份 rules/<layer>.md
     const mk = (layer: 'backend' | 'frontend', title: string, description: string, deps: TaskFile['depends_on'], writes: string[], extra: Partial<TaskInput> = {}): TaskInput => {
       const id = nextId();
-      return { id, stage, kind: 'impl', role: 'worker', title, description, scopes: ['code'], layers: [layer], depends_on: deps, inputs: [],
+      return { id, stage, kind: 'impl', role: layer, title, description, scopes: ['code'], layers: [layer], depends_on: deps, inputs: [],
         writes: [...new Set([...writes, ownAcceptanceGlob(id)])], verify: [...(opts.verify ?? [])], ...(plan.shared.length ? { shared: [...plan.shared] } : {}), ...extra };
     };
     const domainTask = new Map<string, string>();
@@ -169,7 +169,7 @@ export function deriveBatchTasks(plan: BatchPlan, prd: Prd, firstId: number, opt
     }
     for (const { d, deps } of ordered) {
       const t = mk('backend', `后端 ${d.domain}`, `后端 domain「${d.domain}」的整条链路：领域模型、服务、仓储、数据访问、controller、DTO、本 domain 的迁移与测试。职责、表与对外接口见 docs/arch/domains.md，HTTP 接口严格按 docs/contracts/openapi.yaml。${reqs}`,
-        deps.map((a) => hard(domainTask.get(a)!, `需要 domain ${a}`)), d.paths);
+        deps.map((a) => hard(domainTask.get(a)!, `需要 domain ${a}`)), d.paths, { domain: d.domain });
       domainTask.set(d.domain, t.id);
       tasks.push(t);
     }
@@ -184,7 +184,7 @@ export function deriveBatchTasks(plan: BatchPlan, prd: Prd, firstId: number, opt
     }
     for (const page of b.frontend) {
       const t = mk('frontend', `页面 ${page}`, `页面「${page}」：严格按原型实现页面结构与交互，以及加载、空、错误、无权限四种状态，对着 mock 开发。${pageBrief(prd, page)}；用到的接口见 docs/contracts/page-api.md 里这一页。${reqs}`,
-        prevFront ? [hard(prevFront, '前端按页面顺序开发')] : [], [], prevFront ? { fork_from_task: prevFront } : {});
+        prevFront ? [hard(prevFront, '前端按页面顺序开发')] : [], [], { page, ...(prevFront ? { fork_from_task: prevFront } : {}) });
       tasks.push(t);
       prevFront = t.id;
       frontIds.push(t.id);

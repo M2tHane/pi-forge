@@ -50,7 +50,7 @@ export const CHANGE_PHASE_LABEL: Record<FixPhase, string> = { fixing: '实施中
 type LightFlowLike = Pick<FlowFile, 'stage_status' | 'stage' | 'stages'> & { mode?: FlowFile['mode'] };
 export const phaseLabelOf = (flow: Pick<FlowFile, 'mode'> | { mode?: FlowFile['mode'] }, phase: FixPhase): string => (flow.mode === 'change' ? CHANGE_PHASE_LABEL : FIX_PHASE_LABEL)[phase];
 
-const MERGING = new Set(['checking', 'in_review', 'queued_merge', 'merging', 'disputed']);
+const MERGING = new Set(['in_review', 'queued_merge', 'merging']);
 
 export function fixPhase(flow: LightFlowLike, tasks: readonly Pick<TaskFile, 'id' | 'kind' | 'stage' | 'status' | 'for_task'>[]): FixPhase {
   if (flow.stage_status === 'done') return 'done';

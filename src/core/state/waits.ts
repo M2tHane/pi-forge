@@ -1,27 +1,18 @@
 // "一个 task 在等谁"的唯一定义（纯函数，不读写文件）。
-// 派发器（advanceInputs）、状态仓库（转移的 facts、合并队列的合格判断）、合并队列、状态视图、doctor 与测试辅助都从这里取，
-// 不再各写一份。
+// 状态视图、doctor、流程看守与测试辅助都从这里取，不再各写一份。
 import type { TaskFile } from './schemas.ts';
 
 type WaitTask = Pick<TaskFile, 'id' | 'kind' | 'for_task' | 'status' | 'depends_on' | 'blocked_reason'>;
 
 const isDone = (tasks: readonly Pick<TaskFile, 'id' | 'status'>[], id: string) => tasks.find((x) => x.id === id)?.status === 'done';
 
-/** 软依赖的生产方都已 done */
-export function softDepsDone(task: Pick<TaskFile, 'depends_on'>, tasks: readonly Pick<TaskFile, 'id' | 'status'>[]): boolean {
-  return task.depends_on.every((d) => d.type !== 'soft' || isDone(tasks, d.task));
-}
-
 /**
- * 没结束的 task 在等哪些 task（未 done 的）：
- * pending 等未 done 的硬依赖；awaiting_inputs 等未 done 的软依赖。
+ * 没结束的 task 在等哪些 task（未 done 的）：只有 pending 等它的依赖；
  * 其余状态由运行者或程序步骤推进，不等别的 task。
  */
 export function waitsOn(task: WaitTask, tasks: readonly WaitTask[]): string[] {
-  const notDone = (id: string) => !isDone(tasks, id);
-  if (task.status === 'pending') return task.depends_on.filter((d) => d.type === 'hard' && notDone(d.task)).map((d) => d.task);
-  if (task.status === 'awaiting_inputs') return task.depends_on.filter((d) => d.type === 'soft' && notDone(d.task)).map((d) => d.task);
-  return [];
+  if (task.status !== 'pending') return [];
+  return task.depends_on.filter((d) => !isDone(tasks, d.task)).map((d) => d.task);
 }
 
 export interface Stall {

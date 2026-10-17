@@ -1,20 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  planTransition, planStageTransition, hashToken, IN_FLIGHT,
+  planTransition, planStageTransition, hashToken, IN_FLIGHT, poolOf,
   MAX_INTERRUPTIONS, type Facts, type Trigger, type StageTrigger, type StageFacts,
 } from '../../src/core/state/state-machine.ts';
 import { TASK_STATUSES, STAGE_STATUSES, validate, type TaskFile, type TaskStatus, type StageStatus } from '../../src/core/state/schemas.ts';
-import { mkTask, hard, soft } from '../helpers/tasks.ts';
+import { mkTask, hard } from '../helpers/tasks.ts';
 
 const NOW = new Date('2026-01-01T00:00:00Z');
 const TOKEN = 'tok-impl';
 const lease = { run_id: 'r-1', role: 'worker', token_hash: hashToken(TOKEN), acquired_at: NOW.toISOString(), expires_at: '2026-01-01T00:30:00Z' };
 const facts = (over: Partial<Facts> = {}): Facts => ({
-  now: NOW, limits: { max_attempts: 3, max_parallel: 2, max_parallel_aux: 3, max_precheck_failures: 2, max_merge_failures: 2, review_max_rounds: 2 },
-  actor: 'engine', stage_active: true, status_of: new Map(), running_count: 0, conflicting_running: [], queue_head: true,
+  now: NOW, limits: { max_attempts: 3, max_parallel: 2, max_parallel_aux: 3, max_parallel_backend: 4, max_merge_failures: 2, review_max_rounds: 2 },
+  actor: 'engine', stage_active: true, status_of: new Map(), running_count: 0, queue_head: true,
   token: TOKEN, diff_files: ['src/server/t-001/a.ts'], reason: '测试失败',
-  soft_deps_done: true, inputs_synced: true, structured_report: true,
+  review_required: true, structured_report: true,
   ...over,
 });
 const task = (status: TaskStatus, over: Partial<TaskFile> = {}) => mkTask('T-001', {
@@ -32,29 +32,25 @@ interface Case {
 const cases: Case[] = [
   { from: 'pending', to: 'ready', trigger: 'schedule', task: { depends_on: [hard('T-002')] }, facts: { status_of: new Map([['T-002', 'done']]) }, reject: { stage_active: false } },
   { from: 'ready', to: 'in_progress', trigger: 'dispatch', reject: { running_count: 2 } },
-  ...(['impl', 'fix', 'doc', 'merge-fix'] as const).map((kind): Case => ({ from: 'in_progress', to: 'awaiting_inputs', trigger: 'submit', task: { kind }, reject: { diff_files: [] }, rejectTask: { kind: 'review' } })),
-  { from: 'awaiting_inputs', to: 'checking', trigger: 'inputs_ready', reject: { actor: 'orchestrator' } },
-  { from: 'awaiting_inputs', to: 'in_progress', trigger: 'sync_conflict', facts: { conflict_files: ['src/a.ts'] }, reject: { conflict_files: [] } },
-  { from: 'checking', to: 'in_progress', trigger: 'precheck_fail', facts: { precheck_ok: false }, reject: { precheck_ok: true }, rejectTask: { kind: 'review' } },
-  { from: 'checking', to: 'in_review', trigger: 'precheck_pass', facts: { precheck_ok: true, review_required: true }, reject: { review_required: false }, rejectTask: { kind: 'qa' } },
-  { from: 'checking', to: 'queued_merge', trigger: 'precheck_pass_skip', facts: { precheck_ok: true, review_required: false }, reject: { review_required: true }, rejectTask: { kind: 'qa' } },
+  ...(['impl', 'fix', 'doc', 'merge-fix'] as const).map((kind): Case => ({ from: 'in_progress', to: 'in_review', trigger: 'submit', task: { kind }, reject: { diff_files: [] }, rejectTask: { kind: 'review' } })),
+  ...(['impl', 'fix', 'doc', 'merge-fix'] as const).map((kind): Case => ({ from: 'in_progress', to: 'queued_merge', trigger: 'submit', task: { kind }, facts: { review_required: false }, reject: { review_required: true }, rejectTask: { kind: 'qa' } })),
   { from: 'in_review', to: 'in_progress', trigger: 'review_changes', facts: { unresolved_must: 1 }, reject: { unresolved_must: 0 } },
   { from: 'in_review', to: 'queued_merge', trigger: 'review_pass', facts: { unresolved_must: 0 }, reject: { unresolved_must: 1 } },
   { from: 'in_review', to: 'blocked', trigger: 'review_exhausted', task: { review_rounds: 2 }, facts: { unresolved_must: 1 }, reject: { unresolved_must: 0 }, rejectTask: { review_rounds: 1 } },
-  { from: 'queued_merge', to: 'merging', trigger: 'merge_start', reject: { soft_deps_done: false } },
+  { from: 'queued_merge', to: 'merging', trigger: 'merge_start', reject: { queue_head: false } },
   { from: 'merging', to: 'done', trigger: 'merge_done', facts: { rebase_ok: true, post_verify_ok: true, fast_forwarded: true }, reject: { fast_forwarded: false } },
   { from: 'merging', to: 'in_progress', trigger: 'merge_verify_fail', facts: { post_verify_ok: false }, reject: { post_verify_ok: true }, rejectTask: { kind: 'review' } },
   { from: 'merging', to: 'in_progress', trigger: 'merge_conflict', facts: { conflict_files: ['src/a.ts'] }, reject: { conflict_files: [] }, rejectTask: { kind: 'doc' } },
   { from: 'merging', to: 'blocked', trigger: 'merge_blocked', reject: { reason: '' } },
-  { from: 'merging', to: 'queued_merge', trigger: 'merge_requeue', reject: {}, rejectTask: { status: 'checking' } },
-  { from: 'blocked', to: 'queued_merge', trigger: 'accept', task: { blocked_by: 'review_exhausted' }, facts: { actor: 'human' }, reject: { actor: 'orchestrator' }, rejectTask: { blocked_by: 'precheck_exhausted' } },
+  { from: 'merging', to: 'queued_merge', trigger: 'merge_requeue', reject: {}, rejectTask: { kind: 'review' } },
+  { from: 'blocked', to: 'queued_merge', trigger: 'accept', task: { blocked_by: 'review_exhausted' }, facts: { actor: 'human' }, reject: { actor: 'orchestrator' }, rejectTask: { blocked_by: 'merge_exhausted' } },
   { from: 'blocked', to: 'done', trigger: 'accept', task: { blocked_by: 'no_changes' }, facts: { actor: 'human' }, reject: { actor: 'engine' }, rejectTask: { blocked_by: 'review_exhausted' } },
   { from: 'blocked', to: 'blocked', trigger: 'hand_to_user', task: { blocked_by: 'dispatcher', blocked_owner: 'orchestrator' }, facts: { actor: 'orchestrator' }, reject: { actor: 'human' }, rejectTask: { blocked_owner: undefined } },
   { from: 'blocked', to: 'in_progress', trigger: 'unblock', facts: { actor: 'human' }, reject: { actor: 'engine' }, rejectTask: { worktree: null, branch: null } },
   { from: 'blocked', to: 'ready', trigger: 'unblock', task: { worktree: null, branch: null }, facts: { actor: 'human' }, reject: { actor: 'orchestrator' }, rejectTask: { branch: 'started' } },
   ...(['review', 'qa'] as const).map((kind): Case => ({ from: 'in_progress', to: 'done', trigger: 'report', task: { kind }, facts: { diff_files: [] }, reject: { structured_report: false }, rejectTask: { kind: 'merge-fix' } })),
   { from: 'ready', to: 'blocked', trigger: 'block', facts: { actor: 'dispatcher' }, reject: { actor: 'orchestrator' } },
-  ...(['in_progress', 'awaiting_inputs', 'checking', 'in_review', 'queued_merge', 'merging'] as const).map((from): Case => ({ from, to: 'blocked', trigger: 'block', reject: { reason: '' } })),
+  ...(['in_progress', 'in_review', 'queued_merge', 'merging'] as const).map((from): Case => ({ from, to: 'blocked', trigger: 'block', reject: { reason: '' } })),
   ...(['run_failed', 'run_interrupted', 'run_paused', 'run_timeout'] as const).map((trigger): Case => ({ from: 'in_progress', to: 'in_progress', trigger, task: trigger === 'run_timeout' ? { timeout_review: { run: 'r-1', at: NOW.toISOString(), minutes: 30 } } : {}, reject: { reason: '' }, rejectTask: { lease: null } })),
   { from: 'in_progress', to: 'ready', trigger: 'lease_expired', facts: { now: new Date('2026-01-01T00:31:00Z'), worktree_clean: true }, reject: { worktree_clean: false } },
   ...(['pending', 'ready', 'blocked'] as const).map((from): Case => ({ from, to: 'cancelled', trigger: 'cancel', facts: { actor: 'human' }, reject: { actor: 'engine' } })),
@@ -112,71 +108,73 @@ test('状态 × 触发 × 目标穷举：只有清单中的组合可成功；don
     if (allowed.has(`${from}/${trigger}/${to}`)) continue;
     for (const kind of ['impl', 'review', 'qa'] as const) bad(planTransition(task(from, { kind }), to, trigger, facts()));
   }
-  assert.deepEqual(IN_FLIGHT, ['in_progress', 'awaiting_inputs', 'checking', 'in_review', 'queued_merge', 'merging']);
+  assert.deepEqual(IN_FLIGHT, ['in_progress', 'in_review', 'queued_merge', 'merging']);
 });
 
-test('review 与 qa 的完成只接受 report，不能进入合并；辅助池不占实施池', () => {
+test('review 与 qa 的完成只接受 report，不能进入合并', () => {
   for (const kind of ['review', 'qa'] as const) {
     for (const [to, trigger] of [['merging', 'merge_start'], ['done', 'merge_done'], ['blocked', 'merge_blocked'], ['queued_merge', 'merge_requeue']] as const) {
       bad(planTransition(task(trigger === 'merge_start' ? 'queued_merge' : 'merging', { kind }), to, trigger, facts({ rebase_ok: true, post_verify_ok: true, fast_forwarded: true })));
     }
-    ok(planTransition(task('ready', { kind }), 'in_progress', 'dispatch', facts({ running_count: 2, aux_running_count: 0 })));
   }
-  ok(planTransition(task('ready'), 'in_progress', 'dispatch', facts({ running_count: 0, aux_running_count: 3 })));
 });
 
-test('硬依赖只认 done，软依赖不阻塞 schedule；输入与合并必须等待软依赖', () => {
-  const t = task('pending', { depends_on: [hard('T-002'), soft('T-003')] });
-  const f = facts({ status_of: new Map([['T-002', 'done'], ['T-003', 'blocked']]) });
+test('依赖只认 done（没有软依赖）；合并不等别的任务', () => {
+  const t = task('pending', { depends_on: [hard('T-002'), hard('T-003')] });
+  const f = facts({ status_of: new Map([['T-002', 'done'], ['T-003', 'done']]) });
   ok(planTransition(t, 'ready', 'schedule', f));
-  for (const state of ['pending', 'accepting', 'blocked', 'cancelled']) bad(planTransition(t, 'ready', 'schedule', { ...f, status_of: new Map([['T-002', state]]) }));
-  bad(planTransition({ ...t, status: 'awaiting_inputs' }, 'checking', 'inputs_ready', { ...f, soft_deps_done: false }));
-  bad(planTransition({ ...t, status: 'queued_merge' }, 'merging', 'merge_start', { ...f, soft_deps_done: false }));
+  for (const state of ['pending', 'in_review', 'blocked', 'cancelled']) bad(planTransition(t, 'ready', 'schedule', { ...f, status_of: new Map([['T-002', 'done'], ['T-003', state]]) }));
+  ok(planTransition({ ...t, status: 'queued_merge' }, 'merging', 'merge_start', facts()));
 });
 
-test('dispatch：两个池分别限流，worktree、branch、base_sha、租约必需', () => {
-  for (const kind of ['impl', 'review', 'qa'] as const) {
-    const t = task('ready', { kind });
-    const f = facts({ running_count: 0, aux_running_count: 0 });
-    ok(planTransition(t, 'in_progress', 'dispatch', f));
-    bad(planTransition(t, 'in_progress', 'dispatch', { ...f, running_count: 2, aux_running_count: 3 }));
-    ok(planTransition(t, 'in_progress', 'dispatch', { ...f, conflicting_running: ['T-009'] })); // 重叠不再拒绝
-    for (const key of ['worktree', 'branch', 'base_sha', 'lease'] as const) bad(planTransition(t, 'in_progress', 'dispatch', f, { [key]: null }));
+test('dispatch：按池限流（running_count 是同池的运行数），worktree、branch、base_sha、租约必需', () => {
+  // 上限：impl（architect、worker）max_parallel=2，backend max_parallel_backend=4，frontend 固定 1，review、qa max_parallel_aux=3
+  const limits = [['impl', 'worker', 2], ['impl', 'backend', 4], ['impl', 'frontend', 1], ['fix', 'frontend', 1], ['review', 'reviewer', 3], ['qa', 'stage-qa', 3]] as const;
+  for (const [kind, role, limit] of limits) {
+    const t = task('ready', { kind, role });
+    ok(planTransition(t, 'in_progress', 'dispatch', facts({ running_count: limit - 1 })));
+    bad(planTransition(t, 'in_progress', 'dispatch', facts({ running_count: limit })));
+    for (const key of ['worktree', 'branch', 'base_sha', 'lease'] as const) bad(planTransition(t, 'in_progress', 'dispatch', facts(), { [key]: null }));
   }
+  assert.deepEqual([poolOf({ kind: 'impl', role: 'backend' }), poolOf({ kind: 'merge-fix', role: 'frontend' }), poolOf({ kind: 'review', role: 'reviewer' }), poolOf({ kind: 'impl', role: 'architect' })],
+    ['backend', 'frontend', 'aux', 'impl']);
 });
 
 test('submit：鉴权、范围、公共文件、已有测试调整、契约追加与 S0 验收路径例外', () => {
   const t = task('in_progress', { writes: ['**'] });
   const f = facts();
-  for (const token of [undefined, 'forged']) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, token }));
-  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, now: new Date('2026-01-01T00:30:00Z') }));
-  for (const path of ['.forge/state.json', 'rules/project.md']) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files: [path], test_adjustments: [path] }));
-  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/PRD.md'] }));
-  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/prototype/a.html'] }));
+  for (const token of [undefined, 'forged']) bad(planTransition(t, 'in_review', 'submit', { ...f, token }));
+  bad(planTransition(t, 'in_review', 'submit', { ...f, now: new Date('2026-01-01T00:30:00Z') }));
+  for (const path of ['.forge/state.json', 'rules/project.md']) bad(planTransition(t, 'in_review', 'submit', { ...f, diff_files: [path], test_adjustments: [path] }));
+  bad(planTransition(t, 'in_review', 'submit', { ...f, diff_files: ['docs/PRD.md'] }));
+  bad(planTransition(t, 'in_review', 'submit', { ...f, diff_files: ['docs/prototype/a.html'] }));
   // S0 的 architect：writes 显式含 rules/** 时放行 rules/，其余受保护路径仍拒
   const s0 = { ...t, stage: 'S0', role: 'architect', writes: ['**', 'rules/**'] };
-  ok(planTransition(s0, 'awaiting_inputs', 'submit', { ...f, diff_files: ['rules/project.md', 'src/a.ts'] }));
-  for (const path of ['.forge/state.json', 'workflow.yaml', '.git/config', '.pi/x']) bad(planTransition(s0, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
+  ok(planTransition(s0, 'in_review', 'submit', { ...f, diff_files: ['rules/project.md', 'src/a.ts'] }));
+  for (const path of ['.forge/state.json', 'workflow.yaml', '.git/config', '.pi/x']) bad(planTransition(s0, 'in_review', 'submit', { ...f, diff_files: [path] }));
   for (const path of ['tests/acceptance/_support/a.ts', 'tests/acceptance/S0-smoke/a.ts']) {
-    ok(planTransition({ ...t, stage: 'S0' }, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
+    ok(planTransition({ ...t, stage: 'S0' }, 'in_review', 'submit', { ...f, diff_files: [path] }));
     // doc 任务按 writes（这里是 **），验收测试也能改
-    ok(planTransition({ ...t, stage: 'S0', kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
+    ok(planTransition({ ...t, stage: 'S0', kind: 'doc' }, 'in_review', 'submit', { ...f, diff_files: [path] }));
   }
   const narrow = task('in_progress', { shared: ['src/routes.ts'] });
   // impl / fix 不受 writes 限制（包括单元测试与任何 task 的验收测试）；PRD 与原型仍越界；其他种类照旧
-  ok(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['outside.ts', 'src/server/index.js', 'tests/unit/new.test.js', 'tests/acceptance/T-002/a.test.ts'] }));
-  for (const path of ['docs/PRD.md', 'docs/prototype/a.html']) bad(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
-  bad(planTransition({ ...narrow, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['outside.ts'] }));
-  ok(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['src/routes.ts', 'unit/a.test.ts', 'docs/contracts/modules/a.md'], test_adjustments: ['unit/a.test.ts'], contract_additions: ['docs/contracts/modules/a.md'] }));
-  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, interface_rewrites: ['docs/contracts/modules/a.md'] }));
-  for (const diff_files of [undefined, []]) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files }));
-  const submitted = ok(planTransition(narrow, 'awaiting_inputs', 'submit', f));
+  ok(planTransition(narrow, 'in_review', 'submit', { ...f, diff_files: ['outside.ts', 'src/server/index.js', 'tests/unit/new.test.js', 'tests/acceptance/T-002/a.test.ts'] }));
+  for (const path of ['docs/PRD.md', 'docs/prototype/a.html']) bad(planTransition(narrow, 'in_review', 'submit', { ...f, diff_files: [path] }));
+  bad(planTransition({ ...narrow, kind: 'doc' }, 'in_review', 'submit', { ...f, diff_files: ['outside.ts'] }));
+  ok(planTransition(narrow, 'in_review', 'submit', { ...f, diff_files: ['src/routes.ts', 'unit/a.test.ts', 'docs/contracts/modules/a.md'], test_adjustments: ['unit/a.test.ts'] }));
+  // backend、frontend 不能改架构师负责的文档（契约、架构文档、plan.md、AGENTS.md）；worker（轻流程）照旧
+  for (const role of ['backend', 'frontend']) {
+    for (const path of ['docs/contracts/openapi.yaml', 'docs/arch/overview.md', 'docs/plan.md', 'AGENTS.md', 'rules/backend.md']) bad(planTransition({ ...narrow, role }, 'in_review', 'submit', { ...f, diff_files: [path] }));
+    ok(planTransition({ ...narrow, role }, 'in_review', 'submit', { ...f, diff_files: ['src/routes.ts', 'docs/notes.md'] }));
+  }
+  for (const diff_files of [undefined, []]) bad(planTransition(t, 'in_review', 'submit', { ...f, diff_files }));
+  const submitted = ok(planTransition(narrow, 'in_review', 'submit', f));
   assert.equal(submitted.task.lease, null);
   assert.equal(submitted.task.impl_run, 'r-1');
 });
 
 test('输入、审查和合并的独立事实必须满足', () => {
-  for (const key of ['soft_deps_done', 'inputs_synced'] as const) bad(planTransition(task('awaiting_inputs'), 'checking', 'inputs_ready', facts({ [key]: false })));
   bad(planTransition(task('queued_merge'), 'merging', 'merge_start', facts({ merging_other: 'T-002' })));
   bad(planTransition(task('queued_merge'), 'merging', 'merge_start', facts({ queue_head: false })));
   for (const key of ['rebase_ok', 'post_verify_ok', 'fast_forwarded'] as const) bad(planTransition(task('merging'), 'done', 'merge_done', facts({ rebase_ok: true, post_verify_ok: true, fast_forwarded: true, [key]: false })));
@@ -188,13 +186,12 @@ test('输入、审查和合并的独立事实必须满足', () => {
   bad(planTransition(task('in_progress', { kind: 'impl' }), 'done', 'report', facts({ diff_files: ['src/a.ts'] })));
 });
 
-const counts = (t: TaskFile) => [t.attempts, t.precheck_failures ?? 0, t.review_rounds ?? 0, t.merge_failures ?? 0];
+const counts = (t: TaskFile) => [t.attempts, t.review_rounds ?? 0, t.merge_failures ?? 0];
 test('计数独立、预算耗尽设置对应 blocked_by', () => {
-  const baseline = { attempts: 0, precheck_failures: 0, review_rounds: 0, merge_failures: 0 };
+  const baseline = { attempts: 0, review_rounds: 0, merge_failures: 0 };
   const scenarios = [
-    { from: 'checking', to: 'in_progress', trigger: 'precheck_fail', facts: { precheck_ok: false }, expected: [0, 1, 0, 0], blocked: 'precheck_exhausted', counter: 'precheck_failures' },
-    { from: 'in_review', to: 'in_progress', trigger: 'review_changes', facts: { unresolved_must: 1 }, expected: [0, 0, 1, 0], blocked: 'review_exhausted', counter: 'review_rounds' },
-    { from: 'merging', to: 'in_progress', trigger: 'merge_verify_fail', facts: { post_verify_ok: false }, expected: [0, 0, 0, 1], blocked: 'merge_exhausted', counter: 'merge_failures' },
+    { from: 'in_review', to: 'in_progress', trigger: 'review_changes', facts: { unresolved_must: 1 }, expected: [0, 1, 0], blocked: 'review_exhausted', counter: 'review_rounds' },
+    { from: 'merging', to: 'in_progress', trigger: 'merge_verify_fail', facts: { post_verify_ok: false }, expected: [0, 0, 1], blocked: 'merge_exhausted', counter: 'merge_failures' },
   ] as const;
   for (const s of scenarios) {
     const result = ok(planTransition(task(s.from, baseline), s.to, s.trigger, facts(s.facts)));
@@ -205,7 +202,7 @@ test('计数独立、预算耗尽设置对应 blocked_by', () => {
 });
 
 test('运行失败、租约过期与超时计 attempts；暂停和中断沿用独立计数', () => {
-  const t = task('in_progress', { timeout_review: { run: 'r-1', at: NOW.toISOString(), minutes: 30 }, precheck_failures: 1, review_rounds: 1, merge_failures: 1 });
+  const t = task('in_progress', { timeout_review: { run: 'r-1', at: NOW.toISOString(), minutes: 30 }, review_rounds: 1, merge_failures: 1 });
   for (const trigger of ['run_failed', 'run_timeout', 'lease_expired'] as const) {
     const to = trigger === 'lease_expired' ? 'ready' : 'in_progress';
     const f = facts({ now: new Date('2026-01-01T00:31:00Z'), worktree_clean: true });
@@ -224,8 +221,8 @@ test('运行失败、租约过期与超时计 attempts；暂停和中断沿用�
 });
 
 test('unblock 默认保留计数与 worktree；reset 只清零阻塞原因对应计数', () => {
-  const baseline = { attempts: 2, precheck_failures: 3, review_rounds: 4, merge_failures: 5 };
-  const mapping = { attempts: 'attempts', precheck_exhausted: 'precheck_failures', review_exhausted: 'review_rounds', merge_exhausted: 'merge_failures' } as const;
+  const baseline = { attempts: 2, review_rounds: 4, merge_failures: 5 };
+  const mapping = { attempts: 'attempts', review_exhausted: 'review_rounds', merge_exhausted: 'merge_failures' } as const;
   for (const [blocked_by, counter] of Object.entries(mapping)) {
     const t = task('blocked', { ...baseline, blocked_by: blocked_by as TaskFile['blocked_by'] });
     const kept = ok(planTransition(t, 'in_progress', 'unblock', facts({ actor: 'human' })));
@@ -234,7 +231,7 @@ test('unblock 默认保留计数与 worktree；reset 只清零阻塞原因对应
     assert.deepEqual(counts(reset.task), counts({ ...t, [counter]: 0 }));
   }
   for (const actor of ['human', 'orchestrator', 'dispatcher', 'engine', 'run:r-1']) {
-    const r = ok(planTransition(task('checking'), 'blocked', 'block', facts({ actor })));
+    const r = ok(planTransition(task('in_review'), 'blocked', 'block', facts({ actor })));
     assert.equal(r.task.blocked_by, actor === 'human' || actor === 'orchestrator' ? 'user' : actor === 'run:r-1' ? 'agent' : 'dispatcher');
   }
 });
@@ -242,7 +239,7 @@ test('unblock 默认保留计数与 worktree；reset 只清零阻塞原因对应
 test('转移不修改 task、facts、patch，包含 lease 嵌套对象', () => {
   const t = task('in_progress'); const patch = { worktree: '/other' }; const f = facts();
   const snapshot = structuredClone({ t, patch, f });
-  ok(planTransition(t, 'awaiting_inputs', 'submit', f, patch));
+  ok(planTransition(t, 'in_review', 'submit', f, patch));
   assert.deepEqual({ t, patch, f }, snapshot);
 });
 
@@ -284,16 +281,16 @@ test('阶段状态 × 触发 × 目标穷举，只允许阶段清单内的组合
 test('submit：impl 与它的 fix 可以改任何 task 的验收测试，doc 任务按 writes', () => {
   const f = facts();
   const own = task('in_progress', { writes: ['src/**', 'tests/acceptance/T-001/**'] });
-  ok(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: ['src/a.ts', 'tests/acceptance/T-001/a.test.ts', 'tests/acceptance/T-001/sub/b.test.ts'] }));
+  ok(planTransition(own, 'in_review', 'submit', { ...f, diff_files: ['src/a.ts', 'tests/acceptance/T-001/a.test.ts', 'tests/acceptance/T-001/sub/b.test.ts'] }));
   for (const p of ['tests/acceptance/T-002/a.test.ts', 'tests/acceptance/_support/T-001/a.ts', 'tests/acceptance/S0-smoke/a.ts']) {
-    ok(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: [p] }));
-    ok(planTransition(task('in_progress', { id: 'T-001.fx-1', kind: 'fix', for_task: 'T-001', writes: ['tests/acceptance/T-001/**'] }), 'awaiting_inputs', 'submit', { ...f, diff_files: [p] }));
+    ok(planTransition(own, 'in_review', 'submit', { ...f, diff_files: [p] }));
+    ok(planTransition(task('in_progress', { id: 'T-001.fx-1', kind: 'fix', for_task: 'T-001', writes: ['tests/acceptance/T-001/**'] }), 'in_review', 'submit', { ...f, diff_files: [p] }));
   }
   // PRD 与原型仍不能改
-  bad(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/PRD.md'] }));
+  bad(planTransition(own, 'in_review', 'submit', { ...f, diff_files: ['docs/PRD.md'] }));
   // doc 任务不放开 writes，writes 里的验收测试可以改
-  ok(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
-  bad(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-002/a.test.ts'] }));
+  ok(planTransition({ ...own, kind: 'doc' }, 'in_review', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
+  bad(planTransition({ ...own, kind: 'doc' }, 'in_review', 'submit', { ...f, diff_files: ['tests/acceptance/T-002/a.test.ts'] }));
 });
 
 test('merge_conflict：impl / fix 的合并冲突交回 worker，与 merge_verify_fail 共用 merge_failures，达到上限转 blocked', () => {

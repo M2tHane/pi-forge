@@ -22,9 +22,9 @@ export function sortTasks(flow: Pick<FlowFile, 'stages' | 's_stages'>, tasks: re
 /** 完整任务表（Markdown 表格）：编号、类型、角色、状态、阶段、计数器 */
 export function taskTable(flow: Pick<FlowFile, 'stages' | 's_stages'>, tasks: readonly TaskFile[]): string {
   if (!tasks.length) return '（还没有任务）';
-  const head = '| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 尝试 | 阻塞原因 |';
-  const rows = sortTasks(flow, tasks).map((t) => `| ${[t.id, t.kind, t.lease?.role ?? t.role, t.status, t.stage, t.precheck_failures ?? 0, t.review_rounds ?? 0, t.merge_failures ?? 0, t.attempts, t.blocked_by ?? '-'].join(' | ')} |`);
-  return [head, `|${' --- |'.repeat(10)}`, ...rows].join('\n');
+  const head = '| 任务 | 类型 | 角色 | 状态 | 阶段 | 审查轮 | 合并失败 | 尝试 | 阻塞原因 |';
+  const rows = sortTasks(flow, tasks).map((t) => `| ${[t.id, t.kind, t.lease?.role ?? t.role, t.status, t.stage, t.review_rounds ?? 0, t.merge_failures ?? 0, t.attempts, t.blocked_by ?? '-'].join(' | ')} |`);
+  return [head, `|${' --- |'.repeat(9)}`, ...rows].join('\n');
 }
 
 /** 最近的事件（按 seq 升序，最后 n 条）：序号、时间、类型、任务、转移、触发、原因 */

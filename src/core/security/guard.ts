@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { minimatch } from 'minimatch';
 import { BUILTIN_READ_TOOLS, BUILTIN_WRITE_TOOLS, type FlowConfig, type ResolvedRole } from '../state/config.ts';
-import { INTERFACES_PATH, globsOverlap, isProtected, matchesAny, openWriteAllowed, protectedGlobs } from '../state/paths.ts';
+import { ARCH_OWNED_PATHS, archOwnedProtected, globsOverlap, isProtected, matchesAny, openWriteAllowed, protectedGlobs } from '../state/paths.ts';
 import { linkedDeps } from '../workspace/shared-env.ts';
 import { worktreesRoot } from '../workspace/worktree.ts';
 import { parseShell, type SimpleCommand, type Word } from './shell.ts';
@@ -33,8 +33,6 @@ export interface GuardContext {
   rulesWritable?: true;
   /** impl / fix：writes 只用于调度互斥与合并冲突归属，PRD、原型与受保护路径之外的文件都可以改（state/paths.ts 的 openWriteAllowed） */
   openWrites?: boolean;
-  /** 实现类任务（第五轮）：可以在契约文档（docs/contracts/）里追加（只能新增，提交时由程序检查），不受任务可写范围限制 */
-  interfaceAdditions?: boolean;
   /** merge-fix：冲突文件里不在角色可写范围内、但仍要能改的文件（测试、契约） */
   extraWritable?: readonly string[];
   /** 本 run 的临时目录（项目与 worktree 之外）：可以 cd、写入、删除、移动 */
@@ -269,8 +267,15 @@ class Evaluator {
     this.scratch = ctx.scratchDir ? realpathDeep(path.resolve(ctx.scratchDir)) : null;
   }
 
+  /** backend、frontend 不能改架构师负责的文档（契约、架构文档、plan.md、AGENTS.md） */
+  isArchOwned(rel: string): boolean {
+    const lower = rel.toLowerCase();
+    return archOwnedProtected(this.role.name) && (matchesAny(lower, ARCH_OWNED_LOWER) || matchesAny(`${lower}/_`, ARCH_OWNED_LOWER));
+  }
+
   /** 受保护路径判断（不区分大小写，目录本身也算，如 worktree 里的 .git 文件）；rulesWritable 时 rules/** 除外 */
   isProtectedRel(rel: string): boolean {
+    if (this.isArchOwned(rel)) return true;
     if (!isProtectedNocase(rel) && !isProtectedNocase(`${rel}/_`)) return false;
     return !(this.ctx.rulesWritable && matchesAny(rel.toLowerCase(), ['rules/**']));
   }
@@ -339,13 +344,12 @@ class Evaluator {
     if (a.area === 'main') return deny('write_paths', `不能写主工作区（${a.rel}），只能修改当前 worktree 内的文件。${this.hint()}`);
     if (a.area === 'outside') return deny('write_paths', `只能写当前 worktree 内的文件，${a.abs} 在其外。${this.hint()}`);
     const writes = this.effectiveWrites();
-    const inTask = this.inWrites(a.rel)
-      || (!!this.ctx.interfaceAdditions && matchesAny(a.rel.toLowerCase(), [INTERFACES_PATH]))
-      || (this.ctx.extraWritable?.includes(a.rel) ?? false);
+    const inTask = this.inWrites(a.rel) || (this.ctx.extraWritable?.includes(a.rel) ?? false);
     if (!inTask) {
       if (this.ctx.openWrites) return deny('write_paths', `${a.rel} 不能改，${tool} 被阻断。${this.hint()}`);
       return deny('write_paths', `${a.rel} 不在本任务可写范围内（${writes.join(', ') || '无'}）。${tool} 被阻断。${this.hint()}`);
     }
+    if (this.isArchOwned(a.rel)) return deny('protected', ARCH_OWNED_REASON(a.rel));
     if (this.isProtectedRel(a.rel)) {
       return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读（${protectedGlobs().filter((g) => !(this.ctx.rulesWritable && g === 'rules/**')).join('、')}）。`);
     }
@@ -597,7 +601,7 @@ class BashChecker {
   private checkOutputPath(target: string, cwd: string): GuardDecision {
     const a = this.ev.classify(realpathDeep(path.resolve(cwd, target)));
     if (a.area === 'main') return deny('bash', `不能写主工作区（${a.rel}）。${this.ev.hint()}`);
-    if (a.area === 'workspace' && this.ev.isProtectedRel(a.rel)) return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读。`);
+    if (a.area === 'workspace' && this.ev.isProtectedRel(a.rel)) return deny('protected', this.ev.isArchOwned(a.rel) ? ARCH_OWNED_REASON(a.rel) : `${a.rel} 是受保护路径，对所有 agent 只读。`);
     return ok;
   }
 
@@ -633,7 +637,7 @@ class BashChecker {
       if (a.area === 'scratch') continue;
       if (a.area !== 'workspace') return deny('bash', `${name} 只能作用于临时目录或本任务 writes 内的文件，${w.text} 不在其中。${scratchHint}`);
       const writes = this.ev.effectiveWrites();
-      if (this.ev.isProtectedRel(a.rel)) return deny('protected', `${a.rel} 是受保护路径，对所有 agent 只读。`);
+      if (this.ev.isProtectedRel(a.rel)) return deny('protected', this.ev.isArchOwned(a.rel) ? ARCH_OWNED_REASON(a.rel) : `${a.rel} 是受保护路径，对所有 agent 只读。`);
       // 未被 git 跟踪的文件（之前运行留下的临时文件）可以删除：删除它们不会改动仓库内容
       if ((name === 'rm' || name === 'rmdir') && a.rel !== '.' && untracked(this.ev.ws, a.rel)) continue;
       if (!this.ev.inWrites(a.rel)) {
@@ -850,6 +854,9 @@ function extractPaths(input: Record<string, unknown>, keys: readonly string[]): 
   }
   return out;
 }
+
+const ARCH_OWNED_LOWER = ARCH_OWNED_PATHS.map((g) => g.toLowerCase());
+const ARCH_OWNED_REASON = (rel: string) => `${rel} 由架构师负责（${ARCH_OWNED_PATHS.join('、')}），你不能改。契约或公共规范需要修改时向架构师提问（forge_ask_architect），不要换一种方式再试。`;
 
 function isProtectedNocase(rel: string): boolean {
   return isProtected(rel.toLowerCase());

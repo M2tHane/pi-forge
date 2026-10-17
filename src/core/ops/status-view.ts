@@ -29,19 +29,19 @@ export const phaseOfStage = (stage: string): Phase => (ARCH_STAGES.has(stage) ? 
 export function currentPhase(flow: FlowFile): PhaseOrDone {
   return isFinished(flow) && flow.stage_status === 'done' ? 'done' : isLightFlow(flow) ? 'dev' : phaseOfStage(flow.stage);
 }
-const FAILURE_KIND: Record<string, string> = { merge_verify_fail: '合并时全量测试失败', merge_conflict: '合并冲突', precheck_fail: '预检失败', run_failed: '运行中断', run_timeout: '运行超时', lease_expired: '租约过期' };
+const FAILURE_KIND: Record<string, string> = { merge_verify_fail: '合并时全量测试失败', merge_conflict: '合并冲突', run_failed: '运行中断', run_timeout: '运行超时', lease_expired: '租约过期' };
 export function lastFailureKind(store: StateStore, flowId: string, taskId: string): string | null {
   const ev = [...store.readEvents()].reverse().find((e) => e.flow === flowId && e.task === taskId && e.type === 'transition' && e.trigger && e.trigger in FAILURE_KIND);
   return ev ? FAILURE_KIND[ev.trigger!]! : null;
 }
 export function taskActivity(t: TaskFile, failureKind: string | null): string {
   const working = t.kind === 'fix' ? '修复中' : t.kind === 'merge-fix' ? '解决合并冲突' : t.kind === 'doc' ? '撰写中' : t.kind === 'review' ? '代码审查中' : t.kind === 'qa' ? '阶段验收中' : '实现中';
-  const states: Record<string, string> = { awaiting_inputs: '等待输入', checking: '预检中', in_review: '审查中', queued_merge: '合入中', merging: '合入中', ready: '待派发', pending: '等待前置任务', blocked: '阻塞', cancelled: '已取消', done: '已完成' };
+  const states: Record<string, string> = { in_review: '审查中', queued_merge: '合入中', merging: '合入中', ready: '待派发', pending: '等待前置任务', blocked: '阻塞', cancelled: '已取消', done: '已完成' };
   const base = t.status === 'in_progress' ? t.lease ? working : '等待重新派发' : states[t.status]!;
   return base + (t.attempts > 0 && !['done', 'blocked'].includes(t.status) ? `（第 ${t.attempts + 1} 次${failureKind ? `，上次：${failureKind}` : ''}）` : '');
 }
 const BLOCKED_LABEL: Record<string, string> = {
-  review_exhausted: '审查多轮仍有问题，等你决定', precheck_exhausted: '预检多次失败', merge_exhausted: '合并验证多次失败',
+  review_exhausted: '审查多轮仍有问题，等你决定', merge_exhausted: '合并验证多次失败',
   attempts: '多次尝试仍失败', integration_broken: '集成分支已坏', agent: '有问题要问你', user: '有问题要问你', dispatcher: '无法继续',
   no_changes: '合并时没有改动（多半已被别的任务做了）',
 };
@@ -49,7 +49,7 @@ const BLOCKED_LABEL: Record<string, string> = {
 export function blockedCommand(t: Pick<TaskFile, 'id' | 'blocked_by'>): string {
   switch (t.blocked_by) {
     case 'review_exhausted': return `/forge accept ${t.id} --note "<说明>"（接受现状，程序继续合并验证）或 /forge unblock ${t.id} "<意见>" --reset（清零后重新审查）`;
-    case 'precheck_exhausted': case 'merge_exhausted': case 'attempts': return `/forge unblock ${t.id} "<提示>" --reset（计数清零后重试）`;
+    case 'merge_exhausted': case 'attempts': return `/forge unblock ${t.id} "<提示>" --reset（计数清零后重试）`;
     case 'integration_broken': return `集成分支本身已坏：修好后 /forge unblock ${t.id}`;
     case 'no_changes': return `/forge accept ${t.id} --note "<说明>"（确认要做的已在集成分支上，视为完成）或 /forge unblock ${t.id} "<意见>"（重新做）`;
     case 'dispatcher': return `/forge unblock ${t.id}`;
@@ -89,7 +89,7 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
     }
     const stuck = stuckTasks(flow, tasks);
     // 停滞（waits.ts 的等待图）：每条一项。pending 的 task 等在 blocked 的硬依赖上不另报：那是排队的常态，blocked 的 task 自己有一条带解除命令的项，
-    // 全都被挡住时还有下面的"流程卡住"；其余——awaiting_inputs 在等已阻塞的 task、环、等到已取消——只有这里会报
+    // 全都被挡住时还有下面的"流程卡住"；其余——环、等到已取消——只有这里会报
     for (const s of actionableStalls(tasks)) {
       const target = s.target ? tasks.find((x) => x.id === s.target) : undefined;
       out.push({ key: `${flow.id}:stall-wait:${s.kind}:${s.tasks.join(',')}${s.target ? `:${s.target}@${target?.version ?? 0}` : ''}`, text: s.reason,

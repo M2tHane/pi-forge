@@ -1,7 +1,7 @@
 需要你处理：
 - T-001「任务 T-001」审查多轮仍有问题，等你决定：原因 review_exhausted
   → /forge accept T-001 --note "<说明>"（接受现状，程序继续合并验证）或 /forge unblock T-001 "<意见>" --reset（清零后重新审查）
-- T-002「任务 T-002」预检多次失败：原因 precheck_exhausted
+- T-002「任务 T-002」多次尝试仍失败：原因 attempts
   → /forge unblock T-002 "<提示>" --reset（计数清零后重试）
 - T-003「任务 T-003」有问题要问你：原因 agent
   → /forge answer T-003
@@ -26,13 +26,13 @@ B-001「演示」（新项目）
 - 已批准的闸门：S0
 
 ### 任务表（5 个）
-| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 尝试 | 阻塞原因 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-001 | impl | worker | blocked | S1 | 0 | 3 | 0 | 0 | review_exhausted |
-| T-002 | impl | worker | blocked | S1 | 3 | 0 | 0 | 0 | precheck_exhausted |
-| T-003 | impl | worker | blocked | S1 | 0 | 0 | 0 | 0 | agent |
-| T-004 | impl | worker | blocked | S1 | 0 | 0 | 0 | 0 | integration_broken |
-| T-005 | impl | worker | blocked | S1 | 0 | 0 | 3 | 0 | merge_exhausted |
+| 任务 | 类型 | 角色 | 状态 | 阶段 | 审查轮 | 合并失败 | 尝试 | 阻塞原因 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| T-001 | impl | worker | blocked | S1 | 3 | 0 | 0 | review_exhausted |
+| T-002 | impl | worker | blocked | S1 | 0 | 0 | 3 | attempts |
+| T-003 | impl | worker | blocked | S1 | 0 | 0 | 0 | agent |
+| T-004 | impl | worker | blocked | S1 | 0 | 0 | 0 | integration_broken |
+| T-005 | impl | worker | blocked | S1 | 0 | 3 | 0 | merge_exhausted |
 
 ### 最近事件
 #2 <时间> transition none→active

@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateDag, computeReady, dagStats, mutexPairs, conflictsWith, remainingPath, type DagCatalog,
+import { validateDag, computeReady, dagStats, remainingPath, type DagCatalog,
   dagReport, serialHeads } from '../../src/core/state/dag.ts';
-import { mkTask, hard, soft } from '../helpers/tasks.ts';
+import { mkTask, hard } from '../helpers/tasks.ts';
 
 const catalog: DagCatalog = {
   roles: {
@@ -72,11 +72,11 @@ test('writes 过多给出警告而非错误', () => {
   assert.equal(r.warnings.length, 1);
 });
 
-test('硬依赖阻塞 ready，软依赖不阻塞', () => {
+test('依赖 done 之后才 ready（跨阶段的依赖也一样）；只看当前阶段', () => {
   const tasks = [
-    mkTask('T-001', { status: 'in_progress' }),
+    mkTask('T-001', { status: 'in_progress', stage: 'S2' }),
     mkTask('T-002', { deps: [hard('T-001')] }),
-    mkTask('T-003', { deps: [soft('T-001')] }),
+    mkTask('T-003'),
     mkTask('T-004', { stage: 'S4' }),
   ];
   assert.deepEqual(computeReady(tasks, 'S3'), ['T-003']);
@@ -84,23 +84,23 @@ test('硬依赖阻塞 ready，软依赖不阻塞', () => {
   assert.deepEqual(computeReady(tasks, 'S3'), ['T-002', 'T-003']);
 });
 
-test('软依赖前驱阻塞时后继照常 ready', () => {
-  const tasks = [mkTask('T-001', { status: 'blocked' }), mkTask('T-002', { deps: [soft('T-001')] })];
-  assert.deepEqual(computeReady(tasks, 'S3'), ['T-002']);
+test('依赖阻塞或取消时后继不会 ready', () => {
+  for (const status of ['blocked', 'cancelled'] as const) {
+    assert.deepEqual(computeReady([mkTask('T-001', { status }), mkTask('T-002', { deps: [hard('T-001')] })], 'S3'), []);
+  }
 });
 
-test('关键路径、宽度、硬依赖占比', () => {
-  // T1 -> T2 -> T4 (硬)；T1 -> T3 (硬)；T3 ~> T5 (软)
+test('关键路径与宽度', () => {
+  // T1 -> T2 -> T4；T1 -> T3 -> T5
   const tasks = [
     mkTask('T-001'), mkTask('T-002', { deps: [hard('T-001')] }), mkTask('T-003', { deps: [hard('T-001')] }),
-    mkTask('T-004', { deps: [hard('T-002')] }), mkTask('T-005', { deps: [soft('T-003')] }),
+    mkTask('T-004', { deps: [hard('T-002')] }), mkTask('T-005', { deps: [hard('T-003')] }),
   ];
   const s = dagStats(tasks);
   assert.equal(s.taskCount, 5);
   assert.equal(s.criticalPathLength, 3);
   assert.deepEqual(s.criticalPath, ['T-001', 'T-002', 'T-004']);
   assert.equal(s.maxWidth, 2);
-  assert.equal(s.hardRatio, 0.75);
   const rp = remainingPath(tasks);
   assert.equal(rp.get('T-001'), 3);
   assert.equal(rp.get('T-004'), 1);
@@ -116,7 +116,7 @@ test('DAG 报告：同一阶段开头连续两层只能串行时提醒；关键�
   assert.ok(dagReport(serial).warnings.some((w) => /阶段 S3 开头 2 层只能串行（T-001 → T-002）/.test(w)));
   // 底座合并成一个任务、切片对着契约开发：开头就能并行
   const wide = [
-    mkTask('T-001'), mkTask('T-002', { deps: [soft('T-001')] }), mkTask('T-003', { deps: [soft('T-001')] }),
+    mkTask('T-001'), mkTask('T-002'), mkTask('T-003'),
     mkTask('T-004', { deps: [hard('T-001'), hard('T-002'), hard('T-003')] }),
   ];
   assert.deepEqual(serialHeads(wide), []);
@@ -132,14 +132,5 @@ test('DAG 报告：同一阶段开头连续两层只能串行时提醒；关键�
     mkTask('T-001'), mkTask('T-002'), mkTask('T-003', { deps: [hard('T-001')] }), mkTask('T-004', { deps: [hard('T-003')] }), mkTask('T-005'),
   ];
   assert.ok(dagReport(longPath).warnings.some((w) => /关键路径 3 \/ 任务数 5/.test(w)));
-});
-
-test('互斥由 writes 重叠自动推导', () => {
-  const a = mkTask('T-001', { writes: ['src/server/**'] });
-  const b = mkTask('T-002', { writes: ['src/server/export/**'] });
-  const c = mkTask('T-003', { writes: ['src/web/**'] });
-  assert.deepEqual(mutexPairs([a, b, c]), [['T-001', 'T-002']]);
-  assert.equal(conflictsWith(a, b), true);
-  assert.equal(conflictsWith(a, c), false);
 });
 

@@ -163,9 +163,9 @@ scenario('delivery-awaiting-signoff', async () => {
 
 scenario('blocked-variants', async () => {
   const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: ['T-001', 'T-002', 'T-003', 'T-004', 'T-005'].map((id) => impl(id, 'S1')) });
-  const kinds = ['review_exhausted', 'precheck_exhausted', 'agent', 'integration_broken', 'merge_exhausted'];
+  const kinds = ['review_exhausted', 'attempts', 'agent', 'integration_broken', 'merge_exhausted'];
   ['T-001', 'T-002', 'T-003', 'T-004', 'T-005'].forEach((id, i) => forceTask(p, id, { status: 'blocked', blocked_by: kinds[i], blocked_reason: `原因 ${kinds[i]}`, version: 3,
-    ...(i === 0 ? { review_rounds: 3 } : i === 1 ? { precheck_failures: 3 } : i === 4 ? { merge_failures: 3 } : {}) }));
+    ...(i === 0 ? { review_rounds: 3 } : i === 1 ? { attempts: 3 } : i === 4 ? { merge_failures: 3 } : {}) }));
   return p;
 });
 
@@ -281,7 +281,7 @@ test('默认视图不暴露内部状态名和任务类型；这些只在 --detai
 test('阻塞任务按 blocked_by 给出不同的解除命令', async () => {
   const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: ['T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006'].map((id) => impl(id, 'S1')) });
   try {
-    const kinds = ['review_exhausted', 'precheck_exhausted', 'agent', 'integration_broken', 'attempts'];
+    const kinds = ['review_exhausted', 'attempts', 'agent', 'integration_broken', 'attempts'];
     kinds.forEach((k, i) => forceTask(p, `T-00${i + 2}`, { status: 'blocked', blocked_by: k, blocked_reason: 'r', version: 2 }));
     const cmd = (id: string) => actionsNeeded(p.store, p.config, NOW).find((a) => a.key.includes(`:blocked:${id}:`))!.command;
     assert.match(cmd('T-002'), /^\/forge accept T-002 --note/);
@@ -299,7 +299,7 @@ test('--detail 的任务表按阶段顺序、编号自然序排列，输出稳�
     const flow = p.store.readFlow(p.flowId);
     assert.deepEqual(sortTasks(flow, [...tasks].reverse()).map((t) => t.id), ['T-003', 'T-002', 'T-010', 'T-001']);
     assert.equal(taskTable(flow, tasks), taskTable(flow, [...tasks].reverse()));
-    assert.match(taskTable(flow, tasks).split('\n')[0]!, /任务 \| 类型 \| 角色 \| 状态 \| 阶段 \| 预检失败 \| 审查轮 \| 合并失败 \| 尝试/);
+    assert.match(taskTable(flow, tasks).split('\n')[0]!, /任务 \| 类型 \| 角色 \| 状态 \| 阶段 \| 审查轮 \| 合并失败 \| 尝试/);
     assert.equal(renderDetail(p.store, p.config, NOW), renderDetail(p.store, p.config, NOW));
   } finally { p.cleanup(); }
 });

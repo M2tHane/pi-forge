@@ -95,7 +95,7 @@ test('fixPhase 与 fixStatusLine：修复中 / 合并 / 复现确认 / 需要你
   assert.equal(fixPhase(flow('active'), []), 'fixing');
   assert.equal(fixPhase(flow('active'), [t('T-001', 'impl', 'in_progress')]), 'fixing');
   assert.equal(fixPhase(flow('active'), [t('T-001', 'impl', 'queued_merge')]), 'merging');
-  assert.equal(fixPhase(flow('active'), [t('T-001', 'impl', 'checking')]), 'merging');
+  assert.equal(fixPhase(flow('active'), [t('T-001', 'impl', 'in_review')]), 'merging');
   assert.equal(fixPhase(flow('active'), [t('T-001', 'impl', 'done')]), 'confirming');
   assert.equal(fixPhase(flow('active'), [t('T-001', 'impl', 'done'), t('T-001.fx-1', 'fix', 'in_progress')]), 'fixing');
   assert.equal(fixPhase(flow('active'), [t('T-001', 'impl', 'blocked')]), 'needs_human');

@@ -1,7 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectDispatchable } from '../../src/core/engine/scheduler.ts';
+import { flowLimits, poolOf } from '../../src/core/state/state-machine.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
+
+const L = (max_parallel: number, more: { max_parallel_aux?: number; max_parallel_backend?: number } = {}) => ({ max_parallel, ...more });
+const be = (id: string, over = {}) => mkTask(id, { role: 'backend', ...over });
+const fe = (id: string, over = {}) => mkTask(id, { role: 'frontend', ...over });
+const rv = (id: string, over = {}) => mkTask(id, { kind: 'review', role: 'reviewer', scopes: ['review'], writes: [], ...over });
 
 test('优先关键路径上的任务；同长度按 id', () => {
   const tasks = [
@@ -11,47 +17,50 @@ test('优先关键路径上的任务；同长度按 id', () => {
     mkTask('T-004', { deps: [hard('T-003')] }),
     mkTask('T-005', { status: 'ready' }),
   ];
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 2), ['T-002', 'T-001']);
+  assert.deepEqual(selectDispatchable(tasks, 'S3', L(2)), ['T-002', 'T-001']);
 });
 
 test('不超过并发上限；运行中的任务占用名额', () => {
   const tasks = [mkTask('T-001', { status: 'in_progress' }), mkTask('T-002', { status: 'ready' }), mkTask('T-003', { status: 'ready' })];
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 2), ['T-002']);
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 1), []);
+  assert.deepEqual(selectDispatchable(tasks, 'S3', L(2)), ['T-002']);
+  assert.deepEqual(selectDispatchable(tasks, 'S3', L(1)), []);
 });
 
-test('writes 重叠只是优先级：先挑不重叠的；名额还有剩时重叠的也派', () => {
+test('不按 writes 排优先级：writes 重叠的照常按关键路径与 id 派发', () => {
   const tasks = [
-    mkTask('T-001', { status: 'queued_merge', writes: ['src/server/a/**'] }),
-    mkTask('T-002', { status: 'ready', writes: ['src/server/a/x.ts'] }),
-    mkTask('T-003', { status: 'ready', writes: ['src/server/b/**'] }),
-    mkTask('T-004', { status: 'ready', writes: ['src/server/b/c.ts'] }),
+    be('T-001', { status: 'ready', writes: ['src/server/a/**'] }),
+    be('T-002', { status: 'ready', writes: ['src/server/a/x.ts'] }),
   ];
-  // 名额充足：不重叠的 T-003 在前，重叠的 T-002、T-004 随后
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 5), ['T-003', 'T-002', 'T-004']);
-  // 名额只剩 1（在途 1 个 in_progress + 上限 2）：只派不重叠的
-  const busy = [mkTask('T-009', { status: 'in_progress', writes: ['src/other/**'] }), ...tasks];
-  assert.deepEqual(selectDispatchable(busy, 'S3', 2), ['T-003']);
-  // 名额 2：不重叠的一个 + 重叠的一个
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 2), ['T-003', 'T-002']);
+  assert.deepEqual(selectDispatchable(tasks, 'S3', L(1, { max_parallel_backend: 2 })), ['T-001', 'T-002']);
 });
 
 test('只选当前阶段的 ready 任务', () => {
-  assert.deepEqual(selectDispatchable([mkTask('T-001', { status: 'ready', stage: 'S4' })], 'S3', 2), []);
+  assert.deepEqual(selectDispatchable([mkTask('T-001', { status: 'ready', stage: 'S4' })], 'S3', L(2)), []);
 });
 
-test('两个池分别限流：实施池满了审查仍可派发，辅助池满了实施仍可派发', () => {
+test('三个池分别计数：backend 用 max_parallel_backend，frontend 固定 1 个，审查另计', () => {
   const tasks = [
-    mkTask('T-001', { status: 'in_progress' }), mkTask('T-002', { status: 'in_progress' }),
-    mkTask('T-003', { status: 'ready' }),
-    mkTask('T-001.rv', { status: 'ready', kind: 'review', role: 'reviewer', scopes: ['review'], writes: [], for_task: 'T-001' }),
-    mkTask('T-002.rv', { status: 'ready', kind: 'review', role: 'reviewer', scopes: ['review'], writes: [], for_task: 'T-002' }),
+    be('T-001', { status: 'ready' }), be('T-002', { status: 'ready' }), be('T-003', { status: 'ready' }),
+    fe('T-004', { status: 'ready' }), fe('T-005', { status: 'ready' }),
+    rv('T-009.rv', { status: 'ready', for_task: 'T-009' }),
   ];
-  // 实施池 2/2 满：只派审查；辅助池上限 1 只派一个
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 2, 1), ['T-001.rv']);
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 2, 4), ['T-001.rv', 'T-002.rv']);
-  // 实施池有名额、辅助池为 0：只派实施
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 3, 0), ['T-003']);
-  // 没给辅助池上限时沿用实施池上限，但仍分开计数
-  assert.deepEqual(selectDispatchable(tasks, 'S3', 2), ['T-001.rv', 'T-002.rv']);
+  assert.deepEqual(selectDispatchable(tasks, 'S3', L(1, { max_parallel_backend: 2, max_parallel_aux: 1 })), ['T-001', 'T-002', 'T-004', 'T-009.rv']);
+  // 前端已有一个在运行：前端不再派；后端满了也不影响前端与审查
+  const busy = [...tasks.map((t) => (t.id === 'T-004' ? { ...t, status: 'in_progress' as const } : t)), be('T-008', { status: 'in_progress' }), be('T-007', { status: 'in_progress' })];
+  assert.deepEqual(selectDispatchable(busy, 'S3', L(1, { max_parallel_backend: 2 })), ['T-009.rv']);
+});
+
+test('backend 不写上限时同 max_parallel；架构、轻流程的 worker 与 merge-fix（按角色）用对应的池', () => {
+  const tasks = [be('T-001', { status: 'ready' }), be('T-002', { status: 'ready' }), mkTask('T-003', { status: 'ready', role: 'architect' })];
+  assert.deepEqual(selectDispatchable(tasks, 'S3', L(1)), ['T-001', 'T-003']);
+  assert.equal(poolOf({ kind: 'merge-fix', role: 'frontend' }), 'frontend');
+  assert.equal(poolOf({ kind: 'qa', role: 'stage-qa' }), 'aux');
+  assert.equal(poolOf({ kind: 'impl', role: 'worker' }), 'impl');
+});
+
+test('docs/plan.md 的 max_parallel_backend 覆盖 workflow.yaml', () => {
+  const tasks = ['T-001', 'T-002', 'T-003'].map((id) => be(id, { status: 'ready' }));
+  const limits = L(1, { max_parallel_backend: 1 });
+  assert.deepEqual(selectDispatchable(tasks, 'S3', flowLimits(limits, {})), ['T-001']);
+  assert.deepEqual(selectDispatchable(tasks, 'S3', flowLimits(limits, { max_parallel_backend: 3 })), ['T-001', 'T-002', 'T-003']);
 });

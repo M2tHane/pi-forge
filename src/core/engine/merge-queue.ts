@@ -15,7 +15,6 @@ import { mergeAppendOnlyThreeWay } from '../plan/append-merge.ts';
 import { proposeCandidate } from './knowledge.ts';
 import { evidenceText, failureSummary, noteToolMissing, runShell } from '../workspace/verify-runner.ts';
 import { testAdjustEnabled } from '../verify/test-adjust.ts';
-import { softDepsDone } from '../state/waits.ts';
 import { cleanTreeOf, recordVerified, reusableRuns, reuseText } from '../verify/verify-cache.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { resourceOptions, withResources } from '../workspace/resources.ts';
@@ -108,7 +107,7 @@ export class MergeQueue {
       if (this.hooks.beforeMerge) await this.hooks.beforeMerge();
       const mq = this.store.readMergeQueue();
       const flowTasks = this.store.listTasks(flowId);
-      const head = mq.queue.find((e) => e.flow === flowId && softDepsDone(this.store.readTask(e.flow, e.task), flowTasks));
+      const head = mq.queue.find((e) => e.flow === flowId);
       if (mq.merging || !head) return null;
       const batch = head === mq.queue[0] ? await this.mergeBatch(flowId) : null;
       if (batch) return batch;
@@ -135,7 +134,7 @@ export class MergeQueue {
     for (const e of this.store.readMergeQueue().queue) {
       if (e.flow !== flowId || candidates.length >= limit) break;
       const t = tasks.find((x) => x.id === e.task);
-      if (!t || t.status !== 'queued_merge' || !softDepsDone(t, tasks) || t.sync_main || t.kind === 'merge-fix' || !t.worktree || !existsSync(t.worktree)) break;
+      if (!t || t.status !== 'queued_merge' || t.sync_main || t.kind === 'merge-fix' || !t.worktree || !existsSync(t.worktree)) break;
       candidates.push(t);
     }
     if (candidates.length < 2) return null;

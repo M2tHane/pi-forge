@@ -18,14 +18,14 @@ B-001「演示」（新项目）
 - 已批准的闸门：S0
 
 ### 任务表（6 个）
-| 任务 | 类型 | 角色 | 状态 | 阶段 | 预检失败 | 审查轮 | 合并失败 | 尝试 | 阻塞原因 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-001 | impl | worker | done | S0 | 0 | 0 | 0 | 0 | - |
-| T-002 | impl | worker | in_progress | S1 | 0 | 0 | 0 | 0 | - |
-| T-003 | review | reviewer | in_progress | S1 | 0 | 0 | 0 | 0 | - |
-| T-004 | impl | worker | blocked | S1 | 0 | 1 | 0 | 0 | agent |
-| T-005 | impl | worker | ready | S1 | 0 | 0 | 0 | 0 | - |
-| T-006 | impl | worker | pending | S2 | 0 | 0 | 0 | 0 | - |
+| 任务 | 类型 | 角色 | 状态 | 阶段 | 审查轮 | 合并失败 | 尝试 | 阻塞原因 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| T-001 | impl | worker | done | S0 | 0 | 0 | 0 | - |
+| T-002 | impl | worker | in_progress | S1 | 0 | 0 | 0 | - |
+| T-003 | review | reviewer | in_progress | S1 | 0 | 0 | 0 | - |
+| T-004 | impl | worker | blocked | S1 | 1 | 0 | 0 | agent |
+| T-005 | impl | worker | ready | S1 | 0 | 0 | 0 | - |
+| T-006 | impl | worker | pending | S2 | 0 | 0 | 0 | - |
 
 ### 最近事件
 #2 <时间> transition none→active

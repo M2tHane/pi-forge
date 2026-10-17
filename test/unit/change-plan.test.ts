@@ -49,7 +49,7 @@ test('writes：非空，且不与 FORBIDDEN_WRITES 重叠', () => {
 test('depends_on：引用必须存在，不能依赖自己，不能有环', () => {
   assert.match(checkChangePlan(input([task({ depends_on: [{ task: 'T-009', type: 'hard' }] })]), opts).errors.join(), /引用了不存在的 task T-009/);
   assert.match(checkChangePlan(input([task({ depends_on: [{ task: 'T-001', type: 'hard' }] })]), opts).errors.join(), /不能依赖自己/);
-  const cyc = checkChangePlan(input([task({ depends_on: [{ task: 'T-002', type: 'hard' }] }), task({ depends_on: [{ task: 'T-001', type: 'soft' }] })]), opts);
+  const cyc = checkChangePlan(input([task({ depends_on: [{ task: 'T-002', type: 'hard' }] }), task({ depends_on: [{ task: 'T-001', type: 'hard' }] })]), opts);
   assert.match(cyc.errors.join(), /依赖存在环：.*T-001.*T-002/);
   assert.deepEqual(cyc.tasks, []);
   const fine = checkChangePlan(input([task(), task({ depends_on: [{ task: 'T-001', type: 'hard' }] })]), opts);

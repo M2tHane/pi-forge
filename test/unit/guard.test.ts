@@ -9,7 +9,7 @@ import { parseConfig } from '../../src/core/state/config.ts';
 import { TEST_YAML } from '../helpers/config.ts';
 
 // 扩展 worker 的只读搜索工具，以验证路径归一化；权限仍由真实七角色与 task writes 约束。
-const YAML = TEST_YAML.replace('tools: [read, write, edit, "@codegraph"', 'tools: [read, find, grep, ls, write, edit, "@codegraph"');
+const YAML = TEST_YAML.replaceAll('tools: [read, write, edit, "@codegraph"', 'tools: [read, find, grep, ls, write, edit, "@codegraph"');
 const config = parseConfig(YAML);
 
 let base: string, main: string, wt: string;
@@ -329,13 +329,20 @@ test('同一命令中字面量赋值的变量会被代入后校验；含命令�
   allowed(checkToolCall(bash('H=http://example.com; ID=$(curl -s $H/boards)'), c));
 });
 
-test('实现类任务可以在接口文档里追加（不受任务可写范围限制），其他路径照旧；没有该标记时不可写', () => {
-  const impl = ctx('worker', { interfaceAdditions: true, writes: ['src/server/a.ts'] });
-  allowed(checkToolCall(call('write', { path: 'docs/contracts/web.md', content: '' }), impl));
-  allowed(checkToolCall(call('write', { path: 'src/server/a.ts', content: '' }), impl));
-  blocked(checkToolCall(call('write', { path: 'docs/requirements.md', content: '' }), impl), 'write_paths');
-  blocked(checkToolCall(call('write', { path: 'workflow.yaml', content: '' }), impl));
-  blocked(checkToolCall(call('write', { path: 'docs/contracts/web.md', content: '' }), ctx('worker', { writes: ['src/server/a.ts'] })), 'write_paths');
+test('backend、frontend 不能改架构师负责的文档（契约、架构文档、plan.md、AGENTS.md、rules/），包括 bash 写入；worker 与 architect 照旧', () => {
+  for (const role of ['backend', 'frontend']) {
+    const c = ctx(role, { openWrites: true, writes: ['src/**'] });
+    for (const path of ['docs/contracts/openapi.yaml', 'docs/arch/overview.md', 'docs/plan.md', 'AGENTS.md', 'agents.md', 'rules/backend.md']) {
+      const d = checkToolCall(call('write', { path, content: '' }), c);
+      blocked(d, 'protected');
+    }
+    assert.match(String((checkToolCall(call('write', { path: 'docs/contracts/openapi.yaml', content: '' }), c) as { reason: string }).reason), /架构师/);
+    blocked(checkToolCall(bash('echo x >> docs/contracts/page-api.md'), c), 'protected');
+    blocked(checkToolCall(bash('rm docs/arch/domains.md'), c), 'protected');
+    allowed(checkToolCall(call('write', { path: 'src/server/a.ts', content: '' }), c));
+    allowed(checkToolCall(call('write', { path: 'docs/notes.md', content: '' }), c));
+  }
+  allowed(checkToolCall(call('write', { path: 'docs/contracts/openapi.yaml', content: '' }), ctx('worker', { openWrites: true, writes: ['src/**'] })));
 });
 
 test('禁止后台运行：单独的 & 被拦下，&& 与 2>&1 不受影响；setsid、disown 被拦下', () => {

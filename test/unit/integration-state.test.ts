@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { StateStore } from '../../src/core/state/state-store.ts';
 import { hashToken } from '../../src/core/state/state-machine.ts';
 import { tmpRepo } from '../helpers/repo.ts';
-import { mkTask, soft } from '../helpers/tasks.ts';
+import { mkTask } from '../helpers/tasks.ts';
 
 const lease = (id: string) => ({ run_id: id, role: 'worker', token_hash: hashToken(id), acquired_at: '2026-01-01', expires_at: '2099-01-01' });
 
@@ -55,12 +55,14 @@ test('预检 facts：软依赖未完成时，调用方不能伪造等待条件',
   try {
     const store = await StateStore.init(r.dir, { git: false });
     const f = await store.createFlow({ mode: 'build', title: '等待事实', stages: ['S3'], base_sha: 'base' });
-    await store.addTasks(f.id, [mkTask('T-001', { deps: [soft('T-002')] }), mkTask('T-002')], 'architect');
+    await store.addTasks(f.id, [mkTask('T-001'), mkTask('T-002')], 'architect');
     await store.transitionTask(f.id, 'T-001', { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
     await store.transitionTask(f.id, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher', patch: { lease: lease('r-1'), worktree: '/worktree', branch: 'task', base_sha: 'base' } });
     await store.appendHandoff(f.id, 'T-001', '完成', 'run:r-1');
-    await store.transitionTask(f.id, 'T-001', { to: 'awaiting_inputs', trigger: 'submit', actor: 'run:r-1', facts: { token: 'r-1', diff_files: ['src/server/t-001/a.ts'] } });
-    await assert.rejects(store.transitionTask(f.id, 'T-001', { to: 'checking', trigger: 'inputs_ready', actor: 'engine', facts: { inputs_synced: true, soft_deps_done: true, status_of: new Map([['T-002', 'done']]) } }), /软依赖生产方尚未 done/s);
-    assert.equal(store.readTask(f.id, 'T-001').status, 'awaiting_inputs');
+    // 提交时写明是否需要审查：不需要的直接进合并队列，写反了被拒
+    await assert.rejects(store.transitionTask(f.id, 'T-001', { to: 'queued_merge', trigger: 'submit', actor: 'run:r-1', facts: { token: 'r-1', diff_files: ['src/server/t-001/a.ts'], review_required: true } }), /此任务需要审查/);
+    await store.transitionTask(f.id, 'T-001', { to: 'queued_merge', trigger: 'submit', actor: 'run:r-1', facts: { token: 'r-1', diff_files: ['src/server/t-001/a.ts'], review_required: false } });
+    assert.equal(store.readTask(f.id, 'T-001').status, 'queued_merge');
+    assert.deepEqual(store.readMergeQueue().queue.map((e) => e.task), ['T-001']);
   } finally { r.cleanup(); }
 });

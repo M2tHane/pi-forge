@@ -10,7 +10,7 @@ const FlowId = Type.String({ pattern: '^[BCFX]-[0-9]{3,}$' });
 const TaskId = Type.String({ pattern: '^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$' });
 
 export const TASK_STATUSES = [
-  'pending', 'ready', 'in_progress', 'awaiting_inputs', 'checking', 'in_review',
+  'pending', 'ready', 'in_progress', 'in_review',
   'queued_merge', 'merging', 'done', 'blocked', 'cancelled',
 ] as const;
 export const TaskStatus = Type.Enum(TASK_STATUSES);
@@ -72,7 +72,7 @@ const PlanStage = Type.Object({
 }, { additionalProperties: false });
 const StringList = Type.Array(Type.String({ minLength: 1 }));
 const BlockedBy = Type.Enum([
-  'review_exhausted', 'precheck_exhausted', 'merge_exhausted', 'attempts',
+  'review_exhausted', 'merge_exhausted', 'attempts',
   'agent', 'dispatcher', 'user', 'integration_broken', 'no_changes',
 ]);
 
@@ -109,6 +109,8 @@ export const FlowFile = Type.Object({
   }, { additionalProperties: false }))),
   /** S0 批准时由程序按 docs/plan.md 写入的有序批次阶段 */
   s_stages: Type.Optional(Type.Array(PlanStage)),
+  /** docs/plan.md 写了 max_parallel_backend 时，批准时记在这里，覆盖 workflow.yaml 的默认值 */
+  max_parallel_backend: Type.Optional(Type.Integer({ minimum: 1 })),
   /** S0 批准时集成分支的提交：此后契约只能追加（M5 判定） */
   contracts_base: Type.Optional(Type.String({ minLength: 1 })),
   /** S0 被打回：引擎据此新建 architect task，原因写进它的 handoff */
@@ -134,9 +136,10 @@ export type FlowFile = Static<typeof FlowFile>;
 /** 轻流程（fix、change）：单一阶段 X1，无阶段闸门，直接合入主分支，不占用活动流程指针，不用变更请求、不收 PRD */
 export const isLightFlow = (flow: Pick<FlowFile, 'mode'>): boolean => flow.mode !== 'build';
 
+/** 只有硬依赖：依赖的任务 done 之后才能开工 */
 export const Dependency = Type.Object({
   task: TaskId,
-  type: Type.Union([Type.Literal('hard'), Type.Literal('soft')]),
+  type: Type.Literal('hard'),
   reason: Type.Optional(Type.String()),
 }, { additionalProperties: false });
 export type Dependency = Static<typeof Dependency>;
@@ -161,15 +164,20 @@ export const TaskFile = Type.Object({
   scopes: Type.Array(Type.String()),
   depends_on: Type.Array(Dependency),
   inputs: Type.Array(Type.String()),
+  /** 计划给的路径（plan.md 的 paths）：不用于调度，只在合并冲突与问题归属时找负责的任务 */
   writes: Type.Array(Type.String()),
   module: Type.Optional(Type.String({ minLength: 1 })),
+  /** 后端任务负责的 domain（plan.md 的 backend[].domain） */
+  domain: Type.Optional(Type.String({ minLength: 1 })),
+  /** 前端页面任务负责的页面 id（plan.md 的 frontend[]，对应 PRD 页面表） */
+  page: Type.Optional(Type.String({ minLength: 1 })),
   ac: Type.Optional(StringList),
   layers: Type.Optional(StringList),
   produces: Type.Optional(StringList),
   requires: Type.Optional(StringList),
   /** 旧字段，不再使用（worker 自己写验收测试，不再限定测试入口） */
   test_interface: Type.Optional(StringList),
-  /** 审查 task 的强度（strong 用升级模型）；impl 上写了以它为准，计划里不能写 */
+  /** 审查强度：.rv 上记 strong 用升级模型；impl 上只由程序写 skip（"接入真实接口"任务不单独审查，由批次验收检查） */
   review: Type.Optional(TaskReview),
   risk: Type.Optional(TaskRisk),
   /** 派生任务所属的原任务 */
@@ -181,7 +189,6 @@ export const TaskFile = Type.Object({
   verify: Type.Array(Type.String()),
   status: TaskStatus,
   attempts: Type.Integer({ minimum: 0 }),
-  precheck_failures: Type.Optional(Type.Integer({ minimum: 0 })),
   review_rounds: Type.Optional(Type.Integer({ minimum: 0 })),
   merge_failures: Type.Optional(Type.Integer({ minimum: 0 })),
   blocked_by: Type.Optional(Nullable(BlockedBy)),
@@ -223,7 +230,7 @@ export const TaskFile = Type.Object({
   fork_from_task: Type.Optional(TaskId),
   /** 最近一次提交修改过的、writes 之外的已有测试文件（第四轮后续，testing.adjust_tests） */
   test_adjustments: Type.Optional(Type.Array(Type.String())),
-  /** 模块登记的公共文件（第五轮：路由注册、菜单、迁移目录、文案等）：可以写，但不算进互斥，并行模块都可能改 */
+  /** plan.md 的公共文件（shared）：可以写；对已有内容的修改在审查材料里提醒 reviewer */
   shared: Type.Optional(Type.Array(Type.String())),
   created_by: Type.String({ minLength: 1 }),
   version: Type.Integer({ minimum: 1 }),
@@ -346,10 +353,12 @@ export const WorkflowFile = Type.Object({
   /** 旧写法：项目命令现在写在仓库根目录的 commands.yaml；这里的只在没有 commands.yaml 时使用 */
   commands: Type.Optional(Type.Record(Type.String(), Type.String({ minLength: 1 }))),
   limits: Type.Object({
+    /** 轻流程（修复、小改动）与架构阶段的并发 */
     max_parallel: PosInt,
+    /** 主流程同时开发的后端 domain 数（docs/plan.md 可以覆盖）；不写时同 max_parallel。前端固定 1 个 */
+    max_parallel_backend: Type.Optional(PosInt),
     max_parallel_aux: Type.Optional(PosInt),
     max_attempts: PosInt,
-    max_precheck_failures: Type.Optional(Type.Integer({ minimum: 1, default: 3 })),
     max_merge_failures: Type.Optional(Type.Integer({ minimum: 1, default: 2 })),
     /** 每次合并后在后台对集成分支跑一遍门禁命令，失败时定位到具体 task 并建修复（engine/post-merge-test.ts）；默认开启 */
     post_merge_test: Type.Optional(Type.Boolean()),

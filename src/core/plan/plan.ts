@@ -6,7 +6,7 @@ import { HTTP_METHODS } from './contract-check.ts';
 import type { EffectiveSpec } from '../spec/spec.ts';
 import { PlanFile, validate, type TaskFile } from '../state/schemas.ts';
 import type { TaskInput } from '../state/state-store.ts';
-import { conflictsWith, dagReport, findCycle, mutexPairs, type DagReport } from '../state/dag.ts';
+import { dagReport, findCycle, type DagReport } from '../state/dag.ts';
 import { globsOverlap, ownAcceptanceGlob } from '../state/paths.ts';
 
 export const PLAN_PATH = 'docs/plan/plan.yaml';
@@ -234,7 +234,7 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
       // 依赖更晚阶段的 task 会让本阶段永远完不成（与依赖环一样调度不了），仍然拦
       if (fs !== undefined && ts !== undefined && fs > ts) errors.push(`${t.id}（${t.stage}）需要的 ${sym.key} 由更晚阶段的 ${from}（${taskStage.get(from)}）产出：本阶段要等下一阶段，调度不了`);
     }
-    deps.set(t.id, [...edges].map(([task, e]) => ({ task, type: e.hard ? 'hard' : 'soft', reason: e.symbols.join('、') })));
+    deps.set(t.id, [...edges].filter(([, e]) => e.hard).map(([task, e]) => ({ task, type: 'hard' as const, reason: e.symbols.join('、') })));
   }
 
   // 环、互斥、报告
@@ -242,7 +242,7 @@ export function checkPlan(plan: PlanFile, ctx: PlanContext): PlanCheck {
   const cycle = findCycle(graph);
   if (cycle) errors.push(`依赖存在环：${cycle.join(' -> ')}`);
   if (errors.length) return { errors, warnings, report: null, deps };
-  const mutex = mutexPairs(graph);
+  const mutex: [string, string][] = [];
   const strong = strongReviews(plan, deps, ctx.limits.critical_fanout ?? 0);
   const impl = plan.tasks.filter((t) => t.stage !== 'S0');
   const high = impl.filter((t) => t.risk === 'high');
@@ -307,5 +307,3 @@ export function deriveTasks(plan: PlanFile, deps: ReadonlyMap<string, TaskFile['
   return out;
 }
 
-/** writes 互斥的两个 plan task（报告用；shared 不算） */
-export const planConflicts = (a: { writes: string[] }, b: { writes: string[] }) => conflictsWith(a, b);

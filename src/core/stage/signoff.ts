@@ -92,7 +92,6 @@ export function criticalPath(tasks: readonly Pick<TaskFile, 'id' | 'depends_on'>
 // —— 纯函数：返工、覆盖率、QA ——
 
 export interface Rework {
-  precheck_failures: number;
   review_rejects: number;
   merge_verify_failures: number;
   gate_fixes: number;
@@ -109,7 +108,6 @@ export function reworkCounts(events: readonly Pick<FlowEvent, 'flow' | 'task' | 
   const gateTasks = scoped.filter((t) => t.kind === 'fix' && t.title.startsWith(FIX_TITLE.gate)).length;
   const gateRounds = (flow.gate_rounds ?? []).filter((r) => !stage || r.stage === stage).length;
   return {
-    precheck_failures: count('precheck_fail'),
     review_rejects: count('review_changes'),
     merge_verify_failures: count('merge_verify_fail'),
     gate_fixes: Math.max(gateTasks, gateRounds),
@@ -393,7 +391,7 @@ export function renderRunFailures(f: Partial<Record<FailureKind, number>>): stri
 }
 
 export function renderRework(r: Rework): string {
-  return `预检失败 ${r.precheck_failures}，审查打回 ${r.review_rejects}，合并验证失败 ${r.merge_verify_failures}，门禁修复 ${r.gate_fixes}，stage-qa 修复 ${r.qa_fixes}`;
+  return `审查打回 ${r.review_rejects}，合并验证失败 ${r.merge_verify_failures}，门禁修复 ${r.gate_fixes}，stage-qa 修复 ${r.qa_fixes}`;
 }
 
 export function renderViolations(v: Violations): string[] {

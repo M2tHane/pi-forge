@@ -140,14 +140,13 @@ test('真实 pi 子进程：审查要求修改后，接着上一次的对话修�
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done', `${t.status} ${t.last_failure ?? ''}`);
     assert.equal(t.review_rounds, 1, '第一次提交被审查要求修改');
-    assert.equal(t.precheck_failures ?? 0, 0);
     assert.equal(t.attempts, 0);
     const runs = p.store.listRuns().sort((a, b) => a.started_at.localeCompare(b.started_at)).filter((r) => r.role === 'worker');
     assert.deepEqual(runs.map((r) => r.role), ['worker', 'worker']);
     assert.equal(runs[1]!.forked_from, runs[0]!.run_id);
     const triggers = p.store.readEvents().filter((e) => e.task === 'T-001' && e.type === 'transition').map((e) => e.trigger);
     assert.deepEqual(triggers.filter((x) => x !== 'dispatch' && x !== 'schedule'),
-      ['submit', 'inputs_ready', 'precheck_pass', 'review_changes', 'submit', 'inputs_ready', 'precheck_pass', 'review_pass', 'merge_start', 'merge_done'], triggers.join(','));
+      ['submit', 'review_changes', 'submit', 'review_pass', 'merge_start', 'merge_done'], triggers.join(','));
     const reqs = readFileSync(logFile, 'utf8').slice(before).trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.model === 'impl-fork');
     const second = reqs.find((r) => r.turn === 5)!;
     assert.ok(second, '第二次运行的第一个请求带着上一次的 5 条回复');

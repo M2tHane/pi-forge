@@ -1,6 +1,6 @@
-// DAG：依赖类型校验、环检测、互斥推导、ready 计算、关键路径与宽度统计。纯函数，不做 IO。
+// DAG：依赖校验、环检测、ready 计算、关键路径与宽度统计。纯函数，不做 IO。依赖只有硬依赖（done 之后才能开工）。
 import type { TaskFile } from './schemas.ts';
-import { globWithin, globsOverlap } from './paths.ts';
+import { globWithin } from './paths.ts';
 
 type DagTask = Pick<TaskFile, 'id' | 'kind' | 'role' | 'scopes' | 'depends_on' | 'writes' | 'verify'>;
 
@@ -60,7 +60,7 @@ export function validateDag(tasks: readonly DagTask[], catalog: DagCatalog): Dag
   return { errors, warnings };
 }
 
-/** 返回环上的任务 id 序列（首尾相同），无环返回 null。所有依赖类型都参与环检测。 */
+/** 返回环上的任务 id 序列（首尾相同），无环返回 null。 */
 export function findCycle(tasks: readonly Pick<TaskFile, 'id' | 'depends_on'>[]): string[] | null {
   const deps = new Map(tasks.map((t) => [t.id, t.depends_on.map((d) => d.task)]));
   const color = new Map<string, 0 | 1 | 2>();
@@ -92,12 +92,12 @@ export function findCycle(tasks: readonly Pick<TaskFile, 'id' | 'depends_on'>[])
 
 type ReadyTask = Pick<TaskFile, 'id' | 'stage' | 'status' | 'depends_on'>;
 
-/** 依赖直接取真实状态；只有 done 满足硬依赖与软依赖。 */
+/** 依赖直接取真实状态；只有 done 满足依赖。 */
 export function depStatus(t: Pick<TaskFile, 'status'>): string {
   return t.status;
 }
 
-/** 当前 stage 中所有硬依赖都已 done 的 pending 任务；软依赖不影响 ready。 */
+/** 当前 stage 中所有依赖都已 done 的 pending 任务。 */
 export function computeReady(tasks: readonly ReadyTask[], stage: string): string[] {
   const status = new Map(tasks.map((t) => [t.id, depStatus(t)]));
   return tasks
@@ -106,7 +106,7 @@ export function computeReady(tasks: readonly ReadyTask[], stage: string): string
 }
 
 export function hardDepsDone(t: Pick<TaskFile, 'depends_on'>, status: ReadonlyMap<string, string>): boolean {
-  return t.depends_on.every((d) => d.type !== 'hard' || status.get(d.task) === 'done');
+  return t.depends_on.every((d) => status.get(d.task) === 'done');
 }
 
 type StatTask = Pick<TaskFile, 'id' | 'depends_on'>;
@@ -175,21 +175,6 @@ export function dagStats(tasks: readonly StatTask[]): DagStats {
     maxWidth: Math.max(0, ...levels.values()),
     hardRatio: edges.length === 0 ? 0 : hardCount / edges.length,
   };
-}
-
-/** 两个任务 writes 是否重叠（互斥）。 */
-export function conflictsWith(a: Pick<TaskFile, 'writes'>, b: Pick<TaskFile, 'writes'>): boolean {
-  return a.writes.some((x) => b.writes.some((y) => globsOverlap(x, y)));
-}
-
-export function mutexPairs(tasks: readonly Pick<TaskFile, 'id' | 'writes'>[]): [string, string][] {
-  const out: [string, string][] = [];
-  for (let i = 0; i < tasks.length; i++) {
-    for (let j = i + 1; j < tasks.length; j++) {
-      if (conflictsWith(tasks[i]!, tasks[j]!)) out.push([tasks[i]!.id, tasks[j]!.id]);
-    }
-  }
-  return out;
 }
 
 export interface DagReport {

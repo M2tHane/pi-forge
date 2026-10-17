@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { StateStore, taskRel } from '../../src/core/state/state-store.ts';
+import { legacyFlows, resume } from '../../src/core/ops/resume.ts';
+import { doctor } from '../../src/core/ops/doctor.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
+import { TEST_YAML } from '../helpers/config.ts';
 import type { Migration } from '../../src/core/state/migrations.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import { mkTask } from '../helpers/tasks.ts';
@@ -70,12 +74,37 @@ test('迁移 2 → 3：去掉 task 的 scope_request 与 scope_grants，其余�
     const latest = new StateStore(repo.dir, { now, git: false });
     const done = await latest.migrate();
     assert.equal(done.length, 1);
-    assert.match(done[0]!, /格式 2 → 3：/);
+    assert.match(done[0]!, /格式 2 → 4：/);
     const t = latest.readTask(flow.id, 'T-001') as Record<string, unknown>;
     assert.equal(t['title'], '保留');
     assert.equal('scope_request' in t, false);
     assert.equal('scope_grants' in t, false);
-    assert.equal(latest.readState().schema_version, 3);
+    assert.equal(latest.readState().schema_version, 4);
     assert.deepEqual(await latest.migrate(), []);
+  } finally { repo.cleanup(); }
+});
+
+test('旧流程（格式 3）不迁移：/forge-resume 提示中止后重建；/forge abort 能执行，删掉的状态转为阻塞并写明原因', async () => {
+  const repo = tmpRepo();
+  try {
+    const old = await StateStore.init(repo.dir, { now, git: false, schemaVersion: 3 });
+    const flow = await old.createFlow({ mode: 'build', title: '旧流程', stages: ['S1'], base_sha: null });
+    await old.addTasks(flow.id, [mkTask('T-001', { stage: 'S1' }), mkTask('T-002', { stage: 'S1' })], 'architect');
+    const file = path.join(repo.dir, '.forge', taskRel(flow.id, 'T-002'));
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    Object.assign(raw, { status: 'awaiting_inputs', precheck_failures: 1, depends_on: [{ task: 'T-001', type: 'soft' }] });
+    writeFileSync(file, JSON.stringify(raw, null, 2));
+    const store = new StateStore(repo.dir, { now, git: false });
+    assert.deepEqual(legacyFlows(store), [flow.id]);
+    const r = await resume({ root: repo.dir, store, config: parseConfig(TEST_YAML) });
+    assert.equal(r.ok, false);
+    assert.match(r.brief, /这是旧流程，请 \/forge abort 后用新流程重建/);
+    assert.equal(store.readState().schema_version, 3, 'resume 不迁移');
+    assert.ok((await doctor(repo.dir, store)).errors.some((e) => e.includes(`${flow.id}：这是旧流程，请 /forge abort 后用新流程重建`)));
+    await store.transitionStage(flow.id, { to: 'aborted', trigger: 'abort', actor: 'human' });
+    const t = store.readTask(flow.id, 'T-002') as Record<string, unknown>;
+    assert.deepEqual([t['status'], t['blocked_reason'], 'precheck_failures' in t, t['depends_on']], ['blocked', '这是旧流程，请 /forge abort 后用新流程重建', false, []]);
+    assert.equal(store.readState().schema_version, 4);
+    assert.deepEqual(legacyFlows(store), []);
   } finally { repo.cleanup(); }
 });

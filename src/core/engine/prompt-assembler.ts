@@ -70,7 +70,7 @@ export interface AssembleInput {
   /** 本任务依赖的上游任务及其 handoff（需求汇总者从这里读两方意见） */
   /** 本流程的全部 task，用来渲染「已交付的接口」（worker、reviewer） */
   flowTasks?: readonly TaskFile[];
-  upstream?: { id: string; title: string; type: 'hard' | 'soft'; status: string; handoff: string }[];
+  upstream?: { id: string; title: string; status: string; handoff: string }[];
 }
 
 /** 取 handoff 的最近部分，从完整的行开始 */
@@ -110,13 +110,13 @@ export function upstreamSection(ups: NonNullable<AssembleInput['upstream']>): st
     if (!handoff.trim() || used >= UPSTREAM_TOTAL) continue;
     const body = tail(handoff, Math.min(UPSTREAM_TAIL, UPSTREAM_TOTAL - used));
     used += body.length;
-    blocks.push(`### ${u.id}「${u.title}」（${u.type === 'hard' ? '硬依赖' : '软依赖'}，${u.status}）\n${body}`);
+    blocks.push(`### ${u.id}「${u.title}」（${u.status}）\n${body}`);
   }
   return blocks.length ? `## 上游任务的 handoff\n上游任务留下的意见、进展与约定；内容太长时只保留最近部分，需要细节时读取对应文件。\n\n${blocks.join('\n\n')}` : '';
 }
 
 /** 渲染接口清单的角色：这些角色的任务说明里带「已交付的接口」（stage-qa、architect 不需要） */
-const INTERFACE_ROLES: readonly string[] = ['worker', 'reviewer'];
+const INTERFACE_ROLES: readonly string[] = ['worker', 'backend', 'frontend', 'reviewer'];
 /** 已交付的接口最多列出的条数，超出的截断并注明总数 */
 export const DELIVERED_MAX = 40;
 const DELIVERED_KEY = /^(api|page):/;

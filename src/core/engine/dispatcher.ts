@@ -7,7 +7,7 @@ import type { FlowConfig } from '../state/config.ts';
 import { isFinished, type StateStore } from '../state/state-store.ts';
 import { isLightFlow, type RoleSettingsFile, type TaskFile, type ThinkingLevel } from '../state/schemas.ts';
 import type { RunOutcome, SubagentHandle, SubagentLauncher, SubagentSpec } from './launcher.ts';
-import { hashToken, isSettled } from '../state/state-machine.ts';
+import { flowLimits, hashToken, isSettled } from '../state/state-machine.ts';
 import { resolveRoleModel } from '../insight/role-settings.ts';
 import { fillPromptVars, loadAgent } from './agents.ts';
 import { conventionsSection, readPrdText } from '../spec/prd.ts';
@@ -25,7 +25,6 @@ import { RUN_ENV_KEYS } from '../../tools/subagent-tools.ts';
 import { MergeQueue, type MergeHooks, type MergeResult, type SyncResult } from './merge-queue.ts';
 import { runStageGate, gateFailedWithoutChange, runImplementationChecks, type GateOutcome } from '../stage/gates.ts';
 import { afterChecks, stageStep } from '../stage/stage-acceptance.ts';
-import { syncTaskInputs } from '../../tools/module-tools.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { killStrays } from '../workspace/strays.ts';
 import { activePause, clearPause, describePause, pauseActive, recordPause } from './model-pause.ts';
@@ -36,40 +35,18 @@ import { autoTimeoutDecision, awaitingReview, graceMinutes, measureProgress, run
 import { stallOf, stuckTasks } from '../insight/forge-watch.ts';
 import { stopAllServices } from '../workspace/services.ts';
 import { ensureArchitectTask, isArchitectStage } from '../plan/plan-flow.ts';
-import { changeDocPrecheck, changeOfTask, ensureChangeTask } from '../plan/change-flow.ts';
+import { ensureChangeTask } from '../plan/change-flow.ts';
 import { pausedByChange } from '../plan/change-request.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions } from '../workspace/resources.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { readSharedEnv, sharedEnvDir, syncSharedEnv } from '../workspace/shared-env.ts';
-import { waitsOn } from '../state/waits.ts';
-import { REVIEW_INPUT, decideReview, readReviewEvidence, resolveReviews, reviewWorktreeOf, type ReviewInputFile } from '../stage/review-flow.ts';
+import { REVIEW_INPUT, readReviewEvidence, resolveReviews, reviewWorktreeOf, type ReviewInputFile } from '../stage/review-flow.ts';
 import { QA_INPUT, stageWorktreeFor } from '../stage/stage-qa.ts';
 import { isStageLevelTask } from '../workspace/stage-worktree.ts';
 import { fixStep } from '../../modes/fix.ts';
 import { DEFAULT_CHECKPOINT_MINUTES, createCheckpoint, dropCheckpoint, listCheckpoints } from '../state/checkpoints.ts';
 
 const tasksHas = (store: StateStore, flowId: string, id: string) => { try { store.readTask(flowId, id); return true; } catch { return false; } };
-/**
- * 等待输入（awaiting_inputs → checking）：软依赖的生产方都已 done 时，把集成分支同步进任务分支；
- * 有冲突时交回 worker（sync_conflict）。返回进入 checking 的 task。
- */
-export async function advanceInputs(store: StateStore, flowId: string): Promise<string[]> {
-  const out: string[] = [];
-  const tasks = store.listTasks(flowId);
-  for (const listed of tasks) {
-    const t = store.readTask(flowId, listed.id);
-    if (t.status !== 'awaiting_inputs') continue;
-    if (waitsOn(t, store.listTasks(flowId)).length) continue;
-    const synced = await syncTaskInputs(store, flowId, t);
-    if (synced.conflicts.length) {
-      await store.transitionTask(flowId, t.id, { to: 'in_progress', trigger: 'sync_conflict', actor: 'engine', facts: { conflict_files: synced.conflicts } });
-      continue;
-    }
-    await store.transitionTask(flowId, t.id, { to: 'checking', trigger: 'inputs_ready', actor: 'engine', facts: { inputs_synced: true } });
-    out.push(t.id);
-  }
-  return out;
-}
 
 /**
  * 会话文件超过这个大小就不再接着（上下文太长，每轮重发的成本超过重新读代码）。
@@ -238,7 +215,7 @@ export class Engine {
     if (flow.sync?.status === 'conflict') return [];
     if (budgetState(this.d.store, this.d.config, flow, this.now())?.exceeded) return [];
     const changes = this.d.store.listChanges(flowId);
-    const ids = selectDispatchable(this.d.store.listTasks(flowId).filter((t) => !this.pausedFor(flowId, t) && !pausedByChange(changes, t.id)), flow.stage, this.d.config.limits.max_parallel, this.d.config.limits.max_parallel_aux);
+    const ids = selectDispatchable(this.d.store.listTasks(flowId).filter((t) => !this.pausedFor(flowId, t) && !pausedByChange(changes, t.id)), flow.stage, flowLimits(this.d.config.limits, flow));
     const out: Dispatched[] = [];
     for (const id of ids) {
       try { out.push(await this.dispatch(flowId, id)); } catch (e) { if (!(e instanceof HandedToUser)) throw e; }
@@ -397,7 +374,7 @@ export class Engine {
     const esc = escalationPolicy(this.d.config);
     const up = esc.enabled ? escalationModel(this.d.config, settings, role, model) : null;
     const critical = esc.criticalFanout > 0 && hardFanout(task, this.d.store.listTasks(flowId)) >= esc.criticalFanout;
-    const failures = task.attempts + (task.precheck_failures ?? 0) + (task.merge_failures ?? 0) + (task.review_rounds ?? 0);
+    const failures = task.attempts + (task.merge_failures ?? 0) + (task.review_rounds ?? 0);
     // strong 审查（底座、auth、高风险）用升级模型
     const strongReview = task.kind === 'review' && task.review === 'strong';
     const same = task.same_failures ?? 0;
@@ -490,7 +467,7 @@ export class Engine {
     const reviewBrief = task.kind === 'review' || task.kind === 'qa' ? store.readHandoff(flowId, task.id).replace(/^\s*## \d{4}-[^\n]*\n+/, '') : '';
     const confirmRound = (task.kind === 'review' || task.kind === 'qa') && (readReviewEvidence<ReviewInputFile>(store, flowId, task.id, task.kind === 'qa' ? QA_INPUT : REVIEW_INPUT)?.prior_must.length ?? 0) > 0;
     // PRD 的「通用约定」（字段规则）放进写代码与审查代码的任务说明（stock run-03：S2 打回 3 次都是字段规则）
-    const conventions = role === 'worker' || role === 'reviewer' ? conventionsSection(readPrdText(root, `refs/heads/${flow.integration_branch}`) ?? '') : '';
+    const conventions = ['worker', 'backend', 'frontend', 'reviewer'].includes(role) ? conventionsSection(readPrdText(root, `refs/heads/${flow.integration_branch}`) ?? '') : '';
     const prompt = assemblePrompt({
       agent, rules, skills, task, flowId, flowTasks: tasks, ...(conventions ? { conventions } : {}), handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
       ...(reviewBrief ? { reviewBrief, confirmRound } : {}), commands: config.commands,
@@ -498,7 +475,7 @@ export class Engine {
       ...(scratch ? { scratchDir: scratch } : {}),
       upstream: task.depends_on.flatMap((d) => {
         const u = tasks.find((x) => x.id === d.task);
-        return u ? [{ id: u.id, title: u.title, type: d.type, status: u.status === 'done' ? '已完成' : `未完成：${u.status}`, handoff: store.readHandoff(flowId, u.id) }] : [];
+        return u ? [{ id: u.id, title: u.title, status: u.status === 'done' ? '已完成' : `未完成：${u.status}`, handoff: store.readHandoff(flowId, u.id) }] : [];
       }),
       ...(fork && mode === 'impl' && fork.task === task.id && !timeout ? { continuation: { run: fork.run_id } } : {}),
       ...(timeout ? { timeoutResume: { run: timeout.run, minutes: timeout.minutes, budget: timeout.budget, forked: !!fork && fork.task === task.id, ...(timeout.decision ? { decision: timeout.decision } : {}), ...(timeout.note ? { note: timeout.note } : {}) } } : {}),
@@ -643,8 +620,6 @@ export class Engine {
     try {
       await this.promote(flowId);
     } catch (e) { report(e); }
-    try { await advanceInputs(this.d.store, flowId); } catch (e) { report(e); }
-    try { this.startPrechecks(flowId); } catch (e) { report(e); }
     for (const listed of this.d.store.listTasks(flowId)) {
       try {
         // 循环中有 await，列表可能已过时：以最新状态为准。失败或被打回、没有租约的任务重新派发（接着原会话）
@@ -688,60 +663,11 @@ export class Engine {
     this.notify();
   }
 
-  /** 正在预检的 task（flow/task）；同一 task 不会并发预检 */
-  private readonly prechecking = new Set<string>();
-
-  /** 为 checking 状态的 impl、fix、doc、merge-fix 启动预检（后台运行，结束后推进状态并 pump） */
-  private startPrechecks(flowId: string): void {
-    for (const t of this.d.store.listTasks(flowId)) {
-      const key = `${flowId}/${t.id}`;
-      if (t.status !== 'checking' || this.prechecking.has(key) || !['impl', 'fix', 'doc', 'merge-fix'].includes(t.kind)) continue;
-      this.prechecking.add(key);
-      this.track(this.precheckOne(flowId, t.id).catch((e) => this.d.onError?.(e)).finally(() => {
-        this.prechecking.delete(key);
-        this.notify();
-        return this.pump(flowId);
-      }));
-    }
-  }
-
-  private async precheckOne(flowId: string, taskId: string): Promise<void> {
-    const { store, root, config } = this.d;
-    const t = store.readTask(flowId, taskId);
-    if (t.status !== 'checking') return;
-    // 实现类任务的预检不跑命令、也不再检查契约（契约只能追加在 forge_submit 时检查）；只有文档任务（小改动的计划）有程序检查
-    const failure = t.kind === 'doc' && changeOfTask(store, flowId, t.id) ? changeDocPrecheck(root, store, config, flowId, t) : null;
-    if (store.readTask(flowId, taskId).status !== 'checking') return;
-    if (failure) {
-      await store.appendHandoff(flowId, taskId, failure, 'engine');
-      await store.transitionTask(flowId, taskId, { to: 'in_progress', trigger: 'precheck_fail', actor: 'engine', facts: { precheck_ok: false, reason: failure.slice(0, 4000) } });
-      return;
-    }
-    // 按 task.review 或推导决定是否审查；需要时进入 in_review，.rv / .rv-n 由 resolveReviews 创建（pump 串行，不会重复创建）
-    if (decideReview(store, config, flowId, store.readTask(flowId, taskId)) === 'skip') {
-      await store.transitionTask(flowId, taskId, { to: 'queued_merge', trigger: 'precheck_pass_skip', actor: 'engine', facts: { precheck_ok: true, review_required: false } });
-    } else {
-      await store.transitionTask(flowId, taskId, { to: 'in_review', trigger: 'precheck_pass', actor: 'engine', facts: { precheck_ok: true, review_required: true } });
-    }
-  }
-
-  /** 推进等待输入，并就地跑完 checking 的预检（不等其他运行结束；测试用） */
-  async precheck(flowId: string): Promise<void> {
-    await advanceInputs(this.d.store, flowId);
-    for (const t of this.d.store.listTasks(flowId)) {
-      const key = `${flowId}/${t.id}`;
-      if (t.status !== 'checking' || this.prechecking.has(key) || !['impl', 'fix', 'doc', 'merge-fix'].includes(t.kind)) continue;
-      this.prechecking.add(key);
-      try { await this.precheckOne(flowId, t.id); } finally { this.prechecking.delete(key); }
-    }
-    await resolveReviews(this.d.root, this.d.store, this.d.config, flowId);
-  }
-
   /** 不经主会话、由程序直接派发的 ready 任务：merge-fix、逐任务审查（.rv）、复现确认、文档任务与 S0 的全部任务（architect 与门禁修复） */
   private async dispatchProgramDriven(flowId: string): Promise<void> {
     const flow = this.d.store.readFlow(flowId);
     const tasks = this.d.store.listTasks(flowId);
-    const ids = selectDispatchable(tasks, flow.stage, this.d.config.limits.max_parallel, this.d.config.limits.max_parallel_aux).filter((id) => {
+    const ids = selectDispatchable(tasks, flow.stage, flowLimits(this.d.config.limits, flow)).filter((id) => {
       const t = tasks.find((x) => x.id === id);
       return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || t.kind === 'qa' || t.kind === 'doc' || isArchitectStage(t.stage)) && !this.pausedFor(flowId, t);
     });

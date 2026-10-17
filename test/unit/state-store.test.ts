@@ -6,7 +6,7 @@ import { StateStore, StateError } from '../../src/core/state/state-store.ts';
 import { hashToken } from '../../src/core/state/state-machine.ts';
 import { appendEvents, buildEvent, readEvents } from '../../src/core/state/event-log.ts';
 import { tmpRepo } from '../helpers/repo.ts';
-import { mkTask, hard, soft } from '../helpers/tasks.ts';
+import { mkTask, hard } from '../helpers/tasks.ts';
 
 let clock = new Date('2026-01-01T00:00:00Z');
 const now = () => clock;
@@ -26,7 +26,7 @@ async function flowWithTasks(store: StateStore) {
   await store.addTasks(flow.id, [
     mkTask('T-001'),
     mkTask('T-002', { deps: [hard('T-001')] }),
-    mkTask('T-003', { writes: ['src/server/t-001/shared/**'], deps: [soft('T-001')] }),
+    mkTask('T-003', { writes: ['src/server/t-001/shared/**'] }),
   ], 'architect');
   return flow;
 }
@@ -46,14 +46,8 @@ async function toInProgress(store: StateStore, flow: string, id: string, run = '
 async function toQueued(store: StateStore, flow: string, id: string, run: string, token: string) {
   await toInProgress(store, flow, id, run, token);
   await store.appendHandoff(flow, id, '完成', `run:${run}`);
-  await store.transitionTask(flow, id, { to: 'awaiting_inputs', trigger: 'submit', actor: `run:${run}`,
-    facts: { token, diff_files: [`src/server/${id.toLowerCase()}/a.ts`] } });
-  await queueSubmitted(store, flow, id);
-}
-
-async function queueSubmitted(store: StateStore, flow: string, id: string) {
-  await store.transitionTask(flow, id, { to: 'checking', trigger: 'inputs_ready', actor: 'engine', facts: { inputs_synced: true } });
-  await store.transitionTask(flow, id, { to: 'queued_merge', trigger: 'precheck_pass_skip', actor: 'engine', facts: { precheck_ok: true, review_required: false } });
+  await store.transitionTask(flow, id, { to: 'queued_merge', trigger: 'submit', actor: `run:${run}`,
+    facts: { token, diff_files: [`src/server/${id.toLowerCase()}/a.ts`], review_required: false } });
 }
 
 test('init 生成骨架且可重复执行', async () => {
@@ -107,10 +101,9 @@ test('完整闭环：pending 到 done，合并队列同步，每次转移都提�
     const headBefore = git('rev-parse', 'HEAD');
     await toInProgress(store, flow.id, 'T-001');
     await store.appendHandoff(flow.id, 'T-001', '做完了 A，下一步无', 'run:r-1');
-    await store.transitionTask(flow.id, 'T-001', { to: 'awaiting_inputs', trigger: 'submit', actor: 'run:r-1',
-      facts: { token: 'tok', diff_files: ['src/server/t-001/a.ts'] } });
+    await store.transitionTask(flow.id, 'T-001', { to: 'queued_merge', trigger: 'submit', actor: 'run:r-1',
+      facts: { token: 'tok', diff_files: ['src/server/t-001/a.ts'], review_required: false } });
     assert.equal(store.readTask(flow.id, 'T-001').lease, null);
-    await queueSubmitted(store, flow.id, 'T-001');
     assert.deepEqual(store.readMergeQueue().queue.map((e) => e.task), ['T-001']);
     await store.transitionTask(flow.id, 'T-001', { to: 'merging', trigger: 'merge_start', actor: 'merge-queue' });
     assert.equal(store.readMergeQueue().merging?.task, 'T-001');

@@ -77,16 +77,8 @@
             "pattern": "^(T-\\d{3,}(\\.(rv|fx)(-\\d+)?)?|[A-Za-z][A-Za-z0-9_]*\\.qa(-\\d+)?)$"
           },
           "type": {
-            "anyOf": [
-              {
-                "type": "string",
-                "const": "hard"
-              },
-              {
-                "type": "string",
-                "const": "soft"
-              }
-            ]
+            "type": "string",
+            "const": "hard"
           },
           "reason": {
             "type": "string"
@@ -108,6 +100,14 @@
       }
     },
     "module": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domain": {
+      "type": "string",
+      "minLength": 1
+    },
+    "page": {
       "type": "string",
       "minLength": 1
     },
@@ -199,8 +199,6 @@
         "pending",
         "ready",
         "in_progress",
-        "awaiting_inputs",
-        "checking",
         "in_review",
         "queued_merge",
         "merging",
@@ -210,10 +208,6 @@
       ]
     },
     "attempts": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "precheck_failures": {
       "type": "integer",
       "minimum": 0
     },
@@ -230,7 +224,6 @@
         {
           "enum": [
             "review_exhausted",
-            "precheck_exhausted",
             "merge_exhausted",
             "attempts",
             "agent",

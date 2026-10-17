@@ -14,7 +14,7 @@ export interface ChangePlanInput {
     id?: string;
     title: string;
     writes: string[];
-    depends_on?: { task: string; type: 'hard' | 'soft' }[];
+    depends_on?: { task: string; type: 'hard' }[];
     ac: string[];
     layers?: string[];
     module?: string;
@@ -63,7 +63,7 @@ export function checkChangePlan(input: ChangePlanInput, opts: ChangePlanOptions)
     for (const d of t.depends_on ?? []) {
       if (!ids.includes(d.task)) errors.push(`${id} 的 depends_on 引用了不存在的 task ${d.task}`);
       else if (d.task === id) errors.push(`${id} 不能依赖自己`);
-      if (d.type !== 'hard' && d.type !== 'soft') errors.push(`${id} 对 ${d.task} 的依赖类型必须是 hard 或 soft`);
+      if (d.type !== 'hard') errors.push(`${id} 对 ${d.task} 的依赖类型必须是 hard`);
     }
   });
 

@@ -59,9 +59,8 @@ test('返工计数', () => {
     taskEv(3, 'T-001', 'in_progress', 'review_changes'), taskEv(4, 'T-002', 'in_progress', 'merge_verify_fail'),
   ];
   const f = flow();
-  assert.deepEqual(reworkCounts(events, tasks, f), { precheck_failures: 2, review_rejects: 1, merge_verify_failures: 1, gate_fixes: 1, qa_fixes: 1 });
+  assert.deepEqual(reworkCounts(events, tasks, f), { review_rejects: 1, merge_verify_failures: 1, gate_fixes: 1, qa_fixes: 1 });
   const s2 = reworkCounts(events, tasks, f, 'S2');
-  assert.equal(s2.precheck_failures, 0);
   assert.equal(s2.merge_verify_failures, 1);
   assert.equal(s2.qa_fixes, 0);
 });

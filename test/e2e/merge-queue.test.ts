@@ -87,7 +87,6 @@ test('非 impl / fix（doc）的文本冲突在 writes 内：仍生成 merge-fix
     const { engine, merges, errors } = makeEngine(p, async (_role, _n, a) => {
       if (a.env.task === 'T-001') {
         await implement(a, { 'src/server/t-001/a.ts': 'line1\ntask\nline3\n' });
-        await engine.precheck(p.flowId);
         // 制造预检之后才出现的竞争，验证合并队列的冲突修复路径。
         commitToBranch(p.dir, `flow/${p.flowId}/integration`, { 'src/server/t-001/a.ts': 'line1\nhuman\nline3\n' }, '他人修改');
         return;
@@ -132,7 +131,6 @@ test('doc 的 merge-fix 残留冲突标记：合并后检查拦下，回到 in_p
     const { engine, merges } = makeEngine(p, async (_role, _n, a) => {
       if (a.env.task === 'T-001') {
         await implement(a, { 'src/server/t-001/a.ts': 'task\n' });
-        await engine.precheck(p.flowId);
         commitToBranch(p.dir, `flow/${p.flowId}/integration`, { 'src/server/t-001/a.ts': 'human\n' }, '他人修改');
         return;
       }
@@ -212,7 +210,6 @@ test('impl 交回冲突后仍留着冲突标记再提交 → 合并验证失败�
     const { engine, merges } = makeEngine(p, async (_role, _n, a) => {
       if (a.env.task === 'T-001' && !merges.some((m) => m.kind === 'conflict_returned')) {
         await implement(a, { 'src/server/t-001/a.ts': 'task\n' });
-        await engine.precheck(p.flowId);
         commitToBranch(p.dir, `flow/${p.flowId}/integration`, { 'src/server/t-001/a.ts': 'human\n' }, '他人修改');
         return;
       }

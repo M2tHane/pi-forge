@@ -4,7 +4,7 @@ import { Value } from 'typebox/value';
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { TaskFile } from '../state/schemas.ts';
-import { canAppendInterfaces, hashToken } from '../state/state-machine.ts';
+import { hashToken } from '../state/state-machine.ts';
 import { scratchDir } from '../workspace/worktree.ts';
 import { TEST_GLOBS } from '../verify/test-adjust.ts';
 import { matchesAny, INTERFACES_PATH, opensWrites } from '../state/paths.ts';
@@ -93,8 +93,6 @@ export class SubagentRuntime {
       // review / qa 在任务结束后可能还会调用读工具：此时 worktree 已删除，不能回退到主工作区（会被当作越界）。cwd 就是派发时的工作目录（原任务的 worktree 或 qa 的临时 worktree）
       workspaceRoot: t.kind === 'review' || t.kind === 'qa' ? cwd : t.worktree ?? this.env.root,
       mainRoot: this.env.root,
-      // 实现类任务可以在模块之间的接口文档里追加（只能新增，forge_submit 检查）
-      ...(canAppendInterfaces(t) ? { interfaceAdditions: true } : {}),
       // stage-qa 有 full 档 bash，在集成分支的临时 worktree 里不能越出工作区（除临时目录外不能写）
       ...(t.kind === 'qa' ? { isolatedWorkspace: true } : {}),
       ...(this.toolDirs.length ? { toolDirs: this.toolDirs } : {}),

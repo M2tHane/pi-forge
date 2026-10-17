@@ -79,7 +79,7 @@ test('审查 → 打回 → 确认通过：第二轮只能确认；suggest 记�
     assert.equal(t.status, 'done', `${t.blocked_reason ?? ''}${t.last_failure ?? ''}`);
     assert.equal(t.review_rounds, 1);
     const triggers = p.store.readEvents().filter((ev) => ev.task === 'T-001' && ev.type === 'transition').map((ev) => ev.trigger);
-    assert.ok(triggers.indexOf('precheck_pass') < triggers.indexOf('review_changes') && triggers.indexOf('review_changes') < triggers.lastIndexOf('precheck_pass') && triggers.includes('review_pass'), triggers.join());
+    assert.ok(triggers.indexOf('submit') < triggers.indexOf('review_changes') && triggers.indexOf('review_changes') < triggers.lastIndexOf('submit') && triggers.includes('review_pass'), triggers.join());
 
     // .rv：reviewer 角色、只读、指向原 task 的 worktree，带上原 task 的 layers 与 AC
     const rv1 = p.store.readTask(p.flowId, 'T-001.rv');
@@ -268,7 +268,7 @@ test('审查通过后合并冲突交回 worker：解决后直接排队合并，�
     const loser = Object.keys(runs).find((id) => runs[id] === 2);
     assert.ok(loser, JSON.stringify(runs));
     const triggers = p.store.readEvents().filter((ev) => ev.task === loser && ev.type === 'transition').map((ev) => ev.trigger);
-    assert.ok(triggers.includes('merge_conflict') && triggers.at(-3) === 'precheck_pass_skip', triggers.join());
+    assert.ok(triggers.includes('merge_conflict') && triggers.at(-3) === 'submit' && triggers.filter((x) => x === 'review_pass').length === 1, triggers.join());
     const reviews = e.launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'reviewer').map((s) => s.env['PI_FORGE_TASK']).sort();
     assert.deepEqual(reviews, ['T-001.rv', 'T-002.rv']);
     const index = p.git('show', `flow/${p.flowId}/integration:src/server/index.js`);

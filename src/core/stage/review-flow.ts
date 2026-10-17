@@ -48,7 +48,7 @@ export function unresolvedAfter(store: StateStore, flowId: string, rvId: string)
 
 
 /**
- * 预检通过后是否需要审查，以及强度（impl 一律审查，审查者运行本 task 自己的测试）。
+ * 提交时是否需要审查，以及强度（impl 一律审查，审查者运行本 task 自己的测试）。
  * 已有审查记录时：上一轮有未解决的 must 则继续确认轮（沿用强度）；上一轮已通过、之后又返工（合并冲突由 worker 解决）的不再审查，
  * 解决得对不对由阶段门禁的全量测试与验收测试检查，与 merge-fix 一样。重新审查会是新的第一轮，提出之前各轮没提的问题
  * （stock run-04：5 次冲突后的审查有 3 次提了新的 must，T-004 因此用完轮数交给用户）。
@@ -99,12 +99,14 @@ export async function createReviewTask(root: string, store: StateStore, config: 
     contracts = fitSnippets(contractFilesFor(orig.module, all, touched).map((p) => ({ path: p, content: showAt(wt, p) })).filter((f) => f.content), CONTRACT_SNIPPET_MAX);
   }
   const cross = confirm ? {} : crossTaskInputs(tasks, orig, names(orig.base_sha));
+  const sharedEdits = confirm ? [] : sharedRewrites(wt, orig, head, names(orig.base_sha));
   const brief = buildReviewBrief({
     taskId: orig.id, title: orig.title, reviewId: id, acIds: orig.ac ?? [], acTexts: acText, contracts, deviations: orig.deviations ?? [],
     range: { from, to: head }, diff, priorMust,
     tests: reviewTestPlan(config, orig, store.readFlow(flowId).integration_branch),
     ...(ownTests ? { acceptance: acceptanceAudit(orig) ?? undefined, withAcceptance: true } : {}),
     ...cross,
+    ...(sharedEdits.length ? { sharedEdits } : {}),
   });
   const input: TaskInput = {
     id, stage: orig.stage, kind: 'review', role: 'reviewer', title: `审查：${orig.title}`, scopes: [...config.role('reviewer').scopes],
@@ -122,16 +124,25 @@ export async function createReviewTask(root: string, store: StateStore, config: 
   return rv!;
 }
 
-/** 第一轮审查要看的跨 task 信息：软依赖的生产方与接口；diff 里落在已完成的其他 task 负责范围内的文件（文档与验收测试除外，最多 15 个） */
-export function crossTaskInputs(tasks: readonly TaskFile[], orig: TaskFile, files: readonly string[]): Pick<ReviewBriefInput, 'uses' | 'othersFiles'> {
-  const refs = new Map<string, string[]>();
-  for (const d of orig.depends_on) if (d.type === 'soft') refs.set(d.task, [...(refs.get(d.task) ?? []), ...(d.reason ? [d.reason] : [])]);
-  const uses = [...refs].map(([task, r]) => ({ task, refs: r.length ? r : ['（计划里没写接口）'] }));
+/** 第一轮审查要看的跨 task 信息：diff 里落在已完成的其他 task 负责范围内的文件（文档与验收测试除外，最多 15 个） */
+export function crossTaskInputs(tasks: readonly TaskFile[], orig: TaskFile, files: readonly string[]): Pick<ReviewBriefInput, 'othersFiles'> {
   const done = tasks.filter((t) => t.id !== orig.id && t.kind === 'impl' && t.status === 'done' && t.writes.length);
   const othersFiles = files.filter((f) => !f.startsWith('docs/') && !f.startsWith('tests/acceptance/'))
     .map((file) => ({ file, owners: done.filter((t) => matchesAny(file, t.writes)).map((t) => t.id) }))
     .filter((f) => f.owners.length).slice(0, 15);
-  return { ...(uses.length ? { uses } : {}), ...(othersFiles.length ? { othersFiles } : {}) };
+  return othersFiles.length ? { othersFiles } : {};
+}
+
+/**
+ * plan.md 的公共文件（shared）不拦：改动不只是追加（删除或修改了已有的行）的，列给 reviewer 看一眼。
+ * 并行的任务都会往这些文件里追加，改已有内容可能破坏别人的用法；只提醒，不拦。
+ */
+export function sharedRewrites(wt: string, orig: Pick<TaskFile, 'base_sha' | 'shared'>, head: string, files: readonly string[]): string[] {
+  if (!orig.base_sha || !orig.shared?.length) return [];
+  return files.filter((f) => matchesAny(f, orig.shared!)).filter((f) => {
+    const [, deleted] = git(wt, ['diff', '--numstat', orig.base_sha!, head, '--', f]).trim().split('\t');
+    return !!deleted && deleted !== '0';
+  });
 }
 
 /** 把 suggest 追加到集成分支的 docs/review/suggestions.md（每条带 task 与 R 编号；同一条不重复追加）。与合并并发时重试。 */
@@ -165,7 +176,7 @@ const brief1 =(m: ReviewFinding) => `${m.id} ${m.problem.replace(/\s+/g, ' ').sl
 
 /**
  * 处理审查结论（pump 的一步，类似 resolveDisputes）。对每个 in_review 的 task：
- * - 还没有审查 task（刚预检通过，或崩溃恢复）：创建 .rv 或 .rv-n；
+ * - 还没有审查 task（刚提交，或崩溃恢复）：创建 .rv 或 .rv-n；
  * - 最新的审查 task done：没有未解决的 must → review_pass（→ queued_merge）；有 → review_changes（→ in_progress，must 清单写进 handoff，
  *   worker 接着原会话改）；review_rounds 达到 review.max_rounds 时状态机自动转 blocked（blocked_by = review_exhausted，用户可 /forge accept）；
  * - 审查者 forge_block：只有审查 task 阻塞，原 task 留在 in_review 等它（原来一并阻塞：club run-02 主会话对两者各 retry 一次，worker 与 reviewer 在同一个 worktree 里同时运行）。
@@ -179,7 +190,7 @@ export async function resolveReviews(root: string, store: StateStore, config: Fl
     const t = store.readTask(flowId, listed.id);
     if (t.status !== 'in_review') continue;
     const latest = reviewTasksOf(store.listTasks(flowId), t.id).at(-1);
-    // 没有审查 task，或最新一轮的结论已经处理过（原 task 返工后再次预检通过，重新回到 in_review）：创建下一轮
+    // 没有审查 task，或最新一轮的结论已经处理过（原 task 返工后再次提交，重新回到 in_review）：创建下一轮
     if (!latest || (latest.status === 'done' && reviewResolved(store, flowId, t.id, latest.id))) {
       const mode = decideReview(store, config, flowId, t);
       await createReviewTask(root, store, config, flowId, t, mode === 'skip' ? 'auto' : mode);

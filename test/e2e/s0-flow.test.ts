@@ -38,7 +38,7 @@ test('S0：缺必需文件时提交被退回 → 补齐后提交 → 审查、�
       submits.push(await a.call('forge_submit', { summary: '架构' }));
       return;
     }
-    if (role === 'worker') { await a.call('forge_claim'); await a.call('forge_block', { reason: '测试到此为止' }); return; }
+    if (role === 'backend' || role === 'frontend') { await a.call('forge_claim'); await a.call('forge_block', { reason: '测试到此为止' }); return; }
     throw new Error(`意外的角色 ${role}`);
   });
   try {
@@ -79,10 +79,11 @@ test('S0：缺必需文件时提交被退回 → 补齐后提交 → 审查、�
     assert.deepEqual(p.store.readTask(p.flowId, 'T-004').depends_on.map((d) => d.task), ['T-003']);
     assert.deepEqual(p.store.readTask(p.flowId, 'T-008').depends_on.map((d) => d.task), ['T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007']);
     assert.equal(p.store.readTask(p.flowId, 'T-007').fork_from_task, 'T-006');
-    // 第 1 批开工：测试配置并发 2，没有依赖的任务里后续链更长的先派（catalog → inventory、前端基础 → 页面链）
+    assert.equal(after.max_parallel_backend, 2, 'plan.md 的 max_parallel_backend 记在流程上');
+    // 第 1 批开工：后端按 plan.md 的 max_parallel_backend=2 并行（user、catalog；inventory 等 catalog），前端只派前端基础
     await e.engine.idle();
-    const launched = e.launcher.launched.filter((s) => s.env['PI_FORGE_ROLE'] === 'worker').map((s) => s.env['PI_FORGE_TASK']);
-    assert.deepEqual(launched.sort(), ['T-003', 'T-005']);
+    const launched = e.launcher.launched.filter((s) => ['backend', 'frontend'].includes(s.env['PI_FORGE_ROLE']!)).map((s) => `${s.env['PI_FORGE_TASK']} ${s.env['PI_FORGE_ROLE']}`);
+    assert.deepEqual(launched.sort(), ['T-002 backend', 'T-003 backend', 'T-005 frontend']);
     assert.ok((await p.store.verifyIntegrity()).ok);
   } finally { p.cleanup(); }
 });

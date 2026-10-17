@@ -3,7 +3,8 @@
 // → 5 恢复中断的合并 → 6 生成 resume brief。
 import { existsSync } from 'node:fs';
 import type { FlowConfig } from '../state/config.ts';
-import type { StateStore } from '../state/state-store.ts';
+import { isFinished, type StateStore } from '../state/state-store.ts';
+import { LEGACY_REASON, SCHEMA_VERSION } from '../state/migrations.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import { git } from '../state/git.ts';
 import { removeWorktree } from '../workspace/worktree.ts';
@@ -43,6 +44,14 @@ export interface ResumeReport {
   brief: string;
 }
 
+/** 旧格式（新流程之前）的 .forge 里还没结束的主流程：不迁移，提示中止后重建 */
+export function legacyFlows(store: StateStore): string[] {
+  const s = store.readJsonRel<{ schema_version: number }>('state.json');
+  if (!s || s.schema_version >= SCHEMA_VERSION) return [];
+  return store.listFlows().filter((id) => { const f = store.readFlow(id); return f.mode === 'build' && !isFinished(f); });
+}
+export const legacyMessage = (flows: readonly string[]) => `${flows.join('、')}：${LEGACY_REASON}。`;
+
 export const processAlive = (pid: number) => {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 };
@@ -64,6 +73,9 @@ export async function resume(d: ResumeDeps, decide?: (q: ResumeDecision) => Prom
   // 1. 事务日志与完整性
   const replayedJournal = await store.recover();
   if (replayedJournal) actions.push('重放了未完成的事务日志');
+  // 新流程之前的主流程不迁移：提示中止后重建（/forge abort 会顺带把文件改成新格式）
+  const legacy = legacyFlows(store);
+  if (legacy.length) return { ok: false, integrityErrors: [], replayedJournal, actions, pending, brief: legacyMessage(legacy) };
   // 旧格式先迁移（完整性校验按当前 schema 进行）
   try {
     for (const m of await store.migrate()) actions.push(`迁移 ${m}`);

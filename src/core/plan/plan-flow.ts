@@ -137,7 +137,7 @@ export async function materializePlan(root: string, store: StateStore, config: F
   const prd = parsePrd(readRel({ root, ref }, PRD_PATH) ?? '');
   const { stages, tasks } = deriveBatchTasks(check.plan, prd, first, { verify: ['test'].filter((c) => config.commands[c]?.trim()) });
   const contractsBase = git(root, ['rev-parse', `refs/heads/${ref}`]).trim();
-  await store.materializePlan(flowId, { stages, tasks, notes: {}, contractsBase });
+  await store.materializePlan(flowId, { stages, tasks, notes: {}, contractsBase, ...(check.plan.max_parallel_backend ? { maxParallelBackend: check.plan.max_parallel_backend } : {}) });
   return [`已生成 ${stages.length} 个批次阶段（${stages.map((s) => s.id).join('、')}）与 ${tasks.length} 个 task。`];
 }
 

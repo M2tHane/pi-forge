@@ -28,7 +28,7 @@ export const ChangeParams = Type.Object({
     id: Type.Optional(Type.String({ pattern: '^T-[0-9]{3,}$', description: '省略时按顺序编号 T-001…' })),
     title: Type.String({ minLength: 1, maxLength: 200 }),
     writes: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: '计划改动的文件或目录；不能包含 tests/acceptance、docs/spec、docs/contracts、rules 等' }),
-    depends_on: Type.Optional(Type.Array(Type.Object({ task: Type.String({ pattern: '^T-[0-9]{3,}$' }), type: Type.Union([Type.Literal('hard'), Type.Literal('soft')]) }, { additionalProperties: false }))),
+    depends_on: Type.Optional(Type.Array(Type.Object({ task: Type.String({ pattern: '^T-[0-9]{3,}$' }), type: Type.Literal('hard') }, { additionalProperties: false }))),
     ac: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: '验收标准：做到什么算完成' }),
     layers: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
     module: Type.Optional(Type.String({ minLength: 1 })),

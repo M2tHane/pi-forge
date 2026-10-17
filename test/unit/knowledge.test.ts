@@ -50,12 +50,12 @@ test('提示：项目知识在系统提示末尾（技能之后），声明不�
   const k: KnowledgeFile = { entries: [], version: 1 };
   const e = add(k, '订单金额用整数分存储', { scopes: ['code'] });
   const p = assemblePrompt({ ...base, task: mkTask('T-002'), knowledge: [formatEntry(e)],
-    upstream: [{ id: 'T-001', title: '订单模型', type: 'hard', status: '已完成', handoff: `${'旧内容\n'.repeat(400)}最后：迁移文件已建好` }] });
+    upstream: [{ id: 'T-001', title: '订单模型', status: '已完成', handoff: `${'旧内容\n'.repeat(400)}最后：迁移文件已建好` }] });
   assert.ok(p.system.indexOf('SKILL-X') < p.system.indexOf('# 项目知识'));
   assert.match(p.system, /不是规则，与上面的规则冲突时以规则为准[\s\S]*K-001 \[坑\]（code） 订单金额用整数分存储/);
-  assert.match(p.user, /## 上游任务的 handoff[\s\S]*T-001「订单模型」（硬依赖，已完成）[\s\S]*迁移文件已建好/);
+  assert.match(p.user, /## 上游任务的 handoff[\s\S]*T-001「订单模型」（已完成）[\s\S]*迁移文件已建好/);
   assert.ok(p.user.indexOf('上游任务的 handoff') > p.user.indexOf('verify 命令'));
-  const plain = assemblePrompt({ ...base, task: mkTask('T-002'), upstream: [{ id: 'T-001', title: 'x', type: 'soft', status: '已完成', handoff: '' }] });
+  const plain = assemblePrompt({ ...base, task: mkTask('T-002'), upstream: [{ id: 'T-001', title: 'x', status: '已完成', handoff: '' }] });
   assert.ok(!plain.system.includes('# 项目知识'));
   assert.ok(!plain.user.includes('上游任务'));
   const many = upstreamSection(Array.from({ length: 10 }, (_, i) => ({ id: `T-00${i}`, title: 't', type: 'hard' as const, status: '已完成', handoff: 'x'.repeat(2000) })));

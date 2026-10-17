@@ -12,12 +12,12 @@ import {
   type TaskFile, type TaskStatus, type FlowEvent, type NotesFile, type ChangeFile, type ChangeActionSummary,
 } from './schemas.ts';
 import {
-  IN_FLIGHT, isAuxKind, planStageTransition, planTransition, type Facts, type StageTrigger, type TaskPatch, type Trigger,
+  flowLimits, planStageTransition, planTransition, poolOf, type Facts, type StageTrigger, type TaskPatch, type Trigger,
 } from './state-machine.ts';
 import {
   EventCache, GENESIS_HASH, appendEvents, buildEvent, commitStateRef, readEvents, readLastEvent, sha256, untrackStateDir, verifyChain, type EventInput,
 } from './event-log.ts';
-import { conflictsWith, depStatus } from './dag.ts';
+import { depStatus } from './dag.ts';
 
 export const FLOW_DIRNAME = '.forge';
 const JOURNAL = 'tx.json';
@@ -38,7 +38,7 @@ const newerFormat = (from: number, to: number) => new StateError(`.forge/ 是更
 
 export interface StoreLimits {
   max_attempts: number; max_parallel: number; max_continuations?: number;
-  max_parallel_aux?: number; max_precheck_failures?: number; max_merge_failures?: number;
+  max_parallel_aux?: number; max_parallel_backend?: number; max_merge_failures?: number;
   review_max_rounds?: number;
 }
 
@@ -186,8 +186,6 @@ export interface CreateFlowInput {
   base_sha: string | null;
   actor?: string;
 }
-
-import { softDepsDone } from './waits.ts';
 
 export type TaskInput = Pick<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify'>
   & Partial<Omit<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify' | 'status' | 'lease' | 'created_by' | 'version'>>;
@@ -563,7 +561,7 @@ export class StateStore {
     const task: TaskFile = {
       ...structuredClone(t),
       ac: [...(t.ac ?? [])], verify: [...t.verify], status: 'pending', attempts: 0, violations: 0,
-      precheck_failures: 0, review_rounds: 0, merge_failures: 0, blocked_by: null,
+      review_rounds: 0, merge_failures: 0, blocked_by: null,
       lease_expirations: 0, lease: null, impl_run: null, branch: t.branch ?? null, worktree: t.worktree ?? null, base_sha: t.base_sha ?? null,
       blocked_reason: null, last_failure: null, created_by: actor, version: 1,
       ...(t.merge_fix_for ? { merge_fix_for: t.merge_fix_for } : {}),
@@ -597,23 +595,19 @@ export class StateStore {
       const statusOf = new Map(others.map((t) => [t.id, depStatus(t)]));
       const eligible = mq.queue.find((e) => {
         const candidate = e.flow === flowId ? (e.task === taskId ? task : others.find((t) => t.id === e.task)) : this.readTask(e.flow, e.task);
-        return candidate?.status === 'queued_merge' && softDepsDone(candidate, e.flow === flowId ? [task, ...others] : this.listTasks(e.flow));
+        return candidate?.status === 'queued_merge';
       });
       const facts: Facts = {
         ...req.facts,
         now: this.now(),
-        limits: this.limits,
+        limits: flowLimits(this.limits, flow),
         actor: req.actor,
         // 以下由程序推导，覆盖调用方传入的同名字段
         // stage-qa 在门禁进行中（awaiting_gate）运行，其余 task 只在阶段 active 时派发
         stage_active: flow.stage === task.stage && (flow.stage_status === 'active' || (task.kind === 'qa' && flow.stage_status === 'awaiting_gate')),
         status_of: statusOf,
-        soft_deps_done: softDepsDone(task, others),
-        // 两个池分别计数：实施池是 impl、fix、merge-fix、doc 等，辅助池是 review 与 qa
-        running_count: others.filter((t) => t.status === 'in_progress' && !isAuxKind(t.kind)).length,
-        aux_running_count: others.filter((t) => t.status === 'in_progress' && isAuxKind(t.kind)).length,
-        // writes 重叠只影响调度顺序，不再阻止派发；保留作事件记录
-        conflicting_running: others.filter((t) => IN_FLIGHT.includes(t.status) && t.id !== task.merge_fix_for && conflictsWith(t, task)).map((t) => t.id),
+        // 各池分别计数（state-machine.poolOf）：backend、frontend、aux（审查与验收）、其余
+        running_count: others.filter((t) => t.status === 'in_progress' && poolOf(t) === poolOf(task)).length,
         merging_other: merging && merging !== me ? merging : null,
         queue_head: eligible ? key(eligible) === me : false,
       };
@@ -927,13 +921,14 @@ export class StateStore {
    * 批准架构阶段时落地计划：同一事务内写入批次阶段（stages_planned）、新增 task 与它们的初始笔记、记下锁定契约的提交。
    * 只能在 S0 等待批准时调用；已经落地过（有 s_stages）时拒绝。
    */
-  async materializePlan(flowId: string, input: { stages: NonNullable<FlowFile['s_stages']>; tasks: readonly TaskInput[]; notes: Record<string, string[]>; contractsBase: string }): Promise<FlowFile> {
+  async materializePlan(flowId: string, input: { stages: NonNullable<FlowFile['s_stages']>; tasks: readonly TaskInput[]; notes: Record<string, string[]>; contractsBase: string; maxParallelBackend?: number }): Promise<FlowFile> {
     return this.transaction((tx) => {
       const flow = tx.readFlow(flowId);
       if (flow.stage !== 'S0' || flow.stage_status !== 'awaiting_human') throw new StateError(`计划只能在 S0 等待批准时落地（当前 ${flow.stage} ${flow.stage_status}）`);
       if (flow.s_stages?.length) throw new StateError('计划已经落地过，不能重复生成');
       if (new Set(input.stages.map((st) => st.id)).size !== input.stages.length) throw new StateError('S 阶段编号重复');
-      const next = tx.putFlow({ ...flow, s_stages: structuredClone(input.stages), stages: [...flow.stages, ...input.stages.map((st) => st.id)], contracts_base: input.contractsBase });
+      const next = tx.putFlow({ ...flow, s_stages: structuredClone(input.stages), stages: [...flow.stages, ...input.stages.map((st) => st.id)], contracts_base: input.contractsBase,
+        ...(input.maxParallelBackend ? { max_parallel_backend: input.maxParallelBackend } : {}) });
       tx.event({ flow: flowId, actor: 'human', type: 'stages_planned', data: { stages: input.stages } });
       const added = input.tasks.map((t) => this.putNewTask(tx, flowId, t, 'engine'));
       for (const [task, goal] of Object.entries(input.notes)) {

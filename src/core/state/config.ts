@@ -24,10 +24,11 @@ export const DEFAULT_COMPACT_AT = 0.7;
  * 已实测：脚本中的每个工具调用都经过 tool_call 处理函数（guard 照常拦截与计违规）。它自己不直接读写文件。
  */
 export const ORCHESTRATING_TOOLS = ['codemode'] as const;
-/** 只能显式分配给特定角色；按层运行时夹具的 *-engineer 视为 worker */
+/** 只能显式分配给特定角色 */
+const CODING_ROLES = ['worker', 'backend', 'frontend', 'architect'] as const;
 const ROLE_EXCLUSIVE: Record<string, readonly string[]> = {
-  forge_add_dependency: ['worker', 'architect'], forge_private_deps: ['worker', 'architect'],
-  forge_service: ['worker', 'architect', 'stage-qa'], forge_propose_plan: ['architect'],
+  forge_add_dependency: CODING_ROLES, forge_private_deps: CODING_ROLES,
+  forge_service: [...CODING_ROLES, 'stage-qa'], forge_propose_plan: ['architect'],
   forge_review_report: ['reviewer'], forge_review_confirm: ['reviewer'],
   forge_qa_report: ['stage-qa'], forge_qa_confirm: ['stage-qa'],
   forge_read: ['orchestrator'], forge_change: ['orchestrator'],
@@ -163,7 +164,7 @@ export function parseConfig(source: string): FlowConfig {
       const holder = parent ? o[parent] : (o as Record<string, unknown>);
       if (holder && typeof holder === 'object' && key in holder) { delete (holder as Record<string, unknown>)[key]; removedWarnings.push(`${parent ? `${parent}.` : ''}${key} 已不再支持，已忽略`); }
     };
-    dropKey(null, 'acctest_workspace'); dropKey(null, 'modes'); dropKey('limits', 'lean_below_loc'); dropKey('testing', 'max_disputes'); dropKey('implementation_gate', 'test_author'); dropKey('review', 'per_task'); dropKey('review', 'skip_sizes');
+    dropKey(null, 'acctest_workspace'); dropKey(null, 'modes'); dropKey('limits', 'lean_below_loc'); dropKey('testing', 'max_disputes'); dropKey('implementation_gate', 'test_author'); dropKey('review', 'per_task'); dropKey('review', 'skip_sizes'); dropKey('limits', 'max_precheck_failures');
     // 已删除的工具名：旧 workflow.yaml 里还列着时去掉并告警，不让整个配置失效
     const REMOVED_TOOLS = new Set(['forge_request_scope', 'forge_resolve_scope', 'forge_spec_amend', 'forge_dispute', 'forge_spec']);
     const roles = o['roles'];
@@ -185,7 +186,6 @@ export function parseConfig(source: string): FlowConfig {
   }
   const wf = raw as WorkflowFile;
   // schema 的 default 只描述配置；解析时补齐实际运行所需的默认值。
-  wf.limits.max_precheck_failures ??= 3;
   wf.limits.max_merge_failures ??= 2;
   wf.limits.change_max_tasks ??= 3;
   // 状态机按 limits.review_max_rounds 判定审查轮数用尽；取自 review.max_rounds

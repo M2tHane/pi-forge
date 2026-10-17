@@ -1,7 +1,7 @@
 需要你处理：
 - T-001「任务 T-001」审查多轮仍有问题，等你决定：原因 review_exhausted
   → /forge accept T-001 --note "<说明>"（接受现状，程序继续合并验证）或 /forge unblock T-001 "<意见>" --reset（清零后重新审查）
-- T-002「任务 T-002」预检多次失败：原因 precheck_exhausted
+- T-002「任务 T-002」多次尝试仍失败：原因 attempts
   → /forge unblock T-002 "<提示>" --reset（计数清零后重试）
 - T-003「任务 T-003」有问题要问你：原因 agent
   → /forge answer T-003

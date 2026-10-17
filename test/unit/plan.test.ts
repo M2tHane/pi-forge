@@ -32,10 +32,10 @@ test('合格的计划：零错误，推导出软依赖与硬依赖，报告含�
   assert.match(formatPlanReport(r.report!), /S0（1 个 task）[\s\S]*关键路径 2/);
 });
 
-test('全部 requires 带 ~ 时是软依赖', () => {
+test('全部 requires 带 ~ 时不加依赖（没有软依赖了）', () => {
   const r = run((p) => { t(p, 'T-003').requires = ['~table:teams', '~api:GET /api/teams']; });
   assert.deepEqual(r.errors, []);
-  assert.deepEqual(r.deps.get('T-003'), [{ task: 'T-002', type: 'soft', reason: 'table:teams、api:GET /api/teams' }]);
+  assert.deepEqual(r.deps.get('T-003'), []);
 });
 
 test('符号语法：前缀、api 的方法与路径、fn 与 page 的格式', () => {
@@ -93,7 +93,7 @@ test('7.3-5 环检测', () => {
     p.stages[0]!.exit = ['REQ-002', 'REQ-001'];
     p.stages.pop();
     p.tasks[1]!.stage = 'S0';
-    t(p, 'T-002').requires.push('~table:datasources');
+    t(p, 'T-002').requires.push('table:datasources');
   });
   assert.match(errs(r), /依赖存在环：T-00\d -> T-00\d -> T-00\d/);
 });
@@ -141,12 +141,6 @@ test('提醒：阶段 task 过多；产出的接口不在自己模块的契约�
   assert.match(run(() => {}, { limits: { max_parallel: 0, max_task_files: 12 } }).warnings.join(), /阶段 S0 有 1 个 task，超过 max_parallel × 3 = 0/);
   const r = run((p) => { t(p, 'T-003').module = 'storage'; });
   assert.match(r.warnings.join(), /T-003（module storage）产出的 api:POST \/api\/datasources 定义在模块 datasource 的契约文件里/);
-});
-
-test('互斥对：writes 重叠的 task 写进报告', () => {
-  const r = run((p) => { t(p, 'T-003').writes.push('server/src/team/shared.ts'); });
-  assert.deepEqual(r.errors, []);
-  assert.deepEqual(r.report!.mutex, [['T-002', 'T-003']]);
 });
 
 test('派生 task：S0 归 architect、其余 impl 归 worker，writes 加上自己的验收目录，S0 多两个验收目录与 rules/**；verify 来自配置', () => {

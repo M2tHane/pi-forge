@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { StateStore } from '../state/state-store.ts';
 import { git } from '../state/git.ts';
 import { worktreesRoot, removeWorktree } from '../workspace/worktree.ts';
-import { processAlive } from './resume.ts';
+import { legacyFlows, legacyMessage, processAlive } from './resume.ts';
 import { isStaleResource, listResources, reclaimResources } from '../workspace/resources.ts';
 import { preflight, formatPreflight, type PreflightDeps } from '../spec/preflight.ts';
 import { readEngineLock } from './engine-lock.ts';
@@ -24,6 +24,8 @@ export async function doctor(root: string, store: StateStore, opts: { fix?: bool
   if (!existsSync(path.join(root, '.forge', 'state.json'))) {
     return { errors: ['尚未初始化：执行 /forge init'], warnings, fixed, preflight: formatPreflight(preflight({ root, ...opts.preflight })) };
   }
+  const legacy = legacyFlows(store);
+  if (legacy.length) errors.push(legacyMessage(legacy));
   if (existsSync(path.join(root, '.forge', 'tx.json'))) warnings.push('存在未完成的事务日志 tx.json：执行 /forge-resume 重放');
   const integrity = await store.verifyIntegrity();
   errors.push(...integrity.errors.filter((e) => !e.includes('tx.json')).map((e) => `完整性：${e}`));

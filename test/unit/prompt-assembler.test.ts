@@ -186,15 +186,15 @@ test('上游 handoff 只带最后一次 run 写的段，跳过 dispatcher / engi
     '## 2026-01-01T00:31:00Z run:r-2', '', '提交说明：完成', '',
     '## 2026-01-01T00:32:00Z forge-submit', '', '提交前清理了文件', '',
   ].join('\n');
-  const out = upstreamSection([{ id: 'T-002', title: 'x', type: 'hard', status: '已完成', handoff }]);
+  const out = upstreamSection([{ id: 'T-002', title: 'x', status: '已完成', handoff }]);
   assert.match(out, /最新结论：接口在 src\/a\.ts[\s\S]*提交说明：完成/);
   assert.doesNotMatch(out, /Cannot find module|旧结论|审查要求修改|提交前清理/);
   // 没有 run 写的段：只丢程序段；纯文本原样保留
   const human = '\n## 2026-01-01T00:00:00Z dispatcher\n\n过时\n\n## 2026-01-01T00:01:00Z human\n\n用户回答：用 PG\n';
-  const h = upstreamSection([{ id: 'T-002', title: 'x', type: 'soft', status: '已完成', handoff: human }]);
+  const h = upstreamSection([{ id: 'T-002', title: 'x', status: '已完成', handoff: human }]);
   assert.doesNotMatch(h, /过时/);
   assert.match(h, /用户回答：用 PG/);
-  assert.match(upstreamSection([{ id: 'T-002', title: 'x', type: 'soft', status: '已完成', handoff: '纯文本笔记' }]), /纯文本笔记/);
+  assert.match(upstreamSection([{ id: 'T-002', title: 'x', status: '已完成', handoff: '纯文本笔记' }]), /纯文本笔记/);
 });
 
 test('角色提示里的技能位置由程序填入本机路径（只有 stage-qa 用浏览器，worker 的提示里没有）；没给值的占位保持原样', () => {

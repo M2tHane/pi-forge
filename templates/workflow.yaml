@@ -3,10 +3,10 @@ project: my-project
 main_branch: main
 # 流程配置：模型、角色、并发、门禁、可写范围。项目怎么装依赖、跑测试、启动服务写在 commands.yaml（architect 维护）。
 limits:
-  max_parallel: 3                 # 同时运行的 impl task 数（review、qa 另计）
+  max_parallel: 3                 # 架构阶段与修复、小改动流程同时运行的 task 数
+  max_parallel_backend: 3         # 同时开发的后端 domain 数（docs/plan.md 可以覆盖）；前端固定 1 个
   max_parallel_aux: 4             # 同时运行的 review、qa 数
   max_attempts: 3                 # 只计运行失败（崩溃、超时等）
-  max_precheck_failures: 3
   max_merge_failures: 2
   post_merge_test: true           # 每次合并后在后台跑一遍门禁命令，变红时二分定位到 task 并建修复
   port_block: 10                  # 每次运行分配的连续端口数
@@ -56,9 +56,11 @@ tool_groups:
   web:         [web_search, fetch_content, get_search_content, source_check]   # pi-web-access 的搜索工具，默认不分配；要用时在角色 tools 里加 "@web"
   ask:         [ask_user]
 # bash: full | readonly | allowlist 是唯一依据，写了才有 bash 工具（tools 里不写 bash）
-roles:                            # notes、history、forge_block、forge_learn 所有子进程角色隐式拥有；forge_service 只给 worker、architect（S0）与 stage-qa，forge_add_dependency、forge_private_deps 给 worker 与 architect（S0）
+roles:                            # notes、history、forge_block、forge_learn 所有子进程角色隐式拥有；forge_service 只给写代码的角色与 stage-qa，forge_add_dependency、forge_private_deps 只给写代码的角色
   orchestrator:        { model: strong, tools: [read, grep, find, ls, forge_read, "@ask", forge_change, forge_status, forge_wait, forge_change_request, forge_resolve_timeout], writes: [] }   # notes、history 隐式拥有
   architect:   { model: strong, scopes: [plan, code], bash: full, tools: [codemode, read, write, edit, forge_service, "@codegraph", forge_sync, forge_add_dependency, forge_private_deps, forge_propose_plan, forge_note, forge_submit] }
-  worker:      { model: strong, scopes: [code], bash: full, tools: [read, write, edit, forge_service, "@codegraph", forge_sync, forge_change_request, forge_add_dependency, forge_private_deps, forge_note, forge_submit] }
+  backend:     { model: strong, scopes: [code], bash: full, tools: [read, write, edit, forge_service, "@codegraph", forge_sync, forge_add_dependency, forge_private_deps, forge_note, forge_submit] }   # 一个 domain 的整条后端链路
+  frontend:    { model: strong, scopes: [code], bash: full, tools: [read, write, edit, forge_service, "@codegraph", forge_sync, forge_add_dependency, forge_private_deps, forge_note, forge_submit] }   # 前端基础与全部页面，同一时间 1 个
+  worker:      { model: strong, scopes: [code], bash: full, tools: [read, write, edit, forge_service, "@codegraph", forge_sync, forge_change_request, forge_add_dependency, forge_private_deps, forge_note, forge_submit] }   # 只给修复、小改动流程
   reviewer:    { model: medium, scopes: [review], bash: allowlist, bash_allow: [typecheck, lint, test, acceptance], tools: [read, "@codegraph", forge_review_report, forge_review_confirm] }
   stage-qa:    { model: strong, scopes: [qa], bash: full, tools: [read, forge_service, "@codegraph", forge_qa_report, forge_qa_confirm] }

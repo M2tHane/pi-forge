@@ -62,7 +62,7 @@ test('知识库：agent 提交的知识注入后续同 scope 任务的提示，�
     assert.match(sys('T-002'), new RegExp(`K-001 \\[约定\\]（code） ${LESSON}`));
     assert.ok(!sys('T-003').includes(LESSON));
     // 下游看到上游 handoff
-    assert.match(specOf('T-002').prompt, /## 上游任务的 handoff[\s\S]*T-001「任务 T-001」（硬依赖，已完成）[\s\S]*订单模型已建好（第 1 次）/);
+    assert.match(specOf('T-002').prompt, /## 上游任务的 handoff[\s\S]*T-001「任务 T-001」（已完成）[\s\S]*订单模型已建好（第 1 次）/);
     assert.ok(!specOf('T-003').prompt.includes('上游任务的 handoff'));
 
     // 程序提炼的候选（轻流程合并后验证失败时生成）：未确认前不注入

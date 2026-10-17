@@ -18,7 +18,7 @@ export interface Migration {
 }
 
 /** 当前格式版本 */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const omit = (o: Json, keys: readonly string[]): Json => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 const isAcctestId = (id: unknown) => typeof id === 'string' && /\.at(-\d+)?$/.test(id);
@@ -53,8 +53,29 @@ const v2ToV3: Migration = {
   task: (t) => omit(t, ['scope_request', 'scope_grants']),
 };
 
+export const LEGACY_REASON = '这是旧流程，请 /forge abort 后用新流程重建';
+
+/**
+ * 3 → 4：PRD 与原型驱动的新流程（后端按 domain、前端单人、三个调度池）。旧流程不迁移，只把文件改到能通过新 schema，
+ * 好让 /forge abort 能执行：删掉的状态（等待输入、预检中）转为阻塞并写明原因，删掉预检计数与软依赖。
+ */
+const v3ToV4: Migration = {
+  from: 3,
+  description: '删除等待输入与预检状态、预检计数、软依赖（旧流程请中止后重建）',
+  task: (t) => {
+    const next = omit(t, ['precheck_failures']);
+    if (Array.isArray(next['depends_on'])) next['depends_on'] = (next['depends_on'] as Json[]).filter((d) => d['type'] === 'hard');
+    if (next['status'] === 'awaiting_inputs' || next['status'] === 'checking') {
+      next['status'] = 'blocked';
+      next['blocked_by'] = 'dispatcher';
+      next['blocked_reason'] = LEGACY_REASON;
+    } else if (next['blocked_by'] === 'precheck_exhausted') next['blocked_by'] = 'dispatcher';
+    return next;
+  },
+};
+
 /** 版本链；新格式在此追加一步并把 SCHEMA_VERSION 加一 */
-export const MIGRATIONS: Migration[] = [v1ToV2, v2ToV3];
+export const MIGRATIONS: Migration[] = [v1ToV2, v2ToV3, v3ToV4];
 
 /** 从 from 到 to 依次要执行的迁移；缺某一步时返回缺的版本号 */
 export function migrationChain(from: number, to: number, list: readonly Migration[] = MIGRATIONS): { steps: Migration[]; missing: number | null } {

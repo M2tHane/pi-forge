@@ -26,8 +26,6 @@ test('reviewMode：被 critical_fanout 个 task 硬依赖、layers 含 auth、ri
   assert.equal(reviewMode(base, [mkTask('T-001'), ...dependents], policy), 'strong');
   assert.equal(reviewMode(base, [mkTask('T-001'), ...dependents.slice(0, 2)], policy), 'auto', '只有 2 个依赖者，不到 3');
   assert.equal(reviewMode(base, [mkTask('T-001'), ...dependents], { ...policy, criticalFanout: 0 }), 'auto', 'critical_fanout 为 0 关闭');
-  const soft = ['T-002', 'T-003', 'T-004'].map((id) => mkTask(id, { depends_on: [{ task: 'T-001', type: 'soft' }] }));
-  assert.equal(reviewMode(base, [mkTask('T-001'), ...soft], policy), 'auto', '软依赖不计');
   const cancelled = dependents.map((t) => ({ ...t, status: 'cancelled' as const }));
   assert.equal(reviewMode(base, [mkTask('T-001'), ...cancelled], policy), 'auto', '已取消的不计');
   assert.equal(reviewMode(derived('T-001', { layers: ['backend', 'auth'], size: 'S' }), [], policy), 'strong');
@@ -191,17 +189,16 @@ test('buildReviewBrief：给了 tests 与 acceptance 时，先列出要运行的
   assert.match(confirm, /确认轮也先运行这些命令/);
 });
 
-test('跨 task 的提醒：软依赖的生产方与接口、diff 里落在已完成的其他 task 范围内的文件进第一轮说明', () => {
+test('跨 task 的提醒：diff 里落在已完成的其他 task 范围内的文件、改了公共文件的已有内容，进第一轮说明', () => {
   const t005 = mkTask('T-005', { status: 'done', writes: ['public/pages/products/**'] });
   const t008 = mkTask('T-008', { status: 'done', writes: ['server/modules/inventory/**'] });
-  const t013 = mkTask('T-013', { writes: ['server/modules/exports/**', 'public/pages/products/**'], deps: [
-    { task: 'T-008', type: 'soft', reason: 'fn:inventory#changeStock' }, { task: 'T-008', type: 'soft', reason: 'api:GET /api/stock' }] });
+  const t013 = mkTask('T-013', { writes: ['server/modules/exports/**', 'public/pages/products/**'] });
   const cross = crossTaskInputs([t005, t008, t013], t013, ['public/pages/products/page.js', 'server/modules/exports/csv.js', 'docs/contracts/x.md']);
-  assert.deepEqual(cross, { uses: [{ task: 'T-008', refs: ['fn:inventory#changeStock', 'api:GET /api/stock'] }], othersFiles: [{ file: 'public/pages/products/page.js', owners: ['T-005'] }] });
+  assert.deepEqual(cross, { othersFiles: [{ file: 'public/pages/products/page.js', owners: ['T-005'] }] });
   const base = { taskId: 'T-013', title: 't', reviewId: 'T-013.rv', acIds: [], acTexts: {}, contracts: { shown: [], omitted: [] }, deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: false }, priorMust: [] };
-  const brief = buildReviewBrief({ ...base, ...cross });
-  assert.match(brief, /## 用到的其他 task 的产物\n- T-008：fn:inventory#changeStock、api:GET \/api\/stock\n[^\n]*替身/);
+  const brief = buildReviewBrief({ ...base, ...cross, sharedEdits: ['types/errors.ts'] });
+  assert.match(brief, /## 公共文件的已有内容被修改\n- types\/errors\.ts\n[^\n]*只是追加/);
   assert.match(brief, /## 改了其他 task 负责的文件\n- public\/pages\/products\/page\.js（T-005）\n[^\n]*页面能不能打开/);
-  assert.doesNotMatch(buildReviewBrief(base), /其他 task/, '没有跨 task 的情况不加这两节');
+  assert.doesNotMatch(buildReviewBrief(base), /其他 task|公共文件/, '没有跨 task 的情况不加这两节');
   assert.deepEqual(crossTaskInputs([t005], mkTask('T-001'), ['src/server/t-001/a.ts']), {});
 });

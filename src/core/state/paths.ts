@@ -6,7 +6,7 @@ const MM = { dot: true } as const;
 const GLOB_CHARS = /[*?[\]{}]/;
 
 export const PROTECTED_PATHS = ['.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
-/** 模块之间的接口文档（第五轮）：实现者只能追加 */
+/** 契约文档：合并冲突时做结构化三方合并 */
 export const INTERFACES_PATH = 'docs/contracts/**';
 /** impl 自己写验收测试：它自己的验收目录 */
 export const ownAcceptanceGlob = (impl: string) => `tests/acceptance/${impl}/**`;
@@ -44,8 +44,8 @@ export function isTestWrite(w: string): boolean {
 }
 
 /**
- * impl / fix 不受计划 writes 限制（writes 只用于调度互斥与合并冲突归属）：除用户的需求输入（PRD 与原型）与受保护路径外，工作区内任何文件都可以改。
- * 受保护路径另行检查（isProtectedFor）；docs/contracts/ 提交时仍由契约只追加检查把关。
+ * impl / fix 不受计划 writes 限制（writes 只用于合并冲突与问题归属）：除用户的需求输入（PRD 与原型）与受保护路径外，工作区内任何文件都可以改。
+ * 受保护路径另行检查（isProtectedFor）。
  */
 export const OPEN_WRITES_EXCEPT = ['docs/PRD.md', 'docs/prototype/**'] as const;
 export const opensWrites = (t: { kind: string }) => t.kind === 'impl' || t.kind === 'fix';
@@ -58,8 +58,15 @@ export function protectedGlobs(): string[] {
 export function isProtected(rel: string): boolean {
   return matchesAny(rel, PROTECTED_PATHS);
 }
-/** task 的 writes 显式包含 rules/**（S0 的 architect）时，rules/** 对它不算受保护路径；其余受保护路径不变 */
-export function isProtectedFor(rel: string, writes: readonly string[]): boolean {
+/**
+ * 架构师负责的文档：对 backend、frontend 是受保护路径。契约与公共规范要改时问架构师（并行开发的 domain 与页面都依赖它们）；
+ * rules/** 本来就受保护。
+ */
+export const ARCH_OWNED_PATHS = ['docs/contracts/**', 'docs/arch/**', 'docs/plan.md', 'AGENTS.md'] as const;
+export const archOwnedProtected = (role: string): boolean => role === 'backend' || role === 'frontend';
+/** task 的 writes 显式包含 rules/**（S0 的 architect）时，rules/** 对它不算受保护路径；backend、frontend 另加 ARCH_OWNED_PATHS */
+export function isProtectedFor(rel: string, writes: readonly string[], role = ''): boolean {
+  if (archOwnedProtected(role) && matchesAny(rel, ARCH_OWNED_PATHS)) return true;
   return isProtected(rel) && !(writes.includes('rules/**') && matchesAny(rel, ['rules/**']));
 }
 

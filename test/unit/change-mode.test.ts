@@ -88,7 +88,7 @@ test('fixPhase / fixStatusLine：change 模式的文案；fix 模式不变', () 
   assert.equal(fixPhase(flow('active', 'change'), [t('T-001', 'impl', 'queued_merge'), t('T-002', 'impl', 'pending')]), 'merging');
   assert.equal(fixPhase(flow('active', 'change'), impls), 'docs', '实现都完成、文档任务还没建');
   assert.equal(fixPhase(flow('active', 'change'), [...impls, t('T-003', 'doc', 'in_progress')]), 'docs');
-  assert.equal(fixPhase(flow('active', 'change'), [...impls, t('T-003', 'doc', 'checking')]), 'merging');
+  assert.equal(fixPhase(flow('active', 'change'), [...impls, t('T-003', 'doc', 'in_review')]), 'merging');
   assert.equal(fixPhase(flow('active', 'change'), [...impls, t('T-003', 'doc', 'done')]), 'confirming');
   assert.equal(fixPhase(flow('active', 'change'), [...impls, t('T-003', 'doc', 'done'), t('T-001.fx-1', 'fix', 'in_progress')]), 'fixing');
   assert.equal(fixPhase(flow('active', 'change'), [...impls, t('T-003', 'doc', 'blocked')]), 'needs_human');
@@ -134,7 +134,7 @@ const facts = (over: Partial<Facts> = {}): Facts => ({
   now: NOW, limits: { max_attempts: 3, max_parallel: 2 }, actor: 'run:r-1', token: TOKEN, diff_files: ['docs/arch/overview.md'], ...over,
 });
 const docTask = () => mkTask('T-003', { kind: 'doc', stage: 'X1', role: 'architect', scopes: ['plan'], writes: ['docs/arch/**', 'docs/contracts/**'], verify: [], status: 'in_progress', lease, worktree: '/wt', branch: 'b', base_sha: 'abc' });
-const submit = (f: Partial<Facts>) => planTransition(docTask(), 'awaiting_inputs', 'submit', facts(f));
+const submit = (f: Partial<Facts>) => planTransition(docTask(), 'queued_merge', 'submit', facts({ review_required: false, ...f }));
 
 test('“更新架构图与契约”：改什么文档都能提交；没有改动时 report 直接完成', () => {
   assert.equal(isDocsUpdateTask(docTask()), true);

@@ -11,4 +11,3 @@ export function mkTask(id: string, over: Partial<TaskFile> & { deps?: Dependency
   };
 }
 export const hard = (task: string, reason = '需要其产物'): Dependency => ({ task, type: 'hard', reason });
-export const soft = (task: string): Dependency => ({ task, type: 'soft' });

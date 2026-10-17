@@ -2,8 +2,7 @@
 // forge_sync 的共用同步实现见 module-tools.ts；旧验收与审查入口已删除。
 // 纯业务实现，不依赖 Pi；由 pi-adapter 注册为 Pi 工具，测试中由 fake-subagent 直接调用。run token 只来自环境变量，模型看不到也不需要传。
 import { listResources, resourceEnv } from '../core/workspace/resources.ts';
-import { taskBaseOf } from '../core/state/git.ts';
-import { contractViolationsAt } from '../core/plan/contract-diff.ts';
+import { gitOk } from '../core/state/git.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Type, type Static } from 'typebox';
@@ -11,7 +10,7 @@ import type { StateStore } from '../core/state/state-store.ts';
 import { KNOWLEDGE_CATEGORIES, type TaskFile } from '../core/state/schemas.ts';
 import { KnowledgeError, learn, KNOWLEDGE_CONTENT_MAX, KNOWLEDGE_PER_RUN } from '../core/engine/knowledge.ts';
 import { changedFiles, cleanStrayUntracked, removeWorktree, snapshot } from '../core/workspace/worktree.ts';
-import { canAppendInterfaces, canFinishWithoutChanges } from '../core/state/state-machine.ts';
+import { canFinishWithoutChanges } from '../core/state/state-machine.ts';
 import { testAdjustEnabled, testAdjustments } from '../core/verify/test-adjust.ts';
 import { NOTES_DESCRIPTION, NotesError, NotesParams, applyNoteOps, renderNotes } from '../core/engine/notes.ts';
 import { HISTORY_DESCRIPTION, HistoryParams, formatSearch, loadHistory, readHistoryEntry, searchHistory } from '../core/ops/history.ts';
@@ -20,12 +19,12 @@ import { taskNotesRel } from '../core/state/state-store.ts';
 import { scratchDir } from '../core/workspace/worktree.ts';
 import { GUI_REASON, opensGui } from '../core/security/guard.ts';
 import { SERVICE_READY_MAX_S, serviceCommands, serviceLog, serviceStatus, startService, stopService } from '../core/workspace/services.ts';
-import { SyncParams, flowSync } from './module-tools.ts';
+import { SyncParams, flowSync, syncTaskInputs } from './module-tools.ts';
 import { checkArchitecture, isArchitectTask } from '../core/plan/plan-flow.ts';
 import { ChangeError, changeOfTask, proposeChange, requestChange } from '../core/plan/change-flow.ts';
 import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/stage/review.ts';
 import { openWriteAllowed, opensWrites } from '../core/state/paths.ts';
-import { REVIEW_FILES, SUGGESTIONS_PATH, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/stage/review-flow.ts';
+import { REVIEW_FILES, SUGGESTIONS_PATH, decideReview, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/stage/review-flow.ts';
 import { QA_FILES } from '../core/stage/stage-qa.ts';
 import { addDependencyForWorktree, linkedDeps } from '../core/workspace/shared-env.ts';
 import { prepareWorkspaceRecorded } from '../core/workspace/workspace.ts';
@@ -79,44 +78,49 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   // impl / fix 可以在任何位置新建文件，只清理落在不能改的位置（PRD 与原型）的未跟踪文件
   const stray = opensWrites(t)
     ? cleanStrayUntracked(t.worktree, (f) => openWriteAllowed(f))
-    : cleanStrayUntracked(t.worktree, t.conflict_files ?? [...t.writes, ...(t.shared ?? []), ...(canAppendInterfaces(t) ? ['docs/contracts/**'] : [])]);
+    : cleanStrayUntracked(t.worktree, t.conflict_files ?? [...t.writes, ...(t.shared ?? [])]);
   if (stray.length) {
     await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交前程序清理了可写范围外、未被 git 跟踪的文件：${stray.slice(0, 20).join('、')}${stray.length > 20 ? ` 等 ${stray.length} 个` : ''}（多为测试或运行产生的数据；测试应把数据写到临时目录）`, 'forge-submit');
   }
-  snapshot(t.worktree, `[${ctx.env.flow}/${t.id}] ${p.summary.split('\n')[0]}`);
-  const diff = changedFiles(t.worktree, t.base_sha);
-  // 没有改动（要做的已在集成分支上、文档无需更新）：不走合并（没有内容可合），直接完成，依赖它的任务照常推进
-  if (!diff.length && canFinishWithoutChanges(t)) {
-    try {
-      await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'done', trigger: 'report', actor: actor(ctx), facts: { token: ctx.env.token, diff_files: [], structured_report: true } });
-    } catch (e) { rethrow(e, '请调用 forge_block 报告。'); }
-    await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明（没有改动）：${p.summary}`, actor(ctx));
-    removeWorktree(ctx.env.root, t.worktree, t.branch ?? undefined);
-    await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交（没有改动）');
-    return { text: `已记录：${p.summary.split('\n')[0]}。没有改动，任务视为完成。请直接结束，不要再调用工具。`, details: { files: [], no_changes: true } };
+  // 上一次提交时同步出的冲突还没收尾（MERGE_HEAD 还在）：由下面的同步检查冲突标记并完成合并提交
+  const midMerge = gitOk(t.worktree, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  if (!midMerge) {
+    snapshot(t.worktree, `[${ctx.env.flow}/${t.id}] ${p.summary.split('\n')[0]}`);
+    // 没有改动（要做的已在集成分支上、文档无需更新）：不走合并（没有内容可合），直接完成，依赖它的任务照常推进
+    if (!changedFiles(t.worktree, t.base_sha).length && canFinishWithoutChanges(t)) {
+      try {
+        await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'done', trigger: 'report', actor: actor(ctx), facts: { token: ctx.env.token, diff_files: [], structured_report: true } });
+      } catch (e) { rethrow(e, '请调用 forge_block 报告。'); }
+      await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明（没有改动）：${p.summary}`, actor(ctx));
+      removeWorktree(ctx.env.root, t.worktree, t.branch ?? undefined);
+      await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交（没有改动）');
+      return { text: `已记录：${p.summary.split('\n')[0]}。没有改动，任务视为完成。请直接结束，不要再调用工具。`, details: { files: [], no_changes: true } };
+    }
   }
   // 架构阶段：缺必需文件或 docs/plan.md 的 yaml 区块不过时退回，其余只提醒
   const arch = isArchitectTask(t) ? checkArchitecture({ dir: t.worktree }) : null;
   const archWarnings = arch?.warnings.length ? `\n\n提醒（不影响提交，批准页上会列给用户）：\n${arch.warnings.map((w) => `- ${w}`).join('\n')}` : '';
   if (arch?.errors.length) throw new FlowToolError(`架构产出还不能提交（${arch.errors.length} 处），改好后再 forge_submit：\n${arch.errors.map((e) => `- ${e}`).join('\n')}${archWarnings}`);
-  // 契约只能追加：有违规的契约文件由状态机拒绝（基线是任务 worktree 与集成分支的合并基点）
-  const violations = canAppendInterfaces(t) ? contractViolationsAt(ctx.env.root, taskBaseOf(t, ctx.store.readFlow(ctx.env.flow).integration_branch) ?? t.base_sha, t.worktree, t.module) : [];
-  const rewrites = [...new Set(violations.map((v) => v.file))];
+  // 程序把集成分支同步进任务分支（别的任务已合入的改动）：有冲突时不提交，冲突标记留在文件里，交回原 agent 解决
+  const synced = await syncTaskInputs(ctx.store, ctx.env.flow, t, actor(ctx));
+  if (synced.conflicts.length) throw new FlowToolError(`提交前程序把集成分支（其他任务已合入的改动）同步进你的工作区，这些文件有冲突：${synced.conflicts.join('、')}。冲突标记留在文件里：保留双方的意图解决冲突、跑一下相关测试，再 forge_submit。`);
+  const cur = ctx.store.readTask(ctx.env.flow, t.id);
+  const diff = changedFiles(cur.worktree!, cur.base_sha!);
   // 适配已有测试：writes 之外只修改过的已有测试文件不算越界，记在任务上（验收时一并检查）
-  const adjusted = testAdjustEnabled(ctx.config, t) ? testAdjustments(t.worktree, t.base_sha, t.writes) : [];
+  const adjusted = testAdjustEnabled(ctx.config, cur) ? testAdjustments(cur.worktree!, cur.base_sha!, cur.writes) : [];
+  // 需要审查的进 in_review（程序随后建 .rv），不需要的直接排队合并
+  const reviewRequired = decideReview(ctx.store, ctx.config, ctx.env.flow, cur) !== 'skip';
   try {
-    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'awaiting_inputs', trigger: 'submit', actor: actor(ctx),
-      facts: { token: ctx.env.token, diff_files: diff, interface_rewrites: rewrites, test_adjustments: adjusted,
-        // 结构化检查通过的契约追加不受 writes 限制；有违规的文件已在 interface_rewrites 里被拒
-        contract_additions: canAppendInterfaces(t) ? diff.filter((f) => f.startsWith('docs/contracts/') && !rewrites.includes(f)) : [] } });
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: reviewRequired ? 'in_review' : 'queued_merge', trigger: 'submit', actor: actor(ctx),
+      facts: { token: ctx.env.token, diff_files: diff, test_adjustments: adjusted, review_required: reviewRequired } });
   } catch (e) {
-    if (rewrites.length) rethrow(e, `契约只能追加（新增路径、操作、可选字段、错误码等），并且只能改本模块（${t.module ?? '未指定'}）的契约文件：\n${violations.slice(0, 10).map((v) => `- ${v.file}${v.path ? ` ${v.path}` : ''}：${v.message}`).join('\n')}\n还原对已有内容的修改（git checkout ${t.base_sha} -- <文件>）再只追加；确需修改已有契约时调用 forge_block 说明，由用户决定。`);
-    rethrow(e, `只修改可写范围内的文件（登记的公共文件可以改；别的模块已有的测试可以改来适配，但不能新增或删除可写范围外的文件）。还原越界改动：新增的文件用 git rm <文件>，修改过或删除的文件用 git checkout ${t.base_sha} -- <文件>，然后再次 forge_submit。`);
+    rethrow(e, `只修改可写范围内的文件（登记的公共文件可以改；别的模块已有的测试可以改来适配，但不能新增或删除可写范围外的文件）。还原越界改动：新增的文件用 git rm <文件>，修改过或删除的文件用 git checkout ${cur.base_sha} -- <文件>，然后再次 forge_submit。`);
   }
   await ctx.store.appendHandoff(ctx.env.flow, t.id, `提交说明：${p.summary}`, actor(ctx));
   if (adjusted.length) await ctx.store.appendHandoff(ctx.env.flow, t.id, `修改了可写范围外的已有测试（适配接口变化）：${adjusted.join('、')}`, 'forge-submit');
   await ctx.store.updateRun(ctx.env.run, { outcome: 'submitted' }, actor(ctx), '提交');
-  return { text: `已提交合并（改动 ${diff.length} 个文件${stray.length ? `；已清理可写范围外、未被跟踪的文件 ${stray.length} 个：${stray.slice(0, 5).join('、')}` : ''}）。接下来 reviewer 会读你的 diff 并运行本任务自己的测试，合并时不再跑测试，全量测试在阶段门禁运行。你的工作已完成，请直接结束，不要再调用工具。${archWarnings}`, details: { files: diff, cleaned: stray } };
+  const next = reviewRequired ? '接下来 reviewer 会读你的 diff 并运行本任务自己的测试；' : '';
+  return { text: `已提交合并（改动 ${diff.length} 个文件${stray.length ? `；已清理可写范围外、未被跟踪的文件 ${stray.length} 个：${stray.slice(0, 5).join('、')}` : ''}）。${next}合并时不再跑测试，全量测试在阶段门禁运行。你的工作已完成，请直接结束，不要再调用工具。${archWarnings}`, details: { files: diff, cleaned: stray } };
 }
 
 

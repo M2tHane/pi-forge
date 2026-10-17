@@ -26,7 +26,7 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
     assert.equal(c.limits.max_parallel, 3);
     assert.ok(c.warnings.some((w) => w.includes('models.strong')));
     assert.ok(!c.warnings.some((w) => w.includes('已不再支持')), c.warnings.join('\n'));
-    assert.deepEqual(Object.keys(c.roles).sort(), ['orchestrator', 'architect', 'worker', 'reviewer', 'stage-qa'].sort());
+    assert.deepEqual(Object.keys(c.roles).sort(), ['orchestrator', 'architect', 'backend', 'frontend', 'worker', 'reviewer', 'stage-qa'].sort());
     const template = parseConfig(REAL_TEMPLATE_YAML);
     assert.deepEqual(c.raw.scopes, template.raw.scopes);
     assert.deepEqual(c.raw.tool_groups, template.raw.tool_groups);
@@ -49,10 +49,8 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
 
 test('新配置块、命令与次数默认值可读取；命令来自 commands.yaml，没有时用 workflow.yaml 里旧的 commands', () => {
   const c = parseConfig(changed((wf) => {
-    delete wf.limits.max_precheck_failures;
     delete wf.limits.max_merge_failures;
   }));
-  assert.equal(c.limits.max_precheck_failures, 3);
   assert.equal(c.limits.max_merge_failures, 2);
   assert.equal(c.limits.max_parallel_aux, 4);
   assert.equal(c.limits.port_block, 10);
@@ -127,9 +125,10 @@ test('orchestrator 不能拥有 bash、写工具、扩展读工具或可写范�
   assert.match(errorsOf(changed((wf) => { wf.roles.reviewer!.tools.push('write'); })).join(), /reviewer 没有可写范围/);
 });
 
+const CODERS = ['worker', 'backend', 'frontend', 'architect'];
 const exclusiveTools: [string, string[]][] = [
-  ['forge_add_dependency', ['worker', 'architect']], ['forge_private_deps', ['worker', 'architect']],
-  ['forge_service', ['worker', 'architect', 'stage-qa']], ['forge_propose_plan', ['architect']],
+  ['forge_add_dependency', CODERS], ['forge_private_deps', CODERS],
+  ['forge_service', [...CODERS, 'stage-qa']], ['forge_propose_plan', ['architect']],
   ['forge_review_report', ['reviewer']], ['forge_review_confirm', ['reviewer']],
   ['forge_qa_report', ['stage-qa']], ['forge_qa_confirm', ['stage-qa']],
   ['forge_read', ['orchestrator']], ['forge_change', ['orchestrator']],
@@ -151,7 +150,7 @@ test('分组工具同样执行专属工具校验，不得借分组绕过 bash �
   assert.match(errorsOf(changed((wf) => {
     wf.tool_groups.invalid = ['forge_add_dependency'];
     wf.roles.reviewer!.tools.push('@invalid');
-  })).join(), /forge_add_dependency 只能分配给 worker、architect/);
+  })).join(), /forge_add_dependency 只能分配给 worker、backend、frontend、architect/);
   assert.match(errorsOf(changed((wf) => {
     wf.tool_groups.invalid = ['bash_readonly'];
     wf.roles.architect!.tools.push('@invalid');
@@ -165,12 +164,12 @@ test('worker 专属工具按真实名字校验，改名或名字后缀不能继�
     assert.match(errorsOf(changed((wf) => {
       wf.roles[name] = wf.roles.worker!;
       delete wf.roles.worker;
-    }, TEST_YAML)).join(), /forge_add_dependency 只能分配给 worker、architect/);
+    }, TEST_YAML)).join(), /forge_add_dependency 只能分配给 worker、backend、frontend、architect/);
   }
   for (const name of ['reviewer', 'stage-qa']) {
     assert.match(errorsOf(changed((wf) => {
       wf.roles[name]!.tools.push('forge_add_dependency');
-    }, TEST_YAML)).join(), /forge_add_dependency 只能分配给 worker、architect/);
+    }, TEST_YAML)).join(), /forge_add_dependency 只能分配给 worker、backend、frontend、architect/);
   }
 });
 
@@ -182,7 +181,7 @@ test('architect 可以用 forge_service、forge_add_dependency、forge_private_d
   }
   // 其他角色仍然不行
   for (const name of ['reviewer', 'stage-qa']) {
-    assert.match(errorsOf(changed((wf) => { wf.roles[name]!.tools.push('forge_add_dependency'); }, TEST_YAML)).join(), /forge_add_dependency 只能分配给 worker、architect/);
+    assert.match(errorsOf(changed((wf) => { wf.roles[name]!.tools.push('forge_add_dependency'); }, TEST_YAML)).join(), /forge_add_dependency 只能分配给 worker、backend、frontend、architect/);
   }
 });
 
@@ -271,7 +270,7 @@ test('语法错误、schema 错误与旧工具被拒绝', () => {
     assert.match(errorsOf(changed((wf) => { wf.roles.worker!.tools.push(tool); })).join(), /未知工具/);
   }
   assert.ok(errorsOf(REAL_TEMPLATE_YAML.replace('max_rounds: 2                   # 第 2 轮', 'final: true                     # 第 2 轮')).length);
-  for (const key of ['max_precheck_failures', 'max_merge_failures', 'max_parallel_aux', 'port_block']) {
+  for (const key of ['max_parallel_backend', 'max_merge_failures', 'max_parallel_aux', 'port_block']) {
     assert.ok(errorsOf(changed((wf) => { Object.assign(wf.limits, { [key]: 0 }); })).length, key);
   }
   assert.ok(errorsOf(changed((wf) => { wf.roles.worker!.tools.push('@missing_group'); })).length);

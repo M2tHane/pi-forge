@@ -130,7 +130,7 @@ test('/forge next 先推进程序步骤：引擎重启前已提交、排队合�
     });
     await old.engine.next(p.flowId);
     const end = Date.now() + 30_000;
-    while (p.store.readTask(p.flowId, 'T-001').status !== 'awaiting_inputs') { if (Date.now() > end) throw new Error('等待超时'); await new Promise((r) => setTimeout(r, 20)); }
+    while (p.store.readTask(p.flowId, 'T-001').status !== 'in_review') { if (Date.now() > end) throw new Error('等待超时'); await new Promise((r) => setTimeout(r, 20)); }
     const store = new StateStore(p.dir, { limits: p.config.limits });
     const fresh = makeEngine({ ...p, store }, async () => { throw new Error('不应再派发'); });
     await runFlowCommand('next', commandEnv({ ...p, store }, fresh.engine));

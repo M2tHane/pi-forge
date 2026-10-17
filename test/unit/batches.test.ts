@@ -86,6 +86,9 @@ test('deriveBatchTasks：每批一个阶段；domain 任务按 after 排序与�
   assert.deepEqual(user.shared, ['src/shared/**']);
   assert.deepEqual(user.verify, ['test']);
   assert.match(tasks.find((t) => t.id === 'T-006')!.description!, /原型：docs\/prototype\/login\.html；对应需求：REQ-001/);
-  assert.ok(tasks.every((t) => t.kind === 'impl' && t.role === 'worker'));
-  assert.deepEqual(tasks.map((t) => t.layers![0]), ['backend', 'backend', 'backend', 'frontend', 'frontend', 'frontend', 'frontend', 'backend', 'frontend', 'frontend']);
+  assert.ok(tasks.every((t) => t.kind === 'impl'));
+  // 角色决定调度池：domain 任务是 backend（带 domain），前端基础、页面（带 page）、接入真实接口是 frontend
+  assert.deepEqual(tasks.map((t) => t.role), ['backend', 'backend', 'backend', 'frontend', 'frontend', 'frontend', 'frontend', 'backend', 'frontend', 'frontend']);
+  assert.deepEqual(tasks.map((t) => t.layers![0]), tasks.map((t) => t.role));
+  assert.deepEqual(tasks.map((t) => t.domain ?? t.page ?? null), ['user', 'catalog', 'inventory', null, 'login', 'products', null, 'purchase', 'purchase-orders', null]);
 });

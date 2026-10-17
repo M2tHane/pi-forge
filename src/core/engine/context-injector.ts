@@ -28,7 +28,7 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
   if (config && budgetState(store, config, flow)?.exceeded) return { summary, next: '本流程的预算已用完，请用户用 /forge budget 提高预算。', tool: 'none' };
   const waiting = tasks.filter((t) => paused?.(flowId, t));
   if (waiting.length && !activeRunCount) return { summary, next: `${waiting.map((t) => `${paused?.(flowId, t)?.model} 暂停中：${t.id}`).join('；')}；请用户 /forge models resume 或 /forge-config 换模型。`, tool: 'none' };
-  if (tasks.some((t) => t.lease || ['awaiting_inputs', 'checking', 'in_review', 'queued_merge', 'merging'].includes(t.status)) || activeRunCount) return { summary, next: '任务由程序推进，调用 forge_wait 等待结果。', tool: 'forge_wait' };
+  if (tasks.some((t) => t.lease || ['in_review', 'queued_merge', 'merging'].includes(t.status)) || activeRunCount) return { summary, next: '任务由程序推进，调用 forge_wait 等待结果。', tool: 'forge_wait' };
   const blocked = tasks.filter((t) => t.status === 'blocked' && t.blocked_owner !== 'orchestrator');
   if (blocked.length) return { summary, next: `向用户报告阻塞：${blocked.map((t) => `${t.id}（${t.blocked_reason ?? ''}）`).join('；')}；请其 /forge unblock <任务>。`, tool: 'none' };
   // 只看当前阶段：后面阶段的 task 总是 pending，算进来会让打回的意见永远轮不到

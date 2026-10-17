@@ -238,6 +238,10 @@
         "additionalProperties": false
       }
     },
+    "max_parallel_backend": {
+      "type": "integer",
+      "minimum": 1
+    },
     "contracts_base": {
       "type": "string",
       "minLength": 1

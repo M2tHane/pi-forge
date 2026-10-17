@@ -31,7 +31,7 @@ export function reviewPolicy(config: FlowConfig): ReviewPolicy {
 const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'review', 'qa'];
 
 /**
- * 推导一个 impl task 的审查强度（预检不再运行命令，审查者读 diff 并运行本 task 自己的测试）。
+ * 推导一个 impl task 的审查强度（审查者读 diff 并运行本 task 自己的测试）。
  * review: skip 只由程序写在"接入真实接口"任务上（由本批的浏览器验收检查）；task.review 写了 strong 以它为准；
  * 否则：底座（被 critical_fanout 个 task 硬依赖）、layers 含 auth、risk=high → strong；其余 auto。
  */
@@ -177,16 +177,16 @@ export interface ReviewBriefInput {
   acceptance?: AcceptanceAudit;
   /** diff 里是否含 tests/acceptance/**（worker 自己写验收测试时含，审查者要读） */
   withAcceptance?: boolean;
-  /** 本 task 用到的其他 task 的产物（软依赖）：生产方与用到的接口 */
-  uses?: readonly { task: string; refs: readonly string[] }[];
   /** diff 里落在其他 task 负责范围（writes）内的文件 */
   othersFiles?: readonly { file: string; owners: readonly string[] }[];
+  /** plan.md 的公共文件里，改动不只是追加的文件 */
+  sharedEdits?: readonly string[];
 }
 
 /** 跨 task 的两类问题单个 diff 里看不出来，提醒审查者专门看一眼（stock run-02：采购、销售各自留了一份 changeStock 替身；T-013 给商品页加导出按钮让整页打不开） */
 function crossTaskSection(i: ReviewBriefInput): string[] {
   const out: string[] = [];
-  if (i.uses?.length) out.push(`## 用到的其他 task 的产物\n${i.uses.map((u) => `- ${u.task}：${u.refs.join('、')}`).join('\n')}\n这些已在集成分支上（或合并前会先合入）。检查本 task 用的是它们的正式实现：没有留下替身、mock、复制的第二份实现，也没有"合入后再换"的 TODO；有就是 must（出处 contract: 或 defect:）。`);
+  if (i.sharedEdits?.length) out.push(`## 公共文件的已有内容被修改\n${i.sharedEdits.map((f) => `- ${f}`).join('\n')}\n这些是 docs/plan.md 登记的公共文件，并行的任务都会往里追加；本 task 改了或删了其中已有的内容（不只是追加）。看一眼修改是否必要、有没有破坏别的任务的用法。`);
   if (i.othersFiles?.length) out.push(`## 改了其他 task 负责的文件\n${i.othersFiles.map((f) => `- ${f.file}（${f.owners.join('、')}）`).join('\n')}\n这些文件原来的功能要照常可用：看改动有没有破坏它们（页面能不能打开、原来的按钮和接口是否还在），需要时运行相关的测试。`);
   return out;
 }
@@ -207,7 +207,7 @@ function testsSection(tests: ReviewTestPlan, confirm: boolean): string {
   const how = confirm
     ? '确认轮也先运行这些命令。测试仍失败，或者新失败：把与失败相关的条目（找不到相关条目就用第一条）标 resolved=false，note 里写命令与失败摘要。'
     : '先运行这些命令再读 diff。测试失败是阻塞问题：提交 must，basis 写 `defect:<命令> 失败：<失败的用例与原因>`，file 写出错的源文件，expected 写“该命令通过”。区分环境问题（依赖缺失、端口被占用等）与代码问题，环境问题用 forge_block 说明，不要当成代码缺陷。';
-  return `## 先运行本 task 自己的测试（预检不再运行命令；全量测试与全部验收测试在阶段门禁）\n${cmds}${skipped}\n\n${how}只运行上面列出的命令，不要运行别的测试命令。`;
+  return `## 先运行本 task 自己的测试（全量测试与全部验收测试在阶段门禁）\n${cmds}${skipped}\n\n${how}只运行上面列出的命令，不要运行别的测试命令。`;
 }
 
 /** 验收测试审查一节：程序算出的 AC 覆盖 + 要核对的三件事 */

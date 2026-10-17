@@ -35,7 +35,7 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
     assert.deepEqual(errors, []);
     const t = p.store.readTask(p.flowId, 'T-001');
     assert.equal(t.status, 'done', t.last_failure ?? '');
-    assert.ok(p.store.readEvents().some((e) => e.task === 'T-001' && e.trigger === 'submit' && e.from === 'in_progress' && e.to === 'awaiting_inputs'));
+    assert.ok(p.store.readEvents().some((e) => e.task === 'T-001' && e.trigger === 'submit' && e.from === 'in_progress' && e.to === 'in_review'));
     assert.deepEqual(p.store.readMergeQueue().queue, []);
     assert.equal(p.git('show', `flow/${p.flowId}/integration:src/server/t-001/a.ts`), 'export const a = 1;');
 

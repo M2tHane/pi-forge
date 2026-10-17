@@ -64,7 +64,7 @@ export function checkArchitecture(src: Source): ArchitectureCheck {
 export function architectBrief(rework?: string): string {
   return [
     '# S0 架构',
-    `按角色提示的顺序完成技术栈、骨架、公共规范、domain 划分、domain 间接口、API 契约、逐页核对原型与 ${PLAN_MD}。需求在 ${PRD_PATH}，原型在 docs/prototype/。`,
+    `按角色提示的顺序完成技术栈、骨架、公共规范、鉴权接口与桩、domain 划分、domain 间接口、API 契约、逐页核对原型与 ${PLAN_MD}。需求在 ${PRD_PATH}，原型在 docs/prototype/。`,
     `提交前这些文件必须存在：${ARCH_REQUIRED_FILES.join('、')}；${PLAN_MD} 的「## 程序读取的部分」要能解析。缺文件或解析不过时 forge_submit 会退回并列出原因，其余问题只提醒。`,
     '必需的命令要真的能跑，冒烟测试要通过：合入后程序在集成分支上跑门禁命令，通过后等用户批准。',
     ...(rework ? ['', '## 需要返工', rework, '只改上面提到的地方，其余保持不变。'] : []),

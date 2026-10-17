@@ -86,6 +86,9 @@ export function parseBatchPlan(md: string): { plan: BatchPlan | null; errors: st
   return errors.length ? { plan: null, errors, warnings } : { plan, errors: [], warnings };
 }
 
+/** 用户与鉴权的真实实现所在的 domain：S0 只定鉴权接口与开发、测试用的桩 */
+export const IDENTITY = 'identity';
+
 /** 校验：errors 是调度做不下去的情况，warnings 只提醒 */
 export function checkBatchPlan(plan: BatchPlan, prd: Prd): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
@@ -122,6 +125,11 @@ export function checkBatchPlan(plan: BatchPlan, prd: Prd): { errors: string[]; w
   if (unknownReqs.length && prd.reqs.length) warnings.push(`批次里这些需求编号在 PRD 里找不到：${unknownReqs.join('、')}`);
   const unknownPages = plan.batches.flatMap((b) => b.frontend).filter((p) => !pageOf(prd, p));
   if (unknownPages.length) warnings.push(`这些页面 id 在 PRD 的页面表里找不到对应项：${[...new Set(unknownPages)].join('、')}`);
+  // 别的 domain 只依赖 S0 定的鉴权接口、开发时用桩，不等 identity（stock run-01：登录 → 分类 → 商品三环依赖把 4 个能并行的任务拖成串行）
+  const waits = plan.batches.flatMap((b) => b.backend).filter((d) => d.after.includes(IDENTITY)).map((d) => d.domain);
+  if (waits.length) warnings.push(`这些 domain 写了 after: [${IDENTITY}]：${waits.join('、')}。别的 domain 只依赖 S0 定的鉴权接口、开发时用桩，可以和 ${IDENTITY} 并行`);
+  const at = batchOf.get(IDENTITY);
+  if (at !== undefined && at > 0) warnings.push(`${IDENTITY} 不在第 1 批（在 ${plan.batches[at]!.id}）：之前批次的门禁与浏览器验收只能在鉴权桩下跑`);
   return { errors, warnings };
 }
 

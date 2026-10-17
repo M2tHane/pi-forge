@@ -62,6 +62,15 @@ test('checkBatchPlan：没进批次的需求、PRD 里没有的需求与页面�
   ]);
 });
 
+test('checkBatchPlan：别的 domain 写 after: [identity]、identity 不在第 1 批只提醒', () => {
+  const plan = planOf('batches:\n  - id: B1\n    backend: [user]\n  - id: B2\n    backend: [identity, { domain: catalog, after: [identity] }]').plan!;
+  assert.deepEqual(checkBatchPlan(plan, parsePrd('')).warnings, [
+    '这些 domain 写了 after: [identity]：catalog。别的 domain 只依赖 S0 定的鉴权接口、开发时用桩，可以和 identity 并行',
+    'identity 不在第 1 批（在 B2）：之前批次的门禁与浏览器验收只能在鉴权桩下跑',
+  ]);
+  assert.deepEqual(checkBatchPlan(planOf('batches:\n  - id: B1\n    backend: [identity, catalog]').plan!, parsePrd('')).warnings, []);
+});
+
 test('deriveBatchTasks：每批一个阶段；domain 任务按 after 排序与依赖；前端基础只在第一批；页面串成链；接入真实接口依赖本批全部任务且不审查', () => {
   const plan = parseBatchPlan(PLAN_MD_TEXT).plan!;
   const { stages, tasks } = deriveBatchTasks(plan, prd, 2, { verify: ['test'] });

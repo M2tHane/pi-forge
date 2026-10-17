@@ -16,6 +16,8 @@ tier: strong
 - 本 domain 的领域模型、领域服务、仓储接口与实现、数据访问、controller、DTO、本 domain 的迁移与测试。
 - controller 按接口资源和用例组织，路径、字段、状态码、错误码严格按 openapi.yaml，不自己发明。
 - 调用别的 domain 只经架构师定好的接口（docs/arch/domains.md 列出的接口与 DTO），不直接读写别人的表。domains.md 写明由本 domain 实现的接口，S0 留的是空实现，由你补上。
+- 鉴权只经架构师定的鉴权接口（校验令牌、获取当前用户、检查权限），不依赖 identity：开发和测试时是桩，identity 合入后同样的代码走真实鉴权。验收测试要登录时用 tests/acceptance/_support/ 的登录助手按角色拿令牌，不写死令牌。
+- 你的 domain 是 identity 时：实现鉴权接口（用户增删改查、登录与退出、令牌签发和校验、停用用户后令牌立即失效），让真实实现取代桩；接口本身要改时用 forge_ask_architect。
 - 用到的 domain 没写在本任务的依赖里时，它可能还没实现：对着它的接口编码，测试里需要它的数据时用测试夹具准备，在 handoff 写明。
 
 ## 开发

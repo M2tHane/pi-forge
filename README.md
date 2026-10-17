@@ -118,7 +118,7 @@ tasks:
 
 | 产出 | 内容 |
 |---|---|
-| 代码 | 项目骨架、公共代码（统一响应、错误码、异常、枚举）、鉴权机制、domain 间接口与 DTO（空实现）、domain 骨架、数据库迁移配置与初始数据、前端骨架（路由外壳、从 OpenAPI 生成的客户端与 mock）、检查工具（`arch_check`、`contract_check`、lint）、测试基础与一条前端 → API → 数据库的冒烟测试 |
+| 代码 | 项目骨架、公共代码（统一响应、错误码、异常、枚举）、鉴权接口与只用于开发和测试的桩（真实实现是 identity domain，和别的 domain 并行开发）、domain 间接口与 DTO（空实现）、domain 骨架、数据库迁移配置、前端骨架（路由外壳、从 OpenAPI 生成的客户端与 mock）、检查工具（`arch_check`、`contract_check`、lint）、测试基础与一条前端 → API → 数据库的冒烟测试 |
 | 文档 | `AGENTS.md`（目录）、`docs/arch/overview.md`、`docs/arch/domains.md`、`docs/arch/decisions.md`、`docs/contracts/openapi.yaml`、`docs/contracts/page-api.md`、`docs/conventions.md`、`rules/backend.md`、`rules/frontend.md`、`commands.yaml`、`docs/plan.md` |
 
 提交时程序检查必需文件都在（AGENTS.md、overview、domains、openapi、page-api、commands.yaml 要有 test、plan.md），`docs/plan.md` 最后一节「## 程序读取的部分」的 yaml 能解析、调度做得下去（批次或 domain 不重名、`after` 指向存在且不更晚的 domain、不成环、批次不为空）；不满足就退回给 architect。其余（REQ 没进任何批次、页面 id 在 PRD 里找不到）只提醒。

@@ -50,23 +50,25 @@
 ### 规格与计划
 - 需求输入只认固定位置（10-17 改造）：`docs/PRD.md` 与 `docs/prototype/`（至少一个 .html），缺了 `/forge-build` 只提示、不建流程；两者原样提交到集成分支（路径不变），之后所有 agent 从集成分支读。PRD 是需求的唯一依据，不再改写成规格：P0、`forge_spec`、spec-lint、技能 spec-from-prd 与 grilling 已删，build 流程从 S0 开始。程序只解析 REQ 编号、`- ACn` 验收标准与"页面"表（`spec/prd.ts`）；解析不出、缺 AC、编号重复、原型文件不存在只警告。
 - 实施任务不能改 `docs/PRD.md` 与 `docs/prototype/`（原来不能改的是 `docs/spec/`）：需求是用户在流程外定的，agent 改了就没有依据可对照。审查材料不再带术语表；PRD 的「通用约定」照旧放进 worker 与 reviewer 的任务说明。
-- P1 由程序驱动 architect（不经主会话），返工接着上一个 task 的会话。`forge_propose_plan` 在 architect 的 worktree 上跑完整校验，闸门在集成分支上重跑。task 编号全流程连续，含此前流程与 `tests/acceptance/` 的目录名。
-- 项目命令写在仓库根目录的 `commands.yaml`（用户决定 10-14）：architect 在 P1 写、S0 修正，worker 可以补充，随代码合并、合入即生效；程序只执行 install、test、acceptance、serve（及 serve_*）、env_up/env_down、db_create/db_drop、add_dep，其余只给 agent 参考。`workflow.yaml` 只放流程配置。规则由 S0 直接写。
+- 架构阶段 S0（10-17 改造）：原来的 P1（契约与计划）与 S0（骨架）合并成 S0 的一个 impl task，architect 一次做完技术栈、骨架、公共代码、domain 划分与接口、OpenAPI 与页面接口对照、rules、commands.yaml、`docs/plan.md`；由程序派发（不经主会话），经审查、合并、门禁后等用户批准，打回时新 task 接着原会话返工。原因：P1 与 S0 分开时契约写完要等一次批准才落成代码，骨架又常发现契约要改。task 编号全流程连续，含此前流程与 `tests/acceptance/` 的目录名。
+- S0 提交时只拦两类（`plan/batches.ts`、`plan/plan-flow.ts`）：缺必需文件（AGENTS.md、overview、domains、openapi、page-api、commands.yaml 要有 test、plan.md），plan.md 的 yaml 区块解析不过或调度做不下去（批次 id 或 domain 重名、after 不存在、指向更晚批次、成环、空批次）；PRD 的警告、REQ 没进批次、页面 id 找不到只提醒，显示在批准页。批准时先按 yaml 生成批次阶段 S1…Sn 与任务（每个 domain 一个、第 1 批的前端基础、页面按顺序串成链并接着同一会话、每批一个「接入真实接口」任务，它不单独审查，由本批浏览器验收检查），再 `--no-ff` 合入主分支。
+- 改造期间暂留（第 4 步随变更请求删）：变更请求仍走 `docs/plan/plan.yaml`、`forge_propose_plan`、旧计划解析与 plan-dag 技能；新流程的项目没有 plan.yaml，变更请求在新流程里用不了。
+- 项目命令写在仓库根目录的 `commands.yaml`（用户决定 10-14）：architect 在 S0 写，开发 agent 可以补充，随代码合并、合入即生效；程序只执行 install、test、acceptance、serve（及 serve_*）、env_up/env_down、db_create/db_drop、add_dep，其余只给 agent 参考。`workflow.yaml` 只放流程配置。规则由 S0 直接写。
 - 契约只能追加（`plan/contract-diff.ts`）：集合位置可新增键，数组（含 required、enum）不能变，新列须可空或有默认值；可追加可选参数；不限制只改本模块的契约。基线是任务 worktree 与集成分支的合并基点。空文件视为不存在（architect 清空即可）。只在 `forge_submit` 时检查一次。
 - 计划与契约只拦调度不了的（10-14 约束清点）：编号与阶段写错、S0 不是 1 个 task、依赖有环或依赖更晚阶段、契约不是合法 YAML。plan.yaml 多写的字段忽略、列表字段可缺；AC 与需求的分配、produces/requires、契约文件布局与命名都只提醒；writes 可以为空、可以含验收测试目录；术语表可以改。
-- 契约只写 task 之间的边界（用户决定 10-14）：几个 task 共用的数据（只写名字、类型、引用与唯一约束，校验以规格为准）、公共错误码、被别的 task 调用的函数与 HTTP 接口；只有自己用的接口不写。原因：club 实验 92 行需求写出约 2100 行契约，字段规则写了三遍，各模块接口都没有别的 task 调用。计划核对符号时，只有别的 task requires 的产出才要求在契约里。
+- 契约只写前后端之间的边界（10-14 用户决定，10-17 改造后）：`openapi.yaml` 只写前端调用的 HTTP 接口，`page-api.md` 写每个页面用哪些接口；domain 之间的接口写成代码（接口与 DTO，空实现）；校验细则以 PRD 为准不重复。原因：club 实验 92 行需求写出约 2100 行契约，字段规则写了三遍，各模块接口都没有别的 task 调用。
 - 计划的提示（10-15，stock 实验后）：被多个 task 依赖的横切能力（登录与权限）放进 S0 或更早的阶段；`~` 软依赖也要等生产方审查合并后才能预检与合并，阶段内依赖链尽量一层（登录 → 分类 → 商品三环把 4 个并行 task 拖成串行）；S0 的符号不写进 requires；不建只做集成验收的 task。
 - 计划不再有 `review` 与 `test_interface`（用户决定 10-14，旧计划里写了也忽略）：审查强度只由程序推导（底座、auth 层、`risk: high`），批准页列出强审查的 task 与原因；`risk: high` 只给权限与鉴权、金额计算、不可恢复的批量数据操作，过半 task 标 high 时提醒。原因：club 实验里 5 个增删改查 task 全被标成 strong 与 high（技能原写"删除数据时写 high"）。
 
 ### S0 与构建环境
 - S0 的唯一 task 由 architect 做（bash full，worker 的工具）：建骨架、直接写 `rules/`（对它豁免受保护路径）、把共享类型与错误响应落成代码；S0 合入后 rules 生效。
-- S0 一律人工签收；批准时集成分支（规格、契约、计划、骨架、rules、commands.yaml）先 `--no-ff` 合入主分支，集成分支再移到合入后的提交，之后的阶段照常在它上面做（用户决定 10-14）。代价：之后中止流程，主分支上的骨架不撤回；批准 S0 时主工作区不能有未提交的改动。
+- S0 一律人工签收；批准时集成分支（PRD、原型与架构产出）先 `--no-ff` 合入主分支，集成分支再移到合入后的提交，之后的阶段照常在它上面做（用户决定 10-14）。代价：之后中止流程，主分支上的骨架不撤回；批准 S0 时主工作区不能有未提交的改动。
 - Python 用 uv 的项目不共享 `.venv`（可编辑安装指向安装时的源码目录，共享会让各 worktree 测到旧代码）：每个 worktree 自己 `uv sync --frozen`，包从 uv 的全局缓存链接；guard 提醒不要用 pip 装包，加依赖用 `uv add`。`.venv/`、`__pycache__/`、`.pytest_cache/` 写进本地 exclude。
 - 每个 S 阶段开始时建立或刷新共享构建环境 `<项目>.worktrees/.env-shared/`，worktree 链接依赖目录，不再各自 install；只追加根 package.json 依赖时装进共享环境（`forge_add_dependency`），改版本等用私有副本（`forge_private_deps`）。端口段（41000–60000）与数据库按运行分配。没有共享环境时（S0 期间）各工作区自己 install，只读工作区按锁文件哈希缓存。
 
 ### 调度与运行
 - 两个池：实施 task 用 `max_parallel`，review、qa 用 `max_parallel_aux`。writes 只是调度优先级，重叠的也会并行（用户决定）。
-- worker 与 S0 的 architect 可写工作区内任何文件，只排除受保护路径与 `docs/spec/**`（用户决定）；没有范围申请。
+- worker 与 S0 的 architect 可写工作区内任何文件，只排除受保护路径与 `docs/PRD.md`、`docs/prototype/`（用户决定）；没有范围申请。
 - 主会话的上下文（10-15，stock 实验：主会话 $20.6，占全部费用一半以上，gpt 缓存命中 12%）：P0 之后的状态不再带规格检查的警告（57 条约 4500 字，每次 forge_wait 都带）；forge_wait 超时又没有变化时只回两行概况。提交变更请求后立刻推进引擎，起草修订的 architect 不再等下一个任务结束才派发。主会话的系统提示在所有阶段都带 P0 的两份技能（约 3k token），离开 P0 时系统提示不变，缓存不失效。
 - 失败处理：`run_timeout` 计入 attempts，由程序按进展决定接着做、从头做或交给用户；同样的失败连续两次先换升级模型，再换兜底模型（`models.fallback`、`/forge-config fallback` 或表格最后一行，所有角色共用，用户决定 10-14），都试过仍一样就阻塞；没有升级模型时，失败达到次数直接用兜底模型。任务要用的模型被暂停时改用兜底模型继续，原模型恢复后换回。子进程没提交就结束时按错误原文分类（`engine/failure-class.ts`）：额度、限流、配置错误暂停这个模型、不计任务失败（额度与配置要手动恢复），运行环境出错直接 blocked，其余计一次失败、带提示重试。运行中原地打转会结束本次运行并计一次失败；被 guard 拦下只记账，不因次数结束运行；没有按谱系的总预算（10-14 约束清点）。
 - 子进程结束后清理它留下的进程，跳过仍在运行的 run 的进程树（审查、修复常与原任务共用 worktree）。
@@ -151,3 +153,4 @@
 - 10-16：`agents/worker.md` 开始一步改为读「计划里的说明」、不再提输入文件；`skills/plan-dag` 加 `description` 一行，`skills/change-request` 加一条；forge_claim 的工具说明去掉「输入文件」。worker 与 architect 的缓存各失效一次。
 - 10-16：`skills/acceptance-tests` 的"不要断言"表加一行（菜单、页面清单、路由表不断言完整列表）。worker、reviewer 与 S0 的 architect 缓存各失效一次。
 - 10-17：改造第 1 步：`agents/orchestrator.md` 删掉 P0 一节；删除 `skills/spec-from-prd`、`skills/grilling`，主会话系统提示不再带这两份技能；主会话工具去掉 `forge_spec`。主会话的缓存失效一次。worker 与 reviewer 任务说明里「通用约定」的标题改了，审查材料去掉术语表（都在用户消息里，不影响系统提示缓存）。
+- 10-17：改造第 2 步：重写 `agents/architect.md`（只剩 S0 与暂留的变更请求一节）、`skills/design-contract`（openapi 与 page-api）、`skills/write-rules`（commands.yaml 与 rules/backend、frontend）、`skills/domain-modeling`（domain 划分与 domains.md，不再写术语表）；新增 `skills/plan-batches`，S0 的 architect 不再带 plan-dag 与 tdd。architect 的缓存失效一次，其他角色不受影响。

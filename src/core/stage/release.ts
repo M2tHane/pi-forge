@@ -1,4 +1,4 @@
-// 把集成分支合入主分支：S0（骨架）批准时一次，流程最后一个闸门经用户确认后一次。
+// 把集成分支合入主分支：S0（架构）批准时一次，流程最后一个闸门经用户确认后一次。
 // 中止的流程不再合入，集成分支保留；S0 已经合入主分支的骨架不撤回。
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -48,7 +48,7 @@ export async function mergeToMain(root: string, store: StateStore, config: FlowC
 }
 
 /**
- * S0 批准时：骨架（连同规格、契约、计划、rules/、commands.yaml）先合入主分支，再把集成分支移到合入后的提交，
+ * S0 批准时：架构产出（连同 PRD、原型、骨架、契约、计划、rules/、commands.yaml）先合入主分支，再把集成分支移到合入后的提交，
  * 之后的阶段在它上面继续。这样主分支上就有 S0 写的规则与命令，用户也能提前看到骨架。
  */
 export async function publishSkeleton(root: string, store: StateStore, config: FlowConfig, flowId: string): Promise<string> {

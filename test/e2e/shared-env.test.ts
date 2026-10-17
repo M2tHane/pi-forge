@@ -108,8 +108,10 @@ test('阶段开始建立共享环境；任务 worktree 链接依赖（不再 ins
 
 test('第一个 S 阶段之前没有共享环境（S0 期间）：沿用原来的做法，worktree 自己 install', async () => {
   const f = fixture();
-  // 阶段 S0：不建共享环境
-  const p = await setupProject({ yaml: f.yaml, files: FILES, stages: ['S0'], tasks: [mkTask('T-001', { stage: 'S0', verify: ['test'] })] });
+  // 阶段 S0：不建共享环境（计划已落地，S0 只剩这个 task）
+  const p = await setupProject({ yaml: f.yaml, files: FILES, stages: ['S0'] });
+  await p.store.setStages(p.flowId, [{ id: 'S1', goal: '第 1 批', exit: [] }]);
+  await p.store.addTasks(p.flowId, [mkTask('T-001', { stage: 'S0', verify: ['test'] })], 'engine');
   const e = engineEnv(p, async (_role, _n, a) => {
     await a.call('forge_claim');
     assert.match((await a.call('bash', { command: 'test -L node_modules && echo LINK || echo REAL' })).text, /REAL/);

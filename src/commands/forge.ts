@@ -12,7 +12,7 @@ import { buildInputProblems, formatPreflight } from '../core/spec/preflight.ts';
 import { activeFlowId, statusText } from '../tools/orchestrator-tools.ts';
 import { splitArgs } from './args.ts';
 import { approveStage, rejectStage, unblockTask, startFlow } from '../core/stage/stages.ts';
-import { P1_STAGE, isArchitectStage } from '../core/plan/plan-flow.ts';
+import { isArchitectStage } from '../core/plan/plan-flow.ts';
 import { approvalTargets, approveChange, rejectChange } from '../core/plan/change-flow.ts';
 import { importInputs, prepareInputs } from '../core/spec/intake.ts';
 import { PRD_PATH, PROTOTYPE_DIR, prdWarningsAt } from '../core/spec/prd.ts';
@@ -250,8 +250,8 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         return `${text}${d.length ? `\n已派发：${d.map((x) => `${x.task} → ${x.role}`).join('；')}` : ''}\n\n${renderStatus(h.store, h.config)}`;
       }
       const flow = h.store.readFlow(flowId);
-      // P1 批准前还是最后一个阶段；批准时先落地计划、追加 S 阶段，不会合入主分支
-      if (flow.stage !== P1_STAGE && flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && !argv.includes('--yes')) {
+      // 架构阶段批准前 S0 还是最后一个阶段；批准时先落地计划、追加批次阶段，流程继续
+      if (!isArchitectStage(flow.stage) && flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && !argv.includes('--yes')) {
         const msg = `批准阶段 ${flow.stage} 将把 ${flow.integration_branch} 合入 ${h.config.raw.main_branch}，流程随之结束。`;
         if (!env.ui) return `${msg}\n确认请执行 /forge-approve --yes`;
         const ok = await env.ui.select(`${msg}确认？`, ['确认合入并结束流程', '取消']);
@@ -283,7 +283,7 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
         return text;
       }
       const text = await rejectStage({ root: env.root, store: h.store, config: h.config }, flowId, feedback);
-      // P1 的返工由 architect 完成，主会话只需等待
+      // 架构阶段的返工由 architect 完成，主会话只需等待
       if (!isArchitectStage(target.slice('stage:'.length))) env.startConversation?.(`阶段被打回，请带着意见继续讨论：${feedback}`);
       await h.engine.pump(flowId);
       return text;

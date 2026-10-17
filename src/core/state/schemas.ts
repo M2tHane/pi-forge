@@ -107,11 +107,11 @@ export const FlowFile = Type.Object({
   gate_rounds: Type.Optional(Type.Array(Type.Object({
     stage: Type.String({ minLength: 1 }), command: Type.String(), tasks: Type.Array(TaskId), at: IsoTime,
   }, { additionalProperties: false }))),
-  /** P1 批准时由程序写入的有序实施阶段 */
+  /** S0 批准时由程序按 docs/plan.md 写入的有序批次阶段 */
   s_stages: Type.Optional(Type.Array(PlanStage)),
-  /** P1 批准时集成分支的提交：此后契约只能追加（M5 判定） */
+  /** S0 批准时集成分支的提交：此后契约只能追加（M5 判定） */
   contracts_base: Type.Optional(Type.String({ minLength: 1 })),
-  /** P1 被打回或闸门未通过：引擎据此新建 architect task，原因写进它的 handoff */
+  /** S0 被打回：引擎据此新建 architect task，原因写进它的 handoff */
   plan_rework: Type.Optional(Type.Object({ reason: Type.String({ minLength: 1 }), at: IsoTime }, { additionalProperties: false })),
   /** PRD 与可选原型原件的位置及恢复会话所需的文件清单 */
   intake: Type.Optional(Type.Object({

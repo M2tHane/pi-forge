@@ -113,12 +113,12 @@ test('fixDescription：位置参数或 --from 文件的第一行', () => {
 
 // —— fixStep ——
 
-test('fixStep 创建 T-001：impl、worker、writes **、verify test、review skip；重入不重复创建', async () => {
+test('fixStep 创建 T-001：impl、worker、writes **、verify test；重入不重复创建', async () => {
   const { p, fix, ctx } = await fixProject();
   try {
     await fixStep(ctx, fix.id);
     const t = p.store.readTask(fix.id, FIX_TASK);
-    assert.deepEqual([t.kind, t.role, t.stage, t.review], ['impl', 'worker', 'X1', 'skip']);
+    assert.deepEqual([t.kind, t.role, t.stage, t.review], ['impl', 'worker', 'X1', undefined]);
     assert.deepEqual(t.writes, ['**']);
     assert.deepEqual(t.verify, ['test']);
     assert.match(p.store.readHandoff(fix.id, FIX_TASK), /输入正确密码仍提示错误/);

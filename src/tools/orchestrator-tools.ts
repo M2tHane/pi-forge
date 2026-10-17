@@ -1,5 +1,5 @@
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
-import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan/plan-flow.ts';
+import { isArchitectStage, planApprovalSummary, planStatus } from '../core/plan/plan-flow.ts';
 import { activePauses, describePause } from '../core/engine/model-pause.ts';
 import { Type, type Static } from 'typebox';
 import type { StateStore } from '../core/state/state-store.ts';
@@ -138,7 +138,7 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
   for (const a of approvalTargets(store, flowId)) lines.push(`等待批准：${a.object}`);
   const plan = planStatus(store, flowId);
   if (plan) lines.push(plan);
-  if (flow.stage === P1_STAGE && flow.stage_status === 'awaiting_human') lines.push(planApprovalSummary(store, flowId));
+  if (isArchitectStage(flow.stage) && flow.stage_status === 'awaiting_human' && !flow.s_stages?.length) lines.push(planApprovalSummary(store.root, store, flowId));
   const changes = changeStatus(store, flowId);
   if (changes) lines.push(changes);
   const pm = postMergeStatus(store, flowId, engine?.postMergeRunning(flowId) ?? false);

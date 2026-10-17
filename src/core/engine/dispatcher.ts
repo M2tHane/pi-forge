@@ -35,7 +35,7 @@ import type { ModelPause } from '../state/schemas.ts';
 import { autoTimeoutDecision, awaitingReview, graceMinutes, measureProgress, runBudgetMinutes, wrapUpMessage } from './run-budget.ts';
 import { stallOf, stuckTasks } from '../insight/forge-watch.ts';
 import { stopAllServices } from '../workspace/services.ts';
-import { docPrecheck, ensureArchitectTask, isArchitectStage, P1_STAGE } from '../plan/plan-flow.ts';
+import { ensureArchitectTask, isArchitectStage } from '../plan/plan-flow.ts';
 import { changeDocPrecheck, changeOfTask, ensureChangeTask } from '../plan/change-flow.ts';
 import { pausedByChange } from '../plan/change-request.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions } from '../workspace/resources.ts';
@@ -157,7 +157,7 @@ export class Engine {
   private commandsError: string | null = null;
 
   /**
-   * 项目命令换成流程集成分支上的 commands.yaml（合入即生效）。引擎启动、每次合入后调用；P1 批准时 materializePlan 也会换。
+   * 项目命令换成流程集成分支上的 commands.yaml（合入即生效）。引擎启动、每次合入后调用；S0 批准时 materializePlan 也会换。
    * 文件写坏时保留原来的命令并报一次错。
    */
   syncCommands(flowId: string): void {
@@ -439,11 +439,6 @@ export class Engine {
     }
   }
 
-  /** worker 当前使用的模型（architect 据此决定粒度）；没有设置时为 null */
-  private workerModel(): string | null {
-    try { return this.modelFor('worker').model; } catch { return null; }
-  }
-
   private modelFor(role: string): { model: string; thinking: ThinkingLevel | null } {
     const r = resolveRoleModel(this.d.config, this.d.roleSettings(), role);
     if (!r.model) throw new DispatchError(`角色 ${role} 没有设置模型：请执行 /forge-config 为它选择模型，或在 workflow.yaml 的 models 中填写档位`);
@@ -481,8 +476,8 @@ export class Engine {
       if (status || stat) existingWork = [stat, status && `未提交：\n${status}`].filter(Boolean).join('\n\n');
     }
     // worker 自己写验收测试（带上 acceptance-tests），reviewer 审查这些测试（同一份技能当检查依据）
-    const s0Architect = role === 'architect' && task.stage === 'S0' && (task.kind === 'impl' || task.kind === 'fix');
-    const skillNames = [...new Set([...(s0Architect ? ['write-rules', 'tdd', 'simplicity', 'receiving-feedback', 'acceptance-tests'] : role === 'architect' ? (task.stage === 'X1' ? ['design-contract', 'domain-modeling'] : ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules', ...(task.stage !== P1_STAGE ? ['change-request'] : [])]) : role === 'reviewer' ? ['code-review', 'tdd', 'simplicity', 'acceptance-tests'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd', 'simplicity', 'receiving-feedback', 'acceptance-tests']), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
+    const s0Architect = role === 'architect' && isArchitectStage(task.stage) && (task.kind === 'impl' || task.kind === 'fix');
+    const skillNames = [...new Set([...(s0Architect ? ['design-contract', 'domain-modeling', 'plan-batches', 'write-rules', 'acceptance-tests', 'simplicity', 'receiving-feedback'] : role === 'architect' ? (task.stage === 'X1' ? ['design-contract', 'domain-modeling'] : ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules', 'change-request']) : role === 'reviewer' ? ['code-review', 'tdd', 'simplicity', 'acceptance-tests'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd', 'simplicity', 'receiving-feedback', 'acceptance-tests']), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
     const skills = skillNames.map((n) => {
       const f = this.d.packageSkillsDir ? path.join(this.d.packageSkillsDir, n, 'SKILL.md') : '';
       return f && existsSync(f) ? { path: `skills/${n}`, content: readFileSync(f, 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim() } : null;
@@ -658,7 +653,7 @@ export class Engine {
         if (t.status === 'in_progress' && !this.pausedFor(flowId, t) && !awaitingReview(t)) await this.dispatch(flowId, t.id);
       } catch (e) { if (!(e instanceof HandedToUser)) report(e); }
     }
-    // merge-fix 是合并流程的一部分（原任务挂起等待它），P1 的 architect 由程序驱动（主会话只等待）：都由程序直接派发；仍受并发与互斥约束
+    // merge-fix 是合并流程的一部分（原任务挂起等待它），S0 由程序驱动（主会话只等待）：都由程序直接派发；仍受并发与互斥约束
     try { await this.dispatchProgramDriven(flowId); } catch (e) { report(e); }
     // merge-fix 最终失败：挂起的原任务一并转 blocked（merging → blocked）
     try {
@@ -714,8 +709,8 @@ export class Engine {
     const { store, root, config } = this.d;
     const t = store.readTask(flowId, taskId);
     if (t.status !== 'checking') return;
-    // 实现类任务的预检不跑命令、也不再检查契约（契约只能追加在 forge_submit 时检查）；只有文档任务（P1 计划、小改动的计划）有程序检查
-    const failure = t.kind !== 'doc' ? null : changeOfTask(store, flowId, t.id) ? changeDocPrecheck(root, store, config, flowId, t) : docPrecheck(root, store, config, flowId, t);
+    // 实现类任务的预检不跑命令、也不再检查契约（契约只能追加在 forge_submit 时检查）；只有文档任务（小改动的计划）有程序检查
+    const failure = t.kind === 'doc' && changeOfTask(store, flowId, t.id) ? changeDocPrecheck(root, store, config, flowId, t) : null;
     if (store.readTask(flowId, taskId).status !== 'checking') return;
     if (failure) {
       await store.appendHandoff(flowId, taskId, failure, 'engine');
@@ -742,13 +737,13 @@ export class Engine {
     await resolveReviews(this.d.root, this.d.store, this.d.config, flowId);
   }
 
-  /** 不经主会话、由程序直接派发的 ready 任务：merge-fix、逐任务审查（.rv）与 P1 的 architect task */
+  /** 不经主会话、由程序直接派发的 ready 任务：merge-fix、逐任务审查（.rv）、复现确认、文档任务与 S0 的全部任务（architect 与门禁修复） */
   private async dispatchProgramDriven(flowId: string): Promise<void> {
     const flow = this.d.store.readFlow(flowId);
     const tasks = this.d.store.listTasks(flowId);
     const ids = selectDispatchable(tasks, flow.stage, this.d.config.limits.max_parallel, this.d.config.limits.max_parallel_aux).filter((id) => {
       const t = tasks.find((x) => x.id === id);
-      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || t.kind === 'qa' || t.kind === 'doc') && !this.pausedFor(flowId, t);
+      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || t.kind === 'qa' || t.kind === 'doc' || isArchitectStage(t.stage)) && !this.pausedFor(flowId, t);
     });
     for (const id of ids) {
       // 循环里有 await，别的推进（子进程退出回调）可能已经派发了它：以最新状态为准
@@ -771,30 +766,10 @@ export class Engine {
         return;
       }
       if (this.gating.has(flowId)) return;
-      // P1：保证有一个进行中的 architect task（首次进入、打回或闸门未通过后返工）
-      if (isArchitectStage(flow.stage) && flow.stage_status === 'active' && await ensureArchitectTask(this.d.store, this.d.config, flowId, this.workerModel())) {
+      // S0：保证有一个进行中的 architect task（首次进入、用户打回后返工）
+      if (isArchitectStage(flow.stage) && flow.stage_status === 'active' && await ensureArchitectTask(this.d.store, this.d.config, flowId)) {
         await this.promote(flowId);
         await this.dispatchProgramDriven(flowId);
-        return;
-      }
-      // P1：architect 的任务都结束后跑 P1 闸门；未通过时返工
-      if (isArchitectStage(flow.stage)) {
-        if (force && flow.stage_status === 'needs_human') await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'gate_rerun', actor: 'human' });
-        else {
-          if (flow.stage_status !== 'active') return;
-          if (!this.d.store.listTasks(flowId).filter((t) => t.stage === flow.stage).every(isSettled)) return;
-          if (!force && gateFailedWithoutChange(this.d.store, flowId, flow.stage)) return;
-          await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
-        }
-        this.gating.add(flowId);
-        this.notify();
-        this.track(runStageGate(this.d.root, this.d.store, this.d.config, flowId, this.d.verifyTimeoutMs)
-          .then(async (g) => {
-            this.d.onGate?.(g);
-            if (!g.passed) await this.d.store.setPlanRework(flowId, `${flow.stage === P1_STAGE ? 'P1 ' : '纳管'}闸门未通过：\n${g.reasons.join('\n')}`.slice(0, 4000), 'gate');
-          })
-          .finally(() => this.gating.delete(flowId))
-          .then(() => { this.notify(); return this.pump(flowId); }));
         return;
       }
       // 实施阶段：门禁与覆盖率 → stage-qa → 修复 → 只确认 → 签收；编排见 stage-acceptance.ts

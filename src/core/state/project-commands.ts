@@ -1,4 +1,4 @@
-// 项目命令（仓库根目录的 commands.yaml）：怎么装依赖、跑测试、启动服务。architect 在 P1 写、S0 修正，worker 加工具时补充，
+// 项目命令（仓库根目录的 commands.yaml）：怎么装依赖、跑测试、启动服务。architect 在 S0 写，开发 agent 加工具时补充，
 // 随代码一起合并。主要给 agent 参考；程序只执行其中几个必需的（PROGRAM_COMMANDS）。
 // 程序读集成分支上最新的一份（合入即生效）；workflow.yaml 只放流程配置。老项目 workflow.yaml 里的 commands 仍然认，作为后备。
 import { existsSync, readFileSync } from 'node:fs';
@@ -66,7 +66,7 @@ export function commandsTextIn(dir: string): string | null {
   return existsSync(f) ? readFileSync(f, 'utf8') : null;
 }
 
-/** commands.yaml 的问题（P1 闸门用）：缺文件、格式不对、没有 test */
+/** commands.yaml 的问题（S0 提交时检查）：缺文件、格式不对、没有 test */
 export function commandsProblems(text: string | null, where: string): string[] {
   if (text === null) return [`${where}缺少 ${COMMANDS_FILE}：至少写 test（全量测试）；按技术栈写 install、serve 等`];
   try {

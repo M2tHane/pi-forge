@@ -5,7 +5,7 @@ import type { FlowFile } from '../state/schemas.ts';
 import { git, gitOk } from '../state/git.ts';
 import { ensureIntegrationBranch } from '../workspace/worktree.ts';
 import { mergeToMain, publishSkeleton } from './release.ts';
-import { materializePlan, P1_STAGE, isArchitectStage } from '../plan/plan-flow.ts';
+import { materializePlan, isArchitectStage } from '../plan/plan-flow.ts';
 import { deliveryReport } from './signoff.ts';
 
 export interface StageDeps { root: string; store: StateStore; config: FlowConfig }
@@ -19,19 +19,19 @@ export async function startFlow(d: StageDeps, description: string): Promise<Flow
   return flow;
 }
 
-/** S0 与最后阶段先以 --no-ff 合入主分支，成功后才批准（S0 合入后集成分支移到合入后的提交）。 */
+/** 批准 S0 时先按计划生成批次阶段，再把集成分支以 --no-ff 合入主分支（合入后集成分支移到合入后的提交）；最后阶段同样先合入再批准。 */
 export async function approveStage(d: StageDeps, flowId: string, note?: string): Promise<string> {
   let flow = d.store.readFlow(flowId);
   if (flow.stage_status !== 'awaiting_human') throw new Error(`阶段 ${flow.stage} 当前是 ${flow.stage_status}，没有等待批准的闸门。`);
   const lines: string[] = [];
-  // P1：先落地计划（追加 S 阶段），P1 才不再是最后一个阶段
-  if (flow.stage === P1_STAGE) {
+  // S0：先落地计划（追加批次阶段），S0 才不再是最后一个阶段
+  if (isArchitectStage(flow.stage)) {
     lines.push(...await materializePlan(d.root, d.store, d.config, flowId));
     flow = d.store.readFlow(flowId);
   }
-  if (flow.stage === 'S0' && flow.stage !== flow.stages.at(-1)) {
+  if (isArchitectStage(flow.stage) && flow.stage !== flow.stages.at(-1)) {
     const sha = await publishSkeleton(d.root, d.store, d.config, flowId);
-    lines.push(`骨架已合入 ${d.config.raw.main_branch}（${sha.slice(0, 8)}），之后的阶段在集成分支 ${flow.integration_branch} 上从这里继续。`);
+    lines.push(`架构产出已合入 ${d.config.raw.main_branch}（${sha.slice(0, 8)}），之后的阶段在集成分支 ${flow.integration_branch} 上从这里继续。`);
   }
   if (flow.stage === flow.stages.at(-1)) {
     // 先把交付汇报存为阶段证据（失败不阻止合入），再合入
@@ -46,7 +46,7 @@ export async function approveStage(d: StageDeps, flowId: string, note?: string):
   }
   await d.store.transitionStage(flowId, { to: 'done', trigger: 'approve', actor: 'human', ...(note ? { note } : {}) });
   const next = await d.store.advanceStage(flowId, 'human');
-  lines.push(`已批准阶段 ${flow.stage}。`, next.stage !== flow.stage ? `进入阶段 ${next.stage}。${next.stage === P1_STAGE ? '程序将派 architect 起草契约与计划。' : ''}` : `流程 ${flow.id} 已完成。`);
+  lines.push(`已批准阶段 ${flow.stage}。`, next.stage !== flow.stage ? `进入阶段 ${next.stage}。` : `流程 ${flow.id} 已完成。`);
   return lines.join('\n');
 }
 
@@ -57,7 +57,7 @@ export async function rejectStage(d: StageDeps, flowId: string, feedback: string
   await d.store.transitionStage(flowId, { to: 'active', trigger: 'reject', actor: 'human', reason: feedback });
   if (isArchitectStage(flow.stage)) {
     await d.store.setPlanRework(flowId, `用户打回：${feedback}`, 'human');
-    return `已打回阶段 ${flow.stage}，程序将派 architect 按意见返工。`;
+    return `已打回架构阶段，程序将派 architect 接着原会话按意见返工。`;
   }
   return `已打回阶段 ${flow.stage}，意见已交给主会话：它用变更请求把修改加进本阶段，修改合入后重新验收（在那之前程序不会重新提交门禁）。`;
 }

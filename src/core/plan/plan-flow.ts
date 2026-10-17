@@ -1,22 +1,23 @@
-// P1 契约与计划：读取并校验 architect 的产物、计划提案、doc 预检、P1 闸门、批准时落地。
-// 校验本身是纯函数（contract-check、plan、spec）；这里只负责从分支或 worktree 取文件、调用它们、经 StateStore 写入。
-import { createHash } from 'node:crypto';
+// 架构阶段 S0：程序派 architect 的 task、提交时检查必需文件与 docs/plan.md、批准页、批准时按计划生成批次阶段与任务。
+// 解析与校验是纯函数（batches.ts、spec/prd.ts）；这里只负责从分支或 worktree 取文件、调用它们、经 StateStore 写入。
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
-import type { FlowFile, PlanFile, TaskFile } from '../state/schemas.ts';
+import type { TaskFile } from '../state/schemas.ts';
 import type { StateStore, TaskInput } from '../state/state-store.ts';
 import { git, gitOk } from '../state/git.ts';
-import { contractFilesAt, contractFilesInDir, parseContracts } from './contract-check.ts';
-import { checkPlan, deriveTasks, formatPlanReport, nextPlanTaskId, parsePlan, PLAN_PATH, type PlanCheck } from './plan.ts';
-import { acTexts, effectiveSpec, type SpecFiles } from '../spec/spec.ts';
 import { isSettled } from '../state/state-machine.ts';
 import { COMMANDS_FILE, commandsProblems } from '../state/project-commands.ts';
-import { escalationPolicy } from '../insight/cost-control.ts';
+import { ownAcceptanceGlob } from '../state/paths.ts';
+import { checkPrd, parsePrd, PRD_PATH } from '../spec/prd.ts';
+import { nextPlanTaskId } from './plan.ts';
+import { ARCH_REQUIRED_FILES, PLAN_MD, S0_EXTRA_WRITES, checkBatchPlan, deriveBatchTasks, parseBatchPlan, risksSection, splitPlan, type BatchPlan } from './batches.ts';
 
-export const P1_STAGE = 'P1';
-/** 由程序派发 architect 的阶段：P1 契约与计划 */
-export const isArchitectStage = (stage: string): boolean => stage === P1_STAGE;
+export const ARCH_STAGE = 'S0';
+/** 由程序派发 architect 的阶段：S0 架构 */
+export const isArchitectStage = (stage: string): boolean => stage === ARCH_STAGE;
+/** S0 里 architect 自己做的 task（不含审查、修复） */
+export const isArchitectTask = (t: Pick<TaskFile, 'stage' | 'kind' | 'role'>): boolean => isArchitectStage(t.stage) && t.kind === 'impl' && t.role === 'architect';
 
 /** 从 git 引用（分支）或目录（worktree，含未提交的改动）读取文件 */
 export type Source = { root: string; ref: string } | { dir: string };
@@ -27,27 +28,6 @@ export function readRel(src: Source, rel: string): string | null {
     return existsSync(abs) && statSync(abs).isFile() ? readFileSync(abs, 'utf8') : null;
   }
   return gitOk(src.root, ['cat-file', '-e', `${src.ref}:${rel}`]) ? git(src.root, ['show', `${src.ref}:${rel}`]) : null;
-}
-
-export function readSpecFrom(src: Source): { files: SpecFiles } | string {
-  const files: Partial<SpecFiles> = {};
-  for (const name of ['requirements', 'screens', 'permissions', 'glossary'] as const) {
-    const text = readRel(src, `docs/spec/${name}.md`);
-    if (text === null) return `缺少规格文件 docs/spec/${name}.md`;
-    files[name] = text;
-  }
-  return { files: files as SpecFiles };
-}
-
-export const planHash = (text: string) => createHash('sha256').update(text).digest('hex');
-
-export interface P1Result {
-  errors: string[];
-  warnings: string[];
-  plan: PlanFile | null;
-  planText: string | null;
-  check: PlanCheck | null;
-  spec: ReturnType<typeof effectiveSpec> | null;
 }
 
 /**
@@ -63,166 +43,107 @@ export function usedTaskIds(root: string, store: StateStore, flowId: string, con
   return [...ids];
 }
 
-/** 契约检查 + plan 校验；errors 为空才算通过 */
-export function checkP1(root: string, src: Source, flow: FlowFile, existingTaskIds: readonly string[], config: FlowConfig): P1Result {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const specFiles = readSpecFrom(src);
-  if (typeof specFiles === 'string') return { errors: [specFiles], warnings, plan: null, planText: null, check: null, spec: null };
-  const spec = effectiveSpec(specFiles.files);
+export interface ArchitectureCheck { errors: string[]; warnings: string[]; plan: BatchPlan | null }
 
-  const contractFiles = 'dir' in src ? contractFilesInDir(src.dir) : contractFilesAt(src.root, src.ref);
-  const contracts = parseContracts(contractFiles);
-  errors.push(...contracts.errors.map((e) => `契约 ${e.file}：${e.message}`));
-  warnings.push(...contracts.warnings.map((e) => `契约 ${e.file}：${e.message}`));
-
-  const planText = readRel(src, PLAN_PATH);
-  if (planText === null) return { errors: [...errors, `缺少 ${PLAN_PATH}`], warnings, plan: null, planText, check: null, spec };
-  const parsed = parsePlan(planText);
-  if (!parsed.plan) return { errors: [...errors, ...parsed.errors], warnings, plan: null, planText, check: null, spec };
-  const check = checkPlan(parsed.plan, {
-    catalog: contracts.catalog, spec, existingTaskIds,
-    limits: { max_parallel: config.limits.max_parallel, max_task_files: config.limits.max_task_files, critical_fanout: escalationPolicy(config).criticalFanout },
-  });
-  return { errors: [...errors, ...check.errors], warnings: [...warnings, ...check.warnings], plan: parsed.plan, planText, check, spec };
+/** 必需文件、commands.yaml、docs/plan.md 的 yaml 区块：errors 不为空时提交退回；warnings 只提醒（含 PRD 的检查） */
+export function checkArchitecture(src: Source): ArchitectureCheck {
+  const errors = ARCH_REQUIRED_FILES.filter((f) => f !== COMMANDS_FILE && readRel(src, f) === null).map((f) => `缺少 ${f}`);
+  errors.push(...commandsProblems(readRel(src, COMMANDS_FILE), ''));
+  const prdText = readRel(src, PRD_PATH);
+  const prd = parsePrd(prdText ?? '');
+  const warnings = prdText === null ? [] : checkPrd(prd, (rel) => readRel(src, rel) !== null).map((w) => `PRD：${w}`);
+  const planText = readRel(src, PLAN_MD);
+  if (planText === null) return { errors, warnings, plan: null };
+  const parsed = parseBatchPlan(planText);
+  warnings.push(...parsed.warnings);
+  if (!parsed.plan) return { errors: [...errors, ...parsed.errors], warnings, plan: null };
+  const check = checkBatchPlan(parsed.plan, prd);
+  return { errors: [...errors, ...check.errors], warnings: [...warnings, ...check.warnings], plan: check.errors.length ? null : parsed.plan };
 }
 
-/** architect task 的说明：worker 用的模型决定粒度，task 编号从哪里起 */
-export function architectBrief(_config: FlowConfig, existingTaskIds: readonly string[], workerModel: string | null, rework?: string): string {
+/** architect task 的说明 */
+export function architectBrief(rework?: string): string {
   return [
-    '# P1 契约与计划',
-    '按角色提示的顺序产出：docs/arch/overview.md、契约（docs/contracts/）、术语表追加、项目命令（commands.yaml）、AGENTS.md、docs/plan/plan.yaml。',
-    `worker 使用的模型：${workerModel ?? '尚未设置（按强模型估计粒度）'}；粒度按技能 plan-dag 的说明跟模型走。`,
-    `plan.yaml 的 task 编号从 ${nextPlanTaskId(existingTaskIds)} 起（流程里已有 ${existingTaskIds.join('、') || '无'}）。`,
-    '写完后用 forge_propose_plan 提交（附 assumptions 与 extras），按返回的错误修改（提醒自己判断要不要改），通过后 forge_submit。',
+    '# S0 架构',
+    `按角色提示的顺序完成技术栈、骨架、公共规范、domain 划分、domain 间接口、API 契约、逐页核对原型与 ${PLAN_MD}。需求在 ${PRD_PATH}，原型在 docs/prototype/。`,
+    `提交前这些文件必须存在：${ARCH_REQUIRED_FILES.join('、')}；${PLAN_MD} 的「## 程序读取的部分」要能解析。缺文件或解析不过时 forge_submit 会退回并列出原因，其余问题只提醒。`,
+    '必需的命令要真的能跑，冒烟测试要通过：合入后程序在集成分支上跑门禁命令，通过后等用户批准。',
     ...(rework ? ['', '## 需要返工', rework, '只改上面提到的地方，其余保持不变。'] : []),
   ].join('\n');
 }
 
 /**
- * P1 为 active 时保证有一个进行中的 architect task：还没有 P1 task，或 P1 需要返工（打回、闸门未通过）时新建一个。
+ * S0 为 active 且计划还没落地时，保证有一个进行中的 architect task：还没有，或用户打回需要返工时新建一个。
  * 返工的 task 接着上一个 architect task 的会话（fork）。返回新建的 task，没有新建时返回 null。
  */
-export async function ensureArchitectTask(store: StateStore, config: FlowConfig, flowId: string, workerModel: string | null): Promise<TaskFile | null> {
+export async function ensureArchitectTask(store: StateStore, config: FlowConfig, flowId: string): Promise<TaskFile | null> {
   const root = store.root;
   const flow = store.readFlow(flowId);
-  if (!isArchitectStage(flow.stage) || flow.stage_status !== 'active') return null;
+  if (!isArchitectStage(flow.stage) || flow.stage_status !== 'active' || flow.s_stages?.length) return null;
   const all = store.listTasks(flowId);
-  const p1 = all.filter((t) => t.stage === flow.stage);
-  if (p1.some((t) => !isSettled(t))) return null;
-  if (p1.length && !flow.plan_rework) return null;
-  const ids = usedTaskIds(root, store, flowId, config);
-  const id = nextPlanTaskId(ids);
-  const prev = p1.filter((t) => t.status === 'done').at(-1);
+  const stageTasks = all.filter((t) => t.stage === flow.stage);
+  if (stageTasks.some((t) => !isSettled(t))) return null;
+  const own = stageTasks.filter(isArchitectTask);
+  if (own.length && !flow.plan_rework) return null;
+  const id = nextPlanTaskId(usedTaskIds(root, store, flowId, config));
+  const prev = own.filter((t) => t.status === 'done').at(-1);
   const input: TaskInput = {
-    id, stage: flow.stage, kind: 'doc', role: 'architect', title: `契约与计划${p1.length ? '（返工）' : ''}`,
-    // 只用 plan scope：architect 在 S0 另有 code scope，P1 的 doc task 不能因此获得全部可写范围
-    scopes: ['plan'], depends_on: [], inputs: [], writes: [...(config.scopeWrites()['plan'] ?? [])], verify: [],
+    id, stage: flow.stage, kind: 'impl', role: 'architect', title: `架构：技术栈、骨架、契约与计划${own.length ? '（返工）' : ''}`,
+    scopes: ['code'], depends_on: [], inputs: [], writes: ['**', ...S0_EXTRA_WRITES, ownAcceptanceGlob(id)],
+    verify: config.commands['test']?.trim() ? ['test'] : [],
     ...(prev ? { fork_from_task: prev.id } : {}),
   };
   const [task] = await store.addTasks(flowId, [input], 'engine');
-  await store.appendHandoff(flowId, id, architectBrief(config, [...ids, id], workerModel, flow.plan_rework?.reason), 'engine');
+  await store.appendHandoff(flowId, id, architectBrief(flow.plan_rework?.reason), 'engine');
   if (flow.plan_rework) await store.setPlanRework(flowId, null, 'engine');
   return task!;
 }
 
-const proposalProblem = (store: StateStore, flowId: string, planText: string | null): string | null => {
-  const p = store.readPlanProposal(flowId);
-  if (!p) return '还没有用 forge_propose_plan 提交计划';
-  if (planText !== null && p.plan_hash !== planHash(planText)) return 'docs/plan/plan.yaml 在 forge_propose_plan 之后又改过，请重新提交计划';
-  return null;
-};
+const APPROVAL_PROSE_MAX = 6000;
 
-/** P1 的 doc task 预检（v3.2 ：契约检查与计划校验接进 doc 的预检）；通过返回 null，否则返回失败原因 */
-export function docPrecheck(root: string, store: StateStore, config: FlowConfig, flowId: string, task: TaskFile): string | null {
-  if (task.kind !== 'doc' || task.stage !== P1_STAGE || !task.branch) return null;
-  const flow = store.readFlow(flowId);
-  const r = checkP1(root, { root, ref: task.branch }, flow, usedTaskIds(root, store, flowId, config), config);
-  const problems = [...r.errors, ...commandsProblems(readRel({ root, ref: task.branch }, COMMANDS_FILE), '')];
-  const proposal = proposalProblem(store, flowId, r.planText);
-  if (proposal) problems.push(proposal);
-  return problems.length ? `P1 预检未通过：\n${problems.map((p) => `- ${p}`).join('\n')}` : null;
-}
-
-/** P1 闸门：集成分支上的契约、计划、commands.yaml 都要通过，并且提交过计划提案 */
-export function p1GateProblems(root: string, store: StateStore, config: FlowConfig, flowId: string): string[] {
-  const flow = store.readFlow(flowId);
-  const r = checkP1(root, { root, ref: flow.integration_branch }, flow, usedTaskIds(root, store, flowId, config), config);
-  const problems = [...r.errors, ...commandsProblems(readRel({ root, ref: flow.integration_branch }, COMMANDS_FILE), '')];
-  const proposal = proposalProblem(store, flowId, r.planText);
-  if (proposal) problems.push(proposal);
-  return problems;
-}
-
-/** 批准页：计划报告、assumptions、extras、项目命令（给出 root 时列出集成分支上的 commands.yaml） */
-export function planApprovalSummary(store: StateStore, flowId: string, root?: string): string {
-  const p = store.readPlanProposal(flowId);
-  if (!p) return '还没有计划提案。';
-  const commandsText = root ? readRel({ root, ref: store.readFlow(flowId).integration_branch }, COMMANDS_FILE) : null;
+/** 批准页：plan.md 的说明部分（过长截断）、风险与假设、PRD 检查的警告、计划的提醒、项目命令 */
+export function planApprovalSummary(root: string, store: StateStore, flowId: string): string {
+  const ref = store.readFlow(flowId).integration_branch;
+  const text = readRel({ root, ref }, PLAN_MD);
+  if (text === null) return `集成分支上还没有 ${PLAN_MD}。`;
+  const { prose } = splitPlan(text);
+  const check = checkArchitecture({ root, ref });
+  const plan = check.plan;
+  const risks = risksSection(prose);
+  const commands = readRel({ root, ref }, COMMANDS_FILE);
   return [
-    p.report,
-    p.assumptions.length ? `assumptions（architect 默认的处理，请逐条确认）：\n${p.assumptions.map((a, i) => `${i + 1}. ${a.question} → ${a.decision}`).join('\n')}` : 'assumptions：无',
-    p.extras.length ? `extras（超出需求的设计，请确认）：\n${p.extras.map((x, i) => `${i + 1}. ${x.what}：${x.why}`).join('\n')}` : 'extras：无',
-    ...(commandsText !== null ? [`项目命令（${COMMANDS_FILE}，程序只执行 install、test、acceptance、serve 等，其余给 agent 参考）：\n${commandsText.trim()}`] : []),
-    '批准后：生成 S 阶段与 task，契约锁定（之后只能追加），进入 S0（由 architect 搭骨架、写 rules/，按需修正 commands.yaml）。',
+    plan ? `计划：${plan.batches.length} 个批次（${plan.batches.map((b) => `${b.id}${b.title ? ` ${b.title}` : ''}：后端 ${b.backend.length} 个 domain、页面 ${b.frontend.length} 个`).join('；')}）` : '计划：yaml 区块未通过校验',
+    `## ${PLAN_MD} 的说明部分\n${prose.length > APPROVAL_PROSE_MAX ? `${prose.slice(0, APPROVAL_PROSE_MAX)}\n…（已截断，完整内容用 forge_read 读 ${PLAN_MD}）` : prose || '（没有）'}`,
+    `## 风险与假设\n${risks || '（plan.md 里没有这一节）'}`,
+    ...(check.errors.length ? [`## 不能批准的问题\n${check.errors.map((e) => `- ${e}`).join('\n')}`] : []),
+    `## 提醒（PRD 检查与计划检查，不影响批准）\n${check.warnings.length ? check.warnings.map((w) => `- ${w}`).join('\n') : '（无）'}`,
+    ...(commands !== null ? [`## 项目命令（${COMMANDS_FILE}）\n${commands.trim()}`] : []),
+    '批准后：集成分支合入主分支，按计划生成批次阶段与任务，开始第 1 批。',
   ].join('\n\n');
 }
 
-/** 每个 impl task 的初始笔记：负责的 AC 原文（notes 小改） */
-export function initialNotes(tasks: readonly TaskInput[], spec: ReturnType<typeof effectiveSpec>): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
-  for (const t of tasks) {
-    const texts = acTexts(spec, t.ac ?? []);
-    const goal = (t.ac ?? []).map((ac) => `${ac}：${texts[ac] ?? '（规格中找不到原文）'}`);
-    if (t.manual_checks?.length) goal.push(`需要用户查看（manual）：${t.manual_checks.join('；')}`);
-    if (goal.length) out[t.id] = goal;
-  }
-  return out;
-}
-
 /**
- * 批准 P1 时落地计划：再校验一次集成分支，换成集成分支上的 commands.yaml，
- * 然后在一个事务里写入 S 阶段、task、初始笔记与契约锁定点。已经落地过的流程直接跳过（批准中途崩溃后重试）。
+ * 批准 S0 时落地计划：再校验一次集成分支，换成集成分支上的 commands.yaml，
+ * 然后在一个事务里写入批次阶段与任务。已经落地过的流程直接跳过（批准中途崩溃后重试）。
  */
 export async function materializePlan(root: string, store: StateStore, config: FlowConfig, flowId: string): Promise<string[]> {
   const flow = store.readFlow(flowId);
   if (flow.s_stages?.length) return [];
-  const r = checkP1(root, { root, ref: flow.integration_branch }, flow, usedTaskIds(root, store, flowId, config), config);
-  const problems = [...r.errors, ...commandsProblems(readRel({ root, ref: flow.integration_branch }, COMMANDS_FILE), '')];
-  const proposal = proposalProblem(store, flowId, r.planText);
-  if (proposal) problems.push(proposal);
-  if (problems.length || !r.plan || !r.check || !r.spec) throw new Error(`计划未通过校验，不能批准：\n${problems.map((p) => `- ${p}`).join('\n')}`);
-  config.syncCommands(root, flow.integration_branch);
-  // task 只登记全量测试；typecheck、lint 等是参考命令，worker 与审查者按 commands.yaml 自己决定
-  const tasks = deriveTasks(r.plan, r.check.deps, { worker: config.role('worker').scopes }, { verify: ['test'].filter((c) => config.commands[c]?.trim()) });
-  const contractsBase = git(root, ['rev-parse', `refs/heads/${flow.integration_branch}`]).trim();
-  await store.materializePlan(flowId, { stages: r.plan.stages, tasks, notes: initialNotes(tasks, r.spec), contractsBase });
-  return [
-    `已生成 ${r.plan.stages.length} 个 S 阶段（${r.plan.stages.map((s) => s.id).join('、')}）与 ${tasks.length} 个 task。`,
-    `契约已锁定（${contractsBase.slice(0, 8)}），之后只能追加。`,
-  ];
+  const ref = flow.integration_branch;
+  const check = checkArchitecture({ root, ref });
+  if (check.errors.length || !check.plan) throw new Error(`架构产出未通过校验，不能批准：\n${check.errors.map((p) => `- ${p}`).join('\n')}`);
+  config.syncCommands(root, ref);
+  const first = Number(nextPlanTaskId(usedTaskIds(root, store, flowId, config)).slice(2));
+  const prd = parsePrd(readRel({ root, ref }, PRD_PATH) ?? '');
+  const { stages, tasks } = deriveBatchTasks(check.plan, prd, first, { verify: ['test'].filter((c) => config.commands[c]?.trim()) });
+  const contractsBase = git(root, ['rev-parse', `refs/heads/${ref}`]).trim();
+  await store.materializePlan(flowId, { stages, tasks, notes: {}, contractsBase });
+  return [`已生成 ${stages.length} 个批次阶段（${stages.map((s) => s.id).join('、')}）与 ${tasks.length} 个 task。`];
 }
 
-/** forge_propose_plan：在 architect 的 worktree 上校验，通过后保存提案 */
-export async function proposePlan(root: string, store: StateStore, config: FlowConfig, flowId: string, task: TaskFile,
-  input: { assumptions: PlanProposalInput['assumptions']; extras: PlanProposalInput['extras'] }, actor: string): Promise<{ ok: boolean; text: string }> {
-  if (task.kind !== 'doc' || task.stage !== P1_STAGE || !task.worktree) return { ok: false, text: '只有 P1 的 architect task 可以提交计划。' };
-  const flow = store.readFlow(flowId);
-  const r = checkP1(root, { dir: task.worktree }, flow, usedTaskIds(root, store, flowId, config), config);
-  if (r.errors.length || !r.check?.report || r.planText === null) {
-    return { ok: false, text: `计划未通过校验（共 ${r.errors.length} 处），改了再提交：\n${r.errors.map((e) => `- ${e}`).join('\n')}${r.warnings.length ? `\n\n提醒：\n${r.warnings.map((w) => `- ${w}`).join('\n')}` : ''}` };
-  }
-  const report = formatPlanReport(r.check.report, r.warnings);
-  await store.savePlanProposal(flowId, { task: task.id, plan_hash: planHash(r.planText), assumptions: input.assumptions, extras: input.extras, report, warnings: r.warnings }, actor);
-  return { ok: true, text: `计划已通过校验并保存。\n\n${report}\n\n${r.warnings.length ? '提醒看过再决定要不要改；' : ''}确认无误后 forge_submit。plan.yaml 之后再改动需要重新 forge_propose_plan。` };
-}
-type PlanProposalInput = { assumptions: { question: string; decision: string }[]; extras: { what: string; why: string }[] };
-
-/** 状态视图与 forge_status 的 P1 摘要 */
+/** 状态视图与 forge_status 的计划摘要 */
 export function planStatus(store: StateStore, flowId: string): string {
   const flow = store.readFlow(flowId);
-  if (flow.stage !== P1_STAGE && !flow.s_stages?.length) return '';
-  if (flow.s_stages?.length) return `计划：${flow.s_stages.length} 个 S 阶段，契约锁定于 ${flow.contracts_base?.slice(0, 8) ?? '-'}`;
-  const p = store.readPlanProposal(flowId);
-  return [`计划：${p ? '已提交提案' : 'architect 起草中'}`, ...(p ? [p.report.split('\n')[0]!] : []), ...(flow.plan_rework ? [`返工：${flow.plan_rework.reason}`] : [])].join('\n');
+  if (flow.s_stages?.length) return `计划：${flow.s_stages.length} 个批次`;
+  return isArchitectStage(flow.stage) && flow.plan_rework ? `返工：${flow.plan_rework.reason}` : '';
 }

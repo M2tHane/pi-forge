@@ -44,8 +44,11 @@ test('动态实施闸门：只运行已配置命令，两轮 .fx-n 后 needs_hum
   } finally { p.cleanup(); }
 });
 
-test('S0 批准：骨架合入 main，集成分支移到合入后的提交，之后的阶段在它上面继续；S0 一律人工签收', async () => {
-  const p = await setupProject({ yaml: PROJECT_YAML.replace(/^  human: true/m, '  human: false'), stages: ['S0', 'S1'], tasks: [mkTask('T-001', { stage: 'S0' }), mkTask('T-002', { stage: 'S1', writes: ['src/server/t-002/**'] })] });
+test('S0 批准：架构产出合入 main，集成分支移到合入后的提交，之后的阶段在它上面继续；S0 一律人工签收', async () => {
+  const p = await setupProject({ yaml: PROJECT_YAML.replace(/^  human: true/m, '  human: false'), stages: ['S0'] });
+  // 计划已经落地（批准中途崩溃后重试的情形）：批准只合入主分支
+  await p.store.setStages(p.flowId, [{ id: 'S1', goal: '第 1 批', exit: [] }]);
+  await p.store.addTasks(p.flowId, [mkTask('T-001', { stage: 'S0' }), mkTask('T-002', { stage: 'S1', writes: ['src/server/t-002/**'] })], 'engine');
   try {
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
       assert.ok((await a.call('forge_claim')).ok);
@@ -57,7 +60,7 @@ test('S0 批准：骨架合入 main，集成分支移到合入后的提交，之
     assert.deepEqual(errors, []);
     const integ = p.store.readFlow(p.flowId).integration_branch;
     assert.deepEqual([p.store.readFlow(p.flowId).stage, p.store.readFlow(p.flowId).stage_status], ['S0', 'awaiting_human'], 'gate.human 为 false 时 S0 也等人工');
-    assert.match(await approveStage({ root: p.dir, store: p.store, config: p.config }, p.flowId), /骨架已合入 main/);
+    assert.match(await approveStage({ root: p.dir, store: p.store, config: p.config }, p.flowId), /架构产出已合入 main/);
     assert.equal(p.git('show', 'main:src/server/t-001/a.ts'), 'T-001');
     assert.equal(p.git('rev-parse', integ), p.git('rev-parse', 'main'), '集成分支移到 main 的合入提交');
     for (let i = 0; i < 3; i++) { await engine.next(p.flowId); await engine.idle(); }

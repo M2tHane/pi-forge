@@ -9,7 +9,7 @@ import lockfile from 'proper-lockfile';
 import { MIGRATIONS, SCHEMA_VERSION, migrationChain, type Migration } from './migrations.ts';
 import {
   validate, isLightFlow, type FlowFile, type MergeQueueFile, type RunFile, type KnowledgeFile, type ModelPausesFile, type SchemaKind, type StageStatus, type StateFile,
-  type TaskFile, type TaskStatus, type FlowEvent, type NotesFile, type PlanProposalFile, type ChangeFile, type ChangeActionSummary,
+  type TaskFile, type TaskStatus, type FlowEvent, type NotesFile, type ChangeFile, type ChangeActionSummary,
 } from './schemas.ts';
 import {
   IN_FLIGHT, isAuxKind, planStageTransition, planTransition, type Facts, type StageTrigger, type TaskPatch, type Trigger,
@@ -71,7 +71,6 @@ const CHANGE_PATCH_KEYS = new Set(['title', 'stage', 'module', 'size', 'layers',
 const TASK_PATCH_KEYS = new Set(['lease', 'worktree', 'branch', 'base_sha', 'timeout_review', 'timeout_progress']);
 
 export const changeRel = (flow: string, change: string) => `flows/${flow}/changes/${change}.json`;
-export const planProposalRel = (flow: string) => `flows/${flow}/plan-proposal.json`;
 export const flowRel = (flow: string) => `flows/${flow}/flow.json`;
 export const taskRel = (flow: string, task: string) => `flows/${flow}/tasks/${task}.json`;
 export const handoffRel = (flow: string, task: string) => `flows/${flow}/handoff/${task}.md`;
@@ -914,40 +913,24 @@ export class StateStore {
     return next;
   }
 
-  readPlanProposal(flowId: string): PlanProposalFile | null {
-    return this.readJsonRel<PlanProposalFile>(planProposalRel(flowId));
-  }
-
-  /** architect 经 forge_propose_plan 提交（或替换）计划提案 */
-  async savePlanProposal(flowId: string, input: Omit<PlanProposalFile, 'created_at' | 'version'>, actor: string): Promise<PlanProposalFile> {
-    return this.transaction((tx) => {
-      tx.readFlow(flowId);
-      const cur = tx.readJson<PlanProposalFile>(planProposalRel(flowId));
-      const saved = tx.putJson(planProposalRel(flowId), 'plan-proposal', { ...input, created_at: tx.ts, version: cur?.version ?? 1 });
-      tx.event({ flow: flowId, task: input.task, actor, type: 'note', reason: `${cur ? '替换' : '提交'}计划提案`,
-        data: { plan_hash: input.plan_hash, assumptions: input.assumptions.length, extras: input.extras.length, warnings: input.warnings.length } });
-      return saved;
-    });
-  }
-
-  /** P1 需要返工（打回、闸门未通过）或返工已开始（null） */
+  /** 架构阶段需要返工（用户打回）或返工已开始（null） */
   async setPlanRework(flowId: string, reason: string | null, actor: string): Promise<FlowFile> {
     return this.transaction((tx) => {
       const { plan_rework: _old, ...flow } = tx.readFlow(flowId);
       const next = tx.putFlow({ ...flow, ...(reason ? { plan_rework: { reason, at: tx.ts } } : {}) });
-      tx.event({ flow: flowId, actor, type: 'note', reason: reason ? `P1 需要返工：${reason}`.slice(0, 500) : 'P1 返工已开始', data: { plan_rework: reason ? 'open' : 'cleared' } });
+      tx.event({ flow: flowId, actor, type: 'note', reason: reason ? `架构需要返工：${reason}`.slice(0, 500) : '架构返工已开始', data: { plan_rework: reason ? 'open' : 'cleared' } });
       return next;
     });
   }
 
   /**
-   * 批准计划时落地：同一事务内写入 S 阶段（stages_planned）、新增 task 与它们的初始笔记、记下锁定契约的提交。
-   * 只能在 P1 等待批准时调用；已经落地过（有 s_stages）时拒绝。
+   * 批准架构阶段时落地计划：同一事务内写入批次阶段（stages_planned）、新增 task 与它们的初始笔记、记下锁定契约的提交。
+   * 只能在 S0 等待批准时调用；已经落地过（有 s_stages）时拒绝。
    */
   async materializePlan(flowId: string, input: { stages: NonNullable<FlowFile['s_stages']>; tasks: readonly TaskInput[]; notes: Record<string, string[]>; contractsBase: string }): Promise<FlowFile> {
     return this.transaction((tx) => {
       const flow = tx.readFlow(flowId);
-      if (flow.stage !== 'P1' || flow.stage_status !== 'awaiting_human') throw new StateError(`计划只能在 P1 等待批准时落地（当前 ${flow.stage} ${flow.stage_status}）`);
+      if (flow.stage !== 'S0' || flow.stage_status !== 'awaiting_human') throw new StateError(`计划只能在 S0 等待批准时落地（当前 ${flow.stage} ${flow.stage_status}）`);
       if (flow.s_stages?.length) throw new StateError('计划已经落地过，不能重复生成');
       if (new Set(input.stages.map((st) => st.id)).size !== input.stages.length) throw new StateError('S 阶段编号重复');
       const next = tx.putFlow({ ...flow, s_stages: structuredClone(input.stages), stages: [...flow.stages, ...input.stages.map((st) => st.id)], contracts_base: input.contractsBase });
@@ -957,7 +940,7 @@ export class StateStore {
         if (!goal.length) continue;
         tx.putJson(taskNotesRel(flowId, task), 'notes', { goal: [...goal], done: [], todo: [], current: [], decisions: [], pitfalls: [], updated_at: tx.ts, version: 1 });
       }
-      tx.event({ flow: flowId, actor: 'engine', type: 'note', reason: `计划已落地：${input.stages.length} 个 S 阶段、${added.length} 个 task；契约锁定于 ${input.contractsBase.slice(0, 8)}，之后只能追加`,
+      tx.event({ flow: flowId, actor: 'engine', type: 'note', reason: `计划已落地：${input.stages.length} 个批次阶段、${added.length} 个 task；契约锁定于 ${input.contractsBase.slice(0, 8)}`,
         data: { tasks: added.map((t) => t.id), contracts_base: input.contractsBase } });
       return next;
     });

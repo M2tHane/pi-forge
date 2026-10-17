@@ -8,11 +8,34 @@ import { git, gitOk } from '../state/git.ts';
 import { contractFilesAt, contractFilesInDir, parseContracts } from './contract-check.ts';
 import { checkPlan, nextPlanTaskId, parsePlan, PLAN_PATH, type PlanCheck } from './plan.ts';
 import { effectiveSpec } from '../spec/spec.ts';
-import { initialNotes, readRel, readSpecFrom, type Source } from './plan-flow.ts';
+import { readRel, type Source } from './plan-flow.ts';
+import { acTexts, type SpecFiles } from '../spec/spec.ts';
 import { changeSummary, changeTouched, diffPlanRevision, isOpenChange, materializeChange, summarizeActions, type ChangeAction, type CurrentPlan } from './change-request.ts';
 import { escalationPolicy } from '../insight/cost-control.ts';
 
 const hashText = (text: string) => createHash('sha256').update(text).digest('hex');
+
+function readSpecFrom(src: Source): { files: SpecFiles } | string {
+  const files: Partial<SpecFiles> = {};
+  for (const name of ['requirements', 'screens', 'permissions', 'glossary'] as const) {
+    const text = readRel(src, `docs/spec/${name}.md`);
+    if (text === null) return `缺少规格文件 docs/spec/${name}.md`;
+    files[name] = text;
+  }
+  return { files: files as SpecFiles };
+}
+
+/** 每个 impl task 的初始笔记：负责的 AC 原文 */
+function initialNotes(tasks: readonly TaskInput[], spec: ReturnType<typeof effectiveSpec>): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const t of tasks) {
+    const texts = acTexts(spec, t.ac ?? []);
+    const goal = (t.ac ?? []).map((ac) => `${ac}：${texts[ac] ?? '（规格中找不到原文）'}`);
+    if (t.manual_checks?.length) goal.push(`需要用户查看（manual）：${t.manual_checks.join('；')}`);
+    if (goal.length) out[t.id] = goal;
+  }
+  return out;
+}
 export class ChangeError extends Error {}
 
 /** 变更请求的 architect 只能写这些路径（契约可以修改，不只追加） */

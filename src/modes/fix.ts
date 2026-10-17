@@ -219,7 +219,7 @@ export async function fixStep(c: FixContext, flowId: string): Promise<void> {
     return;
   }
 
-  if (!qaEnabledOf(c.config)) { await finish(c, flowId, 'skipped'); return; }
+  if (!qaEnabledOf(c.config, flow.stage)) { await finish(c, flowId, 'skipped'); return; }
   const r = await resolveQa(c.root, store, c.config, flowId, FIX_STAGE);
   switch (r.kind) {
     case 'running': case 'fix': return;
@@ -248,7 +248,7 @@ export async function createFixTask(c: Pick<FixContext, 'store' | 'config'>, flo
   const r = c.config.role(FIX_ROLE);
   const input: TaskInput = {
     id: FIX_TASK, stage: flow.stage, kind: 'impl', title: `修复：${flow.title}`.slice(0, 200), role: FIX_ROLE, scopes: [...r.scopes],
-    depends_on: [], inputs: [], writes: ['**'], verify: c.config.commands['test'] ? ['test'] : [], review: 'skip',
+    depends_on: [], inputs: [], writes: ['**'], verify: c.config.commands['test'] ? ['test'] : [],
     ac: ['所报告的问题不再出现：写明复现步骤与修复后的结果', '新增回归测试覆盖这个问题（修复前失败、修复后通过）', '只改与这个问题相关的代码，全量测试通过'],
   };
   const [t] = await c.store.addTasks(flowId, [input], 'engine');

@@ -10,6 +10,7 @@ import type { TaskFile } from '../state/schemas.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { isSettled } from '../state/state-machine.ts';
 import { isOpenChange } from '../plan/change-request.ts';
+import { isArchitectStage } from '../plan/plan-flow.ts';
 import { headSha } from '../workspace/worktree.ts';
 import { gateFailed, stageDef, type ImplementationChecks } from './gates.ts';
 import { QA_INPUT, createQaTask, qaTasksOf, resolveQa } from './stage-qa.ts';
@@ -28,7 +29,8 @@ export type StageStep = 'wait' | 'gate' | 'changed' | 'done';
 
 const GATE_PASSED = 'gate_checks_passed';
 
-export const qaEnabled = (config: FlowConfig) => config.raw.implementation_gate?.qa !== false;
+/** 架构阶段只跑门禁命令（含冒烟测试），不做浏览器验收 */
+export const qaEnabled = (config: FlowConfig, stage: string) => config.raw.implementation_gate?.qa !== false && !isArchitectStage(stage);
 
 /** 本阶段最近一次确定性检查通过时的集成分支 HEAD（阶段被打回后作废）；纯函数 */
 export function gatePassedHead(events: readonly { type: string; flow: string | null; data?: Record<string, unknown> | undefined }[], flowId: string, stage: string): string | null {
@@ -105,7 +107,7 @@ export async function stageStep(d: AcceptanceDeps, flowId: string, opts: { force
   }
   if (flow.stage_status !== 'awaiting_gate') return 'wait';
   // awaiting_gate 且没有检查在跑：stage-qa 在跑或已结束；崩溃后没有 qa 的，重跑检查
-  if (!qaEnabled(d.config)) return 'gate';
+  if (!qaEnabled(d.config, stage)) return 'gate';
   const r = await resolveQa(d.root, store, d.config, flowId, stage);
   switch (r.kind) {
     case 'running': return 'wait';
@@ -143,7 +145,7 @@ export async function afterChecks(d: AcceptanceDeps, flowId: string, g: Implemen
   }
   if (!g.passed) { await toNeedsHuman(store, flowId, reason || '门禁未通过'); return { done: false, note: reason }; }
   await store.recordEvent({ flow: flowId, actor: 'gate', type: 'note', reason: `阶段 ${g.stage} 门禁与覆盖率通过`, data: { kind: GATE_PASSED, stage: g.stage, head: g.head } });
-  if (!qaEnabled(d.config)) return { done: await finalize(d, flowId, g.head) };
+  if (!qaEnabled(d.config, g.stage)) return { done: await finalize(d, flowId, g.head) };
   const r = await resolveQa(d.root, store, d.config, flowId, g.stage);
   // 轮数用尽后代码又变了（用户打回后变更请求的 task 合入）：再开一轮只确认的，不按改动之前的结论交给用户
   //（stock run-03：S2 修完后门禁两次都按旧的 stage-qa 结论判用尽，修复没人复验）

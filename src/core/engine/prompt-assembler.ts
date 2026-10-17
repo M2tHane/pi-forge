@@ -20,7 +20,7 @@ export const CONVENTIONS_MAX = 12000;
 
 /**
  * global.md、任务 scopes 对应的规则文件、task 的 layers 对应的 rules/<layer>.md（按 layers 选规则），按顺序去重；路径相对项目根。
- * 缺失的文件跳过（例如 P1 批准之前还没有分层规则）。
+ * 缺失的文件跳过（例如 S0 合入之前还没有分层规则）。
  * 给出 worktree 时每个规则文件先在 worktree 里找，有就用它，没有再用项目根目录（S0 的 architect 写进 rules/ 的规则合入集成分支后，后续 worktree 都读得到）。
  */
 export function ruleFilesFor(config: FlowConfig, projectRoot: string, scopes: readonly string[], layers: readonly string[] = [], worktree?: string): { rules: RuleFile[]; missing: string[] } {
@@ -208,7 +208,7 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     const acs = (t.ac ?? []).filter((a) => /^REQ-\d+\.AC\d+$/.test(a));
     parts.push(`## 验收测试（由你编写）\n本任务没有单独的测试作者：按 AC 编号为本任务写验收测试，放在 \`tests/acceptance/${impl}/\`（辅助代码也放在这个目录下），用例标题带 \`[REQ-xxx.ACn]\`，每条 AC 至少一个用例。reviewer 会运行 \`acceptance -- ${impl}\`，这些测试必须通过；全部验收测试在阶段门禁运行。提交前自己先跑通。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
   }
-  // S0 由 architect 执行 impl / fix，同样需要接口清单（P1 与变更请求的 doc task 不需要）
+  // S0 由 architect 执行 impl / fix，同样需要接口清单（变更请求的 doc task 不需要）
   if (i.flowTasks && (INTERFACE_ROLES.includes(i.agent.name) || (i.agent.name === 'architect' && (t.kind === 'impl' || t.kind === 'fix')))) parts.push(...interfaceSections(t, i.flowTasks));
   if (i.priorTask) {
     parts.push(`## 接着你之前的对话\n上面的对话是你完成 ${i.priorTask.id}「${i.priorTask.title}」时的过程（run ${i.priorTask.run}），你熟悉这些代码，不必从头重读。那个任务已经合入；现在是一个新任务、新的 worktree（集成分支最新代码，可能包含别人之后的改动），文件路径与可写范围以本次说明为准。`);

@@ -2,7 +2,6 @@
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowEvent, FlowFile, TaskFile } from '../state/schemas.ts';
-const DESIGN_STAGES = new Set(['P1']);
 
 export const DEFAULT_STALL_MINUTES = 20;
 
@@ -33,7 +32,7 @@ const OPEN = (t: TaskFile) => t.status !== 'done' && t.status !== 'cancelled';
  * 返回要用户决定的 blocked 任务；没有卡住返回 null。
  */
 export function stuckTasks(flow: FlowFile, tasks: readonly TaskFile[]): TaskFile[] | null {
-  if (flow.stage_status !== 'active' || DESIGN_STAGES.has(flow.stage)) return null;
+  if (flow.stage_status !== 'active') return null;
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const open = tasks.filter((t) => t.stage === flow.stage && OPEN(t));
   if (!open.length) return null;
@@ -59,7 +58,7 @@ export interface Stall { minutes: number; since: string; seq: number }
  * 卡住（stuckTasks）另外报告，这里不重复。
  */
 export function stallOf(store: StateStore, config: FlowConfig, flow: FlowFile, now: Date): Stall | null {
-  if (flow.stage_status !== 'active' || DESIGN_STAGES.has(flow.stage)) return null;
+  if (flow.stage_status !== 'active') return null;
   const tasks = store.listTasks(flow.id);
   if (tasks.some((t) => t.lease) || stuckTasks(flow, tasks)) return null;
   const last = [...store.readEvents()].reverse().find((e) => e.flow === flow.id);

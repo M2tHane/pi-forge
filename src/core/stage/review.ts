@@ -31,12 +31,13 @@ export function reviewPolicy(config: FlowConfig): ReviewPolicy {
 const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'review', 'qa'];
 
 /**
- * 推导一个 impl task 的审查强度（预检不再运行命令，所以 impl 一律审查，审查者读 diff 并运行本 task 自己的测试，不能关掉）。
- * task.review 写了 strong 以它为准；否则：底座（被 critical_fanout 个 task 硬依赖）、layers 含 auth、risk=high → strong；其余 auto。
+ * 推导一个 impl task 的审查强度（预检不再运行命令，审查者读 diff 并运行本 task 自己的测试）。
+ * review: skip 只由程序写在"接入真实接口"任务上（由本批的浏览器验收检查）；task.review 写了 strong 以它为准；
+ * 否则：底座（被 critical_fanout 个 task 硬依赖）、layers 含 auth、risk=high → strong；其余 auto。
  */
 export function reviewMode(task: Pick<TaskFile, 'id' | 'kind' | 'review' | 'risk' | 'size' | 'layers' | 'depends_on'>, tasks: readonly TaskFile[], policy: ReviewPolicy): ReviewMode {
   if (NO_REVIEW_KINDS.includes(task.kind)) return 'skip';
-  if (task.review && task.review !== 'skip') return task.review;
+  if (task.review) return task.review;
   const fanout = hardFanout(task as TaskFile, tasks);
   if ((policy.criticalFanout > 0 && fanout >= policy.criticalFanout) || (task.layers ?? []).includes('auth') || task.risk === 'high') return 'strong';
   return 'auto';

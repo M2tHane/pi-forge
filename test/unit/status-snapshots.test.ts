@@ -56,14 +56,14 @@ const lease = (role: string, run: string) => ({ run_id: run, role, token_hash: h
 const running = (role: string, run: string) => ({ status: 'in_progress', lease: lease(role, run), branch: 'b', worktree: '/w', base_sha: 'a'.repeat(40) });
 const HUMAN = { by: 'human', at: '2026-03-04T01:00:00.000Z' };
 
-const S_STAGES = [{ id: 'S0', goal: '项目骨架与契约落地', exit: ['REQ-001'] }, { id: 'S1', goal: '可以创建并查看看板', exit: ['REQ-001', 'REQ-002'] }, { id: 'S2', goal: '看板成员协作', exit: ['REQ-003'] }];
-const ALL_STAGES = ['P1'];
+const S_STAGES = [{ id: 'S1', goal: '可以创建并查看看板', exit: ['REQ-001', 'REQ-002'] }, { id: 'S2', goal: '看板成员协作', exit: ['REQ-003'] }];
+const ALL_STAGES = ['S0'];
 const QA_YAML = PROJECT_YAML.replace(/^  qa: false$/m, '  qa: true');
 
 type T = ReturnType<typeof mkTask>;
 async function mk(opts: { stages?: string[]; tasks?: T[]; yaml?: string; at?: string; plan?: boolean; approvals?: string[] } = {}) {
   const p = await setupProject({ stages: opts.stages ?? ALL_STAGES, now: ticker(), ...(opts.yaml ? { yaml: opts.yaml } : {}) });
-  // 与真实流程一致：S 阶段在 P1 批准时追加到 flow.stages 末尾，之后才有 S 阶段的任务
+  // 与真实流程一致：批次阶段在 S0 批准时追加到 flow.stages 末尾，之后才有批次阶段的任务
   if (opts.plan) await p.store.setStages(p.flowId, S_STAGES, 'standard');
   if (opts.tasks?.length) await p.store.addTasks(p.flowId, opts.tasks as TaskInput[], 'architect');
   const patch: Record<string, unknown> = {};
@@ -87,16 +87,18 @@ const scenario = (name: string, build: () => Promise<Project>) => scenarios.push
 
 // —— 架构阶段 ——
 
-scenario('s0-start', async () => mk({ stages: ['S0'] }));
+scenario('s0-start', async () => mk());
 
-scenario('p1-drafting', async () => {
-  const p = await mk({ at: 'P1', tasks: [mkTask('T-001', { stage: 'P1', kind: 'doc', role: 'architect', scopes: ['plan'], writes: ['docs/**'] })] });
-  forceTask(p, 'T-001', running('architect', 'r-p1'));
+const architect = () => mkTask('T-001', { stage: 'S0', role: 'architect', title: '架构：技术栈、骨架、契约与计划' });
+
+scenario('s0-drafting', async () => {
+  const p = await mk({ tasks: [architect()] });
+  forceTask(p, 'T-001', running('architect', 'r-s0'));
   return p;
 });
 
-scenario('p1-awaiting-approval', async () => {
-  const p = await mk({ at: 'P1', tasks: [mkTask('T-001', { stage: 'P1', kind: 'doc', role: 'architect', scopes: ['plan'], writes: ['docs/**'] })] });
+scenario('s0-awaiting-approval', async () => {
+  const p = await mk({ tasks: [architect()] });
   forceTask(p, 'T-001', { status: 'done' });
   await toSignoff(p);
   return p;
@@ -105,7 +107,7 @@ scenario('p1-awaiting-approval', async () => {
 // —— 开发阶段 ——
 
 scenario('s1-running', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: [
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [
     impl('T-001', 'S0'), impl('T-002', 'S1', { title: '看板列表接口' }), impl('T-003', 'S1', { kind: 'review', role: 'reviewer', title: '看板列表接口审查', for_task: 'T-002', writes: [] }),
     impl('T-004', 'S1', { title: '创建看板接口' }), impl('T-005', 'S1', { title: '看板页面', deps: [{ task: 'T-002', type: 'hard' }] }), impl('T-006', 'S2', { title: '成员邀请' })] });
   forceTask(p, 'T-001', { status: 'done' });
@@ -119,7 +121,7 @@ scenario('s1-running', async () => {
 });
 
 scenario('s1-stage-qa', async () => {
-  const p = await mk({ plan: true, at: 'S1', yaml: QA_YAML, approvals: ['P1'], tasks: [
+  const p = await mk({ plan: true, at: 'S1', yaml: QA_YAML, approvals: ['S0'], tasks: [
     impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' }),
     mkTask('S1.qa', { stage: 'S1', kind: 'qa', role: 'stage-qa', scopes: ['qa'], writes: [], title: 'S1 阶段验收', for_task: 'T-001' })] });
   forceTask(p, 'T-001', { status: 'done' });
@@ -132,7 +134,7 @@ scenario('s1-stage-qa', async () => {
 });
 
 scenario('s1-needs-human', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' })] });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' })] });
   forceTask(p, 'T-001', { status: 'done' });
   forceTask(p, 'T-002', { status: 'done' });
   await toGate(p);
@@ -141,7 +143,7 @@ scenario('s1-needs-human', async () => {
 });
 
 scenario('s1-awaiting-signoff', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' }), impl('T-003', 'S2', { title: '成员邀请' })] });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' }), impl('T-003', 'S2', { title: '成员邀请' })] });
   forceTask(p, 'T-001', { status: 'done' });
   forceTask(p, 'T-002', { status: 'done' });
   await toSignoff(p);
@@ -149,7 +151,7 @@ scenario('s1-awaiting-signoff', async () => {
 });
 
 scenario('delivery-awaiting-signoff', async () => {
-  const p = await mk({ plan: true, at: 'S2', approvals: ['P1'], tasks: [impl('T-001', 'S0', { title: '骨架' }), impl('T-002', 'S1', { title: '看板列表接口' }), impl('T-003', 'S2', { title: '成员邀请' })] });
+  const p = await mk({ plan: true, at: 'S2', approvals: ['S0'], tasks: [impl('T-001', 'S0', { title: '骨架' }), impl('T-002', 'S1', { title: '看板列表接口' }), impl('T-003', 'S2', { title: '成员邀请' })] });
   for (const id of ['T-001', 'T-002', 'T-003']) forceTask(p, id, { status: 'done' });
   forceTask(p, 'T-003', { merge_failures: 1, attempts: 1 });
   await toSignoff(p);
@@ -160,7 +162,7 @@ scenario('delivery-awaiting-signoff', async () => {
 });
 
 scenario('blocked-variants', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: ['T-001', 'T-002', 'T-003', 'T-004', 'T-005'].map((id) => impl(id, 'S1')) });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: ['T-001', 'T-002', 'T-003', 'T-004', 'T-005'].map((id) => impl(id, 'S1')) });
   const kinds = ['review_exhausted', 'precheck_exhausted', 'agent', 'integration_broken', 'merge_exhausted'];
   ['T-001', 'T-002', 'T-003', 'T-004', 'T-005'].forEach((id, i) => forceTask(p, id, { status: 'blocked', blocked_by: kinds[i], blocked_reason: `原因 ${kinds[i]}`, version: 3,
     ...(i === 0 ? { review_rounds: 3 } : i === 1 ? { precheck_failures: 3 } : i === 4 ? { merge_failures: 3 } : {}) }));
@@ -168,14 +170,14 @@ scenario('blocked-variants', async () => {
 });
 
 scenario('sync-conflict', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: [impl('T-001', 'S1')] });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1')] });
   forceTask(p, 'T-001', { status: 'ready' });
   forceFlow(p, { sync: { stage: 'S1', status: 'conflict', main_sha: 'b'.repeat(40), at: '2026-03-04T01:20:00.000Z', files: ['src/app.ts'], reason: 'src/app.ts 两边都改了同一段' } });
   return p;
 });
 
 scenario('budget-exceeded', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: [impl('T-001', 'S1'), impl('T-002', 'S1')] });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1'), impl('T-002', 'S1')] });
   forceTask(p, 'T-001', { status: 'done' });
   forceTask(p, 'T-002', { status: 'ready' });
   forceFlow(p, { budget: { tokens: 50000 } });
@@ -186,7 +188,7 @@ scenario('budget-exceeded', async () => {
 // —— 变更与修订 ——
 
 scenario('change-request-pending', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' })] });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' })] });
   forceTask(p, 'T-001', { status: 'done' });
   forceTask(p, 'T-002', running('worker', 'r-2'));
   const { change } = await p.store.createChange(p.flowId, { what: '看板增加归档功能', why: '用户要求', impact: '新增 1 个接口', source: 'main' },
@@ -264,7 +266,7 @@ for (const s of scenarios) {
 // —— 非快照断言 ——
 
 test('默认视图不暴露内部状态名和任务类型；这些只在 --detail', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: [impl('T-001', 'S1'), impl('T-002', 'S1', { kind: 'review', role: 'reviewer', for_task: 'T-001', writes: [] })] });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1'), impl('T-002', 'S1', { kind: 'review', role: 'reviewer', for_task: 'T-001', writes: [] })] });
   try {
     forceTask(p, 'T-001', running('worker', 'r-1'));
     forceTask(p, 'T-002', { status: 'blocked', blocked_by: 'review_exhausted', blocked_reason: 'x', version: 2 });
@@ -277,7 +279,7 @@ test('默认视图不暴露内部状态名和任务类型；这些只在 --detai
 });
 
 test('阻塞任务按 blocked_by 给出不同的解除命令', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: ['T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006'].map((id) => impl(id, 'S1')) });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: ['T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006'].map((id) => impl(id, 'S1')) });
   try {
     const kinds = ['review_exhausted', 'precheck_exhausted', 'agent', 'integration_broken', 'attempts'];
     kinds.forEach((k, i) => forceTask(p, `T-00${i + 2}`, { status: 'blocked', blocked_by: k, blocked_reason: 'r', version: 2 }));
@@ -320,7 +322,7 @@ test('--metrics 与 --cost：build、fix、没有运行记录的流程都不抛�
 });
 
 test('状态栏：短，只有高层阶段，不列任务编号；没有流程时为 null', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['P1'], tasks: [impl('T-001', 'S1'), impl('T-002', 'S1'), impl('T-003', 'S1')] });
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1'), impl('T-002', 'S1'), impl('T-003', 'S1')] });
   try {
     forceTask(p, 'T-001', running('worker', 'r-1'));
     forceTask(p, 'T-002', running('worker', 'r-2'));

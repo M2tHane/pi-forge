@@ -38,7 +38,7 @@ test('预检：同步新输入，不跑命令，进入审查；审查通过后�
     const upstream = commitToBranch(p.dir, integ, { 'docs/input.md': '新的输入' }, '更新输入');
     const e = engineOf(p);
     await e.precheck(p.flowId);
-    assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'in_review', 'impl 一律审查，mkTask 的 review: skip 无效');
+    assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'in_review', 'impl 默认审查');
     assert.equal(p.store.readTask(p.flowId, 'T-001').base_sha, upstream);
     assert.equal(readFileSync(path.join(wt.path, 'docs/input.md'), 'utf8'), '新的输入');
     assert.equal(hasPrecheckEvidence(p), false, '预检没有运行任何命令');

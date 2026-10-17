@@ -39,7 +39,7 @@ async function project() {
   const tasks = deriveTasks(plan, check.deps, { worker: p.config.role('worker').scopes }, { verify: ['test'] });
   force(p, flowRel(p.flowId), { approvals: { P0: { by: 'human', at: new Date().toISOString() }, P1: { by: 'human', at: new Date().toISOString() } } });
   await p.store.setStages(p.flowId, plan.stages);
-  await p.store.addTasks(p.flowId, tasks.map((t) => ({ ...t, review: 'skip' as const })), 'engine');
+  await p.store.addTasks(p.flowId, tasks, 'engine');
   force(p, flowRel(p.flowId), { stage: 'S1', stages: ['P0', 'P1', ...plan.stages.map((s) => s.id)], stage_status: 'active', contracts_base: p.git('rev-parse', 'HEAD') });
   force(p, taskRel(p.flowId, 'T-002'), { status: 'done' });
   const t3 = p.store.readTask(p.flowId, 'T-003');

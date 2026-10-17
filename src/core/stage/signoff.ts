@@ -290,7 +290,8 @@ export const sStageIds = (flow: FlowFile): string[] => flow.s_stages?.map((s) =>
 /** 纯函数：从普通数据算出 §17 的全部度量 */
 export function computeMetrics(i: MetricsInput): Metrics {
   const { flow, tasks, now } = i;
-  const stages = sStageIds(flow);
+  // 架构阶段 S0 不在批次阶段里，速度与成本也要算上它
+  const stages = [...new Set([...flow.stages.filter((s) => s === 'S0'), ...sStageIds(flow)])];
   const dur = stageDurations(i.events, flow.id, flow.stages[0]!, flow.created_at, now);
   const timings = taskTimings(i.events, flow.id);
   const live = tasks.filter((t) => t.status !== 'cancelled');

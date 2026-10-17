@@ -15,7 +15,6 @@ import { resourceOptions, withResources } from '../workspace/resources.ts';
 
 import type { StageDeps } from './stages.ts';
 import { isLightFlow, type TaskFile } from '../state/schemas.ts';
-import { P1_STAGE, p1GateProblems } from '../plan/plan-flow.ts';
 import { headSha } from '../workspace/worktree.ts';
 import { recordVerified, reusableRuns, reuseText, treeOfCommit } from '../verify/verify-cache.ts';
 import { failingAcceptanceDirs } from '../acceptance/acceptance-flow.ts';
@@ -38,13 +37,6 @@ export async function runStageGate(root: string, store: StateStore, config: Flow
   const flow = store.readFlow(flowId);
   if (flow.stage_status !== 'awaiting_gate') throw new Error(`阶段 ${flow.stage} 不在 awaiting_gate 状态`);
   if (isLightFlow(flow)) throw new Error('修复与小改动流程不使用阶段闸门');
-  if (flow.stage === P1_STAGE) {
-    const reasons = p1GateProblems(root, store, config, flowId);
-    const passed = reasons.length === 0;
-    await store.transitionStage(flowId, { to: passed ? 'awaiting_human' : 'active', trigger: passed ? 'gate_passed' : 'gate_failed', actor: 'gate', needs_human: true,
-      ...(reasons.length ? { reason: reasons.join('\n').slice(0, 4000) } : {}) });
-    return { stage: flow.stage, passed, needsHuman: true, reasons };
-  }
   const def = stageDef(config, flow.stage);
   const isLast = flow.stage === flow.stages.at(-1);
   // S0 与最后一个阶段批准时要合入主分支，一律人工

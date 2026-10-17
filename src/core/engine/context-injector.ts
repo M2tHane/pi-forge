@@ -1,5 +1,5 @@
 // 每轮注入程序状态与主会话可执行的下一步；主工作区改动检测保留。
-import { P1_STAGE, planApprovalSummary } from '../plan/plan-flow.ts';
+import { isArchitectStage, planApprovalSummary } from '../plan/plan-flow.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowConfig } from '../state/config.ts';
 import { budgetState } from '../insight/cost-control.ts';
@@ -18,12 +18,8 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
   const summary = `流程 ${flow.id}「${flow.title}」阶段 ${flow.stage}（${flow.stage_status}）；任务 ${tasks.length} 个，完成 ${tasks.filter((t) => t.status === 'done').length} 个。`;
   const pending = pendingDecisions(store, flowId);
   if (pending.length) return { summary, next: `等你决定：${pending.map((p) => p.id).join('、')}（材料见 forge_status）。${DECISION_GUIDE}`, tool: 'forge_decide', task: pending[0]!.id };
-  if (flow.stage === P1_STAGE) {
-    if (flow.stage_status === 'awaiting_human') return { summary, next: `契约与计划已通过程序检查。用 forge_read 阅读 docs/plan/plan.yaml、docs/arch/overview.md 与 docs/contracts/，向用户概述：阶段与每个阶段交付什么、task 数与并行度、报告里的提醒；assumptions 与 extras 逐条列给用户确认。然后等待用户 /forge-approve stage:P1 或 /forge-reject stage:P1 "<意见>"。\n${planApprovalSummary(store, flowId)}`, tool: 'none' };
-    if (flow.stage_status === 'awaiting_gate') return { summary, next: '程序正在检查集成分支上的契约与计划，等待闸门结果。', tool: 'none' };
-    const stuck = tasks.filter((t) => t.stage === P1_STAGE && t.status === 'blocked' && t.blocked_owner !== 'orchestrator');
-    if (flow.stage_status === 'active' && stuck.length) return { summary, next: `向用户报告阻塞：${stuck.map((t) => `${t.id}（${t.blocked_reason ?? ''}）`).join('；')}；请其 /forge unblock <任务>，或 /forge-reject stage:P1 "<意见>" 让 architect 重做。`, tool: 'none' };
-    if (flow.stage_status === 'active') return { summary, next: `architect 正在起草契约与计划，调用 forge_wait 等待。${flow.plan_rework ? `\n返工原因：${flow.plan_rework.reason}` : ''}`, tool: 'forge_wait' };
+  if (isArchitectStage(flow.stage) && flow.stage_status === 'awaiting_human' && !flow.s_stages?.length) {
+    return { summary, next: `架构阶段已通过审查与门禁。用 forge_read 阅读 docs/plan.md 与 docs/arch/overview.md，先给结论，再向用户汇报要点：技术栈、domain 划分、批次与每批交付什么、风险与假设、下面的提醒。然后提醒用户 /forge-approve 批准或 /forge-reject "<意见>" 打回（只有用户能执行）。\n${planApprovalSummary(store.root, store, flowId)}`, tool: 'none' };
   }
   if (flow.stage_status === 'awaiting_human') return { summary, next: `阶段 ${flow.stage} 等待用户签收，请其 /forge-approve 或 /forge-reject "<意见>"。`, tool: 'none' };
   if (flow.stage_status === 'needs_human') return { summary, next: `阶段 ${flow.stage} 门禁用尽，请用户处理后 /forge gate 重跑，或 /forge-reject "<意见>"。`, tool: 'none' };

@@ -11,17 +11,13 @@ import { crossTaskInputs } from '../../src/core/stage/review-flow.ts';
 import { hard, mkTask } from '../helpers/tasks.ts';
 
 const policy: ReviewPolicy = { criticalFanout: 3, maxRounds: 2 };
-// mkTask 默认 review: 'skip'（保持流水线测试不变），推导用的 task 去掉这个字段
-const derived = (id: string, over: Parameters<typeof mkTask>[1] = {}) => {
-  const { review: _review, ...t } = mkTask(id, over);
-  return t;
-};
+const derived = (id: string, over: Parameters<typeof mkTask>[1] = {}) => mkTask(id, over);
 
-test('reviewMode：task.review 有值就用它；impl 写 skip 无效', () => {
+test('reviewMode：task.review 有值就用它（skip 只由程序写在接入真实接口任务上）', () => {
   const tasks = [mkTask('T-001')];
   assert.equal(reviewMode(mkTask('T-001', { review: 'strong', size: 'S' }), tasks, policy), 'strong');
   assert.equal(reviewMode(mkTask('T-001', { review: 'auto', size: 'S' }), tasks, policy), 'auto');
-  assert.equal(reviewMode(mkTask('T-001', { review: 'skip', risk: 'high' }), tasks, policy), 'strong', 'impl 不能跳过审查，按风险推导');
+  assert.equal(reviewMode(mkTask('T-001', { review: 'skip', risk: 'high' }), tasks, policy), 'skip');
 });
 
 test('reviewMode：被 critical_fanout 个 task 硬依赖、layers 含 auth、risk=high 都是 strong（优先于 size）', () => {

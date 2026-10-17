@@ -120,7 +120,8 @@ function leaseValid(lease: Lease | null, f: Facts, what: string): string[] {
 }
 
 /** 保留给工具层与运行时的能力判断；具体契约文件必须由程序验证后通过 contract_additions 提供。 */
-export const canAppendInterfaces = (t: Pick<TaskFile, 'kind'>) => t.kind === 'impl' || t.kind === 'fix';
+/** 契约只能追加的任务：impl 与 fix；architect 自己写契约（架构阶段与它的修复），不受这条限制 */
+export const canAppendInterfaces = (t: Pick<TaskFile, 'kind' | 'role'>) => (t.kind === 'impl' || t.kind === 'fix') && t.role !== 'architect';
 
 function submitErrors(t: TaskFile, f: Facts): string[] {
   const errors = leaseValid(t.lease, f, '提交被拒');

@@ -91,7 +91,7 @@ export class FlowConfig {
 
   /**
    * 换成某个分支（通常是集成分支）上的 commands.yaml；分支上没有时保持不变。
-   * 格式不对时保持不变并返回错误（不让 worker 写坏的文件把程序停住；P1 闸门与审查会发现）。
+   * 格式不对时保持不变并返回错误（不让 worker 写坏的文件把程序停住；S0 的提交检查与审查会发现）。
    */
   syncCommands(root: string, ref: string): string | null {
     const text = commandsTextAt(root, ref);

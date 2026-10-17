@@ -66,11 +66,13 @@ function writeMeta(root: string, m: SharedEnvMeta): void {
   renameSync(tmp, p);
 }
 
-/** 独占锁：两次安装永远不会同时进行（跨进程，proper-lockfile；安装可能很久，锁文件会持续续期） */
+/** 独占锁：两次安装永远不会同时进行（跨进程，proper-lockfile；安装可能很久，锁文件会持续续期）。
+ *  锁的目标是不存在的 .env-shared（realpath: false）：proper-lockfile 在进程内按目标路径记账，
+ *  和 resources.ts 一样锁 worktrees 目录本身时，两把锁会互相覆盖，先释放的一方让另一方续期时崩溃 */
 export async function withSharedEnvLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
   const dir = worktreesRoot(root);
   mkdirSync(dir, { recursive: true });
-  const release = await lockfile.lock(dir, { lockfilePath: path.join(dir, '.env-shared.lock'), retries: { retries: 1800, factor: 1, minTimeout: 500, maxTimeout: 500 }, stale: 60_000 });
+  const release = await lockfile.lock(path.join(dir, '.env-shared'), { realpath: false, retries: { retries: 1800, factor: 1, minTimeout: 500, maxTimeout: 500 }, stale: 60_000 });
   try { return await fn(); } finally { await release().catch(() => {}); }
 }
 

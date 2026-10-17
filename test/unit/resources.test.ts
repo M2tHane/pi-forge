@@ -10,6 +10,8 @@ import {
   releaseResources, resourceEnv, resourcesPath, withResources, type ResourceEntry,
 } from '../../src/core/workspace/resources.ts';
 import { runShell } from '../../src/core/workspace/verify-runner.ts';
+import { withSharedEnvLock } from '../../src/core/workspace/shared-env.ts';
+import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
 
 function project() {
   const base = mkdtempSync(path.join(tmpdir(), 'pi-forge-res-'));
@@ -137,4 +139,16 @@ test('登记文件损坏时按空登记处理，不阻塞分配', async () => {
     assert.deepEqual(listResources(p.root).map((x) => x.run), ['r-2']);
     assert.ok(e.port_base >= PORT_RANGE.start);
   } finally { p.cleanup(); }
+});
+
+test('资源锁与共享环境锁互不干扰：在共享环境锁内分配并释放资源后，共享环境锁仍能正常释放', async () => {
+  const { root, cleanup } = project();
+  try {
+    await withSharedEnvLock(root, async () => {
+      await allocateResources(root, 'r-1', { probe: free });
+      await releaseResources(root, 'r-1');
+    });
+    assert.equal(existsSync(path.join(worktreesRoot(root), '.env-shared.lock')), false, '共享环境锁的锁文件已删除');
+    assert.equal(existsSync(path.join(worktreesRoot(root), '.resources.lock')), false);
+  } finally { cleanup(); }
 });

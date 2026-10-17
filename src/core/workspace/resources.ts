@@ -75,7 +75,8 @@ export const listResources = (root: string): ResourceEntry[] => readFile(root).e
 async function withLock<T>(root: string, fn: (f: ResourceFile) => Promise<T> | T): Promise<T> {
   const dir = worktreesRoot(root);
   mkdirSync(dir, { recursive: true });
-  const release = await lockfile.lock(dir, { lockfilePath: path.join(dir, '.resources.lock'), retries: { retries: 50, minTimeout: 20, maxTimeout: 200 }, stale: 30_000 });
+  // 目标是不存在的 .resources（锁文件仍是 .resources.lock），不和 shared-env 的锁共用进程内的记账
+  const release = await lockfile.lock(path.join(dir, '.resources'), { realpath: false, retries: { retries: 50, minTimeout: 20, maxTimeout: 200 }, stale: 30_000 });
   try {
     const f = readFile(root);
     const out = await fn(f);

@@ -36,6 +36,8 @@ export async function syncTaskInputs(store: StateStore, flowId: string, t: TaskF
       if (!conflicts.length) { gitOk(wt, ['merge', '--abort']); throw new FlowToolError('合并失败但没有冲突文件，已放弃这次同步。'); }
       // 契约文件与只追加的普通文件先做结构化三方合并（merge 时 stage 2 是任务、stage 3 是集成分支）
       if (!resolveConflictsStructured(wt, conflicts, { integration: 3, task: 2 }, appendMergeAllowed(t))) {
+        // 记一笔：冲突要 agent 自己解决（提交被退回或 forge_sync 停下），度量据此统计同步冲突
+        await store.recordEvent({ flow: flowId, task: t.id, actor, type: 'note', reason: `同步集成分支有冲突：${conflicts.join('、')}`, data: { kind: 'sync_conflict', files: conflicts } });
         return { text: `同步时有冲突，冲突标记留在：${conflicts.join('、')}。解决后再调用 forge_sync。`, conflicts };
       }
       git(wt, ['commit', '-q', '--no-edit', '--no-verify'], { engineIdentity: true });

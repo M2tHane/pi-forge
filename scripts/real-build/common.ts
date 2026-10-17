@@ -1,16 +1,11 @@
-// real-build.ts 用的纯函数与小工具：hidden.mjs 输出解析与计分、回归、agent 时间、项目自带测试的结果解析、summary.json 的类型。
+// real-build.ts 用的纯函数与小工具：hidden.mjs 输出解析与计分、项目自带测试、会话文件的用量统计、返工与冲突计数、summary.json 的类型。
+// 统计口径与 stock run-04 相同：调用、命中率、费用按会话文件逐次调用统计，按角色 + 条目 id + 时间去重
+// （返工时接着原会话的 run 会把之前的会话条目复制一份，不去重会重复计数，run-02 的 worker 工具调用 1910 对去重后 1144）。
 import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { stageDurations } from '../../src/core/stage/signoff.ts';
-import type { FlowEvent, FlowFile } from '../../src/core/state/schemas.ts';
 
 // —— 隐藏测试 ——
-
-/** "非法 JSON 返回 400"超出需求，不计分；基础满分 39，变更 6 */
-export const UNSCORED_LABELS: readonly string[] = ['非法 JSON 返回 400'];
-export const BASE_TOTAL = 39;
-export const CHANGE_TOTAL = 6;
 
 export interface HiddenCase { group: string; label: string; ok: boolean; why: string }
 export interface HiddenResult {
@@ -23,7 +18,7 @@ export interface HiddenResult {
   tail: string;
 }
 
-/** 解析 hidden.mjs 的输出：`## 组名（a/b）` 后跟若干 `✓ 标题` / `✗ 标题：原因`，末行 `合计：基础 a/b，变更 c/d` */
+/** 解析 hidden.mjs 的输出：`## 组名（a/b）` 后跟若干 `✓ 标题` / `✗ 标题：原因`，末行 `合计：x/y` */
 export function parseHidden(output: string, exitCode: number | null = 0): HiddenResult {
   const cases: HiddenCase[] = [];
   let group = '';
@@ -36,7 +31,7 @@ export function parseHidden(output: string, exitCode: number | null = 0): Hidden
     if (c) {
       const ok = c[1] === '✓';
       const rest = c[2]!;
-      // 失败行是 "标题：原因"；标题里本身可能有冒号（"变更：归档"只出现在组名里，用例标题里的冒号少见），按第一个全角冒号拆
+      // 失败行是 "标题：原因"，按第一个全角冒号拆
       const idx = ok ? -1 : rest.indexOf('：');
       cases.push({ group, label: idx >= 0 ? rest.slice(0, idx) : rest, ok, why: idx >= 0 ? rest.slice(idx + 1) : '' });
       continue;
@@ -46,54 +41,23 @@ export function parseHidden(output: string, exitCode: number | null = 0): Hidden
   return { cases, exitCode, crashed: cases.length === 0, footer, tail: output.slice(-1500) };
 }
 
-const isChangeCase = (c: HiddenCase) => c.group.startsWith('变更');
-const scored = (c: HiddenCase) => !UNSCORED_LABELS.includes(c.label);
+export interface HiddenScore { passed: number; total: number; groups: Record<string, { passed: number; total: number }>; failed: string[] }
 
-export interface RunScore {
-  base: { passed: number; total: number; observed: number };
-  change: { passed: number; total: number; observed: number } | null;
-  /** 基础 + 变更 */
-  total: number;
-  /** 变更后变成失败的基础用例标题 */
-  regressed: string[];
-  regression: number;
-  /** 变更阶段是否有结果可比（false：没交付变更，回归记 0） */
-  change_ran: boolean;
-  failed_base: string[];
-  failed_change: string[];
+/** 按组计分；失败用例写成"组名：标题" */
+export function scoreHidden(r: HiddenResult): HiddenScore {
+  const groups: HiddenScore['groups'] = {};
+  for (const c of r.cases) {
+    const g = (groups[c.group] ??= { passed: 0, total: 0 });
+    g.total++;
+    if (c.ok) g.passed++;
+  }
+  return { passed: r.cases.filter((c) => c.ok).length, total: r.cases.length, groups, failed: r.cases.filter((c) => !c.ok).map((c) => `${c.group}：${c.label}`) };
 }
 
-/**
- * 计分。build：新建交付后在 main 上跑的结果；change：变更交付后跑 `--change` 的结果（没跑为 null）。
- * 基础分取新建那次；变更分取变更那次的"变更"组；回归 = 新建后通过、变更后（--change 那次的基础用例）失败的个数。
- * 变更那次崩溃（服务没起来）时，新建通过的用例全部算回归。
- */
-export function scoreRun(build: HiddenResult | null, change: HiddenResult | null): RunScore {
-  const baseCases = (build?.cases ?? []).filter((c) => !isChangeCase(c) && scored(c));
-  const basePassed = baseCases.filter((c) => c.ok);
-  const changeRunBase = (change?.cases ?? []).filter((c) => !isChangeCase(c) && scored(c));
-  const changeCases = (change?.cases ?? []).filter((c) => isChangeCase(c) && scored(c));
-  const regressed = change
-    ? basePassed.filter((p) => !changeRunBase.some((c) => c.label === p.label && c.ok)).map((c) => c.label)
-    : [];
-  const baseScore = basePassed.length;
-  const changeScore = changeCases.filter((c) => c.ok).length;
-  return {
-    base: { passed: baseScore, total: BASE_TOTAL, observed: baseCases.length },
-    change: change ? { passed: changeScore, total: CHANGE_TOTAL, observed: changeCases.length } : null,
-    total: baseScore + changeScore,
-    regressed,
-    regression: regressed.length,
-    change_ran: !!change,
-    failed_base: baseCases.filter((c) => !c.ok).map((c) => c.label),
-    failed_change: changeCases.filter((c) => !c.ok).map((c) => c.label),
-  };
-}
-
-/** 跑 hidden.mjs；`change` 为 true 时加 --change。服务由 hidden.mjs 自己起停 */
-export function runHidden(hidden: string, projectDir: string, change: boolean, timeoutMs = 15 * 60_000): Promise<HiddenResult> {
+/** 跑 hidden.mjs；服务由 hidden.mjs 自己起停 */
+export function runHidden(hidden: string, projectDir: string, timeoutMs = 15 * 60_000): Promise<HiddenResult> {
   return new Promise((resolve) => {
-    const c = spawn('node', [hidden, projectDir, ...(change ? ['--change'] : [])], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
+    const c = spawn('node', [hidden, projectDir], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
     let out = '';
     c.stdout.setEncoding('utf8').on('data', (d: string) => { out += d; });
     c.stderr.setEncoding('utf8').on('data', (d: string) => { out += d; });
@@ -103,75 +67,7 @@ export function runHidden(hidden: string, projectDir: string, change: boolean, t
   });
 }
 
-// —— agent 时间（第 5.1 节） ——
-
-export type Interval = readonly [number, number];
-
-/** 区间并集的总长度（毫秒），先裁剪到 [lo, hi] */
-export function unionMs(intervals: readonly Interval[], lo = -Infinity, hi = Infinity): number {
-  const xs = intervals.map(([a, b]) => [Math.max(a, lo), Math.min(b, hi)] as [number, number]).filter(([a, b]) => b > a).sort((p, q) => p[0] - q[0]);
-  let total = 0;
-  let cur: [number, number] | null = null;
-  for (const x of xs) {
-    if (!cur) cur = [...x];
-    else if (x[0] <= cur[1]) cur[1] = Math.max(cur[1], x[1]);
-    else { total += cur[1] - cur[0]; cur = [...x]; }
-  }
-  if (cur) total += cur[1] - cur[0];
-  return total;
-}
-
-type EventLike = Pick<FlowEvent, 'flow' | 'ts' | 'task' | 'from' | 'to' | 'data'>;
-
-/** 事件日志里 task 处于 blocked 的区间（每个 task 可有多段；到 endMs 还没解除的算到 endMs） */
-export function blockedIntervals(events: readonly EventLike[], flowId: string, endMs: number): Interval[] {
-  const open = new Map<string, number>();
-  const out: [number, number][] = [];
-  for (const e of events) {
-    if (e.flow !== flowId || !e.task || !e.to || e.data?.['entity'] === 'stage' || e.data?.['entity'] === 'flow') continue;
-    const at = Date.parse(e.ts);
-    if (e.to === 'blocked') { if (!open.has(e.task)) open.set(e.task, at); }
-    else if (open.has(e.task)) { out.push([open.get(e.task)!, at]); open.delete(e.task); }
-  }
-  for (const start of open.values()) out.push([start, endMs]);
-  return out;
-}
-
-/** 流程交付的时刻：最后一个阶段转为 done（前面阶段的 done 不算）；没有为 null */
-export function flowDoneMs(events: readonly EventLike[], flowId: string, lastStage: string): number | null {
-  let at: number | null = null;
-  for (const e of events) if (e.flow === flowId && e.data?.['entity'] === 'stage' && e.data['stage'] === lastStage && e.to === 'done') at = Date.parse(e.ts);
-  return at;
-}
-
-export interface AgentTime {
-  wall_ms: number;
-  /** 流程处于 awaiting_human / needs_human 的时长（与 /forge-status --metrics 同口径） */
-  human_ms: number;
-  /** task 处于 blocked 等人回答的时长（事件日志） */
-  blocked_ms: number;
-  /** wall − human − blocked */
-  agent_ms: number;
-  /** /forge-status --metrics 的口径：各阶段 wall − human（不扣 blocked），用来核对 */
-  metrics_agent_ms: number;
-}
-
-/**
- * 一次 /forge-build 的 agent 时间。startMs 是发出命令的时刻；endMs 取流程到达 done 的时刻（没有就用 fallbackEndMs）。
- * 轮询状态的几秒落在 awaiting_human / blocked 区间里，已一并扣除。
- */
-export function agentTime(events: readonly FlowEvent[], flow: Pick<FlowFile, 'id' | 'stages' | 'created_at'>, startMs: number, fallbackEndMs: number): AgentTime {
-  const endMs = flowDoneMs(events, flow.id, flow.stages.at(-1)!) ?? fallbackEndMs;
-  const wall = Math.max(0, endMs - startMs);
-  const dur = stageDurations(events, flow.id, flow.stages[0]!, flow.created_at, endMs);
-  let human = 0;
-  let metricsAgent = 0;
-  for (const d of dur.values()) { human += d.human_ms; metricsAgent += Math.max(0, d.wall_ms - d.human_ms); }
-  const blocked = unionMs(blockedIntervals(events, flow.id, endMs), startMs, endMs);
-  return { wall_ms: wall, human_ms: human, blocked_ms: blocked, agent_ms: Math.max(0, wall - human - blocked), metrics_agent_ms: metricsAgent };
-}
-
-export const toMin = (ms: number): number => Math.round((ms / 60_000) * 100) / 100;
+export const toMin = (ms: number): number => Math.round((ms / 60_000) * 10) / 10;
 
 // —— 项目自带测试 ——
 
@@ -190,82 +86,9 @@ export function parseTestSummary(output: string, exitCode: number | null): TestS
   return { exit_code: exitCode, passed, failed, tail: output.slice(-800) };
 }
 
-// —— summary.json ——
-
-export type RunStatus = 'delivered' | 'flow_failed' | 'infra_failed' | 'stopped_early';
-
-export interface PhaseSummary {
-  /** 阶段名：build / change */
-  name: 'build' | 'change';
-  flow: string | null;
-  delivered: boolean;
-  wall_min: number;
-  human_wait_min: number;
-  blocked_wait_min: number;
-  agent_min: number;
-  /** /forge-status --metrics 口径的 agent 时间，用来核对 */
-  metrics_agent_min: number | null;
-  /** 两种算法差超过 2 分钟 */
-  metrics_diff_over_2min: boolean;
-}
-
-export interface Summary {
-  schema: 1;
-  arm: 'A0' | 'A1';
-  run_id: string;
-  started_at: string;
-  ended_at: string;
-  pi_version: string;
-  pi_forge_sha: string | null;
-  pi_forge_dirty: boolean | null;
-  models: Record<string, string>;
-  thinking: Record<string, string>;
-  status: RunStatus;
-  failure: { kind: string; reason: string } | null;
-  /** 总 agent 时间（新建 + 变更，分钟）。流程失败按上限计：time_charged_min */
-  agent_min: number;
-  time_charged_min: number;
-  phases: PhaseSummary[];
-  hidden: { build: HiddenResult | null; change: HiddenResult | null };
-  score: RunScore;
-  project_tests: { after_build: TestSummary | null; after_change: TestSummary | null };
-  interventions: {
-    gates: number;
-    extra: Record<string, number>;
-    extra_total: number;
-  };
-  usage: Record<string, number | null>;
-  notes: string[];
-}
-
-/** 会话目录下全部会话文件的 token 用量（主会话与子会话） */
-export function sessionUsage(dir: string): Record<string, number | null> {
-  const files: string[] = [];
-  const walk = (d: string) => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.jsonl')) files.push(p); } };
-  walk(dir);
-  const sum = { input: 0, output: 0, cache_read: 0, cache_write: 0, cost: 0, turns: 0 };
-  for (const f of files) {
-    if (!statSync(f).isFile()) continue;
-    for (const line of readFileSync(f, 'utf8').split('\n')) {
-      if (!line.trim()) continue;
-      let o: { message?: { role?: string; usage?: Record<string, unknown> } };
-      try { o = JSON.parse(line); } catch { continue; }
-      const m = o.message;
-      if (m?.role !== 'assistant' || !m.usage) continue;
-      sum.turns++;
-      sum.input += Number(m.usage['input'] ?? 0) || 0;
-      sum.output += Number(m.usage['output'] ?? 0) || 0;
-      sum.cache_read += Number(m.usage['cacheRead'] ?? 0) || 0;
-      sum.cache_write += Number(m.usage['cacheWrite'] ?? 0) || 0;
-      sum.cost += Number((m.usage['cost'] as { total?: number } | undefined)?.total ?? 0) || 0;
-    }
-  }
-  return { session_files: files.length, ...sum };
-}
-
 /**
- * 在独立进程组里跑项目自带测试，超时结束整个进程组（M9 冒烟：模型写的测试起了服务不退出，
- * spawnSync 超时只结束 npm，孙进程占着输出管道，计分一直卡住）。
+ * 在独立进程组里跑项目自带测试，超时结束整个进程组（模型写的测试起了服务不退出时，
+ * spawnSync 超时只结束 npm，孙进程占着输出管道，计分会一直卡住）。
  */
 export function runProjectTests(cwd: string, timeoutMs = 5 * 60_000): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
@@ -282,4 +105,188 @@ export function runProjectTests(cwd: string, timeoutMs = 5 * 60_000): Promise<{ 
     }, timeoutMs);
     c.on('exit', (code) => { try { process.kill(-c.pid!, 'SIGKILL'); } catch { /* 进程组已空 */ } finish(code); });
   });
+}
+
+// —— 会话文件的用量（按角色） ——
+
+export interface SessionEntry {
+  id?: string;
+  timestamp?: string;
+  message?: { role?: string; usage?: Record<string, unknown>; content?: unknown };
+}
+
+export interface RoleUsage {
+  /** 模型调用次数（带 usage 的 assistant 消息） */
+  calls: number;
+  input: number;
+  cache_read: number;
+  cache_write: number;
+  output: number;
+  cost: number;
+  /** 命中率 = 命中 /（输入 + 命中），百分比 */
+  hit_pct: number | null;
+  tool_calls: number;
+  /** bash 里调用浏览器（playwright）的次数 */
+  browser_cmds: number;
+}
+
+/** 目录下全部 .jsonl 会话文件的条目（递归）；目录不存在时为空 */
+export function readSessionEntries(dir: string | null | undefined): SessionEntry[] {
+  if (!dir || !existsSync(dir)) return [];
+  const out: SessionEntry[] = [];
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.jsonl')) for (const line of readFileSync(p, 'utf8').split('\n')) { if (line.trim()) try { out.push(JSON.parse(line) as SessionEntry); } catch { /* 写到一半的行 */ } }
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+const num = (v: unknown): number => Number(v ?? 0) || 0;
+const BROWSER = /pw\.js|playwright/;
+
+/** 各角色的调用、token、费用、工具调用；同一角色里条目 id 与时间相同的只算一次 */
+export function roleUsage(sources: readonly { role: string; entries: readonly SessionEntry[] }[]): Record<string, RoleUsage> {
+  const seen = new Set<string>();
+  const out: Record<string, RoleUsage> = {};
+  for (const { role, entries } of sources) {
+    for (const e of entries) {
+      const m = e.message;
+      if (m?.role !== 'assistant') continue;
+      if (e.id !== undefined) {
+        const key = `${role}\0${e.id}\0${e.timestamp ?? ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      const a = (out[role] ??= { calls: 0, input: 0, cache_read: 0, cache_write: 0, output: 0, cost: 0, hit_pct: null, tool_calls: 0, browser_cmds: 0 });
+      const u = m.usage;
+      if (u) {
+        a.calls++;
+        a.input += num(u['input']);
+        a.cache_read += num(u['cacheRead']);
+        a.cache_write += num(u['cacheWrite']);
+        a.output += num(u['output']);
+        a.cost += num((u['cost'] as { total?: number } | undefined)?.total);
+      }
+      if (Array.isArray(m.content)) {
+        for (const c of m.content as { type?: string; name?: string; arguments?: { command?: unknown } }[]) {
+          if (c?.type !== 'toolCall') continue;
+          a.tool_calls++;
+          if (c.name === 'bash' && BROWSER.test(String(c.arguments?.command ?? ''))) a.browser_cmds++;
+        }
+      }
+    }
+  }
+  for (const a of Object.values(out)) {
+    a.cost = Math.round(a.cost * 10_000) / 10_000;
+    a.hit_pct = a.input + a.cache_read > 0 ? Math.round((1000 * a.cache_read) / (a.input + a.cache_read)) / 10 : null;
+  }
+  return out;
+}
+
+// —— 返工、冲突、审查轮数 ——
+
+export interface RunLite { role: string; task: string | null; started_at: string }
+export interface TaskLite { id: string; kind: string }
+export interface EventLite { flow?: string | null; type: string; trigger?: string | null; task?: string | null; data?: Record<string, unknown> | null }
+
+/** 写代码的角色：返工 run 数只算它们（run-04 只有 worker；新流程是 backend、frontend，worker 留给轻流程） */
+export const CODER_ROLES: readonly string[] = ['backend', 'frontend', 'worker'];
+
+export interface RoleRuns {
+  /** 有 run 的任务数（不含修复任务） */
+  tasks: number;
+  /** 每个任务的第一个 run */
+  first_runs: number;
+  /** 同一任务第一个 run 之后的 run：审查打回、合并或同步冲突、失败重试、主会话决定重做 */
+  rework_runs: number;
+  /** 修复任务（门禁、stage-qa、合并后回归建的 .fx 任务）的 run */
+  fix_runs: number;
+}
+
+export interface ReworkStats {
+  by_role: Record<string, RoleRuns>;
+  /** 写代码角色的返工 run 合计（run-04 口径：首次 run 之外的返工与冲突 run） */
+  rework_runs: number;
+  /** 冲突退回的次数：merge_conflict（合并时）、同步集成分支时（提交前或 forge_sync）留给 agent 解决的冲突 */
+  conflicts: { merge: number; sync: number };
+  /** 审查任务数（每个 .rv 任务算一轮） */
+  review_rounds: number;
+  /** 审查轮数最多的任务 */
+  review_rounds_max: { task: string; rounds: number } | null;
+}
+
+const isFix = (t: TaskLite | undefined, id: string) => t?.kind === 'fix' || t?.kind === 'merge-fix' || /\.fx/.test(id);
+/** 不算返工的任务种类：审查、阶段验收、架构师咨询 */
+const NOT_WORK = new Set(['review', 'qa', 'consult']);
+
+export function reworkStats(runs: readonly RunLite[], tasks: readonly TaskLite[], events: readonly EventLite[], flowId: string): ReworkStats {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const by: Record<string, RoleRuns> = {};
+  const started = new Set<string>();
+  for (const r of [...runs].sort((a, b) => a.started_at.localeCompare(b.started_at))) {
+    if (!r.task) continue;
+    const t = byId.get(r.task);
+    if (!t || NOT_WORK.has(t.kind)) continue;
+    if (r.role !== 'architect' && !CODER_ROLES.includes(r.role)) continue;
+    const s = (by[r.role] ??= { tasks: 0, first_runs: 0, rework_runs: 0, fix_runs: 0 });
+    if (isFix(t, r.task)) { s.fix_runs++; continue; }
+    const key = `${r.role}\0${r.task}`;
+    if (started.has(key)) s.rework_runs++;
+    else { started.add(key); s.tasks++; s.first_runs++; }
+  }
+  const trig = (name: string) => events.filter((e) => e.flow === flowId && e.type === 'transition' && e.trigger === name).length;
+  const reviews = tasks.filter((t) => t.kind === 'review');
+  const perTask = new Map<string, number>();
+  for (const t of reviews) { const orig = t.id.replace(/\.rv(?:-\d+)?$/, ''); perTask.set(orig, (perTask.get(orig) ?? 0) + 1); }
+  let max: ReworkStats['review_rounds_max'] = null;
+  for (const [task, rounds] of perTask) if (!max || rounds > max.rounds) max = { task, rounds };
+  return {
+    by_role: by,
+    rework_runs: CODER_ROLES.reduce((n, r) => n + (by[r]?.rework_runs ?? 0), 0),
+    conflicts: { merge: trig('merge_conflict'), sync: events.filter((e) => e.flow === flowId && (e.trigger === 'sync_conflict' || e.data?.['kind'] === 'sync_conflict')).length },
+    review_rounds: reviews.length,
+    review_rounds_max: max,
+  };
+}
+
+// —— summary.json ——
+
+export type RunStatus = 'delivered' | 'flow_failed' | 'infra_failed' | 'stopped_early';
+
+export interface StageTime {
+  stage: string;
+  /** 墙钟时间（含等用户的时间） */
+  wall_min: number;
+  /** 等用户（awaiting_human、needs_human）的时间：脚本扮演用户，只有轮询的几秒 */
+  human_min: number;
+}
+
+export interface Summary {
+  schema: 2;
+  run_id: string;
+  started_at: string;
+  ended_at: string;
+  pi_version: string;
+  pi_forge_sha: string | null;
+  pi_forge_dirty: boolean | null;
+  suite: string;
+  models: Record<string, string>;
+  thinking: Record<string, string>;
+  max_parallel_backend: number | null;
+  status: RunStatus;
+  failure: { kind: string; reason: string } | null;
+  flow: string | null;
+  /** /forge-build 发出到交付（或结束）的墙钟时间 */
+  wall_min: number;
+  stages: StageTime[];
+  hidden: HiddenScore | null;
+  project_tests: TestSummary | null;
+  interventions: { gates: number; extra: Record<string, number>; extra_total: number };
+  usage: { by_role: Record<string, RoleUsage>; cost: number };
+  rework: ReworkStats | null;
+  notes: string[];
 }

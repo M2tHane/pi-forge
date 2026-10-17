@@ -118,6 +118,7 @@ export function buildQaBrief(i: QaBriefInput): string {
   return [
     `# 阶段验收：${i.stage}（${i.qaId}，第 ${i.round} 轮）`,
     `这是第一轮。门禁与覆盖率已经通过。按技能 stage-qa 的顺序：核对跨模块一致性、页面状态、测试是否形同虚设、exit 是否真正达成，最后调用 forge_qa_report 一次提交全部问题（没有问题提交空列表）。must 必须写出处（rule:/ac:/contract:/defect:），写不出出处的是 suggest；规则同 reviewer。`,
+    `每条 must 的 problem 里写清三项：复现步骤；失败的请求（方法、路径、状态码）或控制台报错原文；怀疑的归属（前端、某个 domain，或不确定）。files 写出问题的源文件，程序按它决定交给哪个任务修。`,
     `## 阶段目标\n${i.goal}`,
     `## exit 中的需求与 AC 原文\n${exit}`,
     `## 覆盖率矩阵（docs/qa/${i.stage}.md）\n${matrix}`,

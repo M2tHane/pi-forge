@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { coverageMatrix, renderCoverageMarkdown, stageCoverage, writeCoverageReport } from '../../src/core/acceptance/coverage.ts';
-import { gateFailed, gateIssues, runImplementationChecks } from '../../src/core/stage/gates.ts';
+import { gateFailed, gateIssues, runImplementationChecks, stageDef } from '../../src/core/stage/gates.ts';
+import type { FlowConfig } from '../../src/core/state/config.ts';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 
@@ -107,6 +108,12 @@ test('runImplementationChecks：覆盖齐全则通过；命令失败不算覆盖
     assert.equal(r.coverage, undefined);
     assert.ok(!bad.git('ls-tree', '-r', '--name-only', bad.store.readFlow(bad.flowId).integration_branch).includes('docs/qa/S1.md'));
   } finally { bad.cleanup(); }
+});
+
+test('stageDef：没配置 auto 时门禁默认跑 test、acceptance、arch_check、contract_check，commands 里没定义的跳过', () => {
+  const config = (raw: object, commands: Record<string, string>) => ({ raw, commands }) as unknown as FlowConfig;
+  assert.deepEqual(stageDef(config({}, { test: 'npm test', arch_check: 'npm run arch', lint: 'eslint' }), 'S1').gate.auto, ['test', 'arch_check']);
+  assert.deepEqual(stageDef(config({ implementation_gate: { auto: ['lint'] } }, { test: 'npm test', lint: 'eslint' }), 'S1').gate.auto, ['lint']);
 });
 
 test('gateIssues：验收测试目录归该 impl 并沿用它的 writes；普通文件按 writes 归属；测试文件不当作 worker 的文件', () => {

@@ -76,6 +76,7 @@ test('exitReqsOf 与 buildQaBrief：第一轮给目标、AC 原文、矩阵、�
   assert.match(first, /a\.ts \| 1 \+/);
   assert.match(first, /forge_service 启动/);
   assert.match(first, /forge_qa_report/);
+  assert.match(first, /每条 must[^\n]*复现步骤[^\n]*控制台报错[^\n]*怀疑的归属/);
   assert.match(buildQaBrief({ ...base, serves: [], matrix: null }), /没有 serve 或 serve_\* 命令[\s\S]*还没有这个阶段的覆盖率矩阵|还没有这个阶段的覆盖率矩阵[\s\S]*没有 serve/);
   const confirm = buildQaBrief({ ...base, round: 2, qaId: 'S1.qa-2', priorMust: [{ id: 'R-1', level: 'must', basis: 'ac:REQ-001.AC1', files: ['a.ts'], location: 'a', problem: '问题甲', expected: '改' }] });
   assert.match(confirm, /forge_qa_confirm/);

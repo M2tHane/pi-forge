@@ -12,16 +12,16 @@ description: 审查一个 task 的 diff：只依据清单与出处判定必须�
 
 ## 先找依据
 
-- 本 task 的 AC 原文、相关契约片段（openapi.yaml、errors/*.yaml、data-model.yaml、modules/）、permissions.md。
-- 本 task 涉及的 rules/<layer>.md，以及每个文件末尾的审查清单；还有 rules/global.md。
-- worker 声明的 deviations：已声明并且合理的不算问题；未声明的偏离算问题。
+- 本 task 的 AC 原文与 PRD 的「通用约定」、相关契约片段（openapi.yaml；前端页面还有 page-api.md 的这一页与原型文件）、PRD 的用户与角色。
+- 本 task 涉及的 rules/backend.md 或 rules/frontend.md，以及文件末尾的审查清单；还有 rules/global.md。
+- 开发者声明的 deviations：已声明并且合理的不算问题；未声明的偏离算问题。
 - 不重复报告已验证通过的机械检查（格式化、lint、类型检查）。但检查命令没有覆盖它声称检查的东西时要报告，并给出证据；命令名叫 typecheck 不等于做了类型检查。
 
 ## 什么可以是"必须改"（basis 只能是这四种）
 
 | basis | 例子 |
 |---|---|
-| `contract:<位置>` | 返回 400 而契约规定 422；字段名 `teamID`，契约是 `team_id`；用了 errors/*.yaml 里没有的错误码却没有追加 |
+| `contract:<位置>` | 返回 400 而契约规定 422；字段名 `teamID`，契约是 `team_id`；页面调用了 page-api.md 里这一页没有的接口 |
 | `rule:rules/<层>.md#R<n>` | `rule:rules/backend.md#R2`："查询必须带 team_id 过滤"未满足。文件与编号必须真实存在于任务说明的规则里 |
 | `ac:<编号>` | 测试通过了，但实现只处理了 MySQL，而 AC 要求 MySQL 和 PostgreSQL（验收测试没覆盖到的部分） |
 | `defect:<输入 → 后果>` | "名称包含单引号时 SQL 拼接出错"；"并发创建同名数据源时，两个请求都成功" |
@@ -30,15 +30,15 @@ description: 审查一个 task 的 diff：只依据清单与出处判定必须�
 
 **每条 must 的 expected 是最小关闭条件**：只列修复该问题必需的结果。新增测试只在规则明确要求、或缺陷涉及安全/权限/数据完整性需要回归保护时才算阻塞，并写明测试路径；其余补测试建议是 suggest。
 **expected 只能要求用项目已配置的 commands 能验证的结果**：不要求浏览器行为的测试（页面交互与状态由 stage-qa 在浏览器里检查），没有类型检查器就不要求类型层面的验证；这类写成 suggest 或 manual。
-**先运行任务说明里列出的本 task 的测试，失败一律是 must**（出处 `defect:<命令> 失败：<失败的用例与原因>`；环境问题用 forge_block，不算代码缺陷）。**验收测试由 worker 自己写，也归你审查**（标准见技能 acceptance-tests）：AC 没有测试、测试没走 Given/When/Then 或绕过公开入口、断言被弱化，一律是 must，出处 `ac:<编号>`。**测试被删除、放宽、跳过一律是 must。** 单元测试的写法问题（绑定实现、同义反复、覆盖不全）只能是 suggest，除非它掩盖了缺陷（写 defect）。
+**先运行任务说明里列出的本 task 的测试，失败一律是 must**（出处 `defect:<命令> 失败：<失败的用例与原因>`；环境问题用 forge_block，不算代码缺陷）。**验收测试由开发者自己写，也归你审查**（标准见技能 acceptance-tests）：AC 没有测试、测试没走 Given/When/Then 或绕过公开入口、断言被弱化，一律是 must，出处 `ac:<编号>`。**测试被删除、放宽、跳过一律是 must。** 单元测试的写法问题（绑定实现、同义反复、覆盖不全）只能是 suggest，除非它掩盖了缺陷（写 defect）。
 
 ## 必看的几类缺陷
 
-- 越权：查询或修改没有按当前用户的团队或角色过滤（对照 permissions.md）。
+- 越权：查询或修改没有按当前用户的团队或角色过滤（对照 PRD 的用户与角色、openapi.yaml 的 `x-roles`）。
 - 注入、拼接 SQL 或命令、未校验的外部输入。
 - 事务边界、并发写入、资源泄漏（连接、文件句柄、定时器）。
 - 吞掉的错误：空的 catch，或者 catch 之后返回成功。
-- 测试质量：删除、放宽或跳过了已有测试（test-adjust 改过的测试要逐个核对）。单元测试的写法问题只是 suggest。
+- 测试质量：删除、放宽或跳过了已有测试（适配接口变化而改过的测试要逐个核对）。单元测试的写法问题只是 suggest。
 
 ## 过度工程（技能 simplicity）：默认是 suggest
 

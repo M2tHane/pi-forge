@@ -181,6 +181,41 @@ export interface ReviewBriefInput {
   othersFiles?: readonly { file: string; owners: readonly string[] }[];
   /** plan.md 的公共文件里，改动不只是追加的文件 */
   sharedEdits?: readonly string[];
+  /** 前端页面任务：页面 id、原型文件路径（PRD 页面表）与 docs/contracts/page-api.md 里这一页的部分（找不到时为 null） */
+  page?: { id: string; prototype: string | null; api: string | null };
+}
+
+export const PAGE_API_PATH = 'docs/contracts/page-api.md';
+export const PAGE_API_MAX = 6_000;
+
+/**
+ * page-api.md 里这一页的部分（纯函数）：标题里含页面 id 的小节（到下一个同级或更高级的标题为止）；
+ * 没有这样的标题时取含页面 id 的行；都没有时返回 null。
+ */
+export function pageApiSection(md: string, page: string): string | null {
+  const esc = page.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const has = new RegExp(`(^|[^\\w-])${esc}([^\\w-]|$)`, 'i');
+  const lines = md.split('\n');
+  const level = (l: string) => /^(#{1,6})\s/.exec(l)?.[1]!.length ?? 0;
+  const start = lines.findIndex((l) => level(l) > 0 && has.test(l));
+  if (start >= 0) {
+    let end = start + 1;
+    while (end < lines.length && !(level(lines[end]!) > 0 && level(lines[end]!) <= level(lines[start]!))) end++;
+    return lines.slice(start, end).join('\n').trim();
+  }
+  const hits = lines.filter((l) => has.test(l));
+  return hits.length ? hits.join('\n') : null;
+}
+
+/** 前端页面任务的审查材料：对照原型看页面，对照 page-api.md 看接口 */
+function pageSection(p: NonNullable<ReviewBriefInput['page']>): string {
+  const api = p.api === null ? `（${PAGE_API_PATH} 里没找到这一页的部分，自己读整个文件）`
+    : p.api.length > PAGE_API_MAX ? `${fence(p.api.slice(0, PAGE_API_MAX))}\n（已截断，完整内容见 ${PAGE_API_PATH}）` : fence(p.api);
+  return [
+    `## 页面「${p.id}」的审查材料`,
+    `原型：${p.prototype ?? '（PRD 的页面表里找不到这个页面）'}。打开原型文件，对照页面结构、字段、交互，以及加载、空、错误、无权限四种状态。`,
+    `${PAGE_API_PATH} 里这一页的部分（核对页面调用的接口、参数、字段是否一致）：\n${api}`,
+  ].join('\n\n');
 }
 
 /** 跨 task 的两类问题单个 diff 里看不出来，提醒审查者专门看一眼（stock run-02：采购、销售各自留了一份 changeStock 替身；T-013 给商品页加导出按钮让整页打不开） */
@@ -249,6 +284,7 @@ export function buildReviewBrief(i: ReviewBriefInput): string {
     `## 本 task 的验收标准（AC 原文）\n${ac}`,
     `## 相关契约\n${contracts}`,
     `## worker 声明的偏离（已声明并且合理的不算问题）\n${i.deviations.length ? i.deviations.map((d) => `- ${d}`).join('\n') : '（无）'}`,
+    ...(i.page ? [pageSection(i.page)] : []),
     ...crossTaskSection(i),
     `本 task 涉及的 rules/<layer>.md（每个文件末尾有审查清单）已在系统提示的规则部分。`,
     ...(i.tests ? [testsSection(i.tests, false)] : []),

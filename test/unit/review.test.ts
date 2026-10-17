@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   REVIEW_DIFF_MAX, buildReviewBrief, classifyIssues, contractFilesFor, effectiveVerdict, fitSnippets, mustHandoff, mustOf,
-  nextReviewId, reviewMode, reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, touchesContracts, truncateDiff, validateConfirm,
+  nextReviewId, pageApiSection, reviewMode, reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, touchesContracts, truncateDiff, validateConfirm,
   type ReviewPolicy,
 } from '../../src/core/stage/review.ts';
 import type { ReviewFinding } from '../../src/core/state/schemas.ts';
@@ -201,4 +201,18 @@ test('跨 task 的提醒：diff 里落在已完成的其他 task 范围内的文
   assert.match(brief, /## 改了其他 task 负责的文件\n- public\/pages\/products\/page\.js（T-005）\n[^\n]*页面能不能打开/);
   assert.doesNotMatch(buildReviewBrief(base), /其他 task|公共文件/, '没有跨 task 的情况不加这两节');
   assert.deepEqual(crossTaskInputs([t005], mkTask('T-001'), ['src/server/t-001/a.ts']), {});
+});
+
+test('页面审查材料：page-api.md 里这一页的小节（到下一个同级标题为止）、原型路径；找不到小节时取含页面 id 的行', () => {
+  const md = ['# 页面与接口', '', '## login 登录', '- POST /api/login', '### 错误', '- 401', '## purchase-orders 采购单', '- GET /api/po', '', '| loginx | 不是这页 |'].join('\n');
+  assert.equal(pageApiSection(md, 'login'), '## login 登录\n- POST /api/login\n### 错误\n- 401');
+  assert.equal(pageApiSection(md, 'purchase-orders'), '## purchase-orders 采购单\n- GET /api/po\n\n| loginx | 不是这页 |');
+  assert.equal(pageApiSection('| 页面 | 接口 |\n| products | GET /api/products |\n| orders | GET /api/orders |', 'products'), '| products | GET /api/products |');
+  assert.equal(pageApiSection(md, 'reports'), null);
+  const base = { taskId: 'T-005', title: '页面 login', reviewId: 'T-005.rv', acIds: [], acTexts: {}, contracts: { shown: [], omitted: [] }, deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: false }, priorMust: [] };
+  const brief = buildReviewBrief({ ...base, page: { id: 'login', prototype: 'docs/prototype/login.html', api: '## login 登录\n- POST /api/login' } });
+  assert.match(brief, /## 页面「login」的审查材料\n\n原型：docs\/prototype\/login\.html。[^\n]*四种状态/);
+  assert.match(brief, /docs\/contracts\/page-api\.md 里这一页的部分[^\n]*\n```\n## login 登录\n- POST \/api\/login\n```/);
+  assert.match(buildReviewBrief({ ...base, page: { id: 'login', prototype: null, api: null } }), /PRD 的页面表里找不到这个页面[\s\S]*没找到这一页的部分，自己读整个文件/);
+  assert.doesNotMatch(buildReviewBrief(base), /审查材料/);
 });

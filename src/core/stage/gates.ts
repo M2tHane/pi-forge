@@ -24,11 +24,14 @@ import { stageCoverage, writeCoverageReport, type CoverageResult } from '../acce
 /** failed：失败的闸门命令与输出；引擎据此生成有限轮次的修复任务。 */
 export interface GateOutcome { stage: string; passed: boolean; needsHuman: boolean; reasons: string[]; failed?: { command: string; output: string } }
 
+/** 没配置 implementation_gate.auto 时门禁跑的命令 */
+export const DEFAULT_GATE_AUTO = ['test', 'acceptance', 'arch_check', 'contract_check'] as const;
+
 /** 阶段门禁：各阶段共用 implementation_gate，auto 里 commands 没定义的命令跳过 */
 export function stageDef(config: FlowConfig, stage: string) {
   const gate = config.raw.implementation_gate;
   return { id: stage, gate: {
-    auto: (gate?.auto ?? []).filter((name) => !!config.commands[name]?.trim()),
+    auto: (gate?.auto ?? [...DEFAULT_GATE_AUTO]).filter((name) => !!config.commands[name]?.trim()),
     human: gate?.human ?? true,
   } };
 }

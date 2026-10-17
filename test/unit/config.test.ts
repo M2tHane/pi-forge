@@ -215,9 +215,9 @@ for (const tool of ['bash', 'bash_readonly']) {
 
 test('allowlist 必须有命令名数组；解析为 allowlist 并保留 bashAllow', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
-  // 模板里 reviewer 是 allowlist（放行 typecheck、lint、test、acceptance，用来核对本 task）
+  // 模板里 reviewer 是 allowlist（放行 typecheck、lint、test、acceptance、arch_check、contract_check，用来核对本 task）
   assert.equal(c.role('reviewer').bash, 'allowlist');
-  assert.deepEqual(c.role('reviewer').bashAllow, ['typecheck', 'lint', 'test', 'acceptance']);
+  assert.deepEqual(c.role('reviewer').bashAllow, ['typecheck', 'lint', 'test', 'acceptance', 'arch_check', 'contract_check']);
   assert.ok(c.role('reviewer').tools.has('bash'));
   assert.deepEqual(c.role('worker').bashAllow, []);
   assert.match(errorsOf(changed((wf) => { delete wf.roles['reviewer']!.bash_allow; })).join(), /bash: allowlist 必须配置 bash_allow/);
@@ -227,9 +227,9 @@ test('allowlist 必须有命令名数组；解析为 allowlist 并保留 bashAll
   assert.match(errorsOf(changed((wf) => { wf.roles.worker!.bash_allow = ['test']; })).join(), /bash_allow 只能用于 bash: allowlist/);
 });
 
-test('implementation_gate 默认只跑 test 与 acceptance（其余命令给 agent 参考）；已删除的配置项只提醒', () => {
+test('implementation_gate 默认跑 test、acceptance、arch_check、contract_check（其余命令给 agent 参考）；已删除的配置项只提醒', () => {
   const c = parseConfig(REAL_TEMPLATE_YAML);
-  assert.deepEqual(c.raw.implementation_gate?.auto, ['test', 'acceptance']);
+  assert.deepEqual(c.raw.implementation_gate?.auto, ['test', 'acceptance', 'arch_check', 'contract_check']);
   assert.equal(c.raw.implementation_gate?.coverage, true);
   assert.equal(c.raw.implementation_gate?.qa, true);
   // 已删除的配置项：旧项目的 workflow.yaml 里还有时忽略并提醒

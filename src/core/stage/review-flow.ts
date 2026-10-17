@@ -10,9 +10,9 @@ import { commitFilesToBranch } from '../spec/intake.ts';
 import { headSha } from '../workspace/worktree.ts';
 import { acceptanceAudit, reviewTestPlan } from './review-tests.ts';
 import { matchesAny, writesOwnAcceptance } from '../state/paths.ts';
-import { acTexts, readPrd } from '../spec/prd.ts';
+import { acTexts, pageOf, readPrd } from '../spec/prd.ts';
 import {
-  CONTRACT_SNIPPET_MAX, buildReviewBrief, contractFilesFor, fitSnippets, mustHandoff, mustOf, nextReviewId, reviewMode, reviewPolicy,
+  CONTRACT_SNIPPET_MAX, PAGE_API_PATH, buildReviewBrief, pageApiSection, contractFilesFor, fitSnippets, mustHandoff, mustOf, nextReviewId, reviewMode, reviewPolicy,
   reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, truncateDiff,
   type ConfirmItem, type ReviewBriefInput, type ReviewMode,
 } from './review.ts';
@@ -92,8 +92,14 @@ export async function createReviewTask(root: string, store: StateStore, config: 
 
   let acText: Record<string, string> = {};
   let contracts: ReturnType<typeof fitSnippets> = { shown: [], omitted: [] };
+  let page: ReviewBriefInput['page'];
   if (!confirm) {
-    acText = acTexts(readPrd(root, `refs/heads/${store.readFlow(flowId).integration_branch}`), orig.ac ?? []);
+    const prd = readPrd(root, `refs/heads/${store.readFlow(flowId).integration_branch}`);
+    acText = acTexts(prd, orig.ac ?? []);
+    if (orig.page) {
+      const api = showAt(wt, PAGE_API_PATH);
+      page = { id: orig.page, prototype: pageOf(prd, orig.page)?.file || null, api: api ? pageApiSection(api, orig.page) : null };
+    }
     const all = git(wt, ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'docs/contracts']).split('\n').filter(Boolean);
     const touched = git(wt, ['diff', '--name-only', orig.base_sha, head, '--', 'docs/contracts']).split('\n').filter(Boolean);
     contracts = fitSnippets(contractFilesFor(orig.module, all, touched).map((p) => ({ path: p, content: showAt(wt, p) })).filter((f) => f.content), CONTRACT_SNIPPET_MAX);
@@ -107,6 +113,7 @@ export async function createReviewTask(root: string, store: StateStore, config: 
     ...(ownTests ? { acceptance: acceptanceAudit(orig) ?? undefined, withAcceptance: true } : {}),
     ...cross,
     ...(sharedEdits.length ? { sharedEdits } : {}),
+    ...(page ? { page } : {}),
   });
   const input: TaskInput = {
     id, stage: orig.stage, kind: 'review', role: 'reviewer', title: `审查：${orig.title}`, scopes: [...config.role('reviewer').scopes],

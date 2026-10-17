@@ -63,5 +63,5 @@ roles:
   backend:           { model: strong, scopes: [code], bash: full, tools: [read, write, edit, "@codegraph", forge_service, forge_sync, forge_add_dependency, forge_private_deps, forge_note, forge_submit, forge_ask_architect] }
   frontend:          { model: strong, scopes: [code], bash: full, tools: [read, write, edit, "@codegraph", forge_service, forge_sync, forge_add_dependency, forge_private_deps, forge_note, forge_submit, forge_ask_architect] }
   worker:            { model: strong, scopes: [code], bash: full, tools: [read, write, edit, "@codegraph", forge_service, forge_sync, forge_add_dependency, forge_private_deps, forge_note, forge_submit] }
-  reviewer:          { model: medium, scopes: [review], bash: allowlist, bash_allow: [typecheck, lint, test, acceptance], tools: [read, "@codegraph", forge_review_report, forge_review_confirm] }
+  reviewer:          { model: medium, scopes: [review], bash: allowlist, bash_allow: [typecheck, lint, test, acceptance, arch_check, contract_check], tools: [read, "@codegraph", forge_review_report, forge_review_confirm] }
   stage-qa:          { model: strong, scopes: [qa], bash: full, tools: [read, forge_service, "@codegraph", forge_qa_report, forge_qa_confirm] }

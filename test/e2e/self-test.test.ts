@@ -8,11 +8,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { P0_SPEC } from '../helpers/spec.ts';
+import { PRD_FILES, PRD_MD_AC2 } from '../helpers/prd.ts';
 import { drive, engineEnv, submitWork, writeFiles } from '../helpers/commands.ts';
 
-const REQS = P0_SPEC.requirements.replace('- AC1：Given 已登录 When 创建看板 Then 返回看板编号', '- AC1：Given 已登录 When 创建看板 Then 返回看板编号\n- AC2：Given 名称为空 When 创建看板 Then 返回 400');
-const FILES = Object.fromEntries(Object.entries({ ...P0_SPEC, requirements: REQS }).map(([k, v]) => [`docs/spec/${k}.md`, v]));
+const FILES = { ...PRD_FILES, 'docs/PRD.md': PRD_MD_AC2 };
 const OUT = mkdtempSync(path.join(tmpdir(), 'pi-forge-selftest-'));
 const LOG = path.join(OUT, 'acc.log');
 // acceptance 命令是 `<命令> -- T-001`：预检不再运行命令，由审查者按任务说明运行，这里要求测试文件已经在 worktree 里

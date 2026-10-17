@@ -133,14 +133,13 @@ const lease = { run_id: 'r-1', role: 'architect', token_hash: hashToken(TOKEN), 
 const facts = (over: Partial<Facts> = {}): Facts => ({
   now: NOW, limits: { max_attempts: 3, max_parallel: 2 }, actor: 'run:r-1', token: TOKEN, diff_files: ['docs/arch/overview.md'], ...over,
 });
-const docTask = () => mkTask('T-003', { kind: 'doc', stage: 'X1', role: 'architect', scopes: ['plan'], writes: ['docs/arch/**', 'docs/contracts/**', 'docs/spec/glossary.md'], verify: [], status: 'in_progress', lease, worktree: '/wt', branch: 'b', base_sha: 'abc' });
+const docTask = () => mkTask('T-003', { kind: 'doc', stage: 'X1', role: 'architect', scopes: ['plan'], writes: ['docs/arch/**', 'docs/contracts/**'], verify: [], status: 'in_progress', lease, worktree: '/wt', branch: 'b', base_sha: 'abc' });
 const submit = (f: Partial<Facts>) => planTransition(docTask(), 'awaiting_inputs', 'submit', facts(f));
 
 test('“更新架构图与契约”：改什么文档都能提交；没有改动时 report 直接完成', () => {
   assert.equal(isDocsUpdateTask(docTask()), true);
   assert.equal(isDocsUpdateTask(mkTask('T-004', { kind: 'doc', stage: 'S1' })), false);
   assert.ok(submit({}).ok, '改了 docs/arch');
-  assert.ok(submit({ diff_files: ['docs/spec/glossary.md'] }).ok, '只改术语表也行');
   assert.equal(submit({ diff_files: [] }).ok, false, '没有改动走 report，不走 submit');
   const done = planTransition(docTask(), 'done', 'report', facts({ diff_files: [], structured_report: true }));
   assert.ok(done.ok, done.ok ? '' : done.errors.join());
@@ -267,7 +266,7 @@ test('fixStep(change)：预建 impl 不再建 T-001；全部 done 后建一次 d
     await fixStep(ctx, flow.id);
     const doc = p.store.readTask(flow.id, 'T-003');
     assert.deepEqual([doc.kind, doc.role, doc.stage, doc.title, doc.scopes, doc.depends_on, doc.verify], ['doc', 'architect', 'X1', DOCS_UPDATE_TITLE, ['plan'], [], []]);
-    assert.deepEqual(doc.writes, ['docs/arch/**', 'docs/contracts/**', 'docs/spec/glossary.md']);
+    assert.deepEqual(doc.writes, ['docs/arch/**', 'docs/contracts/**']);
     const handoff = p.store.readHandoff(flow.id, 'T-003');
     assert.match(handoff, /src\/export\/a\.ts/);
     assert.match(handoff, /看板支持导出 CSV/);

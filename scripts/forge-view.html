@@ -132,7 +132,7 @@ details summary { cursor: pointer; color: var(--text-secondary); }
   <section class="panel" id="p-stages">
     <div class="card">
       <h2>阶段</h2>
-      <div class="hint">P0 规格、P1 契约与计划、S1…Sn 实施阶段、ADOPT 接管。目标与出口来自批准的计划；闸门轮次是该阶段全量测试失败后自动生成的修复。</div>
+      <div class="hint">S0 架构、S1…Sn 开发批次。目标与出口来自批准的计划；闸门轮次是该阶段全量测试失败后自动生成的修复。</div>
       <div style="overflow:auto"><table id="stageTable"></table></div>
     </div>
     <div class="card" style="margin-top:16px">
@@ -235,7 +235,7 @@ const roleC = (r) => (ROLE[r] || [r, '#898781'])[1];
 const roleIdx = (r) => { const i = D.roles.indexOf(r); return i < 0 ? D.roles.length : i; };
 const KIND = { impl: '实现', doc: '文档', acctest: '验收测试', review: '审查', qa: '阶段验收', fix: '修复', 'merge-fix': '合并修复' };
 const STAGE_ST = { active: '进行中', awaiting_gate: '闸门检查中', needs_human: '需要你处理', awaiting_human: '等你批准', done: '已通过', aborted: '已中止', pending: '未开始' };
-const stageName = (id) => id === 'P0' ? '规格' : id === 'P1' ? '契约与计划' : id === 'ADOPT' ? '接管' : /^S/.test(id) ? '实施' : '';
+const stageName = (id) => id === 'S0' || id === 'P0' || id === 'P1' ? '架构' : /^S/.test(id) ? '开发' : '';
 const TRIG = {
   schedule: ['程序', '硬依赖都完成、所属阶段在进行中，任务变为可派发'],
   dispatch: ['程序', '派发：建 worktree、颁发 token 与租约、拉起子进程（实施池与辅助池各有并行上限）'],
@@ -279,9 +279,9 @@ const OUT = {
   failed: ['失败', 'var(--critical)', '失败 / 被结束'], killed: ['被结束', 'var(--critical)', '失败 / 被结束'], lease_expired: ['租约过期', 'var(--critical)', '失败 / 被结束'], timeout: ['超时', 'var(--critical)', '失败 / 被结束'],
   unavailable: ['模型不可用', 'var(--warning)', '模型不可用（暂停）'], running: ['运行中', 'var(--s-impl)', '运行中'],
 };
-// 用户界面只显示高层阶段：规格 → 契约与计划 → 实施 → 交付
-const PHASE = { spec: '规格', plan: '契约与计划', impl: '实施', delivery: '交付' };
-const phaseOf = (stage) => stage === 'P0' ? 'spec' : stage === 'P1' || stage === 'ADOPT' ? 'plan' : 'impl';
+// 用户界面只显示高层阶段：架构 → 开发 → 交付
+const PHASE = { arch: '架构', impl: '开发', delivery: '交付' };
+const phaseOf = (stage) => stage === 'S0' || stage === 'P0' || stage === 'P1' ? 'arch' : 'impl';
 const chip = (status) => { const s = ST[status] || { l: status, c: 'var(--idle)', icon: '' }; return `<span class="chip"><i style="background:${s.c}"></i>${s.icon} ${esc(s.l)}</span>`; };
 const roleChip = (role) => `<span class="chip"><i style="background:${roleC(role)}"></i>${esc(roleL(role))}</span>`;
 const outcomeOf = (r) => r.outcome ?? (r.ended_at ? 'failed' : 'running');
@@ -335,7 +335,7 @@ function render() {
 
 function renderHeader(F, runs, evs) {
   const { flow, tasks } = F;
-  const phases = [...new Set(flow.stages.map(phaseOf))];
+  const phases = ['arch', 'impl'];
   const finished = flow.stage === flow.stages.at(-1) && flow.stage_status === 'done';
   const cur = phaseOf(flow.stage);
   $('#phases').innerHTML = phases.map((p) => {

@@ -49,9 +49,9 @@ test('/forge-change：两个 task 依次合入 → doc 任务（只改术语表�
     if (id === 'T-002') return submitWork(a, '页面按钮', { 'src/server/t-002/b.ts': 'ok\n' });
     if (id === 'T-003') {
       assert.equal(role, 'architect');
-      // 只改了术语表，没改 docs/arch 或 docs/contracts：照样可以提交
-      assert.ok((await a.call('write', { path: 'docs/spec/glossary.md', content: '# 术语\n- 导出：把列表保存为 CSV\n' })).ok);
-      const accepted = await a.call('forge_submit', { summary: '只更新术语表' });
+      // 只改了架构图，没改 docs/contracts：照样可以提交
+      assert.ok((await a.call('write', { path: 'docs/arch/overview.md', content: '# 架构\n- 导出：把列表保存为 CSV\n' })).ok);
+      const accepted = await a.call('forge_submit', { summary: '只更新架构图' });
       docAttempts.push({ ok: accepted.ok, text: accepted.text });
       return;
     }
@@ -77,7 +77,7 @@ test('/forge-change：两个 task 依次合入 → doc 任务（只改术语表�
     assert.equal(docAttempts[0]!.ok, true, docAttempts[0]!.text);
     const doc = p.store.readTask(flow.id, 'T-003');
     assert.deepEqual([doc.kind, doc.role, doc.status], ['doc', 'architect', 'done']);
-    assert.equal(p.git('show', 'main:docs/spec/glossary.md').includes('导出'), true);
+    assert.equal(p.git('show', 'main:docs/arch/overview.md').includes('导出'), true);
 
     assert.equal(p.store.readTask(flow.id, 'X1.qa').status, 'done');
     assert.ok(isFinished(p.store.readFlow(flow.id)));

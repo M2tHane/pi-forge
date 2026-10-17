@@ -286,7 +286,7 @@ test('requestChange：只在计划批准后、阶段 active 时可以；同一�
     assert.equal(r.change.status, 'drafting');
     assert.equal(r.task.id, 'T-004');
     assert.deepEqual([r.task.kind, r.task.role, r.task.stage, r.task.status], ['doc', 'architect', 'S1', 'pending']);
-    assert.deepEqual(r.task.writes, ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md']);
+    assert.deepEqual(r.task.writes, ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**']);
     assert.deepEqual(r.task.scopes, ['plan'], 'architect 另有 code scope，变更请求的 task 只用 plan scope');
     const brief = p.store.readHandoff(p.flowId, 'T-004');
     assert.match(brief, /# 变更请求 C-001[\s\S]*来源：worker:T-002[\s\S]*变更内容：把 users\.email 改成必填/);

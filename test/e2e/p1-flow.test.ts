@@ -5,15 +5,14 @@ import { setupProject, type Project } from '../helpers/project.ts';
 import { commitToBranch } from '../helpers/engine.ts';
 import type { MergeHooks } from '../../src/core/engine/merge-queue.ts';
 import { CONTRACTS, P1_SPEC, PLAN_YAML } from '../helpers/contracts.ts';
-import { runFlowCommand, type CommandEnv } from '../../src/commands/forge.ts';
+import { runFlowCommand } from '../../src/commands/forge.ts';
 import { nextStep, turnContext } from '../../src/core/engine/context-injector.ts';
 import { renderStatus } from '../../src/core/ops/status-view.ts';
-import { flowSpec, statusText } from '../../src/tools/orchestrator-tools.ts';
+import { statusText } from '../../src/tools/orchestrator-tools.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { engineEnv } from '../helpers/commands.ts';
 
 const COMMANDS_DRAFT = 'commands:\n  test: "true"\n  contract_lint: "true"\nshared_env:\n  deps: ["node_modules", "web/node_modules"]\n';
-const GLOSSARY_ADD = '\n**连接测试（ConnectionTest）**：\n检查数据源能否连上。\n';
 
 async function writeAll(a: FakeAgent, files: Record<string, string>) {
   for (const [rel, content] of Object.entries(files)) {
@@ -29,18 +28,17 @@ async function writeDesign(a: FakeAgent) {
     'commands.yaml': COMMANDS_DRAFT,
     'AGENTS.md': '# 开发说明\n',
   });
-  const glossary = (await a.call('read', { path: 'docs/spec/glossary.md' })).text;
-  await writeAll(a, { 'docs/spec/glossary.md': glossary + GLOSSARY_ADD });
 }
 
 
-async function toP1(p: Project, cmd: CommandEnv) {
-  await flowSpec(p.dir, p.store, p.config, P1_SPEC);
-  await runFlowCommand('approve stage:P0', cmd);
+/** P1 读集成分支上的四份规格：直接提交上去再开始调度 */
+async function toP1(p: Project, e: { engine: { pump(flowId: string): Promise<unknown> } }) {
+  commitToBranch(p.dir, p.store.readFlow(p.flowId).integration_branch, Object.fromEntries(Object.entries(P1_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v])), 'spec');
+  await e.engine.pump(p.flowId);
 }
 
 test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、合并、闸门 → 批准生成 S 阶段与 task，规则与命令应用，契约锁定，进入 S0', async () => {
-  const p = await setupProject({ stages: ['P0', 'P1'] });
+  const p = await setupProject({ stages: ['P1'] });
   const results: { tool: string; ok: boolean; text: string }[] = [];
   let architectRuns = 0; // 第 1 次是 P1 的 doc task，第 2 次是 S0 的 impl
   const e = engineEnv(p, async (role, nth, a) => {
@@ -67,7 +65,7 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     throw new Error(`意外的角色 ${role}#${nth}`);
   });
   try {
-    await toP1(p, e.cmd);
+    await toP1(p, e);
     await e.engine.idle();
     assert.deepEqual(e.errors, []);
     // 第一次 propose：依赖更晚阶段；第二次通过并给出报告；提交成功
@@ -94,7 +92,7 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
     assert.doesNotMatch(out, /合入/, 'P1 批准不会合入主分支');
     assert.match(out, /已生成 2 个 S 阶段（S0、S1）与 2 个 task[\s\S]*契约已锁定[\s\S]*进入阶段 S0/);
     const after = p.store.readFlow(p.flowId);
-    assert.deepEqual(after.stages, ['P0', 'P1', 'S0', 'S1']);
+    assert.deepEqual(after.stages, ['P1', 'S0', 'S1']);
     assert.deepEqual(after.s_stages!.map((s) => [s.id, s.exit]), [['S0', ['REQ-002']], ['S1', ['REQ-001']]]);
     assert.equal(after.contracts_base, integrationHead, '契约锁定在批准时集成分支的提交上');
     assert.equal(after.stage, 'S0');
@@ -126,7 +124,7 @@ test('P1：architect 提交错误计划被拒 → 改正后通过 → 预检、�
 });
 
 test('P1 预检：没有 propose、或 propose 之后又改了 plan.yaml，预检失败退回 architect 并写进 handoff；改正后通过', async () => {
-  const p = await setupProject({ stages: ['P0', 'P1'] });
+  const p = await setupProject({ stages: ['P1'] });
   let run = 0;
   const e = engineEnv(p, async (role, _nth, a) => {
     assert.equal(role, 'architect');
@@ -145,7 +143,7 @@ test('P1 预检：没有 propose、或 propose 之后又改了 plan.yaml，预�
     assert.ok((await a.call('forge_submit', { summary: '契约与计划' })).ok);
   });
   try {
-    await toP1(p, e.cmd);
+    await toP1(p, e);
     await e.engine.idle();
     assert.deepEqual(e.errors, []);
     const t = p.store.readTask(p.flowId, 'T-001');
@@ -158,7 +156,7 @@ test('P1 预检：没有 propose、或 propose 之后又改了 plan.yaml，预�
 });
 
 test('P1 打回：新建 architect task 接着上一个的会话，意见写进 handoff；主会话等待；返工后再次等待批准', async () => {
-  const p = await setupProject({ stages: ['P0', 'P1'] });
+  const p = await setupProject({ stages: ['P1'] });
   let run = 0;
   const e = engineEnv(p, async (role, _nth, a) => {
     assert.equal(role, 'architect');
@@ -171,7 +169,7 @@ test('P1 打回：新建 architect task 接着上一个的会话，意见写进 
     assert.ok((await a.call('forge_submit', { summary: '契约与计划' })).ok);
   });
   try {
-    await toP1(p, e.cmd);
+    await toP1(p, e);
     await e.engine.idle();
     assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
     assert.match(await runFlowCommand('reject stage:P1 "数据源要放到 S0"', e.cmd), /architect 按意见返工/);
@@ -187,7 +185,7 @@ test('P1 打回：新建 architect task 接着上一个的会话，意见写进 
 });
 
 test('P1 闸门：集成分支上的契约不合格时回到 active，派 architect 返工并把原因写进 handoff', async () => {
-  const p = await setupProject({ stages: ['P0', 'P1'] });
+  const p = await setupProject({ stages: ['P1'] });
   let broken = false;
   // 合并之后、闸门之前，别的提交弄坏了集成分支上的契约
   const hooks: MergeHooks = { afterMerge: async (root) => {
@@ -210,7 +208,7 @@ test('P1 闸门：集成分支上的契约不合格时回到 active，派 archit
     }
   }, hooks);
   try {
-    await toP1(p, e.cmd);
+    await toP1(p, e);
     await e.engine.idle();
     assert.deepEqual(e.errors, []);
     assert.ok(broken);

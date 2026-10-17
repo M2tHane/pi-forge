@@ -214,7 +214,7 @@ test('任务说明里的「通用约定」：给了才有，放在验收标准�
   const agent = loadAgent('worker', '/nonexistent', PKG_AGENTS);
   const base = { agent, rules: [], task: mkTask('T-001'), flowId: 'B-001', handoff: '', mode: 'impl' as const, commands: {} };
   const with_ = assemblePrompt({ ...base, conventions: '- sku 保存为大写' }).user;
-  assert.match(with_, /## 验收标准[\s\S]*## 规格的通用约定（docs\/spec\/requirements\.md 原文）\n[^\n]*spec:requirements\.md#通用约定[^\n]*\n\n- sku 保存为大写/);
+  assert.match(with_, /## 验收标准[\s\S]*## PRD 的通用约定（docs\/PRD\.md 原文）\n[^\n]*ac:PRD#通用约定[^\n]*\n\n- sku 保存为大写/);
   assert.doesNotMatch(assemblePrompt(base).user, /通用约定/);
-  assert.match(assemblePrompt({ ...base, conventions: 'x'.repeat(CONVENTIONS_MAX + 10) }).user, /已截断，完整内容见 docs\/spec\/requirements\.md/);
+  assert.match(assemblePrompt({ ...base, conventions: 'x'.repeat(CONVENTIONS_MAX + 10) }).user, /已截断，完整内容见 docs\/PRD\.md/);
 });

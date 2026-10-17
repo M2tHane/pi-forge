@@ -48,8 +48,8 @@
 - `.forge` 迁移链 v1→v2（删 `.at`、争议）、v2→v3（删范围申请）。
 
 ### 规格与计划
-- `/forge-build` 不必带 `--prd`（用户决定）：默认扫描项目 `docs/` 下用户的文档入库到 `docs/spec/inputs/docs/`；有文档时主会话只问疑点，没有时详细访谈。
-- spec-lint 只把程序要解析的格式算错误（需求标题与编号、AC 编号、MVP 至少一条 AC）；GWT 写法、占位词、页面状态与引用、权限表、术语格式只警告，权限表的角色不必在术语表里，没有界面的项目可以不交 screens（10-14 约束清点，见 `docs/CONSTRAINTS-AUDIT.md`）。有错误整体拒绝；P0 必须人工批准。规格可以分几次交，没交齐（requirements、permissions、glossary）时只存草稿并提示还差哪几份，交齐才检查（stock 实验：四份一次交超出模型单次输出上限，截断两次）；之后（lint 不通过、门禁不过、用户打回，以及等批准时主会话还想改）只重交改动的那几份，其余沿用上一次提交（`.forge/flows/<id>/spec-draft/`）：一行的 lint 问题不必重新生成四份文档。AC 编号 `REQ-001.AC1`；AC 只写用户能感知的行为，单条 REQ 超过 6 条 AC 只警告；占位词只认大写独立的 `TODO`、`TBD`、"待定"。
+- 需求输入只认固定位置（10-17 改造）：`docs/PRD.md` 与 `docs/prototype/`（至少一个 .html），缺了 `/forge-build` 只提示、不建流程；两者原样提交到集成分支（路径不变），之后所有 agent 从集成分支读。PRD 是需求的唯一依据，不再改写成规格：P0、`forge_spec`、spec-lint、技能 spec-from-prd 与 grilling 已删，build 流程从 S0 开始。程序只解析 REQ 编号、`- ACn` 验收标准与"页面"表（`spec/prd.ts`）；解析不出、缺 AC、编号重复、原型文件不存在只警告。
+- 实施任务不能改 `docs/PRD.md` 与 `docs/prototype/`（原来不能改的是 `docs/spec/`）：需求是用户在流程外定的，agent 改了就没有依据可对照。审查材料不再带术语表；PRD 的「通用约定」照旧放进 worker 与 reviewer 的任务说明。
 - P1 由程序驱动 architect（不经主会话），返工接着上一个 task 的会话。`forge_propose_plan` 在 architect 的 worktree 上跑完整校验，闸门在集成分支上重跑。task 编号全流程连续，含此前流程与 `tests/acceptance/` 的目录名。
 - 项目命令写在仓库根目录的 `commands.yaml`（用户决定 10-14）：architect 在 P1 写、S0 修正，worker 可以补充，随代码合并、合入即生效；程序只执行 install、test、acceptance、serve（及 serve_*）、env_up/env_down、db_create/db_drop、add_dep，其余只给 agent 参考。`workflow.yaml` 只放流程配置。规则由 S0 直接写。
 - 契约只能追加（`plan/contract-diff.ts`）：集合位置可新增键，数组（含 required、enum）不能变，新列须可空或有默认值；可追加可选参数；不限制只改本模块的契约。基线是任务 worktree 与集成分支的合并基点。空文件视为不存在（architect 清空即可）。只在 `forge_submit` 时检查一次。
@@ -150,3 +150,4 @@
 - 10-16：`skills/acceptance-tests`、`skills/tdd`、`skills/code-review`、`skills/stage-qa`、`agents/reviewer.md` 改了页面测试的要求（不开浏览器，页面交给 stage-qa）。worker、reviewer、stage-qa 与 S0 的 architect 缓存各失效一次。
 - 10-16：`agents/worker.md` 开始一步改为读「计划里的说明」、不再提输入文件；`skills/plan-dag` 加 `description` 一行，`skills/change-request` 加一条；forge_claim 的工具说明去掉「输入文件」。worker 与 architect 的缓存各失效一次。
 - 10-16：`skills/acceptance-tests` 的"不要断言"表加一行（菜单、页面清单、路由表不断言完整列表）。worker、reviewer 与 S0 的 architect 缓存各失效一次。
+- 10-17：改造第 1 步：`agents/orchestrator.md` 删掉 P0 一节；删除 `skills/spec-from-prd`、`skills/grilling`，主会话系统提示不再带这两份技能；主会话工具去掉 `forge_spec`。主会话的缓存失效一次。worker 与 reviewer 任务说明里「通用约定」的标题改了，审查材料去掉术语表（都在用户消息里，不影响系统提示缓存）。

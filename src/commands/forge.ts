@@ -8,13 +8,14 @@ import { isLightFlow, type RoleSettingsFile } from '../core/state/schemas.ts';
 import { initProject, formatInit } from '../core/ops/init.ts';
 import { doctor, formatDoctor } from '../core/ops/doctor.ts';
 import { resume, type DecisionAnswer } from '../core/ops/resume.ts';
-import { formatPreflight } from '../core/spec/preflight.ts';
+import { buildInputProblems, formatPreflight } from '../core/spec/preflight.ts';
 import { activeFlowId, statusText } from '../tools/orchestrator-tools.ts';
 import { splitArgs } from './args.ts';
 import { approveStage, rejectStage, unblockTask, startFlow } from '../core/stage/stages.ts';
 import { P1_STAGE, isArchitectStage } from '../core/plan/plan-flow.ts';
 import { approvalTargets, approveChange, rejectChange } from '../core/plan/change-flow.ts';
-import { importInputs, prepareInputs, type IntakeInput, type PreparedIntake } from '../core/spec/intake.ts';
+import { importInputs, prepareInputs } from '../core/spec/intake.ts';
+import { PRD_PATH, PROTOTYPE_DIR, prdWarningsAt } from '../core/spec/prd.ts';
 import { readFileSync } from 'node:fs';
 import { renderCostView, renderDetail, renderMetricsView } from '../core/ops/status-detail.ts';
 import { deliveryReport, sStageIds, stageSignoff } from '../core/stage/signoff.ts';
@@ -68,9 +69,9 @@ export interface CommandEnv {
 
 export const FLOW_USAGE = [
   '用法：',
-  '  /forge-build ["<项目名>"]   建新项目：读取 docs/ 下的需求文档（没有就由主会话访谈你），开始规格阶段；也可用 --prd/--prototype 指定位置',
+  '  /forge-build ["<项目名>"]   建新项目：读取 docs/PRD.md 与 docs/prototype/（缺了不开始），从架构阶段开始',
   '  /forge-fix "<问题>"        修复缺陷（/forge-fix help）；/forge-change --from <计划文件> 在做完的项目上加小功能（/forge-change help）',
-  '  /forge-status            当前阶段（规格 → 契约与计划 → 实施 → 交付）、进度、需要你处理的事项',
+  '  /forge-status            当前阶段（架构 → 开发 → 交付）、进度、需要你处理的事项',
   '  /forge-status --detail   完整的任务列表与内部状态',
   '  /forge next              由程序选择 ready 任务并派发',
   '  /forge-resume            会话丢失后恢复，并进入调度模式',
@@ -437,9 +438,11 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
 
 export const BUILD_USAGE = [
   '用法：',
-  '  /forge-build ["<项目名>"]                从零建新项目：把需求文档（PRD、原型图、说明等）放在项目的 docs/ 下即可；',
-  '                                          主会话先读这些文档，只就有疑问的地方问你；docs/ 下没有文档时，主会话会详细地问你需求',
-  '  可选：--prd <文件或目录> [--prototype <路径>]   直接指定需求文档与原型的位置，不扫描 docs/',
+  '  /forge-build ["<项目名>"]   从零建新项目。开始前先在流程外准备好：',
+  `    ${PRD_PATH}        需求文档：需求标题带编号（### 6.3 商品  REQ-003），验收标准每条一行（- AC1 Given … When … Then …），`,
+  '                        有一节"页面"表格（页面 | 原型文件 | 对应需求）；/forge init 会生成模板',
+  `    ${PROTOTYPE_DIR}/   可点击的 HTML 原型（含 CSS 与图片），自己点过、满意`,
+  '  之后：架构师定技术栈、骨架、契约与计划 → 你批准 → 按批次开发、审查、浏览器验收 → 你逐批签收。',
   '小改动（单文件、几十行以内）直接用 pi 更划算；缺陷修复用 /forge-fix。',
 ].join('\n');
 
@@ -471,30 +474,6 @@ async function ensureInitialized(env: CommandEnv, lines: string[]): Promise<void
   }
 }
 
-/** /forge-build 只接受 PRD 与可选原型；值与重复参数都显式校验。 */
-/** 解析 /forge-build 的参数：--prd、--prototype 可选；其余位置参数是流程名 */
-export function parseBuildArgs(argv: string[]): IntakeInput & { title?: string } {
-  const input: { prd?: string; prototype?: string } = {};
-  const words: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const flag = argv[i]!;
-    if (!flag.startsWith('--')) { words.push(flag); continue; }
-    const name = flag === '--prd' ? 'prd' : flag === '--prototype' ? 'prototype' : null;
-    if (!name) throw new Error(`未知参数 ${flag}。\n${BUILD_USAGE}`);
-    if (input[name] !== undefined) throw new Error(`参数 ${flag} 不能重复。\n${BUILD_USAGE}`);
-    const value = argv[++i];
-    if (!value?.trim() || value.startsWith('--')) throw new Error(`参数 ${flag} 缺少路径。\n${BUILD_USAGE}`);
-    input[name] = value;
-  }
-  const title = words.join(' ').trim();
-  return { ...input, ...(title ? { title } : {}) };
-}
-
-/** 流程名：命令里写的名字 > PRD 文件或目录名 > 项目目录名 */
-function intakeTitle(root: string, intake: { prd?: string; title?: string }): string {
-  return (intake.title || path.basename(path.resolve(root, intake.prd ?? '.'))).slice(0, 120);
-}
-
 function readFromFile(env: CommandEnv, argv: string[]): string | null {
   const file = option(argv, '--from');
   if (file === undefined) return null;
@@ -514,21 +493,30 @@ function assertNoActiveFlow(h: EngineHandle): void {
   }
 }
 
-/** /forge-build */
+/** /forge-build ["<项目名>"]：docs/PRD.md 与 docs/prototype/ 齐全才开始，缺了只提示、不创建流程 */
 export async function runFlowBuild(args: string, env: CommandEnv): Promise<string> {
   const argv = splitArgs(args);
   if (argv[0] === 'help' || argv[0] === '--help') return BUILD_USAGE;
-  const parsed = parseBuildArgs(argv);
-  // 没有指定 --prd 时扫描 docs/
-  const intake: IntakeInput = parsed.prd !== undefined ? { prd: parsed.prd, ...(parsed.prototype !== undefined ? { prototype: parsed.prototype } : {}) }
-    : { ...(parsed.prototype !== undefined ? { prototype: parsed.prototype } : {}), docs: true };
-  // 输入无效时连初始化与流程创建都不进行。
-  const prepared = prepareInputs(env.root, intake);
+  const flag = argv.find((a) => a.startsWith('--'));
+  if (flag) throw new Error(`未知参数 ${flag}。\n${BUILD_USAGE}`);
+  const problems = buildInputProblems(env.root);
+  if (problems.length) return ['还不能开始：', ...problems.map((p) => `- ${p}`), '', BUILD_USAGE].join('\n');
+  // 输入无效（符号链接、敏感文件、超量）时连初始化与流程创建都不进行
+  const prepared = prepareInputs(env.root);
   const lines: string[] = [];
   await ensureInitialized(env, lines);
   const h = env.engine();
   assertNoActiveFlow(h);
-  return startBuildFlow(env, intakeTitle(env.root, parsed), lines, intake, prepared);
+  dependencyGate(env, h.config, lines);
+  const title = (argv.join(' ').trim() || path.basename(path.resolve(env.root))).slice(0, 120);
+  const flow = await startFlow({ root: env.root, store: h.store, config: h.config }, title);
+  const files = await importInputs(env.root, h.store, flow.id, prepared);
+  lines.push(`已把 ${PRD_PATH} 与 ${PROTOTYPE_DIR}/ 提交到集成分支 ${flow.integration_branch}（共 ${files.length} 个文件）。`);
+  const warnings = prdWarningsAt(env.root, `refs/heads/${flow.integration_branch}`);
+  if (warnings.length) lines.push(`PRD 检查的提醒（不影响开始）：\n${warnings.map((w) => `- ${w}`).join('\n')}`);
+  lines.push(`已创建流程 ${flow.id}，从架构阶段（${flow.stage}）开始。`, '', renderStatus(h.store, h.config));
+  await env.activateOrchestrator?.();
+  return lines.join('\n');
 }
 
 /** 开流程前检查依赖：Pi 版本过低直接拒绝；插件缺失或版本未经验证只提醒 */
@@ -540,34 +528,6 @@ function dependencyGate(env: CommandEnv, config: FlowConfig, lines: string[]): v
   if (errors.length) throw new Error(`依赖检查未通过：\n${errors.map((i) => `✗ ${i.item}：${i.detail}`).join('\n')}`);
   const warns = items.filter((i) => i.level === 'warn');
   if (warns.length) lines.push(`依赖提醒（不影响开始，相关工具可能不可用；/forge doctor 查看）：\n${warns.map((i) => `! ${i.item}：${i.detail}`).join('\n')}`, '');
-}
-
-/** 接收 PRD 与原型原件后停在 P0，主会话流程由第二批接入。 */
-async function startBuildFlow(env: CommandEnv, title: string, lines: string[], intake: IntakeInput, prepared: PreparedIntake): Promise<string> {
-  const h = env.engine();
-  dependencyGate(env, h.config, lines);
-  const flow = await startFlow({ root: env.root, store: h.store, config: h.config }, title);
-  const r = await importInputs(env.root, h.store, flow.id, intake, prepared);
-  const list = r.files.map((f) => `- ${f.path}（${f.size} 字节，${f.type}）`);
-  if (r.files.length) lines.push(`已接收需求文档${r.prototype ? '与原型' : ''}，共 ${r.files.length} 个文件，放在集成分支 ${flow.integration_branch} 的 docs/spec/inputs/ 下。`, ...list);
-  else lines.push(intake.docs ? '项目 docs/ 下没有找到需求文档：主会话会详细地问你需求。' : '没有接收到需求文档。');
-  if (r.skipped?.length) lines.push(`跳过：${r.skipped.join('、')}`);
-  lines.push(`已创建流程 ${flow.id}（${flow.mode}），阶段：${flow.stages.join(' → ')}；集成分支 ${flow.integration_branch}。`);
-  lines.push('主会话将和你讨论需求、整理规格。', '', renderStatus(h.store, h.config));
-  await env.activateOrchestrator?.();
-  env.startConversation?.(p0Opening(list));
-  return lines.join('\n');
-}
-
-/** P0 第一轮给主会话的说明：有文档时先读、只问有疑问的地方；没有文档时详细访谈（纯函数） */
-export function p0Opening(files: readonly string[]): string {
-  const what = '这个项目';
-  const intro = '';
-  const submit = '确认后整理四份规格，用 forge_spec 提交。';
-  if (!files.length) {
-    return `${intro}用户没有提供需求文档。请按技能 grilling 详细地向用户了解${what}的需求：先问目标与要解决的问题、使用者与角色，再问核心流程、页面与每个页面的状态、权限、数据与边界情况、明确不做的范围。每轮把能问的问完，每题给出推荐答案。${submit}`;
-  }
-  return `${intro}用户的需求文档已入库到集成分支，请先用 forge_read 逐份读完：\n${files.join('\n')}\n读完后按技能 spec-from-prd 的缺口清单找出有疑问的地方（缺验收标准、缺页面状态、权限没说清、叫法不一致、前后矛盾、范围不明），**只就这些点**按技能 grilling 向用户提问；文档里已经写清楚的不要再问。${submit}`;
 }
 
 /** /forge-change --from <yaml 文件>：解析计划文件并交给 startChange */

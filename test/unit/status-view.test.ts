@@ -1,21 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConfig, ConfigError } from '../../src/core/state/config.ts';
+import { parseConfig } from '../../src/core/state/config.ts';
 import { phaseOfStage, renderStatus, taskActivity, notices, snapshotOf, actionsNeeded, statusLine } from '../../src/core/ops/status-view.ts';
 import { hashToken } from '../../src/core/state/state-machine.ts';
 import { setupProject } from '../helpers/project.ts';
 import { TEST_YAML, REAL_TEMPLATE_YAML } from '../helpers/config.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
 
-test('phase：模板显式配置；缺省按阶段 id 推断；顺序倒退报错', () => {
-  const c = parseConfig(REAL_TEMPLATE_YAML);
-  assert.equal(phaseOfStage(c, 'P0'), 'spec');
-  assert.equal(phaseOfStage(c, 'P1'), 'plan');
-  assert.equal(phaseOfStage(c, 'S0'), 'implementation');
-  const noPhase = parseConfig(REAL_TEMPLATE_YAML.replace(/phase: \w+,\s*/g, ''));
-  assert.equal(phaseOfStage(noPhase, 'S0'), 'implementation');
-  assert.throws(() => parseConfig(REAL_TEMPLATE_YAML.replace(/(id: P0, name: spec,\s*phase:) spec/g, '$1 implementation')),
-    (e: unknown) => e instanceof ConfigError && /phase plan 不能排在 implementation 之后/.test(e.message));
+test('phaseOfStage：S0 是架构（旧流程的 P0、P1 也算），其余是开发', () => {
+  assert.deepEqual(['S0', 'P0', 'P1', 'S1', 'S3'].map(phaseOfStage), ['arch', 'arch', 'arch', 'dev', 'dev']);
 });
 
 test('任务活动用人话表示，重试带上次失败原因', () => {
@@ -33,8 +26,8 @@ test('/forge status 精简视图：阶段条、进度、正在进行、需要你
   try {
     let out = renderStatus(p.store, p.config);
     assert.match(out, /^需要你处理：无/);
-    assert.match(out, /\[实施\] → 交付/);
-    assert.match(out, /实施阶段：按任务实施并运行全量验证/);
+    assert.match(out, /架构 ✓ → \[开发\] → 交付/);
+    assert.match(out, /开发阶段：按任务实施并运行全量验证/);
     assert.match(out, /进度：0 \/ 3 个任务完成/);
     assert.doesNotMatch(out, /pending|in_progress|queued_merge|S3/, '不暴露内部状态名');
 
@@ -93,7 +86,7 @@ test('状态栏一行：流程、高层阶段、进度、进行中的任务、�
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'ready', trigger: 'schedule', actor: 'scheduler' });
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher',
       patch: { worktree: '/w', branch: 'b', base_sha: 'abc', lease: { run_id: 'r-1', role: 'worker', token_hash: hashToken('t'), acquired_at: '2026-10-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' } } });
-    assert.equal(statusLine(p.store, p.config), 'pi-forge B-001 实施 · 0/3 · 1 个任务进行中');
+    assert.equal(statusLine(p.store, p.config), 'pi-forge B-001 开发 · 0/3 · 1 个任务进行中');
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'block', actor: 'run:r-1', facts: { token: 't', reason: '需要决定' } });
     assert.match(statusLine(p.store, p.config)!, /主会话处理 1 项$/);
     await p.store.transitionTask(p.flowId, 'T-001', { to: 'blocked', trigger: 'hand_to_user', actor: 'orchestrator', facts: { reason: '要用户决定' } });

@@ -6,7 +6,7 @@ import { TEMPLATE_YAML, TEST_YAML } from '../helpers/config.ts';
 import { mkTask, hard } from '../helpers/tasks.ts';
 
 // 中等档的 test-author 验证默认升级；worker 在真实模板里已是 strong。
-const YAML = TEST_YAML.replace(/models:[\s\S]*?\nmodes:/, 'models:\n  strong: "p/strong"\n  medium: "p/medium"\n  cheap:  "<provider/model>"\nmodes:');
+const YAML = TEST_YAML.replace(/models:[\s\S]*?\nreview:/, 'models:\n  strong: "p/strong"\n  medium: "p/medium"\n  cheap:  "<provider/model>"\nreview:');
 const config = parseConfig(YAML);
 
 test('模型引用与升级：档位或 provider/model；占位符取不到；默认升到上一档；/forge-config 优先；与原模型相同不升级', () => {

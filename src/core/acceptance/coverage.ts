@@ -1,12 +1,11 @@
-// 阶段验收的覆盖率：阶段 exit 需求的每条计入的 AC（MVP、非 manual，与计划覆盖同一口径）
-// 是否在验收测试里有带 [REQ-xxx.ACn] 标签的测试。纯函数负责矩阵与渲染，IO 部分在集成分支的某个提交上读取（git ls-tree / git show，不需要工作区）。
+// 阶段验收的覆盖率：本阶段需求（docs/PRD.md 的 REQ）的每条 AC 是否在验收测试里有带 [REQ-xxx.ACn] 标签的测试，只出报告。
+//纯函数负责矩阵与渲染，IO 部分在集成分支的某个提交上读取（git ls-tree / git show，不需要工作区）。
 import type { FlowConfig } from '../state/config.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { git } from '../state/git.ts';
 import { commitFilesToBranch } from '../spec/intake.ts';
-import { effectiveSpec, type Requirement, type SpecFiles } from '../spec/spec.ts';
-import { SPEC_PATHS } from '../spec/spec-flow.ts';
+import { parsePrd, PRD_PATH, type PrdReq } from '../spec/prd.ts';
 import { headSha } from '../workspace/worktree.ts';
 
 /** 一对方括号里只有 AC 编号（可用逗号、顿号、分号、斜杠、加号、&、空格分隔），允许一个测试带多个编号 */
@@ -29,7 +28,7 @@ export function scanAcCoverage(files: readonly { path: string; content: string }
 
 export interface CoverageRow { req: string; ac: string; text?: string; owner?: string; files: string[] }
 export interface CoverageInput {
-  reqs: readonly Pick<Requirement, 'id' | 'priority' | 'acs'>[];
+  reqs: readonly Pick<PrdReq, 'id' | 'acs'>[];
   /** 阶段的 exit 需求 */
   exit: readonly string[];
   tasks: readonly (Pick<TaskFile, 'id' | 'kind' | 'status'> & { ac?: readonly string[] })[];
@@ -38,15 +37,14 @@ export interface CoverageInput {
 }
 export interface CoverageResult { rows: CoverageRow[]; gaps: CoverageRow[]; markdown: string }
 
-/** 覆盖矩阵（纯函数）：exit 需求中 MVP 且非 manual 的每条 AC 一行，按 exit 与规格中的顺序排列 */
+/** 覆盖矩阵（纯函数）：exit 需求的每条 AC 一行，按 exit 与 PRD 中的顺序排列 */
 export function coverageMatrix(input: CoverageInput): CoverageRow[] {
   const rows: CoverageRow[] = [];
   const impls = input.tasks.filter((t) => t.kind === 'impl' && t.status !== 'cancelled').sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
   for (const id of input.exit) {
     const r = input.reqs.find((x) => x.id === id);
-    if (!r || r.priority !== 'MVP') continue;
+    if (!r) continue;
     for (const ac of r.acs) {
-      if (ac.manual) continue;
       const key = `${r.id}.${ac.id}`;
       const owner = impls.find((t) => (t.ac ?? []).includes(key))?.id;
       rows.push({ req: r.id, ac: key, text: ac.text, ...(owner ? { owner } : {}), files: [...(input.tests.get(key) ?? [])] });
@@ -67,17 +65,16 @@ export function renderCoverageMarkdown(stage: string, goal: string, rows: readon
   return lines.join('\n');
 }
 
-/** 在 ref（提交或分支）上读规格与验收测试，计算本阶段的覆盖率；计划里没有该阶段时抛错 */
+/** 在 ref（提交或分支）上读 PRD 与验收测试，计算本阶段的覆盖率；计划里没有该阶段时抛错 */
 export function stageCoverage(root: string, store: StateStore, _config: FlowConfig, flowId: string, stage: string, ref: string): CoverageResult {
   const flow = store.readFlow(flowId);
   const def = (flow.s_stages ?? []).find((s) => s.id === stage);
   if (!def) throw new Error(`计划里没有阶段 ${stage}`);
   const show = (rel: string) => git(root, ['show', `${ref}:${rel}`]);
-  const files = Object.fromEntries(SPEC_PATHS.map((n) => [n, show(`docs/spec/${n}.md`)])) as unknown as SpecFiles;
-  const spec = effectiveSpec(files);
+  const prd = parsePrd(show(PRD_PATH));
   const testFiles = git(root, ['ls-tree', '-r', '--name-only', '-z', ref, '--', 'tests/acceptance/']).split('\0').filter(Boolean)
     .map((p) => ({ path: p, content: show(p) }));
-  const rows = coverageMatrix({ reqs: spec.reqs, exit: def.exit, tasks: store.listTasks(flowId), tests: scanAcCoverage(testFiles) });
+  const rows = coverageMatrix({ reqs: prd.reqs, exit: def.exit, tasks: store.listTasks(flowId), tests: scanAcCoverage(testFiles) });
   return { rows, gaps: rows.filter((r) => !r.files.length), markdown: renderCoverageMarkdown(stage, def.goal, rows) };
 }
 

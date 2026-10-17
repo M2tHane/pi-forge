@@ -879,7 +879,7 @@ export class StateStore {
     await this.transaction((tx) => tx.event(e));
   }
 
-  async transitionStage(flowId: string, req: { to: StageStatus; trigger: StageTrigger; actor: string; reason?: string; needs_human?: boolean; note?: string; spec?: NonNullable<FlowFile['spec']>; data?: Record<string, unknown>; delegated?: boolean }): Promise<FlowFile> {
+  async transitionStage(flowId: string, req: { to: StageStatus; trigger: StageTrigger; actor: string; reason?: string; needs_human?: boolean; note?: string; data?: Record<string, unknown>; delegated?: boolean }): Promise<FlowFile> {
     return this.transaction((tx) => {
       const flow = tx.readFlow(flowId);
       const errors = planStageTransition(flow.stage_status, req.to, req.trigger, req);
@@ -887,10 +887,6 @@ export class StateStore {
       const from = flow.stage_status;
       flow.stage_status = req.to;
       if (req.trigger === 'approve') flow.approvals[flow.stage] = { by: 'human', at: tx.ts, ...(req.note ? { note: req.note } : {}) };
-      if (req.spec) flow.spec = req.spec;
-      if (flow.stage === 'P0' && req.to === 'active' && ['reject', 'gate_failed'].includes(req.trigger)) {
-        flow.spec = { submitted: false, errors: flow.spec?.errors ?? [], warnings: flow.spec?.warnings ?? [], ...(req.reason ? { feedback: req.reason } : {}) };
-      }
       const next = tx.putFlow(flow);
       if (req.to === 'aborted' && !isLightFlow(flow)) tx.setActiveFlow(null);
       const type = req.trigger === 'approve' ? 'approval' : req.trigger.startsWith('gate_') ? 'gate_result' : 'transition';
@@ -998,13 +994,6 @@ export class StateStore {
       const saved = tx.putFlow({ ...tx.readFlow(flowId), intake });
       tx.event({ flow: flowId, actor, type: 'note', reason, data: { intake: { prd: intake.prd, prototype_path: intake.prototype_path, files: intake.files.length } } });
       return saved;
-    });
-  }
-
-  async setSpec(flowId: string, spec: NonNullable<FlowFile['spec']>, actor: string): Promise<void> {
-    await this.transaction((tx) => {
-      tx.putFlow({ ...tx.readFlow(flowId), spec });
-      tx.event({ flow: flowId, actor, type: 'note', reason: spec.submitted ? '规格已提交，spec-lint 通过' : '规格检查未通过', data: { spec } });
     });
   }
 

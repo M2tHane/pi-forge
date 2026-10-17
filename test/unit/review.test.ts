@@ -132,24 +132,23 @@ test('契约片段：diff 里改到的在前，再加本模块同名的文件；
 
 const must: ReviewFinding = { id: 'R-1', level: 'must', basis: 'ac:REQ-001.AC2', files: ['src/a.ts'], location: 'create()', problem: '名称为空时返回 500', expected: '返回 400' };
 
-test('buildReviewBrief 第一轮：AC 原文、契约、术语表、偏离、diff 都在；截断时注明', () => {
+test('buildReviewBrief 第一轮：AC 原文、契约、偏离、diff 都在；截断时注明', () => {
   const brief = buildReviewBrief({
     taskId: 'T-001', title: '创建看板', reviewId: 'T-001.rv', acIds: ['REQ-001.AC1', 'REQ-001.AC9'], acTexts: { 'REQ-001.AC1': 'Given 已登录 When 创建 Then 返回编号' },
     contracts: { shown: [{ path: 'docs/contracts/paths/board.yaml', content: '/api/boards: {}' }], omitted: ['docs/contracts/openapi.yaml'] },
-    glossary: '**看板（Board）**', deviations: ['多加了一个索引'], range: { from: 'aaaaaaaa1111', to: 'bbbbbbbb2222' },
+    deviations: ['多加了一个索引'], range: { from: 'aaaaaaaa1111', to: 'bbbbbbbb2222' },
     diff: { text: '+export const a = 1;', truncated: false }, priorMust: [],
   });
   assert.match(brief, /# 审查：T-001「创建看板」（T-001\.rv）/);
   assert.match(brief, /- REQ-001\.AC1：Given 已登录 When 创建 Then 返回编号/);
-  assert.match(brief, /- REQ-001\.AC9：（规格里找不到原文）/);
+  assert.match(brief, /- REQ-001\.AC9：（PRD 里找不到原文）/);
   assert.match(brief, /### docs\/contracts\/paths\/board\.yaml[\s\S]*\/api\/boards/);
   assert.match(brief, /因长度限制省略：docs\/contracts\/openapi\.yaml/);
-  assert.match(brief, /\*\*看板（Board）\*\*/);
   assert.match(brief, /多加了一个索引/);
   assert.match(brief, /aaaaaaaa\.\.bbbbbbbb[\s\S]*\+export const a = 1;/);
   assert.match(brief, /forge_review_report/);
   assert.ok(!brief.includes('forge_review_confirm'));
-  const cut = buildReviewBrief({ taskId: 'T-001', title: 't', reviewId: 'T-001.rv', acIds: [], acTexts: {}, contracts: { shown: [], omitted: [] }, glossary: '', deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: true }, priorMust: [] });
+  const cut = buildReviewBrief({ taskId: 'T-001', title: 't', reviewId: 'T-001.rv', acIds: [], acTexts: {}, contracts: { shown: [], omitted: [] }, deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: true }, priorMust: [] });
   assert.match(cut, /已按 20000 字截断/);
   assert.match(cut, /（没有相关的契约文件）/);
 });
@@ -157,7 +156,7 @@ test('buildReviewBrief 第一轮：AC 原文、契约、术语表、偏离、dif
 test('buildReviewBrief 确认轮：只有上一轮的 must 清单和增量 diff，说明只能用 forge_review_confirm', () => {
   const brief = buildReviewBrief({
     taskId: 'T-001', title: '创建看板', reviewId: 'T-001.rv-2', acIds: ['REQ-001.AC1'], acTexts: { 'REQ-001.AC1': 'AC 原文不该出现' },
-    contracts: { shown: [{ path: 'docs/contracts/x.yaml', content: '契约不该出现' }], omitted: [] }, glossary: '术语表不该出现', deviations: ['偏离不该出现'],
+    contracts: { shown: [{ path: 'docs/contracts/x.yaml', content: '契约不该出现' }], omitted: [] }, deviations: ['偏离不该出现'],
     range: { from: 'cccccccc', to: 'dddddddd' }, diff: { text: '+fix', truncated: false }, priorMust: [must],
   });
   assert.match(brief, /确认轮/);
@@ -165,7 +164,7 @@ test('buildReviewBrief 确认轮：只有上一轮的 must 清单和增量 diff�
   assert.match(brief, /不能提出新问题/);
   assert.match(brief, /R-1　出处：ac:REQ-001\.AC2[\s\S]*src\/a\.ts（create\(\)）[\s\S]*名称为空时返回 500[\s\S]*返回 400/);
   assert.match(brief, /增量 diff[\s\S]*\+fix/);
-  for (const absent of ['AC 原文不该出现', '契约不该出现', '术语表不该出现', '偏离不该出现']) assert.ok(!brief.includes(absent), absent);
+  for (const absent of ['AC 原文不该出现', '契约不该出现', '偏离不该出现']) assert.ok(!brief.includes(absent), absent);
 });
 
 test('mustHandoff 与 suggestionLine：返工说明带编号；用尽时说明已阻塞；suggest 带审查 task 与 R 编号', () => {
@@ -177,7 +176,7 @@ test('mustHandoff 与 suggestionLine：返工说明带编号；用尽时说明�
 });
 
 test('buildReviewBrief：给了 tests 与 acceptance 时，先列出要运行的命令，再列 AC 覆盖；缺失的 AC 点名为 must', () => {
-  const base = { taskId: 'T-001', title: 't', reviewId: 'T-001.rv', acIds: ['REQ-001.AC1'], acTexts: {}, contracts: { shown: [], omitted: [] }, glossary: '', deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: false }, priorMust: [] };
+  const base = { taskId: 'T-001', title: 't', reviewId: 'T-001.rv', acIds: ['REQ-001.AC1'], acTexts: {}, contracts: { shown: [], omitted: [] }, deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: false }, priorMust: [] };
   const brief = buildReviewBrief({
     ...base, withAcceptance: true,
     tests: { run: [{ name: 'acceptance', shell: 'pnpm acc -- T-001' }], skipped: ['单元测试：本 task 没有改动单元测试文件，全量单元测试在阶段门禁运行'] },
@@ -203,7 +202,7 @@ test('跨 task 的提醒：软依赖的生产方与接口、diff 里落在已完
     { task: 'T-008', type: 'soft', reason: 'fn:inventory#changeStock' }, { task: 'T-008', type: 'soft', reason: 'api:GET /api/stock' }] });
   const cross = crossTaskInputs([t005, t008, t013], t013, ['public/pages/products/page.js', 'server/modules/exports/csv.js', 'docs/contracts/x.md']);
   assert.deepEqual(cross, { uses: [{ task: 'T-008', refs: ['fn:inventory#changeStock', 'api:GET /api/stock'] }], othersFiles: [{ file: 'public/pages/products/page.js', owners: ['T-005'] }] });
-  const base = { taskId: 'T-013', title: 't', reviewId: 'T-013.rv', acIds: [], acTexts: {}, contracts: { shown: [], omitted: [] }, glossary: '', deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: false }, priorMust: [] };
+  const base = { taskId: 'T-013', title: 't', reviewId: 'T-013.rv', acIds: [], acTexts: {}, contracts: { shown: [], omitted: [] }, deviations: [], range: { from: 'a', to: 'b' }, diff: { text: 'x', truncated: false }, priorMust: [] };
   const brief = buildReviewBrief({ ...base, ...cross });
   assert.match(brief, /## 用到的其他 task 的产物\n- T-008：fn:inventory#changeStock、api:GET \/api\/stock\n[^\n]*替身/);
   assert.match(brief, /## 改了其他 task 负责的文件\n- public\/pages\/products\/page\.js（T-005）\n[^\n]*页面能不能打开/);

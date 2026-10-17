@@ -3,13 +3,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Value } from 'typebox/value';
 import { withoutPlaceholders } from '../../src/core/security/tool-params.ts';
-import { SpecParams, WaitParams } from '../../src/tools/orchestrator-tools.ts';
+import { Type } from 'typebox';
+import { WaitParams } from '../../src/tools/orchestrator-tools.ts';
+
+const Params = Type.Object({ title: Type.String(), description: Type.Optional(Type.String()), note: Type.Optional(Type.String()), detail: Type.Optional(Type.String()) });
 
 test('withoutPlaceholders：去掉可选参数里的 N/A、空串、null；必填与正常值原样保留', () => {
-  const p = { requirements: 'r', screens: 's', permissions: 'p', glossary: 'N/A' };
-  assert.deepEqual(withoutPlaceholders(SpecParams, p), { requirements: 'r', screens: 's', permissions: 'p' });
-  assert.deepEqual(withoutPlaceholders(SpecParams, { requirements: 'r', screens: '', permissions: null }), { requirements: 'r' });
-  assert.deepEqual(withoutPlaceholders(SpecParams, { requirements: '无', screens: '页面' }), { screens: '页面' });
+  assert.deepEqual(withoutPlaceholders(Params, { title: 't', description: 'd', note: 'n', detail: 'N/A' }), { title: 't', description: 'd', note: 'n' });
+  assert.deepEqual(withoutPlaceholders(Params, { title: 't', description: '', note: null }), { title: 't' });
+  assert.deepEqual(withoutPlaceholders(Params, { title: 't', description: '无', note: '说明' }), { title: 't', note: '说明' });
   // 带格式约束的可选参数：占位值去掉后才能通过 schema 校验
   assert.equal(Value.Check(WaitParams, { task_id: 'N/A' }), false);
   assert.equal(Value.Check(WaitParams, withoutPlaceholders(WaitParams, { task_id: 'N/A' })), true);

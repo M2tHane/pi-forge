@@ -22,7 +22,7 @@ test('/forge init：生成骨架、.gitignore、.forge 与初始提交；重复�
   try {
     writeFileSync(path.join(r.dir, '.gitignore'), 'node_modules/');
     const first = await initProject(r.dir, PKG);
-    for (const f of ['workflow.yaml', 'AGENTS.md', 'rules/global.md', 'docs/contracts/paths/.gitkeep', 'docs/contracts/components/.gitkeep', 'docs/contracts/errors/.gitkeep', 'docs/spec/.gitkeep', 'docs/arch/.gitkeep', 'docs/plan/.gitkeep', 'tests/acceptance/.gitkeep', '.forge/state.json']) {
+    for (const f of ['workflow.yaml', 'AGENTS.md', 'rules/global.md', 'docs/contracts/paths/.gitkeep', 'docs/contracts/components/.gitkeep', 'docs/contracts/errors/.gitkeep', 'docs/PRD.md', 'docs/prototype/README.md', 'docs/arch/.gitkeep', 'docs/plan/.gitkeep', 'tests/acceptance/.gitkeep', '.forge/state.json']) {
       assert.ok(existsSync(path.join(r.dir, f)), f);
     }
     assert.ok(!existsSync(path.join(r.dir, 'docs/interfaces')), '不再生成 docs/interfaces/');
@@ -37,10 +37,12 @@ test('/forge init：生成骨架、.gitignore、.forge 与初始提交；重复�
     // 用户改了规则、删了 AGENTS.md
     writeFileSync(path.join(r.dir, 'rules/global.md'), '# 我自己的规则\n');
     rmSync(path.join(r.dir, 'AGENTS.md'));
+    writeFileSync(path.join(r.dir, 'docs/PRD.md'), '# 用户写好的 PRD\n');
     const eventsBefore = readFileSync(path.join(r.dir, '.forge/events.jsonl'), 'utf8');
     const second = await initProject(r.dir, PKG);
     assert.deepEqual(second.created, ['AGENTS.md']);
     assert.ok(second.differs.includes('rules/global.md'));
+    assert.ok(!second.differs.includes('docs/PRD.md'), '用户写的 PRD 与模板不同是正常的');
     assert.equal(readFileSync(path.join(r.dir, 'rules/global.md'), 'utf8'), '# 我自己的规则\n', '不覆盖');
     assert.equal(readFileSync(path.join(r.dir, '.forge/events.jsonl'), 'utf8'), eventsBefore, '.forge 不重复初始化');
     assert.equal((readFileSync(path.join(r.dir, '.gitignore'), 'utf8').match(/\.codegraph/g) ?? []).length, 1);

@@ -10,7 +10,7 @@ import type { RunOutcome, SubagentHandle, SubagentLauncher, SubagentSpec } from 
 import { hashToken, isSettled } from '../state/state-machine.ts';
 import { resolveRoleModel } from '../insight/role-settings.ts';
 import { fillPromptVars, loadAgent } from './agents.ts';
-import { readConventions } from '../spec/spec-flow.ts';
+import { conventionsSection, readPrdText } from '../spec/prd.ts';
 import { assemblePrompt, ruleFilesFor } from './prompt-assembler.ts';
 import { formatEntry, selectKnowledge } from './knowledge.ts';
 import { findSessionFile, sessionDirOf } from './session-log.ts';
@@ -494,8 +494,8 @@ export class Engine {
     // 审查 task 的 handoff 就是审查输入（完整放进提示，不按 handoff 的长度截断）
     const reviewBrief = task.kind === 'review' || task.kind === 'qa' ? store.readHandoff(flowId, task.id).replace(/^\s*## \d{4}-[^\n]*\n+/, '') : '';
     const confirmRound = (task.kind === 'review' || task.kind === 'qa') && (readReviewEvidence<ReviewInputFile>(store, flowId, task.id, task.kind === 'qa' ? QA_INPUT : REVIEW_INPUT)?.prior_must.length ?? 0) > 0;
-    // 写代码与审查代码的角色不读规格：requirements.md 的「通用约定」（字段规则）放进任务说明（stock run-03：S2 打回 3 次都是字段规则）
-    const conventions = role === 'worker' || role === 'reviewer' ? readConventions(root, flow.integration_branch) : '';
+    // PRD 的「通用约定」（字段规则）放进写代码与审查代码的任务说明（stock run-03：S2 打回 3 次都是字段规则）
+    const conventions = role === 'worker' || role === 'reviewer' ? conventionsSection(readPrdText(root, `refs/heads/${flow.integration_branch}`) ?? '') : '';
     const prompt = assemblePrompt({
       agent, rules, skills, task, flowId, flowTasks: tasks, ...(conventions ? { conventions } : {}), handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
       ...(reviewBrief ? { reviewBrief, confirmRound } : {}), commands: config.commands,
@@ -775,20 +775,6 @@ export class Engine {
       if (isArchitectStage(flow.stage) && flow.stage_status === 'active' && await ensureArchitectTask(this.d.store, this.d.config, flowId, this.workerModel())) {
         await this.promote(flowId);
         await this.dispatchProgramDriven(flowId);
-        return;
-      }
-      // P0 只处理已提交后的闸门（包括崩溃恢复）
-      if (flow.stage === 'P0') {
-        if (flow.stage_status !== 'awaiting_gate') {
-          if (!force || flow.stage_status !== 'active' || !flow.spec) return;
-          await this.d.store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
-        }
-        this.gating.add(flowId);
-        try {
-          const result = await runStageGate(this.d.root, this.d.store, this.d.config, flowId);
-          this.d.onGate?.(result);
-        }
-        finally { this.gating.delete(flowId); this.notify(); }
         return;
       }
       // P1：architect 的任务都结束后跑 P1 闸门；未通过时返工

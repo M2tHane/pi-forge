@@ -44,10 +44,10 @@ export function isTestWrite(w: string): boolean {
 }
 
 /**
- * impl / fix 不受计划 writes 限制（writes 只用于调度互斥与合并冲突归属）：除 docs/spec/ 与受保护路径外，工作区内任何文件都可以改。
+ * impl / fix 不受计划 writes 限制（writes 只用于调度互斥与合并冲突归属）：除用户的需求输入（PRD 与原型）与受保护路径外，工作区内任何文件都可以改。
  * 受保护路径另行检查（isProtectedFor）；docs/contracts/ 提交时仍由契约只追加检查把关。
  */
-export const OPEN_WRITES_EXCEPT = ['docs/spec/**'] as const;
+export const OPEN_WRITES_EXCEPT = ['docs/PRD.md', 'docs/prototype/**'] as const;
 export const opensWrites = (t: { kind: string }) => t.kind === 'impl' || t.kind === 'fix';
 export const openWriteAllowed = (rel: string): boolean => !matchesAny(rel, OPEN_WRITES_EXCEPT);
 

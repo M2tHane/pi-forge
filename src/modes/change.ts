@@ -15,7 +15,7 @@ import { fixRefusal } from './refusal.ts';
 
 export const DOCS_UPDATE_TITLE = '更新架构图与契约';
 /** 更新文档任务的可写范围（scope plan 允许这些路径） */
-export const DOCS_UPDATE_WRITES = ['docs/arch/**', 'docs/contracts/**', 'docs/spec/glossary.md'];
+export const DOCS_UPDATE_WRITES = ['docs/arch/**', 'docs/contracts/**'];
 
 export class ChangeStartError extends Error {}
 
@@ -63,7 +63,7 @@ export function buildDocsUpdateHandoff(description: string, range: { from: strin
     `## 合入主分支的改动（${r}）`, stat.trim() ? '```\n' + stat.slice(0, 4000) + '\n```' : '（没有改动）', '',
     '## 要求',
     '1. 读上面的改动和相关代码，弄清这次变更对架构和接口的影响。',
-    '2. 把 docs/arch/overview.md 与 docs/contracts/ 改到与代码一致：新增的模块、数据流、接口写进去，变化的改掉，删除的去掉。这里的契约可以修改，不只是追加。术语有变化时同步 docs/spec/glossary.md。',
+    '2. 把 docs/arch/overview.md 与 docs/contracts/ 改到与代码一致：新增的模块、数据流、接口写进去，变化的改掉，删除的去掉。这里的契约可以修改，不只是追加。',
     '3. 确认确实不需要改时，不改任何文件直接 forge_submit（summary 写明原因），没有改动的提交视为完成。',
   ].join('\n');
 }

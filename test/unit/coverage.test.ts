@@ -5,18 +5,17 @@ import { coverageMatrix, renderCoverageMarkdown, stageCoverage, writeCoverageRep
 import { gateFailed, gateIssues, runImplementationChecks } from '../../src/core/stage/gates.ts';
 import { setupProject } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import type { Requirement } from '../../src/core/spec/spec.ts';
 
-const req = (id: string, priority: 'MVP' | 'LATER', acs: [string, boolean][]) => ({ id, priority, acs: acs.map(([a, manual]) => ({ id: a, manual, text: `${a} 的内容`, line: 1 })) }) as Pick<Requirement, 'id' | 'priority' | 'acs'>;
-const REQS = [req('REQ-001', 'MVP', [['AC1', false], ['AC2', false], ['AC3', true]]), req('REQ-002', 'LATER', [['AC1', false]]), req('REQ-003', 'MVP', [['AC1', false]])];
+const req = (id: string, acs: string[]) => ({ id, acs: acs.map((a) => ({ id: a, text: `${a} 的内容`, line: 1 })) });
+const REQS = [req('REQ-001', ['AC1', 'AC2']), req('REQ-002', ['AC1']), req('REQ-003', ['AC1'])];
 const TASKS = [
   { id: 'T-001', kind: 'impl', status: 'done', ac: ['REQ-001.AC1', 'REQ-001.AC2'] },
   { id: 'T-002', kind: 'impl', status: 'cancelled', ac: ['REQ-003.AC1'] },
   { id: 'T-003', kind: 'impl', status: 'done', ac: ['REQ-003.AC1'] },
 ] as const;
 
-test('coverageMatrix：只算 exit 里 MVP 且非 manual 的 AC，owner 忽略 cancelled，files 来自标签', () => {
-  const rows = coverageMatrix({ reqs: REQS, exit: ['REQ-001', 'REQ-002', 'REQ-003', 'REQ-404'], tasks: TASKS, tests: new Map([['REQ-001.AC1', ['tests/acceptance/T-001/a.test.ts']]]) });
+test('coverageMatrix：exit 里每条需求的每条 AC 一行，PRD 里没有的需求跳过；owner 忽略 cancelled，files 来自标签', () => {
+  const rows = coverageMatrix({ reqs: REQS, exit: ['REQ-001', 'REQ-003', 'REQ-404'], tasks: TASKS, tests: new Map([['REQ-001.AC1', ['tests/acceptance/T-001/a.test.ts']]]) });
   assert.deepEqual(rows.map((r) => r.ac), ['REQ-001.AC1', 'REQ-001.AC2', 'REQ-003.AC1']);
   assert.deepEqual(rows.map((r) => r.owner), ['T-001', 'T-001', 'T-003']);
   assert.deepEqual(rows.map((r) => r.files.length), [1, 0, 0]);
@@ -41,8 +40,7 @@ test('renderCoverageMarkdown：表格与缺口汇总', () => {
 });
 
 const SPEC = {
-  'docs/spec/requirements.md': '# 需求\n\n## 需求清单\n### REQ-001 登录 [MVP]\n角色：成员\n- AC1：Given 已注册 When 登录 Then 成功\n- AC2：Given 密码错误 When 登录 Then 失败\n- AC3（manual）：界面好看\n\n### REQ-002 导出 [LATER]\n角色：成员\n- AC1：Given 有数据 When 导出 Then 得到文件\n',
-  'docs/spec/screens.md': '# 页面\n', 'docs/spec/permissions.md': '# 权限\n', 'docs/spec/glossary.md': '# 术语\n',
+  'docs/PRD.md': '# PRD\n\n### 登录 REQ-001\n- AC1 Given 已注册 When 登录 Then 成功\n- AC2 Given 密码错误 When 登录 Then 失败\n',
   'tests/acceptance/T-001/login.test.ts': "test('[REQ-001.AC1] 登录成功', () => {});\n",
   'src/server/t-001/a.ts': 'export const a = 1;\n',
 };
@@ -53,7 +51,7 @@ async function project(extra: Record<string, string> = {}) {
   return p;
 }
 
-test('stageCoverage：从集成分支读规格与验收测试，缺口就是没有标签的 AC', async () => {
+test('stageCoverage：从集成分支读 PRD 与验收测试，缺口就是没有标签的 AC', async () => {
   const p = await project();
   try {
     const r = stageCoverage(p.dir, p.store, p.config, p.flowId, 'S1', p.store.readFlow(p.flowId).integration_branch);

@@ -151,7 +151,8 @@ test('submit：鉴权、范围、公共文件、已有测试调整、契约追�
   for (const token of [undefined, 'forged']) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, token }));
   bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, now: new Date('2026-01-01T00:30:00Z') }));
   for (const path of ['.forge/state.json', 'rules/project.md']) bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files: [path], test_adjustments: [path] }));
-  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/spec/requirements.md'] }));
+  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/PRD.md'] }));
+  bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/prototype/a.html'] }));
   // S0 的 architect：writes 显式含 rules/** 时放行 rules/，其余受保护路径仍拒
   const s0 = { ...t, stage: 'S0', role: 'architect', writes: ['**', 'rules/**'] };
   ok(planTransition(s0, 'awaiting_inputs', 'submit', { ...f, diff_files: ['rules/project.md', 'src/a.ts'] }));
@@ -162,9 +163,9 @@ test('submit：鉴权、范围、公共文件、已有测试调整、契约追�
     ok(planTransition({ ...t, stage: 'S0', kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
   }
   const narrow = task('in_progress', { shared: ['src/routes.ts'] });
-  // impl / fix 不受 writes 限制（包括单元测试与任何 task 的验收测试）；规格仍越界；其他种类照旧
+  // impl / fix 不受 writes 限制（包括单元测试与任何 task 的验收测试）；PRD 与原型仍越界；其他种类照旧
   ok(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['outside.ts', 'src/server/index.js', 'tests/unit/new.test.js', 'tests/acceptance/T-002/a.test.ts'] }));
-  for (const path of ['docs/spec/requirements.md']) bad(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
+  for (const path of ['docs/PRD.md', 'docs/prototype/a.html']) bad(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: [path] }));
   bad(planTransition({ ...narrow, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['outside.ts'] }));
   ok(planTransition(narrow, 'awaiting_inputs', 'submit', { ...f, diff_files: ['src/routes.ts', 'unit/a.test.ts', 'docs/contracts/modules/a.md'], test_adjustments: ['unit/a.test.ts'], contract_additions: ['docs/contracts/modules/a.md'] }));
   bad(planTransition(t, 'awaiting_inputs', 'submit', { ...f, interface_rewrites: ['docs/contracts/modules/a.md'] }));
@@ -288,8 +289,8 @@ test('submit：impl 与它的 fix 可以改任何 task 的验收测试，doc 任
     ok(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: [p] }));
     ok(planTransition(task('in_progress', { id: 'T-001.fx-1', kind: 'fix', for_task: 'T-001', writes: ['tests/acceptance/T-001/**'] }), 'awaiting_inputs', 'submit', { ...f, diff_files: [p] }));
   }
-  // 规格仍不能改
-  bad(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/spec/requirements.md'] }));
+  // PRD 与原型仍不能改
+  bad(planTransition(own, 'awaiting_inputs', 'submit', { ...f, diff_files: ['docs/PRD.md'] }));
   // doc 任务不放开 writes，writes 里的验收测试可以改
   ok(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-001/a.test.ts'] }));
   bad(planTransition({ ...own, kind: 'doc' }, 'awaiting_inputs', 'submit', { ...f, diff_files: ['tests/acceptance/T-002/a.test.ts'] }));

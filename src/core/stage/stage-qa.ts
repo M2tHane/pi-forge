@@ -6,8 +6,7 @@ import type { FlowConfig } from '../state/config.ts';
 import type { ReviewFinding, TaskFile } from '../state/schemas.ts';
 import type { StateStore, TaskInput } from '../state/state-store.ts';
 import { git, gitOk } from '../state/git.ts';
-import { readSpec } from '../spec/spec-flow.ts';
-import { effectiveSpec } from '../spec/spec.ts';
+import { readPrd, type Prd } from '../spec/prd.ts';
 import { formatMust } from './review.ts';
 import { readReviewEvidence, type ReviewInputFile } from './review-flow.ts';
 import { resolveRounds, unresolvedIn, type RoundSpec, type StageRoundOutcome } from './stage-rounds.ts';
@@ -50,26 +49,21 @@ export function nextQaId(tasks: readonly Pick<TaskFile, 'id' | 'kind'>[], stage:
 
 // —— 阶段上下文 ——
 
-export interface ExitReq { req: string; title: string; acs: { id: string; text: string; manual: boolean }[] }
+export interface ExitReq { req: string; title: string; acs: { id: string; text: string }[] }
 
-/** exit 中的 REQ 与它们的 AC 原文（纯函数）；规格里找不到的 REQ 只列编号 */
-export function exitReqsOf(spec: ReturnType<typeof effectiveSpec>, exit: readonly string[]): ExitReq[] {
+/** exit 中的 REQ 与它们的 AC 原文（纯函数）；PRD 里找不到的 REQ 只列编号 */
+export function exitReqsOf(prd: Prd, exit: readonly string[]): ExitReq[] {
   return exit.map((id) => {
-    const req = spec.reqs.find((r) => r.id === id);
-    return { req: id, title: req?.title ?? '（规格里找不到）', acs: (req?.acs ?? []).map((a) => ({ id: `${id}.${a.id}`, text: a.text, manual: !!a.manual })) };
+    const req = prd.reqs.find((r) => r.id === id);
+    return { req: id, title: req?.title ?? '（PRD 里找不到）', acs: (req?.acs ?? []).map((a) => ({ id: `${id}.${a.id}`, text: a.text })) };
   });
 }
 
-/** 读取本阶段的目标、exit 与其 AC 原文；规格或计划缺失时降级（只给阶段编号） */
+/** 读取本阶段的目标、exit 与其 AC 原文（来自集成分支上的 docs/PRD.md） */
 export function readStageExit(root: string, store: StateStore, flowId: string, stage: string): { goal: string; exit: ExitReq[] } {
   const flow = store.readFlow(flowId);
   const def = flow.s_stages?.find((s) => s.id === stage);
-  let exit: ExitReq[] = (def?.exit ?? []).map((req) => ({ req, title: '（规格读取失败）', acs: [] }));
-  try {
-    const spec = readSpec(root, flow.integration_branch);
-    exit = exitReqsOf(effectiveSpec(spec.files), def?.exit ?? []);
-  } catch { /* 规格读不到时只给 REQ 编号 */ }
-  return { goal: def?.goal ?? stage, exit };
+  return { goal: def?.goal ?? stage, exit: exitReqsOf(readPrd(root, `refs/heads/${flow.integration_branch}`), def?.exit ?? []) };
 }
 
 /** 阶段 diff 的范围：基线用 stageBaseOf，找不到时回退到流程的 base_sha */
@@ -113,7 +107,7 @@ export function buildQaBrief(i: QaBriefInput): string {
     ].filter(Boolean).join('\n\n');
   }
   const exit = i.exit.length
-    ? i.exit.map((r) => `### ${r.req} ${r.title}\n${r.acs.map((a) => `- ${a.id}${a.manual ? '（manual）' : ''}：${a.text}`).join('\n') || '（没有 AC）'}`).join('\n\n')
+    ? i.exit.map((r) => `### ${r.req} ${r.title}\n${r.acs.map((a) => `- ${a.id}：${a.text}`).join('\n') || '（没有 AC）'}`).join('\n\n')
     : '（本阶段没有 exit）';
   const serve = i.serves.length
     ? `项目定义了服务命令：${i.serves.join('、')}。需要运行服务检查权限、页面状态时，**用 forge_service 启动**（不要用 bash 的 & 放到后台）；工作目录是 HEAD 的临时 worktree，不是主工作区。`

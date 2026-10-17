@@ -26,7 +26,7 @@ import { parseAgentFile } from '../core/engine/agents.ts';
 import { runFlowConfig, type ModelOption } from '../commands/forge-config.ts';
 import { RoleTable, type RoleRow, type TableModel } from '../commands/role-table.ts';
 import { runFlowCommand, runFlowBuild, runFlowFix, runFlowChange, FLOW_USAGE, type CommandEnv, type EngineHandle } from '../commands/forge.ts';
-import { flowChange, flowChangeRequestMain, flowDecide, flowSpec, ChangeParams, DecideParams, SpecParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
+import { flowChange, flowChangeRequestMain, flowDecide, ChangeParams, DecideParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
 import { PiLauncher } from './launcher.ts';
 import { lastFailureKind, notices, snapshotOf, statusLine, visibleFlows } from '../core/ops/status-view.ts';
 import { decisionKeys, wakeMessage } from '../core/engine/decisions.ts';
@@ -43,7 +43,7 @@ import { MAIN_NOTES_REL } from '../core/state/state-store.ts';
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TEMPLATE_WORKFLOW = path.join(PACKAGE_ROOT, 'templates', 'workflow.yaml');
 const SUBAGENT_EXTENSION = path.join(PACKAGE_ROOT, 'src', 'pi-adapter', 'subagent.ts');
-const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_spec', 'forge_change', 'forge_change_request', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_decide'];
+const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_change', 'forge_change_request', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_decide'];
 
 /** 用户级设置文件：~/.pi/agent/pi-forge.json（与 Pi 官方 preset 示例的全局配置位置一致） */
 export function roleSettingsPath(): string {
@@ -297,16 +297,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_spec', label: 'forge_spec', description: 'P0 与用户确认后提交规格：requirements、screens、permissions、glossary（没有界面的项目可以不交 screens）。内容长时可以分几次调用、每次交一两份，交齐后程序检查并提交。spec-lint 拒绝、用户打回或等待批准期间要修改时，只重交要改的那几份，没交的沿用上一次提交。通过后等待用户批准。',
-      parameters: SpecParams,
-      async execute(_id, p, _s, _u, ctx) {
-        const h = engineFor(ctx.cwd);
-        const r = await flowSpec(ctx.cwd, h.store, h.config, checked(SpecParams, p, 'forge_spec'));
-        return toolResult(r.text, r.details);
-      },
-    }));
-    pi.registerTool(tolerantArgs({
-      name: 'forge_change', label: 'forge_change', description: '在做完的项目上加小功能：与用户商量后提交 1 到 3 个 task 的迷你计划（title、description、tasks[]：title、writes、ac、可选 id/depends_on/layers/module）。程序校验通过后直接开始实施（不经 P0/P1 批准）：实现者实现、审查者审查、合入主分支，结束前程序建“更新架构图与契约”任务，最后由验收者确认。改动更大时让用户用 /forge-build。',
+      name: 'forge_change', label: 'forge_change', description: '在做完的项目上加小功能：与用户商量后提交 1 到 3 个 task 的迷你计划（title、description、tasks[]：title、writes、ac、可选 id/depends_on/layers/module）。程序校验通过后直接开始实施（不经架构批准）：实现者实现、审查者审查、合入主分支，结束前程序建“更新架构图与契约”任务，最后由验收者确认。改动更大时让用户用 /forge-build。',
       parameters: ChangeParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
@@ -409,16 +400,13 @@ export default function piFlow(pi: ExtensionAPI): void {
 
   // 调度模式：系统提示只追加稳定的角色提示与技能；每轮的状态与唯一允许的下一步作为一条上下文消息放在对话末尾。
   // 状态写进系统提示时每轮都变，不能表示中途改系统提示的模型服务会收到整份新前缀，提示缓存每轮失效（Pi 1.1 extensions.md）。
-  // P0 的两份技能在所有阶段都带着（约 3k token，命中缓存时很便宜）：只在 P0 带时，离开 P0 那一轮系统提示变化，缓存整份失效
   // 同时记录轮开始时主工作区的改动
   pi.on('before_agent_start', (event, ctx) => {
     const s = sessions.get(ctx.cwd);
     if (!s?.orchestrator || !s.handle) return;
     const { store, engine, config } = s.handle;
     s.driftBefore = dirtyFiles(ctx.cwd);
-    const skills = ['spec-from-prd', 'grilling'].map((name) => readFileSync(path.join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'), 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim()).join('\n\n');
-    const stable = `${agentPrompt(ctx.cwd, 'orchestrator')}\n\n${skills}`;
-    event.systemPromptOptions.appendSystemPrompt = `${event.systemPromptOptions.appendSystemPrompt ?? ''}\n\n${stable}`.trim();
+    event.systemPromptOptions.appendSystemPrompt = `${event.systemPromptOptions.appendSystemPrompt ?? ''}\n\n${agentPrompt(ctx.cwd, 'orchestrator')}`.trim();
     const status = turnContext(store, config.limits.max_parallel, engine.activeRuns().length, config, (f, t) => engine.pausedFor(f, t));
     return { message: { customType: 'pi-forge-status', content: status, display: false } };
   });

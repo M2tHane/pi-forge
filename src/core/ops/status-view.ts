@@ -1,4 +1,4 @@
-// 用户界面只显示规格、契约与计划、实施、交付；内部状态保留在 --detail。
+// 用户界面只显示架构、开发、交付三个高层阶段；内部状态保留在 --detail。
 import { actionableStalls } from '../state/waits.ts';
 import { pendingChanges } from '../plan/change-flow.ts';
 import { planStatus } from '../plan/plan-flow.ts';
@@ -6,7 +6,7 @@ import type { FlowConfig } from '../state/config.ts';
 import { isFinished, type StateStore } from '../state/state-store.ts';
 import { budgetState, formatBudget } from '../insight/cost-control.ts';
 import { activePauses, describePause } from '../engine/model-pause.ts';
-import { isLightFlow, type ChangeFile, type FlowFile, type Phase, type TaskFile } from '../state/schemas.ts';
+import { isLightFlow, type ChangeFile, type FlowFile, type TaskFile } from '../state/schemas.ts';
 import { stallOf, stuckTasks } from '../insight/forge-watch.ts';
 import { IN_FLIGHT } from '../state/state-machine.ts';
 import { awaitingReview } from '../engine/run-budget.ts';
@@ -14,25 +14,20 @@ import { stageDelegated } from '../engine/decisions.ts';
 import { isStageLevelTask } from '../workspace/stage-worktree.ts';
 import { fixStatusLine, fixPhase, phaseLabelOf } from '../../modes/fix.ts';
 
+/** 高层阶段：架构（S0）→ 开发（批次 S1…Sn）；交付由最后一批的签收表示 */
+export type Phase = 'arch' | 'dev';
 export type PhaseOrDone = Phase | 'done';
-export const PHASE_LABEL: Record<PhaseOrDone, string> = { spec: '规格', plan: '契约与计划', implementation: '实施', done: '交付' };
-/** 最后一个阶段等你批准 = 等你批准合入主分支。P0、P1 批准前 S 阶段还没生成，它们也是"最后一个阶段"，但批准的只是规格或计划 */
-export const awaitingMerge = (flow: Pick<FlowFile, 'stage' | 'stages' | 'stage_status'>) => flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && flow.stage !== 'P0' && flow.stage !== 'P1';
+export const PHASE_LABEL: Record<PhaseOrDone, string> = { arch: '架构', dev: '开发', done: '交付' };
+/** 架构阶段：S0（旧流程的 P0、P1 也算） */
+const ARCH_STAGES = new Set(['S0', 'P0', 'P1']);
+/** 最后一个阶段等你批准 = 等你批准合入主分支。架构阶段批准前批次阶段还没生成，S0 也是"最后一个阶段"，但批准的是架构产出 */
+export const awaitingMerge = (flow: Pick<FlowFile, 'stage' | 'stages' | 'stage_status'>) => flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && !ARCH_STAGES.has(flow.stage);
 export const phaseLabel = (flow: Pick<FlowFile, 'stage' | 'stages' | 'stage_status'>, p: PhaseOrDone) => awaitingMerge(flow) ? '交付（待合入）' : PHASE_LABEL[p];
 const INFLIGHT = new Set<string>(IN_FLIGHT);
 const short = (s: string, n = 120) => (s.length > n ? `${s.slice(0, n)}…` : s).replace(/\s+/g, ' ');
-export function phaseOfStage(config: FlowConfig, stage: string): Phase {
-  return config.raw.modes.build?.stages.find((s) => s.id === stage)?.phase ?? (stage === 'P0' ? 'spec' : stage === 'P1' ? 'plan' : 'implementation');
-}
-export function currentPhase(config: FlowConfig, flow: FlowFile, _tasks: TaskFile[]): PhaseOrDone {
-  return isFinished(flow) && flow.stage_status === 'done' ? 'done' : isLightFlow(flow) ? 'implementation' : phaseOfStage(config, flow.stage);
-}
-export function phasesOf(config: FlowConfig, flow: FlowFile): Phase[] {
-  if (isLightFlow(flow)) return ['implementation'];
-  const phases = [...new Set(flow.stages.map((s) => phaseOfStage(config, s)))];
-  // P1 批准前 S 阶段还没生成：界面上始终显示完整的 规格 → 契约与计划 → 实施 → 交付
-  if (!phases.includes('implementation') && flow.stages.some((s) => s === 'P0' || s === 'P1')) phases.push('implementation');
-  return phases;
+export const phaseOfStage = (stage: string): Phase => (ARCH_STAGES.has(stage) ? 'arch' : 'dev');
+export function currentPhase(flow: FlowFile): PhaseOrDone {
+  return isFinished(flow) && flow.stage_status === 'done' ? 'done' : isLightFlow(flow) ? 'dev' : phaseOfStage(flow.stage);
 }
 const FAILURE_KIND: Record<string, string> = { merge_verify_fail: '合并时全量测试失败', merge_conflict: '合并冲突', precheck_fail: '预检失败', run_failed: '运行中断', run_timeout: '运行超时', lease_expired: '租约过期' };
 export function lastFailureKind(store: StateStore, flowId: string, taskId: string): string | null {
@@ -74,7 +69,7 @@ export function actionsNeeded(store: StateStore, config: FlowConfig, now = new D
     }
     const tasks = store.listTasks(flow.id);
     const isS = (flow.s_stages ?? []).some((x) => x.id === flow.stage);
-    if (flow.stage_status === 'awaiting_human') out.push({ key: `${flow.id}:gate:${flow.stage}`, text: awaitingMerge(flow) ? '全部任务已完成，等你批准合入主分支' : isS ? `${flow.stage} 阶段已通过检查，等你签收后进入下一阶段` : flow.stage === 'P0' ? '规格已通过检查，等你批准' : flow.stage === 'P1' ? '契约与计划已通过检查，等你批准' : `${phaseLabel(flow, currentPhase(config, flow, tasks))}阶段的产出等待你审批`, command: `/forge-approve stage:${flow.stage} 或 /forge-reject stage:${flow.stage} "<意见>"${isS ? '；签收材料：/forge report' : ''}` });
+    if (flow.stage_status === 'awaiting_human') out.push({ key: `${flow.id}:gate:${flow.stage}`, text: awaitingMerge(flow) ? '全部任务已完成，等你批准合入主分支' : isS ? `${flow.stage} 阶段已通过检查，等你签收后进入下一阶段` : phaseOfStage(flow.stage) === 'arch' ? '架构产出已通过检查，等你批准（材料：forge_status）' : `${phaseLabel(flow, currentPhase(flow))}阶段的产出等待你审批`, command: `/forge-approve stage:${flow.stage} 或 /forge-reject stage:${flow.stage} "<意见>"${isS ? '；签收材料：/forge report' : ''}` });
     if (flow.stage_status === 'needs_human') {
       const why = needsHumanReason(store, flow);
       if (isLightFlow(flow)) out.push({ key: `${flow.id}:fixhelp`, text: `${flow.mode === 'change' ? '小改动' : '修复'}需要你处理${why ? `：${short(why, 200)}` : ''}`, command: '/forge accept --note "<说明>"（放行并结束）或 /forge abort（放弃）' });
@@ -129,20 +124,19 @@ export function visibleFlows(store: StateStore): FlowFile[] {
   const active = store.readState().active_flow;
   return [...(active ? [store.readFlow(active)] : []), ...(store.openLightFlow() ? [store.openLightFlow()!] : [])];
 }
-function phaseBar(config: FlowConfig, flow: FlowFile, cur: PhaseOrDone): string {
-  const phases: PhaseOrDone[] = [...phasesOf(config, flow), 'done'];
+function phaseBar(flow: FlowFile, cur: PhaseOrDone): string {
+  const phases: PhaseOrDone[] = ['arch', 'dev', 'done'];
   // 最后一个阶段通过检查、等你批准合入时，已经走到"交付"：前面的阶段都打勾
   if (awaitingMerge(flow)) return phases.map((p, i) => i < phases.length - 1 ? `${PHASE_LABEL[p]} ✓` : '[交付（待合入）]').join(' → ');
   const index = phases.indexOf(cur);
   return phases.map((p, i) => i < index ? `${PHASE_LABEL[p]} ✓` : i === index ? `[${PHASE_LABEL[p]}]` : PHASE_LABEL[p]).join(' → ');
 }
 const MODE_LABEL: Record<FlowFile['mode'], string> = { build: '新项目', fix: '修复', change: '小改动' };
-/** S0 是骨架阶段，其余直接用编号 */
-const stageName = (id: string) => (id === 'S0' ? 'S0 骨架' : id);
-const isAdopt = (flow: Pick<FlowFile, 'stages'>) => flow.stages.includes('ADOPT');
+/** S0 是架构阶段，其余直接用编号 */
+const stageName = (id: string) => (id === 'S0' ? 'S0 架构' : id);
 const isLastStage = (flow: Pick<FlowFile, 'stage' | 'stages'>) => flow.stage === flow.stages.at(-1);
 
-/** 实施阶段的 S 阶段条：S0 骨架 ✓ → [S1] → S2 */
+/** 开发阶段的批次条：S1 ✓ → [S2] → S3 */
 function stageBar(flow: FlowFile): string {
   const ss = flow.s_stages ?? [];
   const idx = ss.findIndex((s) => s.id === flow.stage);
@@ -159,7 +153,7 @@ function stageStateText(flow: FlowFile, tasks: readonly TaskFile[], delegated = 
     default: return '进行中';
   }
 }
-/** 当前阶段的一行说明：规格、契约与计划阶段说明在做什么；实施阶段给出 S 阶段名、目标与状态 */
+/** 当前阶段的一行说明：架构阶段说明在做什么；开发阶段给出批次名、目标与状态 */
 function phaseLine(flow: FlowFile, tasks: readonly TaskFile[], cur: PhaseOrDone, main: string, delegated = false): string[] {
   if (isLightFlow(flow)) return [fixStatusLine(flow, tasks)];
   if (cur === 'done') return ['交付：已合入主分支'];
@@ -168,23 +162,13 @@ function phaseLine(flow: FlowFile, tasks: readonly TaskFile[], cur: PhaseOrDone,
     return [`交付阶段：${def ? `${stageName(def.id)}「${short(def.goal, 80)}」` : '全部任务'}已通过检查，等你批准合入 ${main}`];
   }
   const st = flow.stage_status;
-  if (cur === 'spec') {
-    const state = st === 'awaiting_human' ? '规格已通过检查，等你批准' : st === 'awaiting_gate' ? '规格检查中' : st === 'needs_human' ? '规格检查多次未通过，等你处理' : '与你讨论需求，整理成可验证的规格';
-    return [`规格阶段：${state}`];
-  }
-  if (cur === 'plan') {
-    if (isAdopt(flow)) return ['契约与计划阶段：纳管现有代码，整理契约'];
-    const state = st === 'awaiting_human' ? '契约与计划已通过检查，等你批准' : st === 'awaiting_gate' ? '契约与计划检查中' : st === 'needs_human' ? '契约与计划检查多次未通过，等你处理' : 'architect 起草契约与计划';
-    return [`契约与计划阶段：${state}`];
+  if (cur === 'arch') {
+    const state = st === 'awaiting_human' ? '架构产出已通过检查，等你批准' : st === 'awaiting_gate' ? '架构产出检查中' : st === 'needs_human' ? '架构产出检查多次未通过，等你处理' : 'architect 定技术栈、骨架、契约与计划';
+    return [`架构阶段：${state}`];
   }
   const def = flow.s_stages?.find((s) => s.id === flow.stage);
-  if (!def) return ['实施阶段：按任务实施并运行全量验证'];
-  return [`实施阶段：${stageBar(flow)}`, `当前阶段 ${stageName(def.id)}：${short(def.goal, 80)}（${stageStateText(flow, tasks, delegated)}）`];
-}
-function specLines(flow: FlowFile): string[] {
-  const spec = flow.spec;
-  if (flow.stage !== 'P0' && !spec) return [];
-  return [`规格：${spec?.submitted ? '已提交' : '尚未提交'}；检查：${spec ? spec.errors.length ? '未通过' : '通过' : '尚未检查'}`, ...(spec?.errors ?? []).map((s) => `- ${s}`), ...(spec?.warnings ?? []).map((s) => `警告：${s}`), ...(spec?.feedback ? [`反馈：${spec.feedback}`] : [])];
+  if (!def) return ['开发阶段：按任务实施并运行全量验证'];
+  return [`开发阶段：${stageBar(flow)}`, `当前阶段 ${stageName(def.id)}：${short(def.goal, 80)}（${stageStateText(flow, tasks, delegated)}）`];
 }
 const CHANGE_STATE = (c: ChangeFile, ready: boolean) => c.status === 'proposed' ? (ready ? (c.to_user ? '修订已就绪，等你批准' : '修订已就绪，主会话审核中') : '修订已提交，合并中') : c.status === 'rejected' ? '已打回，等待返工' : 'architect 起草修订中';
 function changeLines(store: StateStore, flowId: string): string[] {
@@ -201,21 +185,20 @@ function idleText(flow: FlowFile, tasks: readonly TaskFile[], delegated = false)
 }
 export function renderFlow(store: StateStore, config: FlowConfig, flow: FlowFile, now = new Date()): string {
   const tasks = store.listTasks(flow.id);
-  const cur = currentPhase(config, flow, tasks);
-  const counted = tasks.filter((t) => t.status !== 'cancelled' && !isStageLevelTask(t) && (isLightFlow(flow) || cur === 'done' || phaseOfStage(config, t.stage) === cur));
+  const cur = currentPhase(flow);
+  const counted = tasks.filter((t) => t.status !== 'cancelled' && !isStageLevelTask(t) && (isLightFlow(flow) || cur === 'done' || phaseOfStage(t.stage) === cur));
   const doneN = (xs: readonly TaskFile[]) => xs.filter((t) => t.status === 'done').length;
   const stageTasks = counted.filter((t) => t.stage === flow.stage);
-  const hasStages = cur === 'implementation' && !isLightFlow(flow) && !!flow.s_stages?.some((s) => s.id === flow.stage);
-  const progress = hasStages ? `进度：${flow.stage} ${doneN(stageTasks)} / ${stageTasks.length} 个任务完成（全部实施阶段 ${doneN(counted)} / ${counted.length}）` : `进度：${doneN(counted)} / ${counted.length} 个任务完成`;
+  const hasStages = cur === 'dev' && !isLightFlow(flow) && !!flow.s_stages?.some((s) => s.id === flow.stage);
+  const progress = hasStages ? `进度：${flow.stage} ${doneN(stageTasks)} / ${stageTasks.length} 个任务完成（全部批次 ${doneN(counted)} / ${counted.length}）` : `进度：${doneN(counted)} / ${counted.length} 个任务完成`;
   const active = tasks.filter((t) => INFLIGHT.has(t.status));
   const budget = budgetState(store, config, flow, now);
   return [
-    `${flow.id}「${short(flow.title, 60)}」（${isAdopt(flow) ? '纳管' : MODE_LABEL[flow.mode]}）`,
-    ...(isLightFlow(flow) ? [] : [phaseBar(config, flow, cur)]),
+    `${flow.id}「${short(flow.title, 60)}」（${MODE_LABEL[flow.mode]}）`,
+    ...(isLightFlow(flow) ? [] : [phaseBar(flow, cur)]),
     ...phaseLine(flow, tasks, cur, config.raw.main_branch, stageDelegated(store, flow)),
-    ...(cur === 'done' && !isLightFlow(flow) || cur === 'spec' || (cur === 'plan' && !counted.length) ? [] : [progress]),
-    ...(cur === 'spec' ? specLines(flow) : []),
-    ...(cur === 'plan' ? [planStatus(store, flow.id)].filter(Boolean) : []),
+    ...(cur === 'done' && !isLightFlow(flow) || (cur === 'arch' && !counted.length) ? [] : [progress]),
+    ...(cur === 'arch' ? [planStatus(store, flow.id)].filter(Boolean) : []),
     ...changeLines(store, flow.id),
     active.length ? `正在进行：\n${active.map((t) => `- ${t.id} ${short(t.title, 40)}（${t.lease?.role ?? t.role}）${isLightFlow(flow) && t.kind === 'qa' ? (flow.mode === 'change' ? '变更确认中' : '复现确认中') : taskActivity(t, lastFailureKind(store, flow.id, t.id))}`).join('\n')}` : `正在进行：${idleText(flow, tasks, stageDelegated(store, flow))}`,
     ...(tasks.some((t) => t.status === 'blocked') ? [`阻塞：${tasks.filter((t) => t.status === 'blocked').map((t) => t.id).join('、')}`] : []),
@@ -242,7 +225,7 @@ export function renderStatus(store: StateStore, config: FlowConfig, now = new Da
     const last = lastEnded(store);
     if (!last) return `当前没有进行中的流程。${START_HINT}`;
     const done = last.stage_status === 'done';
-    return `当前没有进行中的流程。\n最近的流程 ${last.id}「${short(last.title, 60)}」（${isAdopt(last) ? '纳管' : MODE_LABEL[last.mode]}）${done ? isLightFlow(last) ? `已结束，${last.mode === 'change' ? '变更' : '修复'}日志：/forge-status --detail` : `已完成，交付到 ${config.raw.main_branch}` : '已中止（集成分支与 worktree 保留）'}。\n${START_HINT}`;
+    return `当前没有进行中的流程。\n最近的流程 ${last.id}「${short(last.title, 60)}」（${MODE_LABEL[last.mode]}）${done ? isLightFlow(last) ? `已结束，${last.mode === 'change' ? '变更' : '修复'}日志：/forge-status --detail` : `已完成，交付到 ${config.raw.main_branch}` : '已中止（集成分支与 worktree 保留）'}。\n${START_HINT}`;
   }
   return [actionsBlock(actionsNeeded(store, config, now)), ...flows.map((f) => renderFlow(store, config, f, now)), '（完整任务表与最近事件：/forge-status --detail；成本：/forge-status --cost；度量：/forge-status --metrics）'].join('\n\n');
 }
@@ -258,7 +241,7 @@ export function snapshotOf(store: StateStore, config: FlowConfig): StatusSnapsho
   const flows = visibleFlows(store);
   for (const f of flows) {
     const tasks = store.listTasks(f.id);
-    snap.phases[f.id] = currentPhase(config, f, tasks);
+    snap.phases[f.id] = currentPhase(f);
     for (const t of tasks) snap.attempts[`${f.id}/${t.id}`] = t.attempts;
   }
   for (const a of actionsNeeded(store, config)) snap.actions[a.key] = `${a.owner === 'orchestrator' ? '［主会话处理中］' : ''}${a.text} → ${a.command}`;
@@ -302,13 +285,13 @@ export function statusLine(store: StateStore, config: FlowConfig, now = new Date
   const delegated = all.length - actions;
   const parts = flows.map((flow) => {
     const tasks = store.listTasks(flow.id);
-    const cur = currentPhase(config, flow, tasks);
+    const cur = currentPhase(flow);
     const live = tasks.filter((t) => t.status !== 'cancelled' && !isStageLevelTask(t));
-    const inPhase = (isLightFlow(flow) || cur === 'done' ? live : live.filter((t) => phaseOfStage(config, t.stage) === cur))
-      .filter((t) => isLightFlow(flow) || cur !== 'implementation' || !flow.s_stages?.length || t.stage === flow.stage);
+    const inPhase = (isLightFlow(flow) || cur === 'done' ? live : live.filter((t) => phaseOfStage(t.stage) === cur))
+      .filter((t) => isLightFlow(flow) || cur !== 'dev' || !flow.s_stages?.length || t.stage === flow.stage);
     const active = tasks.filter((t) => INFLIGHT.has(t.status));
     const head = isLightFlow(flow) ? `${flow.id} ${flow.mode === 'change' ? '小改动' : '修复'}·${phaseLabelOf(flow, fixPhase(flow, tasks))}` : awaitingMerge(flow) ? `${flow.id} 交付`
-      : `${flow.id} ${phaseLabel(flow, cur)}${cur === 'implementation' && flow.s_stages?.some((s) => s.id === flow.stage) ? ` ${flow.stage}` : ''}`;
+      : `${flow.id} ${phaseLabel(flow, cur)}${cur === 'dev' && flow.s_stages?.some((s) => s.id === flow.stage) ? ` ${flow.stage}` : ''}`;
     const state = awaitingMerge(flow) ? '等你批准合入' : flow.stage_status === 'awaiting_human' ? '等你审批' : flow.stage_status === 'needs_human' ? (stageDelegated(store, flow) ? '主会话决定中' : '等你处理')
       : flow.stage_status === 'awaiting_gate' ? (tasks.some((t) => t.kind === 'qa' && INFLIGHT.has(t.status)) ? '阶段验收中' : '阶段检查中') : active.length ? `${active.length} 个任务进行中` : '';
     return [head, isLightFlow(flow) ? '' : inPhase.length ? `${inPhase.filter((t) => t.status === 'done').length}/${inPhase.length}` : '', state].filter(Boolean).join(' · ');

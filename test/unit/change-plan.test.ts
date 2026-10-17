@@ -37,7 +37,7 @@ test('id：缺省按顺序 T-001…；给了必须是 T-数字且不重复', () 
 
 test('writes：非空，且不与 FORBIDDEN_WRITES 重叠', () => {
   assert.match(checkChangePlan(input([task({ writes: [] })]), opts).errors.join(), /T-001 的 writes 不能为空/);
-  for (const w of ['tests/acceptance/**', 'docs/spec/glossary.md', 'docs/contracts/api.md', 'rules/global.md', '.forge/state.json', 'workflow.yaml', '**']) {
+  for (const w of ['tests/acceptance/**', 'docs/PRD.md', 'docs/prototype/a.html', 'docs/contracts/api.md', 'rules/global.md', '.forge/state.json', 'workflow.yaml', '**']) {
     const r = checkChangePlan(input([task({ writes: ['src/a.ts', w] })]), opts);
     assert.match(r.errors.join(), new RegExp(`writes ${w.replace(/[*.]/g, '\\$&')} 与 .* 重叠`), w);
     assert.ok(forbiddenWriteOf(w), w);

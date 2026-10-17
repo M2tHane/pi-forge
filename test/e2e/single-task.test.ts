@@ -63,9 +63,9 @@ test('一个任务从 ready 走到 queued_merge 并自动合入；run 记录写�
   } finally { p.cleanup(); }
 });
 
-test('worker 与 reviewer 的任务说明带 requirements.md 的「通用约定」原文（含三级标题，到下一节为止）与计划里的说明', async () => {
-  const requirements = '# 需求\n\n## 需求清单\n### REQ-001 商品 [MVP]\n- AC1：Given 合法资料 When 创建 Then 成功\n\n## 通用约定\n- 字符串先去掉首尾空白再校验长度。\n\n### 原文字段规则\n- 商品 sku（1–32 个字符，保存为大写）\n\n## 范围外\n- 打印\n';
-  const p = await setupProject({ tasks: [{ ...task1(), description: '删除保护用固定夹具验证' }], files: { 'docs/spec/requirements.md': requirements } });
+test('worker 与 reviewer 的任务说明带 PRD 的「通用约定」原文（含三级标题，到下一节为止）与计划里的说明', async () => {
+  const prd = '# PRD\n\n## 需求\n### 商品 REQ-001\n- AC1 Given 合法资料 When 创建 Then 成功\n\n## 通用约定\n- 字符串先去掉首尾空白再校验长度。\n\n### 原文字段规则\n- 商品 sku（1–32 个字符，保存为大写）\n\n## 不做的\n- 打印\n';
+  const p = await setupProject({ tasks: [{ ...task1(), description: '删除保护用固定夹具验证' }], files: { 'docs/PRD.md': prd } });
   try {
     const { engine, launcher, errors } = makeEngine(p, async (_role, _n, a) => implGood(a));
     await engine.next(p.flowId);
@@ -73,8 +73,8 @@ test('worker 与 reviewer 的任务说明带 requirements.md 的「通用约定�
     assert.deepEqual(errors, []);
     const [worker, reviewer] = launcher.launched;
     for (const spec of [worker!, reviewer!]) {
-      assert.match(spec.prompt, /## 规格的通用约定[\s\S]*去掉首尾空白[\s\S]*### 原文字段规则\n- 商品 sku（1–32 个字符，保存为大写）/, spec.env['PI_FORGE_ROLE']);
-      assert.doesNotMatch(spec.prompt, /打印/, '下一节（范围外）不带');
+      assert.match(spec.prompt, /## PRD 的通用约定[\s\S]*去掉首尾空白[\s\S]*### 原文字段规则\n- 商品 sku（1–32 个字符，保存为大写）/, spec.env['PI_FORGE_ROLE']);
+      assert.doesNotMatch(spec.prompt, /打印/, '下一节（不做的）不带');
       assert.match(spec.prompt, /## 计划里的说明（architect 写的）\n删除保护用固定夹具验证/, spec.env['PI_FORGE_ROLE']);
     }
   } finally { p.cleanup(); }
@@ -104,7 +104,7 @@ test('无 token 或错 token 的提交被拒；实施角色没有验收工具', 
   } finally { p.cleanup(); }
 });
 
-test('writes 之外的文件（含别的 task 的验收测试、任何测试代码）可以直接改并合入；只有规格与受保护路径被拦下', async () => {
+test('writes 之外的文件（含别的 task 的验收测试、任何测试代码）可以直接改并合入；只有 PRD、原型与受保护路径被拦下', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
     const { engine } = makeEngine(p, async (role, _n, a) => {
@@ -112,7 +112,7 @@ test('writes 之外的文件（含别的 task 的验收测试、任何测试代�
       await a.call('write', { path: 'src/server/t-001/a.ts', content: 'x' });
       assert.ok((await a.call('write', { path: 'README.md', content: 'changed outside writes' })).ok);
       for (const f of ['tests/acceptance/T-009/a.test.ts', 'tests/unit/a.test.ts']) assert.ok((await a.call('write', { path: f, content: 'x' })).ok, f);
-      for (const f of ['docs/spec/requirements.md', 'rules/global.md', 'workflow.yaml']) {
+      for (const f of ['docs/PRD.md', 'docs/prototype/a.html', 'rules/global.md', 'workflow.yaml']) {
         const r = await a.call('write', { path: f, content: 'x' });
         assert.equal(r.ok, false, f);
       }
@@ -127,16 +127,16 @@ test('writes 之外的文件（含别的 task 的验收测试、任何测试代�
   } finally { p.cleanup(); }
 });
 
-test('提交前清理落在不能改的位置（docs/spec）、未被跟踪的文件；writes 外的新文件（含测试）照常提交', async () => {
+test('提交前清理落在不能改的位置（PRD 与原型）、未被跟踪的文件；writes 外的新文件（含测试）照常提交', async () => {
   const p = await setupProject({ tasks: [task1()] });
   try {
     let submitText = '';
     const { engine } = makeEngine(p, async (role, _n, a) => {
       assert.ok((await a.call('forge_claim')).ok);
       assert.ok((await a.call('write', { path: 'src/server/t-001/a.ts', content: 'export const a = 1;' })).ok);
-      // 不经过工具（guard 看不到）写下的文件：规格目录里的被清理；测试代码与普通文件保留
-      for (const d of ['tests/unit', 'src/shared', 'docs/spec']) mkdirSync(path.join(a.spec.cwd, d), { recursive: true });
-      writeFileSync(path.join(a.spec.cwd, 'docs/spec/leftover.md'), '');
+      // 不经过工具（guard 看不到）写下的文件：原型目录里的被清理；测试代码与普通文件保留
+      for (const d of ['tests/unit', 'src/shared', 'docs/prototype']) mkdirSync(path.join(a.spec.cwd, d), { recursive: true });
+      writeFileSync(path.join(a.spec.cwd, 'docs/prototype/leftover.html'), '');
       writeFileSync(path.join(a.spec.cwd, 'tests/unit/leftover.test.ts'), '');
       writeFileSync(path.join(a.spec.cwd, 'src/shared/util.ts'), 'export const u = 1;');
       await a.call('forge_note', { text: '完成' });
@@ -147,8 +147,8 @@ test('提交前清理落在不能改的位置（docs/spec）、未被跟踪的�
     await engine.next(p.flowId);
     await engine.idle();
     assert.equal(p.store.readTask(p.flowId, 'T-001').status, 'done');
-    assert.match(submitText, /已清理可写范围外、未被跟踪的文件 1 个：docs\/spec\/leftover\.md/);
-    assert.throws(() => p.git('show', `flow/${p.flowId}/integration:docs/spec/leftover.md`));
+    assert.match(submitText, /已清理可写范围外、未被跟踪的文件 1 个：docs\/prototype\/leftover\.html/);
+    assert.throws(() => p.git('show', `flow/${p.flowId}/integration:docs/prototype/leftover.html`));
     assert.equal(p.git('show', `flow/${p.flowId}/integration:tests/unit/leftover.test.ts`), '');
     assert.match(p.git('show', `flow/${p.flowId}/integration:src/shared/util.ts`), /u = 1/);
   } finally { p.cleanup(); }

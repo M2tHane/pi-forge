@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { makeEngine, ALL_FAKE, type RoleScript } from '../helpers/engine.ts';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { P0_SPEC } from '../helpers/spec.ts';
+import { PRD_FILES } from '../helpers/prd.ts';
 import type { FakeAgent } from '../fixtures/fake-subagent/launcher.ts';
 import { readReviewEvidence, REVIEW_CONFIRM, REVIEW_INPUT, REVIEW_REPORT, SUGGESTIONS_PATH, type ReviewInputFile } from '../../src/core/stage/review-flow.ts';
 import type { RoleSettingsFile } from '../../src/core/state/schemas.ts';
@@ -13,7 +13,7 @@ import { pendingDecisions } from '../../src/core/engine/decisions.ts';
 
 // 全量测试命令改为恒通过：本组用例关心的是审查而不是预检
 const YAML = PROJECT_YAML.replace(/test: +"test -f[^\n]*/, 'test:      "true"');
-const FILES = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));
+const FILES = PRD_FILES;
 const derived = (id: string, over: Parameters<typeof mkTask>[1] = {}) => { const { review: _review, ...t } = mkTask(id, over); return t; };
 const SETTINGS: RoleSettingsFile = { version: 1, roles: { ...ALL_FAKE.roles, reviewer: { model: 'fake/model', thinking: 'low', escalate_model: 'fake/strong' } } };
 
@@ -87,10 +87,9 @@ test('审查 → 打回 → 确认通过：第二轮只能确认；suggest 记�
     assert.match(seen['T-001.rv']!.cwd, /\.worktrees\/B-001-T-001$/, '不为审查新建 worktree');
     assert.ok(seen['T-001.rv']!.tools.includes('forge_review_report') && !seen['T-001.rv']!.tools.includes('write'));
 
-    // 第一轮的输入：AC 原文、术语表、diff（不含验收测试）、backend 规则（系统提示）
+    // 第一轮的输入：AC 原文、diff（不含验收测试）、backend 规则（系统提示）
     const brief = seen['T-001.rv']!.brief;
     assert.match(brief, /REQ-001\.AC1：Given 已登录 When 创建看板 Then 返回看板编号/);
-    assert.match(brief, /看板（Board）/);
     assert.match(brief, /diff --git a\/src\/server\/t-001\/a\.ts/);
     assert.ok(!brief.includes('diff --git a/tests/acceptance'));
     assert.match(readFileSync(e.launcher.launched.find((s) => s.env['PI_FORGE_TASK'] === 'T-001.rv')!.appendSystemPromptFiles[0]!, 'utf8'), /handler 内不写业务逻辑/, 'rules/backend.md 进系统提示');

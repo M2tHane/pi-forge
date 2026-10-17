@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupProject, PROJECT_YAML } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { P0_SPEC } from '../helpers/spec.ts';
+import { PRD_FILES } from '../helpers/prd.ts';
 import { drive, engineEnv, submitWork, writeFiles } from '../helpers/commands.ts';
 import { flowMetrics, renderMetrics } from '../../src/core/stage/signoff.ts';
 
@@ -16,7 +16,7 @@ const withDeps = (yaml: string, test: string) => yaml
   .replace('\nlimits:', '\nshared_env:\n  deps: [.deps-installed]\nlimits:');
 // 有包清单与锁文件才会 install（S0 还没有清单时跳过）
 const DEPS = { 'package.json': '{"name":"app"}\n', 'pnpm-lock.yaml': 'lockfileVersion: 1\n', '.gitignore': '.deps-installed\n' };
-const SPEC = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));
+const SPEC = PRD_FILES;
 
 const prepared = (p: { store: { readEvents: () => { type: string; data?: Record<string, unknown> | undefined; actor: string }[] } }) =>
   p.store.readEvents().filter((e) => e.type === 'note' && e.data?.['kind'] === 'workspace_prepare');
@@ -92,9 +92,8 @@ test('(a2) 门禁的工作区准备失败 → 不生成 fix，直接 needs_human
 
 test('(b) stage-qa：临时 worktree 里有依赖', async () => {
   const yaml = withDeps(PROJECT_YAML.replace(/^  qa: false$/m, '  qa: true'), 'test -f .deps-installed');
-  const REQS = P0_SPEC.requirements;
   const impl = mkTask('T-001', { stage: 'S1', ac: ['REQ-001.AC1'], writes: ['src/server/t-001/**', 'tests/acceptance/T-001/**'] });
-  const p = await setupProject({ yaml, files: { ...SPEC, 'docs/spec/requirements.md': REQS, ...DEPS }, stages: ['S1'], tasks: [impl] });
+  const p = await setupProject({ yaml, files: { ...SPEC, ...DEPS }, stages: ['S1'], tasks: [impl] });
   await p.store.setStages(p.flowId, [{ id: 'S1', goal: '可以创建看板', exit: ['REQ-001'] }]);
   const qaSeen: string[] = [];
   const e = engineEnv(p, async (role, _n, a) => {

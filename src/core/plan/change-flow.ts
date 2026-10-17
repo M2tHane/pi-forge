@@ -16,7 +16,7 @@ const hashText = (text: string) => createHash('sha256').update(text).digest('hex
 export class ChangeError extends Error {}
 
 /** 变更请求的 architect 只能写这些路径（契约可以修改，不只追加） */
-export const CHANGE_WRITES = ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md'] as const;
+export const CHANGE_WRITES = ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**'] as const;
 
 /** 当前生效的计划：最近一次批准的变更请求保存的 plan.yaml；还没有变更时是 P1 批准时（契约锁定点）的 plan.yaml */
 export function currentPlan(root: string, store: StateStore, flowId: string): { plan: CurrentPlan; text: string } | string {
@@ -269,11 +269,4 @@ export interface ApprovalTarget { object: string; summary: string }
 export function approvalTargets(store: StateStore, flowId: string, includeNeedsHuman = false): ApprovalTarget[] {
   const f = store.readFlow(flowId);
   return [...(f.stage_status === 'awaiting_human' || includeNeedsHuman && f.stage_status === 'needs_human' ? [{ object: `stage:${f.stage}`, summary: `stage:${f.stage} 等待用户${f.stage_status === 'needs_human' ? '处理' : '批准'}` }] : []), ...pendingChanges(store, flowId).map((c) => ({ object: `change:${c.id}`, summary: changeApprovalText(c) }))];
-}
-/** 规格状态一行（P0 或已提交过规格时）加等待批准的对象 */
-export function specStatus(store: StateStore, flowId: string): string {
-  const f = store.readFlow(flowId);
-  const spec = f.spec;
-  // 规格的检查结果只在 P0 有用；之后每次 forge_wait 都带上全部警告会撑大主会话（stock 实验：57 条警告约 4500 字 × 52 次）
-  return [...(f.stage === 'P0' ? [`规格：${spec?.submitted ? '已提交' : '尚未提交'}；spec-lint：${spec ? spec.errors.length ? '未通过' : '通过' : '尚未检查'}`, ...(spec?.errors ?? []).map((s) => `- ${s}`), ...(spec?.warnings ?? []).map((s) => `警告：${s}`), ...(spec?.feedback ? [`反馈：${spec.feedback}`] : [])] : []), ...approvalTargets(store, flowId).map((a) => `等待批准：${a.object}`)].join('\n');
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parse, stringify } from 'yaml';
 import { parseConfig, ConfigError } from '../../src/core/state/config.ts';
 import { parseProjectCommands } from '../../src/core/state/project-commands.ts';
-import { PHASES, type WorkflowFile } from '../../src/core/state/schemas.ts';
+import type { WorkflowFile } from '../../src/core/state/schemas.ts';
 import { TEMPLATE_YAML, TEST_YAML, REAL_TEMPLATE_YAML } from '../helpers/config.ts';
 
 const errorsOf = (yaml: string): string[] => {
@@ -25,7 +25,7 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
     const c = parseConfig(source);
     assert.equal(c.limits.max_parallel, 3);
     assert.ok(c.warnings.some((w) => w.includes('models.strong')));
-    assert.deepEqual(c.raw.modes.build?.stages.map((s) => s.id), ['P0', 'P1']);
+    assert.ok(!c.warnings.some((w) => w.includes('已不再支持')), c.warnings.join('\n'));
     assert.deepEqual(Object.keys(c.roles).sort(), ['orchestrator', 'architect', 'worker', 'reviewer', 'stage-qa'].sort());
     const template = parseConfig(REAL_TEMPLATE_YAML);
     assert.deepEqual(c.raw.scopes, template.raw.scopes);
@@ -45,7 +45,6 @@ test('真实 v3 模板与运行时夹具通过校验，测试派发配置固定'
   const c = parseConfig(TEST_YAML);
   assert.equal(c.limits.max_parallel, 2);
   assert.equal(c.limits.auto_dispatch, false);
-  assert.deepEqual(PHASES, ['spec', 'plan', 'implementation']);
 });
 
 test('新配置块、命令与次数默认值可读取；命令来自 commands.yaml，没有时用 workflow.yaml 里旧的 commands', () => {
@@ -71,8 +70,8 @@ test('角色 writes 由真实 scopes 并集推导；env 与读路径顺序保留
   const c = parseConfig(TEST_YAML);
   // architect 兼有 plan 与 code scope（S0 搭骨架）；P1 的 task 只取 plan scope（config.scopeWrites()）
   assert.deepEqual(c.role('architect').scopes, ['plan', 'code']);
-  assert.deepEqual(c.role('architect').writes, ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'commands.yaml', 'AGENTS.md', '**']);
-  assert.deepEqual(c.scopeWrites()['plan'], ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'docs/spec/glossary.md', 'commands.yaml', 'AGENTS.md']);
+  assert.deepEqual(c.role('architect').writes, ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'commands.yaml', 'AGENTS.md', '**']);
+  assert.deepEqual(c.scopeWrites()['plan'], ['docs/contracts/**', 'docs/arch/**', 'docs/plan/**', 'commands.yaml', 'AGENTS.md']);
   assert.deepEqual(c.role('reviewer').writes, []);
   assert.deepEqual(c.role('stage-qa').writes, []);
   assert.deepEqual(c.role('worker').writes, ['**']);
@@ -93,14 +92,14 @@ test('工具组展开、类别与唯一列表；orchestrator 严格使用规格�
   assert.deepEqual(orchestrator.writes, []);
   assert.equal(orchestrator.bash, 'none');
   assert.ok(!orchestrator.tools.has('bash'));
-  assert.deepEqual([...orchestrator.tools].sort(), ['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_spec', 'forge_change', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_decide', 'notes', 'history'].sort());
+  assert.deepEqual([...orchestrator.tools].sort(), ['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_change', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_decide', 'notes', 'history'].sort());
   assert.equal(c.role('architect').bash, 'full');
   assert.equal(c.role('worker').bash, 'full');
   assert.ok(c.role('worker').tools.has('codegraph_search'));
   assert.equal(c.toolKind('codegraph_search'), 'ext-read');
   assert.equal(c.toolKind('edit'), 'write');
   assert.equal(c.toolKind('web_search'), 'web');
-  assert.equal(c.toolKind('forge_spec'), 'flow');
+  assert.equal(c.toolKind('forge_wait'), 'flow');
   assert.equal(c.toolKind('forge_qa_confirm'), 'flow');
   assert.equal(c.toolKind('unknown'), 'other');
   for (const r of Object.values(c.roles)) assert.equal(r.toolList.length, r.tools.size);
@@ -133,7 +132,7 @@ const exclusiveTools: [string, string[]][] = [
   ['forge_service', ['worker', 'architect', 'stage-qa']], ['forge_propose_plan', ['architect']],
   ['forge_review_report', ['reviewer']], ['forge_review_confirm', ['reviewer']],
   ['forge_qa_report', ['stage-qa']], ['forge_qa_confirm', ['stage-qa']],
-  ['forge_read', ['orchestrator']], ['forge_spec', ['orchestrator']], ['forge_change', ['orchestrator']],
+  ['forge_read', ['orchestrator']], ['forge_change', ['orchestrator']],
   ['forge_resolve_timeout', ['orchestrator']],
 ];
 for (const [tool, owners] of exclusiveTools) {
@@ -242,22 +241,12 @@ test('implementation_gate 默认只跑 test 与 acceptance（其余命令给 age
   assert.ok(!oldTools.role('worker').tools.has('forge_request_scope'));
   assert.ok(legacy.warnings.some((w) => /acctest_workspace 已不再支持/.test(w)));
   assert.ok(legacy.warnings.some((w) => /limits\.lean_below_loc 已不再支持/.test(w)));
+  // 旧项目的 P0、P1 固定阶段与 forge_spec：忽略并提醒
+  const p0 = parseConfig(changed((wf) => { (wf as Record<string, unknown>)['modes'] = { build: { stages: [{ id: 'P0', name: 'spec', gate: { human: true } }] } }; wf.roles.orchestrator!.tools.push('forge_spec'); }));
+  assert.ok(p0.warnings.some((w) => /^modes 已不再支持/.test(w)));
+  assert.ok(p0.warnings.some((w) => /forge_spec 已不再支持/.test(w)));
   // gate 里的命令名在 commands.yaml 里找，没有的运行时跳过，不算配置错误
-  assert.deepEqual(errorsOf(changed((wf) => { wf.modes.build!.stages[1]!.gate.auto = ['missing']; })), []);
-});
-
-test('固定模式只能配置 P0、P1，phase 不能倒退或使用旧名称', () => {
-  assert.match(errorsOf(changed((wf) => {
-    wf.modes.build!.stages.push({ id: 'S0', name: 'implementation', phase: 'implementation', gate: {} });
-  })).join(), /只能按顺序配置 P0、P1/);
-  assert.match(errorsOf(changed((wf) => {
-    wf.modes.build!.stages.reverse();
-  })).join(), /只能按顺序配置 P0、P1/);
-  assert.match(errorsOf(changed((wf) => {
-    wf.modes.build!.stages[0]!.phase = 'plan';
-    wf.modes.build!.stages[1]!.phase = 'spec';
-  })).join(), /高层阶段只能按 spec → plan → implementation 前进/);
-  assert.ok(errorsOf(REAL_TEMPLATE_YAML.replace('phase: spec', 'phase: requirements')).length);
+  assert.deepEqual(errorsOf(changed((wf) => { wf.implementation_gate!.auto = ['missing']; })), []);
 });
 
 test('未知 scope、工具组、工具、模型档位的错误有 YAML 路径与行号', () => {

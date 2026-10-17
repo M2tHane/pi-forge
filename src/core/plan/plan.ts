@@ -13,7 +13,7 @@ export const PLAN_PATH = 'docs/plan/plan.yaml';
 /** S0（由 architect 执行）额外可写的验收目录与项目规则 rules/** */
 export const S0_EXTRA_WRITES = ['tests/acceptance/_support/**', 'tests/acceptance/S0-smoke/**', 'rules/**'] as const;
 /** impl 的 writes 不能覆盖这些路径：验收测试目录由程序派生，规格只经 forge_spec，契约只能由程序核实的追加修改 */
-export const FORBIDDEN_WRITES = ['tests/acceptance/**', 'docs/spec/**', 'docs/contracts/**', '.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
+export const FORBIDDEN_WRITES = ['tests/acceptance/**', 'docs/PRD.md', 'docs/prototype/**', 'docs/contracts/**', '.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
 
 export { isTestWrite } from '../state/paths.ts';
 

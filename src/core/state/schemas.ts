@@ -337,20 +337,6 @@ const Gate = Type.Object({
   qa: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 
-/** 高层阶段：规格 → 契约与计划 → 实施；交付由最后一个 S 阶段的批准表示 */
-export const PHASES = ['spec', 'plan', 'implementation'] as const;
-export type Phase = (typeof PHASES)[number];
-
-const StageDef = Type.Object({
-  id: Type.String({ minLength: 1 }),
-  name: Type.String({ minLength: 1 }),
-  /** 可选：该阶段在 /forge-status 中归入哪个高层阶段；缺省按阶段 id 推断 */
-  phase: Type.Optional(Type.Enum(PHASES)),
-  gate: Gate,
-}, { additionalProperties: false });
-
-const ModeDef = Type.Object({ stages: Type.Array(StageDef, { minItems: 1 }) }, { additionalProperties: false });
-
 const PosInt = Type.Integer({ minimum: 1 });
 
 export const WorkflowFile = Type.Object({
@@ -401,7 +387,6 @@ export const WorkflowFile = Type.Object({
   /** 会打开桌面应用或浏览器窗口的项目命令（前缀匹配，例如 "pnpm dev:desktop"）：agent 不能运行，要看效果时交给用户 */
   gui_commands: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   models: Type.Record(Type.String(), Type.String({ minLength: 1 })),
-  modes: Type.Object({ build: Type.Optional(ModeDef) }, { additionalProperties: false }),
   /** 动态 S 阶段共用闸门；auto 中未在 commands 配置的命令跳过 */
   implementation_gate: Type.Optional(Gate),
   generated_paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),

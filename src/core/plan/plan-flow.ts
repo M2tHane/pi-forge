@@ -10,7 +10,6 @@ import { git, gitOk } from '../state/git.ts';
 import { contractFilesAt, contractFilesInDir, parseContracts } from './contract-check.ts';
 import { checkPlan, deriveTasks, formatPlanReport, nextPlanTaskId, parsePlan, PLAN_PATH, type PlanCheck } from './plan.ts';
 import { acTexts, effectiveSpec, type SpecFiles } from '../spec/spec.ts';
-import { SPEC_PATHS } from '../spec/spec-flow.ts';
 import { isSettled } from '../state/state-machine.ts';
 import { COMMANDS_FILE, commandsProblems } from '../state/project-commands.ts';
 import { escalationPolicy } from '../insight/cost-control.ts';
@@ -32,7 +31,7 @@ export function readRel(src: Source, rel: string): string | null {
 
 export function readSpecFrom(src: Source): { files: SpecFiles } | string {
   const files: Partial<SpecFiles> = {};
-  for (const name of SPEC_PATHS) {
+  for (const name of ['requirements', 'screens', 'permissions', 'glossary'] as const) {
     const text = readRel(src, `docs/spec/${name}.md`);
     if (text === null) return `缺少规格文件 docs/spec/${name}.md`;
     files[name] = text;

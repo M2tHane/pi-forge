@@ -8,7 +8,7 @@ import { REVIEW_GUIDE, awaitingReview } from './run-budget.ts';
 import { DECISION_GUIDE, pendingDecisions } from './decisions.ts';
 import { pendingRejection } from '../stage/gates.ts';
 
-export interface NextStep { summary: string; next: string; tool: 'forge_spec' | 'forge_wait' | 'forge_resolve_timeout' | 'forge_decide' | 'none'; task?: string }
+export interface NextStep { summary: string; next: string; tool: 'forge_wait' | 'forge_resolve_timeout' | 'forge_decide' | 'none'; task?: string }
 export type PausedOf = (flowId: string, t: TaskFile) => ModelPause | null;
 export function nextStep(store: StateStore, _maxParallel: number, activeRunCount = 0, config?: FlowConfig, paused?: PausedOf): NextStep {
   const flowId = store.readState().active_flow;
@@ -16,12 +16,6 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
   const flow = store.readFlow(flowId);
   const tasks = store.listTasks(flowId);
   const summary = `流程 ${flow.id}「${flow.title}」阶段 ${flow.stage}（${flow.stage_status}）；任务 ${tasks.length} 个，完成 ${tasks.filter((t) => t.status === 'done').length} 个。`;
-  if (flow.stage === 'P0') {
-    if (flow.stage_status === 'awaiting_gate') return { summary, next: '规格已提交，程序正在重读集成分支并执行 spec-lint，等待闸门结果。', tool: 'none' };
-    if (flow.stage_status === 'awaiting_human') return { summary, next: '规格已提交，spec-lint 通过。向用户概述规格，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。等待期间要修改（例如修警告）可以直接用 forge_spec 重交改动的那几份。', tool: 'none' };
-    const read = flow.intake?.files.length ? '用 forge_read 阅读集成分支 docs/spec/inputs/ 的需求文档与可选原型（只就有疑问的地方向用户提问）' : '用户没有提供需求文档：按技能 grilling 详细地向用户了解需求';
-    return { summary, next: `${read}；和用户确认后用 forge_spec 提交四份规格。${flow.spec?.feedback ? `\n规格被打回或检查失败，意见：${flow.spec.feedback}` : ''}`, tool: 'forge_spec' };
-  }
   const pending = pendingDecisions(store, flowId);
   if (pending.length) return { summary, next: `等你决定：${pending.map((p) => p.id).join('、')}（材料见 forge_status）。${DECISION_GUIDE}`, tool: 'forge_decide', task: pending[0]!.id };
   if (flow.stage === P1_STAGE) {
@@ -49,9 +43,6 @@ export function nextStep(store: StateStore, _maxParallel: number, activeRunCount
 }
 export function turnContext(store: StateStore, maxParallel: number, activeRunCount = 0, config?: FlowConfig, paused?: PausedOf): string {
   const s = nextStep(store, maxParallel, activeRunCount, config, paused);
-  const id = store.readState().active_flow;
-  const flow = id ? store.readFlow(id) : null;
-  const inputs = flow?.stage === 'P0' ? flow.intake?.files.map((f) => `- ${f.path}（${f.size} 字节，${f.type}）`).join('\n') : '';
-  return `[pi-forge 状态] ${s.summary}\n[唯一允许的下一步] ${s.next}${inputs ? `\n[输入清单：用 forge_read 阅读]\n${inputs}` : ''}`;
+  return `[pi-forge 状态] ${s.summary}\n[唯一允许的下一步] ${s.next}`;
 }
 export function newDrift(before: Set<string>, after: Set<string>): string[] { return [...after].filter((f) => !before.has(f)).sort(); }

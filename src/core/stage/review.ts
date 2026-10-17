@@ -10,7 +10,6 @@ export type ReviewMode = 'skip' | 'auto' | 'strong';
 /** 审查输入的上限（diff 最多 2 万字） */
 export const REVIEW_DIFF_MAX = 20_000;
 export const CONTRACT_SNIPPET_MAX = 8_000;
-export const GLOSSARY_MAX = 4_000;
 
 // —— 10.1 什么时候审查 ——
 
@@ -161,11 +160,10 @@ export interface ReviewBriefInput {
   title: string;
   /** 这一轮的审查 task 编号 */
   reviewId: string;
-  /** AC 编号 → 原文（规格里找不到的编号没有原文） */
+  /** AC 编号 → 原文（PRD 里找不到的编号没有原文） */
   acIds: readonly string[];
   acTexts: Record<string, string>;
   contracts: { shown: { path: string; content: string }[]; omitted: string[] };
-  glossary: string;
   deviations: readonly string[];
   /** 比较范围：<from>..<to>（第一轮是任务基线到提交，之后是上一轮审查之后的增量） */
   range: { from: string; to: string };
@@ -240,7 +238,7 @@ export function buildReviewBrief(i: ReviewBriefInput): string {
       diffSection,
     ].join('\n\n');
   }
-  const ac = i.acIds.length ? i.acIds.map((id) => `- ${id}：${i.acTexts[id] ?? '（规格里找不到原文）'}`).join('\n') : '（无）';
+  const ac = i.acIds.length ? i.acIds.map((id) => `- ${id}：${i.acTexts[id] ?? '（PRD 里找不到原文）'}`).join('\n') : '（无）';
   const contracts = i.contracts.shown.length
     ? [...i.contracts.shown.map((c) => `### ${c.path}\n${fence(c.content)}`), ...(i.contracts.omitted.length ? [`（因长度限制省略：${i.contracts.omitted.join('、')}，需要时自己读）`] : [])].join('\n\n')
     : '（没有相关的契约文件）';
@@ -249,7 +247,6 @@ export function buildReviewBrief(i: ReviewBriefInput): string {
     '这是第一轮审查。程序没有预先运行测试：先运行下面列出的、本 task 自己的测试，再按角色提示的顺序检查；最后调用 forge_review_report 一次提交全部问题。must 必须写出处（rule:/ac:/contract:/defect:），写不出出处的是 suggest。',
     `## 本 task 的验收标准（AC 原文）\n${ac}`,
     `## 相关契约\n${contracts}`,
-    `## 术语表\n${i.glossary.trim() ? i.glossary.trim() : '（无）'}`,
     `## worker 声明的偏离（已声明并且合理的不算问题）\n${i.deviations.length ? i.deviations.map((d) => `- ${d}`).join('\n') : '（无）'}`,
     ...crossTaskSection(i),
     `本 task 涉及的 rules/<layer>.md（每个文件末尾有审查清单）已在系统提示的规则部分。`,

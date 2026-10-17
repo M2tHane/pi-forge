@@ -14,9 +14,9 @@ const at = (m: number) => new Date(T0 + m * MIN).toISOString();
 const flow = { id: 'B-001', stages: ['P0', 'P1', 'S0'], stage: 'S0', stage_status: 'active', created_at: at(0) } as FlowFile;
 const ev = (m: number, to: string, stage?: string) => ({ flow: 'B-001', ts: at(m), to, data: { entity: 'stage', ...(stage ? { stage } : {}) } }) as unknown as FlowEvent;
 
-test('流程墙钟：需求阶段与等用户审批的时间不计', () => {
-  const events = [ev(30, 'P1'), ev(40, 'awaiting_gate', 'P1'), ev(41, 'awaiting_human', 'P1'), ev(101, 'done', 'P1'), ev(101, 'S0')];
-  assert.equal(activeMinutes(flow, events, new Date(T0 + 161 * MIN)), 10 + 1 + 60);
+test('流程墙钟：等用户审批的时间不计', () => {
+  const events = [ev(30, 'awaiting_gate', 'S0'), ev(31, 'awaiting_human', 'S0'), ev(91, 'done', 'S0'), ev(91, 'S1')];
+  assert.equal(activeMinutes(flow, events, new Date(T0 + 151 * MIN)), 30 + 1 + 60);
 });
 
 test('流程卡住：剩下的任务都 blocked 或只因为依赖 blocked 任务而没开始', () => {

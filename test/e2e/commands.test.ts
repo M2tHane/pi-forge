@@ -34,88 +34,61 @@ test('/forge unblock 附回答写入 handoff 并回到 ready；approve 在没有
   } finally { p.cleanup(); }
 });
 
-test('/forge-build 入库 PRD 与原型后停在 P0，启动主会话讨论，不派发任务', async () => {
+test('/forge-build 缺 docs/PRD.md 或原型时只提示，不建流程、不建分支；未知参数报错', async () => {
   const p = await setupProject();
   try {
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
-    const { engine, launcher } = makeEngine(p, async () => { throw new Error('P0 不应派发'); });
-    let activated = 0;
-    const talks: string[] = [];
-    const e = { ...commandEnv(p, engine), activateOrchestrator: () => { activated++; }, startConversation: (s: string) => { talks.push(s); } };
-    mkdirSync(path.join(p.dir, 'inputs'));
-    writeFileSync(path.join(p.dir, 'inputs/用户 服务.md'), '# 用户服务\n原始 PRD');
-    const image = Buffer.from([0, 255, 2, 3]);
-    writeFileSync(path.join(p.dir, 'inputs/screen.png'), image);
-    const output = await runFlowBuild('--prd "inputs/用户 服务.md" --prototype inputs/screen.png', e);
-    assert.match(output, /主会话将和你讨论需求、整理规格/);
-    assert.match(output, /docs\/spec\/inputs\/prd\/用户 服务\.md/);
-    assert.match(output, /image\/png/);
-    const id = p.store.readState().active_flow!;
-    const ref = p.store.readFlow(id).integration_branch;
-    assert.equal(p.git('show', `${ref}:docs/spec/inputs/prd/用户 服务.md`), '# 用户服务\n原始 PRD');
-    assert.deepEqual(execFileSync('git', ['show', `${ref}:docs/spec/inputs/prototype/screen.png`], { cwd: p.dir }), image);
-    assert.deepEqual(p.store.readFlow(id).stages, ['P0', 'P1']);
-    assert.equal(p.store.readFlow(id).stage, 'P0');
-    assert.deepEqual(p.store.listTasks(id), []);
-    assert.ok(p.git('rev-parse', p.store.readFlow(id).integration_branch));
-    await engine.pump(id);
-    await engine.idle();
-    assert.equal(p.store.readFlow(id).stage_status, 'active');
-    assert.equal(activated, 1);
-    assert.match(talks[0]!, /docs\/spec\/inputs\/prd\/用户 服务\.md[\s\S]*screen\.png/);
-    assert.equal(p.store.readFlow(id).intake?.files.length, 2);
-    assert.equal(launcher.launched.length, 0);
-  } finally { p.cleanup(); }
-});
-
-test('/forge-build 旧参数与路径错误不建流程', async () => {
-  const p = await setupProject();
-  try {
-    await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
-    const { engine } = makeEngine(p, async () => { throw new Error('输入错误不应派发'); });
+    const { engine } = makeEngine(p, async () => { throw new Error('输入不全不应派发'); });
     const e = commandEnv(p, engine);
-    mkdirSync(path.join(p.dir, 'inputs'));
-    mkdirSync(path.join(p.dir, 'empty'));
-    writeFileSync(path.join(p.dir, 'inputs/prd.md'), '# PRD');
     const branches = p.git('for-each-ref', '--format=%(refname)', 'refs/heads/flow/');
-    for (const [args, error] of [
-      ['--prd', /缺少路径/],
-      ['--prd --prototype inputs', /缺少路径/],
-      ['--prd ""', /缺少路径/],
-      ['--from inputs/prd.md', /未知参数/],
-      ['--prd inputs/prd.md --arch inputs', /未知参数/],
-      ['--prd inputs/prd.md --design inputs', /未知参数/],
-      ['--prd inputs/prd.md --prd inputs/prd.md', /不能重复/],
-      ['--prd missing.md', /找不到PRD/],
-      ['--prd inputs/prd.md --prototype missing.png', /找不到原型/],
-      ['--prd empty', /空目录/],
-    ] as const) {
-      await assert.rejects(runFlowBuild(args, e), error);
+    const noFlow = () => {
       assert.equal(p.store.readState().active_flow, null);
       assert.equal(p.git('for-each-ref', '--format=%(refname)', 'refs/heads/flow/'), branches);
+    };
+    let out = await runFlowBuild('', e);
+    assert.match(out, /还不能开始：\n- 缺少 docs\/PRD\.md[\s\S]*- 缺少 docs\/prototype\//);
+    noFlow();
+    mkdirSync(path.join(p.dir, 'docs/prototype'), { recursive: true });
+    writeFileSync(path.join(p.dir, 'docs/PRD.md'), '# PRD');
+    writeFileSync(path.join(p.dir, 'docs/prototype/README.md'), '说明');
+    out = await runFlowBuild('"看板"', e);
+    assert.match(out, /docs\/prototype\/ 里没有 \.html 文件/);
+    noFlow();
+    for (const args of ['--prd docs/PRD.md', '--prototype docs/prototype']) {
+      await assert.rejects(runFlowBuild(args, e), /未知参数/);
+      noFlow();
     }
-    assert.match(await runFlowBuild('--help', e), /--prd <文件或目录> \[--prototype <路径>\]/);
+    assert.match(await runFlowBuild('help', e), /docs\/PRD\.md[\s\S]*docs\/prototype\//);
+    assert.doesNotMatch(await runFlowBuild('help', e), /--prd|--prototype/);
     assert.match(await runFlowCommand('help', e), /\/forge-build \["<项目名>"\]/);
-    assert.doesNotMatch(await runFlowBuild('help', e), /--arch|--design|--from/);
   } finally { p.cleanup(); }
 });
 
-test('/forge-build PRD 目录无需原型，原样入库并停在 P0；活动流程阻止重复建流程', async () => {
+test('/forge-build PRD 与原型齐全时入库到集成分支，流程从 S0 开始；PRD 检查只提醒；活动流程阻止重复建流程', async () => {
   const p = await setupProject();
   try {
     await p.store.transitionStage(p.flowId, { to: 'aborted', trigger: 'abort', actor: 'human' });
     const { engine } = makeEngine(p, async () => {});
-    const e = commandEnv(p, engine);
-    mkdirSync(path.join(p.dir, 'prd/nested'), { recursive: true });
-    writeFileSync(path.join(p.dir, 'prd/requirements.md'), '# 需求');
-    writeFileSync(path.join(p.dir, 'prd/nested/detail.txt'), '补充');
-    assert.match(await runFlowBuild('--prd prd', e), /共 2 个文件/);
+    let activated = 0;
+    const e = { ...commandEnv(p, engine), activateOrchestrator: () => { activated++; } };
+    mkdirSync(path.join(p.dir, 'docs/prototype/img'), { recursive: true });
+    writeFileSync(path.join(p.dir, 'docs/PRD.md'), '# 看板\n\n### 创建看板 REQ-001\n- AC1 Given 已登录 When 创建 Then 成功\n\n### 删除看板 REQ-002\n说明\n');
+    writeFileSync(path.join(p.dir, 'docs/prototype/boards.html'), '<title>看板</title>');
+    const image = Buffer.from([0, 255, 2, 3]);
+    writeFileSync(path.join(p.dir, 'docs/prototype/img/logo.png'), image);
+    const out = await runFlowBuild('"团队 看板"', e);
+    assert.match(out, /共 3 个文件/);
+    assert.match(out, /PRD 检查的提醒（不影响开始）：\n- REQ-002「删除看板」没有验收标准/);
+    assert.match(out, /从架构阶段（S0）开始/);
     const flow = p.store.readFlow(p.store.readState().active_flow!);
-    assert.equal(flow.stage, 'P0');
-    assert.equal(flow.stage_status, 'active');
-    assert.equal(p.git('show', `${flow.integration_branch}:docs/spec/inputs/prd/nested/detail.txt`), '补充');
-    assert.equal(p.git('ls-tree', '-r', '--name-only', flow.integration_branch, '--', 'docs/spec/inputs/prototype'), '');
-    await assert.rejects(runFlowBuild('--prd prd', e), /已有进行中的流程/);
+    assert.equal(flow.title, '团队 看板');
+    assert.deepEqual([flow.stages, flow.stage, flow.stage_status], [['S0'], 'S0', 'active']);
+    assert.equal(p.git('show', `${flow.integration_branch}:docs/PRD.md`), '# 看板\n\n### 创建看板 REQ-001\n- AC1 Given 已登录 When 创建 Then 成功\n\n### 删除看板 REQ-002\n说明');
+    assert.deepEqual(execFileSync('git', ['show', `${flow.integration_branch}:docs/prototype/img/logo.png`], { cwd: p.dir }), image);
+    assert.equal(p.git('ls-tree', '-r', '--name-only', 'main', '--', 'docs/PRD.md'), '', '主分支不动');
+    assert.equal(flow.intake?.files.length, 3);
+    assert.equal(activated, 1);
+    await assert.rejects(runFlowBuild('', e), /已有进行中的流程/);
     assert.equal(p.store.readState().active_flow, flow.id);
   } finally { p.cleanup(); }
 });

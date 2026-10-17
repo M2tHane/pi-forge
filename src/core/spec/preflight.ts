@@ -1,5 +1,6 @@
-// 前置条件检查：git、node、仓库、workflow.yaml、规则文件、角色模型；Pi 版本、插件与其背后的程序（dependencies.ts）。
-import { existsSync } from 'node:fs';
+// 前置条件检查：git、node、仓库、workflow.yaml、规则文件、角色模型；Pi 版本、插件与其背后的程序（dependencies.ts）；
+// /forge-build 开始前的输入检查（docs/PRD.md 与 docs/prototype/）。
+import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { loadConfig, type FlowConfig } from '../state/config.ts';
@@ -7,6 +8,7 @@ import { resolveRoleModel } from '../insight/role-settings.ts';
 import type { RoleSettingsFile } from '../state/schemas.ts';
 import { gitOk } from '../state/git.ts';
 import { checkDependencies, type DependencyDeps } from '../workspace/dependencies.ts';
+import { PRD_PATH, PROTOTYPE_DIR } from './prd.ts';
 
 export interface PreflightItem { level: 'ok' | 'warn' | 'error'; item: string; detail: string }
 
@@ -102,4 +104,20 @@ export function preflight(d: PreflightDeps): PreflightItem[] {
 export function formatPreflight(items: PreflightItem[]): string {
   const mark = { ok: '✓', warn: '!', error: '✗' } as const;
   return items.map((i) => `${mark[i.level]} ${i.item}：${i.detail}`).join('\n');
+}
+
+/** 开始流程前缺了什么：docs/PRD.md、docs/prototype/ 里至少一个 .html。都齐全时为空 */
+export function buildInputProblems(root: string): string[] {
+  const out: string[] = [];
+  const prd = path.join(root, PRD_PATH);
+  if (!existsSync(prd) || !lstatSync(prd).isFile()) out.push(`缺少 ${PRD_PATH}：先和 Claude 写好需求文档（需求标题带 REQ-001 编号，验收标准每条一行以 - AC1 开头，有一节"页面"表格）`);
+  const proto = path.join(root, PROTOTYPE_DIR);
+  const html = (dir: string): boolean => readdirSync(dir).some((n) => {
+    const abs = path.join(dir, n);
+    const st = lstatSync(abs);
+    return st.isDirectory() ? !n.startsWith('.') && html(abs) : st.isFile() && /\.html?$/i.test(n);
+  });
+  if (!existsSync(proto) || !lstatSync(proto).isDirectory()) out.push(`缺少 ${PROTOTYPE_DIR}/：把可点击的 HTML 原型（含 CSS 与图片）放进这个目录`);
+  else if (!html(proto)) out.push(`${PROTOTYPE_DIR}/ 里没有 .html 文件：原型要能在浏览器里打开`);
+  return out;
 }

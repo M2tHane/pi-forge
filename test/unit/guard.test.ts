@@ -115,12 +115,12 @@ test('stage-qa 在临时 worktree 里按隔离工作区约束：写不到主工�
   assert.ok(wt.startsWith(main));
 });
 
-test('architect（P1 的 doc task，writes 取 plan scope）：只能写规划产物，不能写实现代码或规格需求', () => {
+test('architect（P1 的 doc task，writes 取 plan scope）：只能写规划产物，不能写实现代码或需求', () => {
   const c = ctx('architect', { writes: config.scopeWrites()['plan']! });
-  for (const file of ['docs/contracts/openapi.yaml', 'docs/arch/overview.md', 'docs/plan/plan.yaml', 'commands.yaml', 'docs/spec/glossary.md', 'AGENTS.md']) {
+  for (const file of ['docs/contracts/openapi.yaml', 'docs/arch/overview.md', 'docs/plan/plan.yaml', 'commands.yaml', 'AGENTS.md']) {
     allowed(checkToolCall(call('write', { path: file, content: '' }), c));
   }
-  for (const file of ['src/server/a.ts', 'docs/spec/requirements.md', 'docs/review/x.md', 'docs/rules-draft/backend.md']) {
+  for (const file of ['src/server/a.ts', 'docs/PRD.md', 'docs/review/x.md', 'docs/rules-draft/backend.md']) {
     blocked(checkToolCall(call('write', { path: file, content: '' }), c), 'write_paths');
   }
   allowed(checkToolCall(call('read', { path: '.forge/state.json' }), c));

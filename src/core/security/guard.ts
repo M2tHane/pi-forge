@@ -31,7 +31,7 @@ export interface GuardContext {
   writes?: string[];
   /** S0 的 architect 写 rules/：task 的 writes 显式包含 rules/** 时，rules/** 不再算受保护路径（.forge、.git、workflow.yaml、.pi 不变） */
   rulesWritable?: true;
-  /** impl / fix：writes 只用于调度互斥与合并冲突归属，docs/spec/ 与受保护路径之外的文件都可以改（state/paths.ts 的 openWriteAllowed） */
+  /** impl / fix：writes 只用于调度互斥与合并冲突归属，PRD、原型与受保护路径之外的文件都可以改（state/paths.ts 的 openWriteAllowed） */
   openWrites?: boolean;
   /** 实现类任务（第五轮）：可以在契约文档（docs/contracts/）里追加（只能新增，提交时由程序检查），不受任务可写范围限制 */
   interfaceAdditions?: boolean;
@@ -296,7 +296,7 @@ class Evaluator {
         : '你是调度者，不能直接修改代码。任务由程序派发给对应 subagent，用 forge_wait 等待结果。';
     }
     if (this.isReadonlyRole) return `你是只读角色（${this.role.name}），不能修改任何文件；结论请写进 forge_note 并 forge_submit。`;
-    if (this.ctx.openWrites) return '实现与修复任务可以改工作区内任何文件，只有受保护路径（.forge/、.git/、workflow.yaml、rules/、.pi/）与规格（docs/spec/）不能改。确需改动时用 forge_block 说明原因。';
+    if (this.ctx.openWrites) return '实现与修复任务可以改工作区内任何文件，只有受保护路径（.forge/、.git/、workflow.yaml、rules/、.pi/）与用户的需求输入（docs/PRD.md、docs/prototype/）不能改。确需改动时用 forge_block 说明原因。';
     return `你是 ${this.role.name}，只能修改本任务 writes 内的文件；确需越界时调用 forge_block 说明原因，不要换一种方式再试。`;
   }
 

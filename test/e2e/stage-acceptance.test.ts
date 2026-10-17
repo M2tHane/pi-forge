@@ -8,14 +8,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { P0_SPEC } from '../helpers/spec.ts';
+import { PRD_FILES, PRD_MD_AC2 } from '../helpers/prd.ts';
 import { runFlowCommand } from '../../src/commands/forge.ts';
 import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
 import { drive, engineEnv, submitWork, writeFiles } from '../helpers/commands.ts';
 import { rejectStage } from '../../src/core/stage/stages.ts';
 
-const REQS = P0_SPEC.requirements.replace('- AC1：Given 已登录 When 创建看板 Then 返回看板编号', '- AC1：Given 已登录 When 创建看板 Then 返回看板编号\n- AC2：Given 名称为空 When 创建看板 Then 返回 400');
-const FILES = { ...Object.fromEntries(Object.entries({ ...P0_SPEC, requirements: REQS }).map(([k, v]) => [`docs/spec/${k}.md`, v])) };
+const FILES = { ...PRD_FILES, 'docs/PRD.md': PRD_MD_AC2 };
 // serve 把自己的工作目录写到测试指定的文件
 const OUT = mkdtempSync(path.join(tmpdir(), 'pi-forge-serve-'));
 const yamlWith = (qa: boolean) => (qa ? PROJECT_YAML.replace(/^  qa: false$/m, '  qa: true') : PROJECT_YAML)

@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { LineCounter, parseDocument, isNode } from 'yaml';
-import { PHASES, validate, type ThinkingLevel, type WorkflowFile } from './schemas.ts';
+import { validate, type ThinkingLevel, type WorkflowFile } from './schemas.ts';
 import { COMMANDS_FILE, commandsTextAt, commandsTextIn, parseProjectCommands, type ProjectCommands, type SharedEnvSetting } from './project-commands.ts';
 
 export const BUILTIN_READ_TOOLS = ['read', 'grep', 'find', 'ls'] as const;
@@ -10,7 +10,7 @@ export const BUILTIN_WRITE_TOOLS = ['write', 'edit'] as const;
 export const FLOW_TOOLS = [
   'forge_status', 'forge_wait', 'forge_claim', 'forge_note', 'forge_submit',
   'forge_block', 'forge_learn', 'notes', 'history', 'forge_sync',
-  'forge_read', 'forge_spec', 'forge_change', 'forge_change_request',
+  'forge_read', 'forge_change', 'forge_change_request',
   'forge_resolve_timeout', 'forge_decide',
   'forge_service', 'forge_propose_plan', 'forge_review_report', 'forge_review_confirm',
   'forge_qa_report', 'forge_qa_confirm',
@@ -30,11 +30,11 @@ const ROLE_EXCLUSIVE: Record<string, readonly string[]> = {
   forge_service: ['worker', 'architect', 'stage-qa'], forge_propose_plan: ['architect'],
   forge_review_report: ['reviewer'], forge_review_confirm: ['reviewer'],
   forge_qa_report: ['stage-qa'], forge_qa_confirm: ['stage-qa'],
-  forge_read: ['orchestrator'], forge_spec: ['orchestrator'], forge_change: ['orchestrator'],
+  forge_read: ['orchestrator'], forge_change: ['orchestrator'],
   forge_resolve_timeout: ['orchestrator'], forge_decide: ['orchestrator'],
 };
 /** orchestrator 严格使用这份白名单 */
-const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_spec', 'forge_change', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_decide', ...MEMORY_TOOLS]);
+const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_change', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_decide', ...MEMORY_TOOLS]);
 const WEB_GROUP = 'web';
 
 export type ToolKind = 'read' | 'write' | 'bash' | 'flow' | 'web' | 'ext-read' | 'other';
@@ -163,9 +163,9 @@ export function parseConfig(source: string): FlowConfig {
       const holder = parent ? o[parent] : (o as Record<string, unknown>);
       if (holder && typeof holder === 'object' && key in holder) { delete (holder as Record<string, unknown>)[key]; removedWarnings.push(`${parent ? `${parent}.` : ''}${key} 已不再支持，已忽略`); }
     };
-    dropKey(null, 'acctest_workspace'); dropKey('modes', 'feature'); dropKey('limits', 'lean_below_loc'); dropKey('testing', 'max_disputes'); dropKey('implementation_gate', 'test_author'); dropKey('review', 'per_task'); dropKey('review', 'skip_sizes');
+    dropKey(null, 'acctest_workspace'); dropKey(null, 'modes'); dropKey('limits', 'lean_below_loc'); dropKey('testing', 'max_disputes'); dropKey('implementation_gate', 'test_author'); dropKey('review', 'per_task'); dropKey('review', 'skip_sizes');
     // 已删除的工具名：旧 workflow.yaml 里还列着时去掉并告警，不让整个配置失效
-    const REMOVED_TOOLS = new Set(['forge_request_scope', 'forge_resolve_scope', 'forge_spec_amend', 'forge_dispute']);
+    const REMOVED_TOOLS = new Set(['forge_request_scope', 'forge_resolve_scope', 'forge_spec_amend', 'forge_dispute', 'forge_spec']);
     const roles = o['roles'];
     if (roles && typeof roles === 'object') {
       for (const [name, def] of Object.entries(roles as Record<string, { tools?: unknown }>)) {
@@ -195,25 +195,6 @@ export function parseConfig(source: string): FlowConfig {
 
   for (const [tier, model] of Object.entries(wf.models)) {
     if (/^<.*>$/.test(model.trim())) warnings.push(`${at(['models', tier])}: 未填写具体模型（当前为占位符 ${model}）`);
-  }
-
-  // 闸门命令
-  for (const mode of ['build'] as const) {
-    const stages = wf.modes[mode]?.stages ?? [];
-    if (wf.modes[mode] && (stages.length !== 2 || stages[0]?.id !== 'P0' || stages[1]?.id !== 'P1')) {
-      errors.push(`${at(['modes', mode, 'stages'])}: ${mode} 只能按顺序配置 P0、P1；S 阶段由计划生成，使用 implementation_gate`);
-    }
-    const seen = new Set<string>();
-    let lastPhase = -1;
-    stages.forEach((s, i) => {
-      if (s.phase) {
-        const idx = PHASES.indexOf(s.phase);
-        if (idx < lastPhase) errors.push(`${at(['modes', mode, 'stages', i, 'phase'])}: phase ${s.phase} 不能排在 ${PHASES[lastPhase]} 之后（高层阶段只能按 ${PHASES.join(' → ')} 前进）`);
-        lastPhase = Math.max(lastPhase, idx);
-      }
-      if (seen.has(s.id)) errors.push(`${at(['modes', mode, 'stages', i, 'id'])}: 阶段 id ${s.id} 重复`);
-      seen.add(s.id);
-    });
   }
 
   // 工具分类

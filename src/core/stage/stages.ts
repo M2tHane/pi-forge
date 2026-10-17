@@ -1,4 +1,4 @@
-// 流程与阶段控制；P0/P1 的产物与计划在 M2/M3 接入。
+// 流程与阶段控制：build 流程从架构阶段 S0 开始，批准 S0 后按计划追加批次阶段 S1…Sn。
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowFile } from '../state/schemas.ts';
@@ -11,13 +11,10 @@ import { deliveryReport } from './signoff.ts';
 export interface StageDeps { root: string; store: StateStore; config: FlowConfig }
 
 export async function startFlow(d: StageDeps, description: string): Promise<FlowFile> {
-  const mode = 'build';
-  const def = d.config.raw.modes.build;
-  if (!def) throw new Error('workflow.yaml 没有定义 modes.build');
   const main = d.config.raw.main_branch;
   if (!gitOk(d.root, ['show-ref', '--verify', '--quiet', `refs/heads/${main}`])) throw new Error(`主分支 ${main} 不存在，请检查 workflow.yaml 的 main_branch`);
   const base = git(d.root, ['rev-parse', main]).trim();
-  const flow = await d.store.createFlow({ mode, title: description, stages: def.stages.map((s) => s.id), base_sha: base, actor: 'human' });
+  const flow = await d.store.createFlow({ mode: 'build', title: description, stages: ['S0'], base_sha: base, actor: 'human' });
   ensureIntegrationBranch(d.root, flow.integration_branch, base);
   return flow;
 }

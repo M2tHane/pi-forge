@@ -77,7 +77,7 @@ test('检查点：包含未跟踪的新文件、不动索引；内容没变不�
 test('通知：新出现的事项与完成的流程各运行一次命令，事件 JSON 从标准输入传入', async () => {
   const r = tmpRepo();
   try {
-    const prev = { phases: { 'B-001': 'implementation' as const }, actions: { 'B-001:blocked:T-001:3': '旧事项' }, attempts: {} };
+    const prev = { phases: { 'B-001': 'dev' as const }, actions: { 'B-001:blocked:T-001:3': '旧事项' }, attempts: {} };
     const next = { phases: { 'B-001': 'done' as const }, actions: { 'B-001:blocked:T-001:3': '旧事项', 'B-001:stuck:T-002@1': '流程卡住' }, attempts: {} };
     const events = notifyEvents(prev, next);
     assert.deepEqual(events.map((e) => [e.type, e.flow, e.text]), [['action', 'B-001', '流程卡住'], ['done', 'B-001', 'B-001 已完成']]);

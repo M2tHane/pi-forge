@@ -24,10 +24,10 @@ const writes = ['src/server/cards/**', 'tests/acceptance/T-007/**'];
 const ctx = (over: Partial<GuardContext> = {}): GuardContext => ({ config, role: 'worker', cwd: wt, workspaceRoot: wt, mainRoot: main, writes, openWrites: true, ...over });
 const write = (p: string, c: GuardContext) => checkToolCall({ toolName: 'write', input: { path: p, content: 'x' } }, c);
 
-test('openWriteAllowed：除 docs/spec/ 外都可以改，包括任何 task 的验收测试、单元测试、package.json、契约', () => {
+test('openWriteAllowed：除 PRD 与原型外都可以改，包括任何 task 的验收测试、单元测试、package.json、契约', () => {
   for (const f of ['src/server/index.js', 'src/web/app.js', 'package.json', 'docs/contracts/paths/cards.yaml', 'tests/acceptance/T-007/a.test.js',
     'tests/acceptance/T-004/a.test.js', 'tests/acceptance/suite/x.test.js', 'tests/unit/a.test.js', 'src/a.test.js']) assert.ok(openWriteAllowed(f), f);
-  for (const f of ['docs/spec/requirements.md', 'docs/spec/inputs/a.md']) assert.equal(openWriteAllowed(f), false, f);
+  for (const f of ['docs/PRD.md', 'docs/prototype/a.html', 'docs/prototype/img/b.png']) assert.equal(openWriteAllowed(f), false, f);
 });
 
 test('opensWrites：只有 impl 与 fix', () => {
@@ -35,11 +35,11 @@ test('opensWrites：只有 impl 与 fix', () => {
   for (const kind of ['merge-fix', 'acctest', 'doc', 'review']) assert.equal(opensWrites({ kind }), false, kind);
 });
 
-test('guard：openWrites 时可以写、删除 writes 外的源码、单元测试、别的 task 的验收测试；规格、受保护路径仍阻断', () => {
+test('guard：openWrites 时可以写、删除 writes 外的源码、单元测试、别的 task 的验收测试；PRD、受保护路径仍阻断', () => {
   assert.ok(write('src/server/index.js', ctx()).allow);
   assert.ok(checkToolCall({ toolName: 'bash', input: { command: 'rm src/server/index.js' } }, ctx()).allow);
   for (const p of ['tests/unit/cards.test.js', 'tests/acceptance/T-004/a.test.js', 'package.json']) assert.ok(write(p, ctx()).allow, p);
-  const spec = write('docs/spec/requirements.md', ctx());
+  const spec = write('docs/PRD.md', ctx());
   assert.equal(spec.allow, false);
   if (!spec.allow) assert.match(spec.reason, /不能改/);
   for (const p of ['workflow.yaml', 'rules/global.md', '.forge/state.json', '.pi/x']) assert.equal(write(p, ctx()).allow, false, p);

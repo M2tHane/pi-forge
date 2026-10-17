@@ -3,10 +3,10 @@
   → /forge budget tokens|cost|minutes <数值>
 
 B-001「演示」（新项目）
-规格 ✓ → 契约与计划 ✓ → [实施] → 交付
-实施阶段：S0 骨架 ✓ → [S1] → S2
+架构 ✓ → [开发] → 交付
+开发阶段：S0 架构 ✓ → [S1] → S2
 当前阶段 S1：可以创建并查看看板（进行中）
-进度：S1 1 / 2 个任务完成（全部实施阶段 1 / 2）
+进度：S1 1 / 2 个任务完成（全部批次 1 / 2）
 正在进行：无
 
 （完整任务表与最近事件：/forge-status --detail；成本：/forge-status --cost；度量：/forge-status --metrics）

@@ -10,10 +10,9 @@ import { commitFilesToBranch } from '../spec/intake.ts';
 import { headSha } from '../workspace/worktree.ts';
 import { acceptanceAudit, reviewTestPlan } from './review-tests.ts';
 import { matchesAny, writesOwnAcceptance } from '../state/paths.ts';
-import { readSpec } from '../spec/spec-flow.ts';
-import { acTexts, effectiveSpec } from '../spec/spec.ts';
+import { acTexts, readPrd } from '../spec/prd.ts';
 import {
-  CONTRACT_SNIPPET_MAX, GLOSSARY_MAX, buildReviewBrief, contractFilesFor, fitSnippets, mustHandoff, mustOf, nextReviewId, reviewMode, reviewPolicy,
+  CONTRACT_SNIPPET_MAX, buildReviewBrief, contractFilesFor, fitSnippets, mustHandoff, mustOf, nextReviewId, reviewMode, reviewPolicy,
   reviewRoundOf, reviewTasksOf, stripAcceptanceDiff, suggestionLine, truncateDiff,
   type ConfirmItem, type ReviewBriefInput, type ReviewMode,
 } from './review.ts';
@@ -92,21 +91,16 @@ export async function createReviewTask(root: string, store: StateStore, config: 
   const diff = truncateDiff(ownTests ? raw : stripAcceptanceDiff(raw));
 
   let acText: Record<string, string> = {};
-  let glossary = '';
   let contracts: ReturnType<typeof fitSnippets> = { shown: [], omitted: [] };
   if (!confirm) {
-    try {
-      const spec = readSpec(root, store.readFlow(flowId).integration_branch);
-      acText = acTexts(effectiveSpec(spec.files), orig.ac ?? []);
-      glossary = spec.files.glossary.slice(0, GLOSSARY_MAX);
-    } catch { /* 规格读不到时只给 AC 编号 */ }
+    acText = acTexts(readPrd(root, `refs/heads/${store.readFlow(flowId).integration_branch}`), orig.ac ?? []);
     const all = git(wt, ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'docs/contracts']).split('\n').filter(Boolean);
     const touched = git(wt, ['diff', '--name-only', orig.base_sha, head, '--', 'docs/contracts']).split('\n').filter(Boolean);
     contracts = fitSnippets(contractFilesFor(orig.module, all, touched).map((p) => ({ path: p, content: showAt(wt, p) })).filter((f) => f.content), CONTRACT_SNIPPET_MAX);
   }
   const cross = confirm ? {} : crossTaskInputs(tasks, orig, names(orig.base_sha));
   const brief = buildReviewBrief({
-    taskId: orig.id, title: orig.title, reviewId: id, acIds: orig.ac ?? [], acTexts: acText, contracts, glossary, deviations: orig.deviations ?? [],
+    taskId: orig.id, title: orig.title, reviewId: id, acIds: orig.ac ?? [], acTexts: acText, contracts, deviations: orig.deviations ?? [],
     range: { from, to: head }, diff, priorMust,
     tests: reviewTestPlan(config, orig, store.readFlow(flowId).integration_branch),
     ...(ownTests ? { acceptance: acceptanceAudit(orig) ?? undefined, withAcceptance: true } : {}),

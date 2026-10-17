@@ -2,29 +2,27 @@
 import type { FlowConfig } from '../state/config.ts';
 import type { StateStore } from '../state/state-store.ts';
 import type { FlowEvent, FlowFile, TaskFile } from '../state/schemas.ts';
-const DESIGN_STAGES = new Set(['P0', 'P1']);
+const DESIGN_STAGES = new Set(['P1']);
 
 export const DEFAULT_STALL_MINUTES = 20;
 
-/** 不计入流程墙钟的时段：等用户审批，以及需求阶段（和用户讨论、接收检查） */
-const userTime = (stage: string, status: string) => ['awaiting_human', 'needs_human'].includes(status) || stage === 'P0';
+/** 不计入流程墙钟的时段：等用户审批或处理 */
+const userTime = (status: string) => ['awaiting_human', 'needs_human'].includes(status);
 
 /** 流程已用的分钟数：从创建起，按阶段事件排除等用户的时段 */
 export function activeMinutes(flow: FlowFile, events: readonly FlowEvent[], now: Date): number {
-  let stage = flow.stages[0]!;
   let status = 'active';
   let since = Date.parse(flow.created_at);
   let ms = 0;
   for (const e of events) {
     if (e.flow !== flow.id || e.data?.['entity'] !== 'stage' || !e.to) continue;
     const at = Date.parse(e.ts);
-    if (!userTime(stage, status)) ms += Math.max(0, at - since);
+    if (!userTime(status)) ms += Math.max(0, at - since);
     since = at;
     // 阶段内状态转移带 data.stage；进入下一阶段的事件 to 是新阶段名
-    if (typeof e.data['stage'] === 'string') status = e.to;
-    else { stage = e.to; status = 'active'; }
+    status = typeof e.data['stage'] === 'string' ? e.to : 'active';
   }
-  if (!userTime(stage, status)) ms += Math.max(0, now.getTime() - since);
+  if (!userTime(status)) ms += Math.max(0, now.getTime() - since);
   return ms / 60_000;
 }
 

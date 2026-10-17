@@ -1,7 +1,5 @@
 // orchestrator 的工具：forge_status、forge_wait、超时复核与范围申请处理；派发由程序执行。
-import { submitSpec } from '../core/spec/spec-flow.ts';
 import { P1_STAGE, planApprovalSummary, planStatus } from '../core/plan/plan-flow.ts';
-import { runStageGate } from '../core/stage/gates.ts';
 import { activePauses, describePause } from '../core/engine/model-pause.ts';
 import { Type, type Static } from 'typebox';
 import type { StateStore } from '../core/state/state-store.ts';
@@ -16,30 +14,12 @@ import { fixHelpHint, fixStatusLine, readFixLog } from '../modes/fix.ts';
 import { ChangeStartError, startChange } from '../modes/change.ts';
 import type { ChangePlanInput } from '../core/plan/change-plan.ts';
 import { isFinished } from '../core/state/state-store.ts';
-import { ChangeError, changeStatus, requestChange, specStatus } from '../core/plan/change-flow.ts';
+import { ChangeError, approvalTargets, changeStatus, requestChange } from '../core/plan/change-flow.ts';
 import { ChangeRequestParams } from './subagent-tools.ts';
 import { DECISION_GUIDE, DecisionError, decide, decisionsText, pendingDecisions } from '../core/engine/decisions.ts';
 import { ChangeError as ApproveError } from '../core/plan/change-flow.ts';
 import { StateError } from '../core/state/state-store.ts';
 import { postMergeStatus } from '../core/engine/post-merge-test.ts';
-
-export const SpecParams = Type.Object({
-  requirements: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
-  screens: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
-  permissions: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
-  glossary: Type.Optional(Type.String({ minLength: 1, maxLength: 120000 })),
-}, { additionalProperties: false });
-export async function flowSpec(root: string, store: StateStore, config: FlowConfig, p: Static<typeof SpecParams>): Promise<ToolResult> {
-  const id = activeFlowId(store);
-  const given = Object.fromEntries(Object.entries(p).filter(([, v]) => v)) as Partial<Record<'requirements' | 'screens' | 'permissions' | 'glossary', string>>;
-  if (!Object.keys(given).length) throw new FlowToolError('至少提交一份规格；第一次提交要给出 requirements、permissions、glossary（screens 没有界面的项目可以不交）。');
-  const r = await submitSpec(root, store, id, given);
-  if (r.missing.length) return { text: `已保存 ${Object.keys(given).join('、')}，还差 ${r.missing.join('、')}：再调用 forge_spec 交剩下的（可以一份一份交），交齐后程序检查并提交。`, details: { missing: r.missing } };
-  const reused = r.reused.length ? `（${r.reused.join('、')} 沿用上一次提交）` : '';
-  if (!r.ok) throw new FlowToolError(`spec-lint 未通过，未写入集成分支${reused}：\n${r.lint.errors.map((e) => `- ${e.message}`).join('\n')}\n只需重交要改的那几份，没交的沿用这次提交的内容。`);
-  const gate = await runStageGate(root, store, config, id);
-  return { text: gate.passed ? `规格已提交${reused}，spec-lint 通过，等待用户 /forge-approve stage:P0 或 /forge-reject stage:P0 "<意见>"。${r.lint.warnings.length ? `\n警告：\n${r.lint.warnings.map((i) => i.message).join('\n')}` : ''}` : `集成分支上的 spec-lint 未通过，已回到规格讨论，请修正后用 forge_spec 重交要改的那几份：\n${gate.reasons.join('\n')}`, details: { sha: r.sha, lint: r.lint, gate } };
-}
 
 export const ChangeParams = Type.Object({
   title: Type.String({ minLength: 1, maxLength: 120, description: '一句话写明这次要加什么' }),
@@ -155,8 +135,7 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
     `任务 ${tasks.length} 个：${TASK_STATUSES.filter((s) => count(s)).map((s) => `${s} ${count(s)}`).join('，') || '无'}`,
   ];
   if (isLightFlow(flow)) lines.push(fixStatusLine(flow, tasks));
-  const spec = specStatus(store, flowId);
-  if (spec) lines.push(spec);
+  for (const a of approvalTargets(store, flowId)) lines.push(`等待批准：${a.object}`);
   const plan = planStatus(store, flowId);
   if (plan) lines.push(plan);
   if (flow.stage === P1_STAGE && flow.stage_status === 'awaiting_human') lines.push(planApprovalSummary(store, flowId));

@@ -56,7 +56,7 @@ export function flowClaim(ctx: ToolContext): ToolResult {
     `状态：${t.status}　工作目录：${t.worktree ?? '（无）'}　基线：${t.base_sha ?? '（无）'}`,
     `验收标准：\n${(t.ac ?? []).map((a) => `- ${a}`).join('\n') || '（无）'}`,
     opensWrites(t)
-      ? `计划的改动范围（用于调度与合并冲突归属；工作区内任何文件都可以改，只有受保护路径与 docs/spec/ 除外）：\n${t.writes.map((a) => `- ${a}`).join('\n')}`
+      ? `计划的改动范围（用于调度与合并冲突归属；工作区内任何文件都可以改，只有受保护路径与 docs/PRD.md、docs/prototype/ 除外）：\n${t.writes.map((a) => `- ${a}`).join('\n')}`
       : `可写范围：\n${(t.conflict_files ?? t.writes).map((a) => `- ${a}`).join('\n')}`,
     `verify 命令：\n${cmds.map((a) => `- ${a}`).join('\n') || '（无）'}`,
     ...(t.last_failure ? [`上次未通过的原因：\n${t.last_failure}`] : []),
@@ -76,7 +76,7 @@ export async function flowSubmit(ctx: ToolContext, p: Static<typeof SubmitParams
   const t = checkRun(ctx);
   if (t.status !== 'in_progress') throw new FlowToolError(`任务当前是 ${t.status}，不能提交。`);
   if (!t.worktree || !t.base_sha) throw new FlowToolError('任务没有 worktree 或 base_sha，无法提交，请调用 forge_block 报告。');
-  // impl / fix 可以在任何位置新建文件，只清理落在不能改的位置（docs/spec/）的未跟踪文件
+  // impl / fix 可以在任何位置新建文件，只清理落在不能改的位置（PRD 与原型）的未跟踪文件
   const stray = opensWrites(t)
     ? cleanStrayUntracked(t.worktree, (f) => openWriteAllowed(f))
     : cleanStrayUntracked(t.worktree, t.conflict_files ?? [...t.writes, ...(t.shared ?? []), ...(canAppendInterfaces(t) ? ['docs/contracts/**'] : [])]);

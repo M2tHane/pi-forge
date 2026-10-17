@@ -1,0 +1,10 @@
+需要你处理：
+- 流程停滞：29 分钟没有进展
+  → /forge-status --detail；/forge-resume
+
+B-001「演示」（新项目）
+[架构] → 开发 → 交付
+架构阶段：architect 定技术栈、骨架、契约与计划
+正在进行：无
+
+（完整任务表与最近事件：/forge-status --detail；成本：/forge-status --cost；度量：/forge-status --metrics）

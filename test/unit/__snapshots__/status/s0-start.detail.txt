@@ -1,0 +1,19 @@
+需要你处理：
+- 流程停滞：29 分钟没有进展
+  → /forge-status --detail；/forge-resume
+
+B-001「演示」（新项目）
+[架构] → 开发 → 交付
+架构阶段：architect 定技术栈、骨架、契约与计划
+正在进行：无
+
+## B-001「演示」内部状态
+- 模式 build；阶段序列 S0
+- 当前阶段 S0：active；集成分支 flow/B-001/integration
+- 已批准的闸门：无
+
+### 任务表（0 个）
+（还没有任务）
+
+### 最近事件
+#2 <时间> transition none→active

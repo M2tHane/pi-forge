@@ -22,9 +22,15 @@ export function skeleton(packageRoot: string, projectName: string): Map<string, 
   files.set('AGENTS.md', t('templates/AGENTS.md'));
   // 通用规则；项目专属规则 rules/project.md 由规划阶段的主 agent 起草、用户批准时写入
   for (const f of readdirSync(path.join(packageRoot, 'rules')).filter((x) => x.endsWith('.md')).sort()) files.set(`rules/${f}`, t(`rules/${f}`));
-  for (const dir of ['docs/spec', 'docs/contracts/paths', 'docs/contracts/components', 'docs/contracts/errors', 'docs/arch', 'docs/plan', 'tests/acceptance']) files.set(`${dir}/.gitkeep`, '');
+  // 需求文档模板与原型目录说明：用户在流程外照着写好，/forge-build 才开始
+  files.set('docs/PRD.md', t('templates/PRD.md'));
+  files.set('docs/prototype/README.md', t('templates/prototype/README.md'));
+  for (const dir of ['docs/contracts/paths', 'docs/contracts/components', 'docs/contracts/errors', 'docs/arch', 'docs/plan', 'tests/acceptance']) files.set(`${dir}/.gitkeep`, '');
   return files;
 }
+
+/** 用户自己改写的文件：和模板不同是正常的，不报告 */
+const USER_OWNED = new Set(['workflow.yaml', 'docs/PRD.md', 'docs/prototype/README.md']);
 
 export async function initProject(root: string, packageRoot: string, deps?: { piVersion: string; packageRoots: string[] }): Promise<InitReport> {
   if (!gitOk(root, ['rev-parse', '--git-dir'])) throw new Error(`${root} 不是 git 仓库，请先执行 git init`);
@@ -38,7 +44,7 @@ export async function initProject(root: string, packageRoot: string, deps?: { pi
     const abs = path.join(root, rel);
     if (existsSync(abs)) {
       existing.push(rel);
-      if (rel !== 'workflow.yaml' && readFileSync(abs, 'utf8') !== content) differs.push(rel);
+      if (!USER_OWNED.has(rel) && readFileSync(abs, 'utf8') !== content) differs.push(rel);
       continue;
     }
     mkdirSync(path.dirname(abs), { recursive: true });

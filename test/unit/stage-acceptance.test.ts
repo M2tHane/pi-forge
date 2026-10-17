@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { P0_SPEC } from '../helpers/spec.ts';
+import { PRD_FILES } from '../helpers/prd.ts';
 import { commitToBranch } from '../helpers/engine.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
 import { afterChecks, gatePassedHead, sameWork, stageStep, stageWorkSettled } from '../../src/core/stage/stage-acceptance.ts';
@@ -14,7 +14,7 @@ import { QA_INPUT, QA_REPORT } from '../../src/core/stage/stage-qa.ts';
 import { evidenceRel } from '../../src/core/state/state-store.ts';
 import { mkdirSync } from 'node:fs';
 
-const FILES = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));
+const FILES = PRD_FILES;
 
 function force(p: Project, id: string, patch: Record<string, unknown>) {
   const f = path.join(p.dir, '.forge', taskRel(p.flowId, id));

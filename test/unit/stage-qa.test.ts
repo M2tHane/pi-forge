@@ -8,8 +8,8 @@ import { makeEngine, commitToBranch, type RoleScript } from '../helpers/engine.t
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { tmpRepo } from '../helpers/repo.ts';
 import { mkTask } from '../helpers/tasks.ts';
-import { P0_SPEC } from '../helpers/spec.ts';
-import { effectiveSpec } from '../../src/core/spec/spec.ts';
+import { PRD_FILES, PRD_MD } from '../helpers/prd.ts';
+import { parsePrd } from '../../src/core/spec/prd.ts';
 import { SUGGESTIONS_PATH, readReviewEvidence } from '../../src/core/stage/review-flow.ts';
 import {
   QA_CONFIRM, QA_INPUT, QA_REPORT, buildQaBrief, createQaTask, exitReqsOf, nextQaId, qaRoundOf, qaRounds, qaTasksOf, resolveQa,
@@ -20,7 +20,7 @@ import { worktreesRoot } from '../../src/core/workspace/worktree.ts';
 import { evidenceRel, taskRel } from '../../src/core/state/state-store.ts';
 
 const YAML = PROJECT_YAML.replace('acceptance: "true"', 'acceptance: "true"\n  serve:     "true"');
-const FILES = Object.fromEntries(Object.entries(P0_SPEC).map(([k, v]) => [`docs/spec/${k}.md`, v]));
+const FILES = PRD_FILES;
 const must1 = { level: 'must' as const, basis: 'ac:REQ-001.AC1', files: ['src/server/t-001/a.ts'], location: 'a', problem: '没有返回看板编号', expected: '返回编号' };
 const namingSug = { level: 'suggest' as const, basis: '我觉得不好', files: ['src/server/t-001/a.ts'], location: '', problem: '命名', expected: '改名' };
 const sug = { level: 'suggest' as const, basis: '过长函数', file: 'src/server/t-001/a.ts', location: 'a', problem: '函数过长', expected: '拆分' };
@@ -65,10 +65,9 @@ test('isStageLevelTask：只有 qa；逐任务审查不是', () => {
 });
 
 test('exitReqsOf 与 buildQaBrief：第一轮给目标、AC 原文、矩阵、统计、服务；确认轮只给 must 清单', () => {
-  const spec = effectiveSpec({ requirements: P0_SPEC.requirements, screens: P0_SPEC.screens, permissions: P0_SPEC.permissions, glossary: P0_SPEC.glossary });
-  const exit = exitReqsOf(spec, ['REQ-001', 'REQ-404']);
+  const exit = exitReqsOf(parsePrd(PRD_MD), ['REQ-001', 'REQ-404']);
   assert.equal(exit[0]!.acs[0]!.id, 'REQ-001.AC1');
-  assert.deepEqual(exit[1], { req: 'REQ-404', title: '（规格里找不到）', acs: [] });
+  assert.deepEqual(exit[1], { req: 'REQ-404', title: '（PRD 里找不到）', acs: [] });
   const base = { stage: 'S1', goal: '可以创建看板', qaId: 'S1.qa', round: 1, exit, matrix: '| REQ-001.AC1 | a.test.ts |', range: { from: 'a'.repeat(40), to: 'b'.repeat(40) }, stat: ' a.ts | 1 +', serves: ['serve'], priorMust: [] };
   const first = buildQaBrief(base);
   assert.match(first, /可以创建看板/);

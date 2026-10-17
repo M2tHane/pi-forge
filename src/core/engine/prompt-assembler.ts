@@ -140,10 +140,10 @@ export function interfaceSections(task: TaskFile, all: readonly TaskFile[]): str
 
 export interface AssembledPrompt { system: string; user: string }
 
-/** 「通用约定」一节：字段规则按 spec-from-prd 不写成 AC，worker 与 reviewer 又不读规格，只能由程序带进任务说明 */
+/** PRD 的「通用约定」一节：字段规则不写成 AC，由程序带进任务说明 */
 function conventionsPart(text: string): string {
-  const body = text.length > CONVENTIONS_MAX ? `${text.slice(0, CONVENTIONS_MAX)}\n…（已截断，完整内容见 docs/spec/requirements.md）` : text;
-  return `## 规格的通用约定（docs/spec/requirements.md 原文）\n所有接口与字段都要遵守的规则：字段长度、字符、大小写、默认值、PATCH 只改给出的字段、错误格式等。它们不写成 AC，实现、测试与审查都按这里核对；不符合是 must，出处写 \`spec:requirements.md#通用约定\`。\n\n${body}`;
+  const body = text.length > CONVENTIONS_MAX ? `${text.slice(0, CONVENTIONS_MAX)}\n…（已截断，完整内容见 docs/PRD.md）` : text;
+  return `## PRD 的通用约定（docs/PRD.md 原文）\n所有接口与字段都要遵守的规则：字段长度、字符、大小写、默认值、PATCH 只改给出的字段、错误格式等。它们不写成 AC，实现、测试与审查都按这里核对；不符合是 must，出处写 \`ac:PRD#通用约定\`。\n\n${body}`;
 }
 
 const list = (xs: readonly string[], empty = '（无）') => (xs.length ? xs.map((x) => `- ${x}`).join('\n') : empty);

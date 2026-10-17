@@ -1,6 +1,5 @@
 // 阶段闸门（gate）：all_tasks_done、S1/F1 必须有任务提案、在集成分支 HEAD 上执行 auto 命令并保存 evidence。
 // 通过后：需要人工 → awaiting_human；否则 → done。最后一个阶段一律需要人工（之后合入主分支）。
-import { specGateLint } from '../spec/spec-flow.ts';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FlowConfig } from '../state/config.ts';
@@ -26,11 +25,10 @@ import { stageCoverage, writeCoverageReport, type CoverageResult } from '../acce
 /** failed：失败的闸门命令与输出；引擎据此生成有限轮次的修复任务。 */
 export interface GateOutcome { stage: string; passed: boolean; needsHuman: boolean; reasons: string[]; failed?: { command: string; output: string } }
 
+/** 阶段门禁：各阶段共用 implementation_gate，auto 里 commands 没定义的命令跳过 */
 export function stageDef(config: FlowConfig, stage: string) {
-  const def = config.raw.modes.build?.stages.find((s) => s.id === stage);
-  if (def) return def;
   const gate = config.raw.implementation_gate;
-  return { id: stage, phase: 'implementation' as const, gate: {
+  return { id: stage, gate: {
     auto: (gate?.auto ?? []).filter((name) => !!config.commands[name]?.trim()),
     human: gate?.human ?? true,
   } };
@@ -40,15 +38,6 @@ export async function runStageGate(root: string, store: StateStore, config: Flow
   const flow = store.readFlow(flowId);
   if (flow.stage_status !== 'awaiting_gate') throw new Error(`阶段 ${flow.stage} 不在 awaiting_gate 状态`);
   if (isLightFlow(flow)) throw new Error('修复与小改动流程不使用阶段闸门');
-  if (flow.stage === 'P0') {
-    const lint = specGateLint(root, flow);
-    const reasons = lint.errors.map((i) => i.message);
-    const passed = reasons.length === 0;
-    await store.transitionStage(flowId, { to: passed ? 'awaiting_human' : 'active', trigger: passed ? 'gate_passed' : 'gate_failed', actor: 'gate', needs_human: true,
-      ...(reasons.length ? { reason: reasons.join('\n') } : {}),
-      spec: { ...flow.spec, submitted: passed, errors: reasons, warnings: lint.warnings.map((i) => i.message) } });
-    return { stage: 'P0', passed, needsHuman: true, reasons };
-  }
   if (flow.stage === P1_STAGE) {
     const reasons = p1GateProblems(root, store, config, flowId);
     const passed = reasons.length === 0;

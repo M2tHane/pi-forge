@@ -1,9 +1,14 @@
 // 小改动（change）模式的迷你计划校验（纯函数，不读写文件）：1 到 N 个 impl task，直接进 worker → reviewer → 合并流水线，不走 P0/P1。
-// 复用 plan.ts 的 writes 禁区判断与 dag.ts 的环检测。
+// 复用 dag.ts 的环检测。
 import type { TaskInput } from '../state/state-store.ts';
 import { findCycle } from '../state/dag.ts';
-import { ownAcceptanceGlob } from '../state/paths.ts';
-import { forbiddenWriteOf } from './plan.ts';
+import { globsOverlap, ownAcceptanceGlob } from '../state/paths.ts';
+
+/** 迷你计划的 writes 不能覆盖这些路径：验收测试目录由程序派生，PRD、原型、契约与规则不能由 task 直接改写 */
+export const FORBIDDEN_WRITES = ['tests/acceptance/**', 'docs/PRD.md', 'docs/prototype/**', 'docs/contracts/**', '.forge/**', '.git/**', 'workflow.yaml', 'rules/**', '.pi/**'] as const;
+
+/** writes 与 FORBIDDEN_WRITES 重叠时返回重叠的那一项；没有则 undefined */
+export const forbiddenWriteOf = (w: string): string | undefined => FORBIDDEN_WRITES.find((f) => globsOverlap(w, f));
 
 export const CHANGE_STAGE = 'X1';
 

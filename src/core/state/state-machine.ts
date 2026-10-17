@@ -9,7 +9,8 @@ export type Trigger =
   | 'review_changes' | 'review_pass' | 'review_exhausted'
   | 'merge_start' | 'merge_done' | 'merge_verify_fail' | 'merge_conflict' | 'merge_blocked' | 'merge_requeue'
   | 'accept' | 'block' | 'unblock' | 'lease_expired'
-  | 'run_failed' | 'run_interrupted' | 'run_paused' | 'run_timeout' | 'report' | 'cancel' | 'hand_to_user';
+  | 'run_failed' | 'run_interrupted' | 'run_paused' | 'run_timeout' | 'report' | 'cancel' | 'hand_to_user'
+  | 'ask' | 'answered';
 
 export const MAX_INTERRUPTIONS = 5;
 /** 同一个任务主会话最多决定几次（放行、重试、取消）；之后再阻塞直接交给用户，避免主会话与子进程来回打转 */
@@ -71,10 +72,10 @@ interface Rule {
   failure?: boolean;
   counter?: 'review_rounds' | 'merge_failures';
 }
-/** 辅助池（review、qa）的任务种类；并发上限用 limits.max_parallel_aux，与实施池分开计数 */
-export const isAuxKind = (kind: string): boolean => kind === 'review' || kind === 'qa';
+/** 辅助池（review、qa、架构师咨询）的任务种类；并发上限用 limits.max_parallel_aux，与实施池分开计数（咨询另由 consult.ts 保证串行） */
+export const isAuxKind = (kind: string): boolean => kind === 'review' || kind === 'qa' || kind === 'consult';
 /**
- * 调度池：backend（max_parallel_backend）、frontend（固定 1 个，前端按页面顺序做）、aux（审查与验收，max_parallel_aux），
+ * 调度池：backend（max_parallel_backend）、frontend（固定 1 个，前端按页面顺序做）、aux（审查、验收与咨询，max_parallel_aux），
  * 其余（架构阶段的 architect、轻流程的 worker）用 max_parallel。fix、merge-fix 跟着角色进对应的池。
  */
 export type Pool = 'impl' | 'backend' | 'frontend' | 'aux';
@@ -105,10 +106,10 @@ const humanOrDelegate = (t: TaskFile, f: Facts) =>
 const countDecision = (t: TaskFile, f: Facts) => { if (f.actor === 'orchestrator') t.decisions = (t.decisions ?? 0) + 1; };
 /** 小改动（change）流程结束前由程序建的"更新架构图与契约"任务：X1 阶段的 doc 任务（轻流程只有它是 doc） */
 export const isDocsUpdateTask = (t: Pick<TaskFile, 'kind' | 'stage'>) => t.kind === 'doc' && t.stage === 'X1';
-const workerKind = (t: TaskFile) => ['impl', 'fix', 'doc', 'merge-fix'].includes(t.kind);
-/** 没有改动也可以提交、直接视为完成的任务（要做的已在集成分支上，或文档无需更新）；merge-fix 没有改动说明冲突没解决 */
-export const canFinishWithoutChanges = (t: Pick<TaskFile, 'kind'>) => ['impl', 'fix', 'doc'].includes(t.kind);
-const pipelineOnly = (t: TaskFile) => need(workerKind(t), '只有实现、修复、文档或合并修复任务可以走此流水线');
+const workerKind = (t: TaskFile) => ['impl', 'fix', 'doc', 'merge-fix', 'consult'].includes(t.kind);
+/** 没有改动也可以提交、直接视为完成的任务（要做的已在集成分支上，或文档无需更新，或咨询只需回答）；merge-fix 没有改动说明冲突没解决 */
+export const canFinishWithoutChanges = (t: Pick<TaskFile, 'kind'>) => ['impl', 'fix', 'doc', 'consult'].includes(t.kind);
+const pipelineOnly = (t: TaskFile) => need(workerKind(t), '只有实现、修复、文档、合并修复或咨询任务可以走此流水线');
 const mergeOnly = pipelineOnly;
 const started = (t: TaskFile) => !!(t.worktree || t.branch);
 
@@ -271,9 +272,21 @@ export const TRANSITIONS: readonly Rule[] = [
     effect: (t, f) => blocked(t, f, f.actor === 'human' || f.actor === 'orchestrator' ? 'user' : f.actor.startsWith('run:') ? 'agent' : 'dispatcher'),
   },
   {
+    // forge_ask_architect：子进程提问后结束本次运行，任务等架构师回答；不交给主会话决定
+    from: ['in_progress'], to: 'blocked', trigger: 'ask',
+    check: (t, f) => [...leaseValid(t.lease, f, '提问被拒'), ...reasonRequired(f)],
+    effect: (t, f) => { blocked(t, f, 'architect'); delete t.blocked_owner; },
+  },
+  {
+    // 咨询任务完成：程序把回答写进 handoff、同步集成分支后让提问的任务接着原会话继续
+    from: ['blocked'], to: 'in_progress', trigger: 'answered',
+    check: (t, f) => [...need(f.actor === 'engine', '只有程序可以在架构师回答后恢复任务'), ...need(t.blocked_by === 'architect', '任务不是在等架构师')],
+    effect: (t) => { t.lease = null; },
+  },
+  {
     from: ['in_progress'], to: 'done', trigger: 'report',
     check: (t, f) => [
-      ...leaseValid(t.lease, f, '提交被拒'), ...need(['review', 'qa'].includes(t.kind) || canFinishWithoutChanges(t), '只有 review、qa 与没有改动的实现、修复、文档任务可以直接完成'),
+      ...leaseValid(t.lease, f, '提交被拒'), ...need(['review', 'qa'].includes(t.kind) || canFinishWithoutChanges(t), '只有 review、qa 与没有改动的实现、修复、文档、咨询任务可以直接完成'),
       ...need(!!f.diff_files && f.diff_files.length === 0, '直接完成的任务不得有改动，且必须提供 diff'),
       ...need(f.structured_report, '缺少结构化结论'),
     ], effect: (t) => {

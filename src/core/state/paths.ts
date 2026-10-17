@@ -17,7 +17,12 @@ export const writesOwnAcceptance = (t: WritesOf) => t.writes.includes(ownAccepta
 export const acceptanceDirOf = (t: Pick<WritesOf, 'id' | 'for_task'>) => t.for_task ?? t.id;
 /** 该 task 自己的验收目录 glob */
 export const selfTestGlobOf = (t: Pick<WritesOf, 'id' | 'for_task'>) => ownAcceptanceGlob(t.for_task ?? t.id);
-export const SENSITIVE_PATHS = ['**/.env*', '**/*.pem', 'secrets/**', '**/secrets/**'] as const;
+/** 下一个可用的主任务编号 T-xxx（只看主编号，.rv / .fx 等派生编号不占号） */
+export function nextPlanTaskId(ids: readonly string[]): string {
+  const n = Math.max(0, ...ids.map((id) => Number(id.match(/^T-(\d+)/)?.[1] ?? 0))) + 1;
+  return `T-${String(n).padStart(3, '0')}`;
+}
+export const SENSITIVE_PATHS =['**/.env*', '**/*.pem', 'secrets/**', '**/secrets/**'] as const;
 
 /** 把路径规范化为相对 root 的 posix 路径；越出 root 返回 null。不解析符号链接（由调用方用 realpath 处理）。 */
 export function normalizeRelPath(root: string, p: string): string | null {

@@ -10,9 +10,9 @@ export const BUILTIN_WRITE_TOOLS = ['write', 'edit'] as const;
 export const FLOW_TOOLS = [
   'forge_status', 'forge_wait', 'forge_claim', 'forge_note', 'forge_submit',
   'forge_block', 'forge_learn', 'notes', 'history', 'forge_sync',
-  'forge_read', 'forge_change', 'forge_change_request',
+  'forge_read', 'forge_change', 'forge_ask_architect', 'forge_answer',
   'forge_resolve_timeout', 'forge_decide',
-  'forge_service', 'forge_propose_plan', 'forge_review_report', 'forge_review_confirm',
+  'forge_service', 'forge_review_report', 'forge_review_confirm',
   'forge_qa_report', 'forge_qa_confirm',
   'forge_add_dependency', 'forge_private_deps',
 ] as const;
@@ -28,14 +28,14 @@ export const ORCHESTRATING_TOOLS = ['codemode'] as const;
 const CODING_ROLES = ['worker', 'backend', 'frontend', 'architect'] as const;
 const ROLE_EXCLUSIVE: Record<string, readonly string[]> = {
   forge_add_dependency: CODING_ROLES, forge_private_deps: CODING_ROLES,
-  forge_service: [...CODING_ROLES, 'stage-qa'], forge_propose_plan: ['architect'],
+  forge_service: [...CODING_ROLES, 'stage-qa'], forge_answer: ['architect'],
   forge_review_report: ['reviewer'], forge_review_confirm: ['reviewer'],
   forge_qa_report: ['stage-qa'], forge_qa_confirm: ['stage-qa'],
   forge_read: ['orchestrator'], forge_change: ['orchestrator'],
   forge_resolve_timeout: ['orchestrator'], forge_decide: ['orchestrator'],
 };
 /** orchestrator 严格使用这份白名单 */
-const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_change', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_decide', ...MEMORY_TOOLS]);
+const ORCHESTRATOR_ALLOWED = new Set(['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_change', 'forge_status', 'forge_wait', 'forge_ask_architect', 'forge_resolve_timeout', 'forge_decide', ...MEMORY_TOOLS]);
 const WEB_GROUP = 'web';
 
 export type ToolKind = 'read' | 'write' | 'bash' | 'flow' | 'web' | 'ext-read' | 'other';
@@ -166,7 +166,7 @@ export function parseConfig(source: string): FlowConfig {
     };
     dropKey(null, 'acctest_workspace'); dropKey(null, 'modes'); dropKey('limits', 'lean_below_loc'); dropKey('testing', 'max_disputes'); dropKey('implementation_gate', 'test_author'); dropKey('review', 'per_task'); dropKey('review', 'skip_sizes'); dropKey('limits', 'max_precheck_failures');
     // 已删除的工具名：旧 workflow.yaml 里还列着时去掉并告警，不让整个配置失效
-    const REMOVED_TOOLS = new Set(['forge_request_scope', 'forge_resolve_scope', 'forge_spec_amend', 'forge_dispute', 'forge_spec']);
+    const REMOVED_TOOLS = new Set(['forge_request_scope', 'forge_resolve_scope', 'forge_spec_amend', 'forge_dispute', 'forge_spec', 'forge_change_request', 'forge_propose_plan']);
     const roles = o['roles'];
     if (roles && typeof roles === 'object') {
       for (const [name, def] of Object.entries(roles as Record<string, { tools?: unknown }>)) {
@@ -253,7 +253,7 @@ export function parseConfig(source: string): FlowConfig {
     if (bash !== 'none') toolList.push('bash');
     // 子进程角色隐式拥有 forge_block、forge_learn；专属工具均须显式授予。
     if (name !== 'orchestrator') toolList.push('forge_block', 'forge_learn');
-    // orchestrator 隐式拥有 forge_decide：阻塞、门禁用尽、变更请求先由它决定
+    // orchestrator 隐式拥有 forge_decide：阻塞、门禁用尽先由它决定
     else toolList.push('forge_decide');
     // 有 forge_submit 的角色隐式拥有 forge_claim
     if (toolList.includes('forge_submit')) toolList.push('forge_claim');

@@ -26,7 +26,7 @@ import { parseAgentFile } from '../core/engine/agents.ts';
 import { runFlowConfig, type ModelOption } from '../commands/forge-config.ts';
 import { RoleTable, type RoleRow, type TableModel } from '../commands/role-table.ts';
 import { runFlowCommand, runFlowBuild, runFlowFix, runFlowChange, FLOW_USAGE, type CommandEnv, type EngineHandle } from '../commands/forge.ts';
-import { flowChange, flowChangeRequestMain, flowDecide, ChangeParams, DecideParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
+import { flowChange, flowAskArchitectMain, flowDecide, ChangeParams, DecideParams, ResolveTimeoutParams, WaitParams, activeFlowId, flowResolveTimeout, flowWait, statusText } from '../tools/orchestrator-tools.ts';
 import { PiLauncher } from './launcher.ts';
 import { lastFailureKind, notices, snapshotOf, statusLine, visibleFlows } from '../core/ops/status-view.ts';
 import { decisionKeys, wakeMessage } from '../core/engine/decisions.ts';
@@ -37,13 +37,13 @@ import { redactToolResult } from './redact-hook.ts';
 import { notifyEvents, runNotify } from '../core/ops/notify.ts';
 import { NOTES_DESCRIPTION, NotesError, NotesParams, applyNoteOps, notesContextMessage, renderNotes } from '../core/engine/notes.ts';
 import { HISTORY_DESCRIPTION, HistoryParams } from '../core/ops/history.ts';
-import { ChangeRequestParams, historyTool } from '../tools/subagent-tools.ts';
+import { AskArchitectParams, historyTool } from '../tools/subagent-tools.ts';
 import { MAIN_NOTES_REL } from '../core/state/state-store.ts';
 
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TEMPLATE_WORKFLOW = path.join(PACKAGE_ROOT, 'templates', 'workflow.yaml');
 const SUBAGENT_EXTENSION = path.join(PACKAGE_ROOT, 'src', 'pi-adapter', 'subagent.ts');
-const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_change', 'forge_change_request', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_decide'];
+const ORCHESTRATOR_TOOLS = ['forge_read', 'forge_change', 'forge_ask_architect', 'forge_status', 'forge_wait', 'forge_resolve_timeout', 'forge_decide'];
 
 /** 用户级设置文件：~/.pi/agent/pi-forge.json（与 Pi 官方 preset 示例的全局配置位置一致） */
 export function roleSettingsPath(): string {
@@ -306,13 +306,12 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_change_request', label: 'forge_change_request', description: '计划批准后需要修改已有契约或计划时提交变更请求（what、why、impact）：程序派 architect 起草修订，修订先交给你审核（forge_decide），必要时转交用户。同一时间只能有一个未结束的变更请求。',
-      parameters: ChangeRequestParams,
+      name: 'forge_ask_architect', label: 'forge_ask_architect', description: '技术问题交给架构师（你自己不回答技术问题）：kind=answer 只要回答；kind=change 要求修改公共内容或契约（签收打回里归属不清的修改也用它）。程序派架构师处理，回答在之后的 forge_wait 返回，由你转达给用户。',
+      parameters: AskArchitectParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);
-        const r = await flowChangeRequestMain(ctx.cwd, h.store, h.config, checked(ChangeRequestParams, p, 'forge_change_request'));
-        // 起草修订的 architect task 立刻派出去，不等下一次别的任务结束（stock 实验：等了十几分钟）
-        await h.engine.pump(activeFlowId(h.store));
+        // 咨询任务立刻派出去，不等下一次别的任务结束
+        const r = await flowAskArchitectMain(h.store, h.config, h.engine, checked(AskArchitectParams, p, 'forge_ask_architect'));
         return toolResult(r.text, r.details);
       },
     }));
@@ -334,7 +333,7 @@ export default function piFlow(pi: ExtensionAPI): void {
       },
     }));
     pi.registerTool(tolerantArgs({
-      name: 'forge_decide', label: 'forge_decide', description: '程序交给你决定的事（forge_status 的"等你决定"）：阻塞的任务 retry 重新做或 accept 放行，门禁用尽的阶段 accept 放行进入签收，变更请求的修订 approve 批准或 reject 打回；解决不了的 user 转交用户。note 必填。',
+      name: 'forge_decide', label: 'forge_decide', description: '程序交给你决定的事（forge_status 的"等你决定"）：阻塞的任务 retry 重新做或 accept 放行，门禁用尽的阶段 accept 放行进入签收；解决不了的 user 转交用户。签收打回后，能明确归属的修改用 fix（target 写负责的任务，note 写要改什么）。note 必填。',
       parameters: DecideParams,
       async execute(_id, p, _s, _u, ctx) {
         const h = engineFor(ctx.cwd);

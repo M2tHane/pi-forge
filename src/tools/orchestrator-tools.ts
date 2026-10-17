@@ -14,10 +14,10 @@ import { fixHelpHint, fixStatusLine, readFixLog } from '../modes/fix.ts';
 import { ChangeStartError, startChange } from '../modes/change.ts';
 import type { ChangePlanInput } from '../core/plan/change-plan.ts';
 import { isFinished } from '../core/state/state-store.ts';
-import { ChangeError, approvalTargets, changeStatus, requestChange } from '../core/plan/change-flow.ts';
-import { ChangeRequestParams } from './subagent-tools.ts';
+import { approvalTargets } from '../core/stage/stages.ts';
+import { AskArchitectParams } from './subagent-tools.ts';
 import { DECISION_GUIDE, DecisionError, decide, decisionsText, pendingDecisions } from '../core/engine/decisions.ts';
-import { ChangeError as ApproveError } from '../core/plan/change-flow.ts';
+import { createConsult, markDelivered, openMainConsults, undeliveredAnswers } from '../core/engine/consult.ts';
 import { StateError } from '../core/state/state-store.ts';
 import { postMergeStatus } from '../core/engine/post-merge-test.ts';
 
@@ -50,15 +50,21 @@ export async function flowChange(root: string, store: StateStore, config: FlowCo
   }
 }
 
-/** forge_change_request（main）：提交变更请求，交给 architect 起草修订 */
-export async function flowChangeRequestMain(root: string, store: StateStore, config: FlowConfig, p: Static<typeof ChangeRequestParams>): Promise<ToolResult> {
-  try {
-    const r = await requestChange(root, store, config, activeFlowId(store), p, 'main');
-    return { text: `已提交变更请求 ${r.change.id}：程序派 architect（${r.task.id}）起草修订。修订提交后先交给你审核（forge_decide 批准、打回或转交用户）；批准前被调整或取消的未开始 task 不会派发。`, details: { change: r.change.id, task: r.task.id } };
-  } catch (e) {
-    if (e instanceof ChangeError) throw new FlowToolError(e.message);
-    throw e;
-  }
+/** forge_ask_architect（主会话）：技术问题交给架构师；回答在之后的 forge_wait 返回 */
+export async function flowAskArchitectMain(store: StateStore, config: FlowConfig, engine: Pick<Engine, 'pump'> | null, p: Static<typeof AskArchitectParams>): Promise<ToolResult> {
+  const flowId = activeFlowId(store);
+  if (isLightFlow(store.readFlow(flowId))) throw new FlowToolError('修复与小改动流程没有架构师咨询。');
+  const c = await createConsult(store, config, flowId, p.question, p.kind, null, 'orchestrator');
+  if (engine) await engine.pump(flowId);
+  return { text: `已交给架构师（${c.id}）。回答会在之后的 forge_wait 返回时交给你，再转达给用户。`, details: { consult: c.id } };
+}
+
+/** 架构师给主会话的回答：取出还没交付的，记为已交付 */
+async function takeAnswers(store: StateStore, flowId: string): Promise<string> {
+  const answers = undeliveredAnswers(store, flowId);
+  if (!answers.length) return '';
+  await markDelivered(store, flowId, answers.map((a) => a.task));
+  return answers.map((a) => `架构师的回答（${a.task}）：\n${a.answer}`).join('\n\n');
 }
 
 export const WaitParams = Type.Object({
@@ -98,19 +104,19 @@ export async function flowResolveTimeout(store: StateStore, engine: Engine, p: S
 }
 
 export const DecideParams = Type.Object({
-  target: Type.String({ pattern: '^(T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-[0-9]+)?|S[0-9]+|C-[0-9]{3,})$', description: '等你决定的任务（T-…）、阶段（S…）或变更请求（C-…）' }),
-  decision: Type.Union([Type.Literal('retry'), Type.Literal('accept'), Type.Literal('approve'), Type.Literal('reject'), Type.Literal('user')], { description: 'retry 重新做；accept 放行；approve 批准修订；reject 打回修订；user 转交用户。forge_status 里每项列出可选的决定' }),
-  note: Type.String({ minLength: 1, maxLength: 4000, description: '理由；retry 时是给子进程的意见（也可以是对它提问的回答），reject 时是修改意见，user 时写清楚要用户决定什么' }),
+  target: Type.String({ pattern: '^(T-[0-9]{3,}(\\.(at|rv|fx)(-[0-9]+)?)?|[A-Za-z][A-Za-z0-9_]*\\.(rv|qa)(-[0-9]+)?|S[0-9]+)$', description: '等你决定的任务（T-…）或阶段（S…）；fix 时是负责这处修改的任务' }),
+  decision: Type.Union([Type.Literal('retry'), Type.Literal('accept'), Type.Literal('fix'), Type.Literal('user')], { description: 'retry 重新做；accept 放行；fix 签收打回后把修改交给负责的任务；user 转交用户。forge_status 里每项列出可选的决定' }),
+  note: Type.String({ minLength: 1, maxLength: 4000, description: '理由；retry 时是给子进程的意见（也可以是对它提问的回答），fix 时写要改什么，user 时写清楚要用户决定什么' }),
 });
 
-/** forge_decide：阻塞、门禁用尽、变更请求的修订先由主会话决定，解决不了的转交用户 */
+/** forge_decide：阻塞、门禁用尽先由主会话决定，解决不了的转交用户；签收打回后把能归属的修改交给负责的任务 */
 export async function flowDecide(root: string, store: StateStore, config: FlowConfig, engine: Engine, p: Static<typeof DecideParams>): Promise<ToolResult> {
   const flowId = activeFlowId(store);
   let r;
   try {
     r = await decide({ root, store, config }, flowId, p.target, p.decision, p.note);
   } catch (e) {
-    if (e instanceof DecisionError || e instanceof ApproveError || e instanceof StateError) throw new FlowToolError(e.message);
+    if (e instanceof DecisionError || e instanceof StateError) throw new FlowToolError(e.message);
     throw e;
   }
   await engine.pump(flowId);
@@ -139,8 +145,9 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
   const plan = planStatus(store, flowId);
   if (plan) lines.push(plan);
   if (isArchitectStage(flow.stage) && flow.stage_status === 'awaiting_human' && !flow.s_stages?.length) lines.push(planApprovalSummary(store.root, store, flowId));
-  const changes = changeStatus(store, flowId);
-  if (changes) lines.push(changes);
+  const asking = tasks.filter((t) => t.status === 'blocked' && t.blocked_by === 'architect');
+  const consults = openMainConsults(tasks);
+  if (asking.length || consults.length) lines.push(`等架构师回答（程序推进，不用处理）：${[...asking.map((t) => t.id), ...consults.map((t) => `${t.id}（你的问题）`)].join('、')}`);
   const pm = postMergeStatus(store, flowId, engine?.postMergeRunning(flowId) ?? false);
   if (pm) lines.push(pm);
   const running = engine?.activeRuns().filter((r) => r.flow === flowId) ?? [];
@@ -150,7 +157,7 @@ export function statusText(store: StateStore, engine: Engine | null, flowId: str
   if (ready.length) lines.push(`可派发：${ready.map((t) => `${t.id} ${t.title}（${t.role}）`).join('；')}`);
   const decisions = pendingDecisions(store, flowId);
   if (decisions.length) lines.push(`等你决定（forge_decide）：${DECISION_GUIDE}\n${decisionsText(decisions)}`);
-  const blocked = tasks.filter((t) => t.status === 'blocked' && t.blocked_owner !== 'orchestrator');
+  const blocked = tasks.filter((t) => t.status === 'blocked' && t.blocked_owner !== 'orchestrator' && t.blocked_by !== 'architect');
   if (blocked.length) lines.push(`阻塞，需要用户处理：\n${blocked.map((t) => `- ${t.id}：${one(t.blocked_reason ?? '')} → /forge unblock ${t.id}`).join('\n')}`);
   const now = new Date();
   const pauses = activePauses(store, now);
@@ -188,13 +195,18 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
   const deadline = Date.now() + (p.timeout_s ?? 1200) * 1000;
   const settled = (id: string) => ['done', 'blocked', 'cancelled'].includes(store.readTask(flowId, id).status);
   if (p.task_id && settled(p.task_id)) return { text: `${p.task_id} 已是 ${store.readTask(flowId, p.task_id).status}。\n\n${statusText(store, engine, flowId)}`, details: { changed: [] } };
+  // 上次等待之后架构师已经回答了主会话的问题：直接交给它
+  const ready = await takeAnswers(store, flowId);
+  if (ready) return { text: `${ready}\n\n${statusText(store, engine, flowId)}`, details: { changed: [] } };
   const worthWaking = (): boolean => {
     const now = statuses();
     // 运行超时等主会话复核
     for (const k of reviewing()) if (!beforeReview.has(k)) return true;
     if (p.task_id) return now.get(p.task_id) !== before.get(p.task_id);
+    // 子 agent 向架构师提问、架构师回答由程序推进，不唤醒主会话（主会话自己的提问在回答完成时唤醒）
+    const internal = new Set(store.listTasks(flowId).filter((t) => (t.kind === 'consult' && t.for_task) || (t.status === 'blocked' && t.blocked_by === 'architect')).map((t) => t.id));
     for (const [id, s] of now) {
-      if (s === before.get(id)) continue;
+      if (s === before.get(id) || internal.has(id)) continue;
       // impl 一律有审查任务，.rv 的新建与完成由程序驱动，不单独唤醒（结论体现在被审查任务的状态上）；审查者 blocked 时只有 .rv 阻塞，要唤醒
       if (/\.rv(-\d+)?$/.test(id) && s !== 'blocked') continue;
       if (!before.has(id) || s === 'done' || s === 'blocked' || s === 'cancelled') return true;
@@ -221,9 +233,10 @@ export async function flowWait(store: StateStore, engine: Engine, p: Static<type
   };
   const newReviews = tasks.filter(awaitingReview).filter((t) => !beforeReview.has(`${t.id}:${t.timeouts ?? 0}`)).map((t) => `- ${t.id}：运行超时，等你复核`);
   const changes = changed.length ? `变化：\n${changed.map((id) => `- ${desc(id)}`).join('\n')}` : '';
-  const head = [newReviews.join('\n'), changes].filter(Boolean).join('\n') || (woke ? '没有任务状态变化。' : '等待超时，没有值得报告的变化。');
+  const answers = await takeAnswers(store, flowId);
+  const head = [answers, newReviews.join('\n'), changes].filter(Boolean).join('\n') || (woke ? '没有任务状态变化。' : '等待超时，没有值得报告的变化。');
   // 等待超时又没有变化：只给两行概况，完整状态上一次已经给过（stock 实验：52 次 forge_wait 返回合计 27 万字，留在主会话里每次请求都要付费）
   const status = statusText(store, engine, flowId);
-  if (!woke && !changed.length && !newReviews.length) return { text: `${head}\n${status.split('\n').slice(0, 2).join('\n')}\n（完整状态：forge_status）`, details: { changed } };
+  if (!woke && !changed.length && !newReviews.length && !answers) return { text: `${head}\n${status.split('\n').slice(0, 2).join('\n')}\n（完整状态：forge_status）`, details: { changed } };
   return { text: `${head}\n\n${status}`, details: { changed } };
 }

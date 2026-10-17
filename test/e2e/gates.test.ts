@@ -71,7 +71,7 @@ test('S0 批准：架构产出合入 main，集成分支移到合入后的提交
   } finally { p.cleanup(); }
 });
 
-test('用户打回已完成的实施阶段：不立刻重提门禁，主会话的下一步是把修改加进本阶段（后面阶段还有没开始的 task 也一样）；有新任务变化后照常验收', async () => {
+test('用户打回已完成的实施阶段：不立刻重提门禁，主会话的下一步是判断归属、交给负责的任务或架构师（后面阶段还有没开始的 task 也一样）；有新任务变化后照常验收', async () => {
   const p = await setupProject({ yaml: PROJECT_YAML, stages: ['S3', 'S4'], tasks: [mkTask('T-001'), mkTask('T-009', { stage: 'S4', writes: ['src/server/t-009/**'] })] });
   try {
     const { engine, errors } = makeEngine(p, async (_role, _n, a) => {
@@ -83,11 +83,11 @@ test('用户打回已完成的实施阶段：不立刻重提门禁，主会话�
     for (let i = 0; i < 3; i++) { await engine.next(p.flowId); await engine.idle(); }
     assert.deepEqual(errors, []);
     assert.equal(p.store.readFlow(p.flowId).stage_status, 'awaiting_human');
-    assert.match(await rejectStage({ root: p.dir, store: p.store, config: p.config }, p.flowId, '仓库代码填小写会被拒绝'), /变更请求/);
+    assert.match(await rejectStage({ root: p.dir, store: p.store, config: p.config }, p.flowId, '仓库代码填小写会被拒绝'), /交程序建修复任务或交架构师/);
     for (let i = 0; i < 2; i++) { await engine.pump(p.flowId); await engine.idle(); }
     assert.equal(p.store.readFlow(p.flowId).stage_status, 'active', '没有新变化前不重提门禁');
     const step = nextStep(p.store, 3, 0, p.config);
-    assert.match(step.next, /用户打回了阶段 S3：仓库代码填小写会被拒绝[\s\S]*forge_change_request/);
+    assert.match(step.next, /用户打回了阶段 S3：仓库代码填小写会被拒绝[\s\S]*decision=fix[\s\S]*forge_ask_architect[\s\S]*已完成的实现任务：T-001/);
     await p.store.addTasks(p.flowId, [mkTask('T-002', { writes: ['src/server/t-002/**'] })], 'engine');
     for (let i = 0; i < 3; i++) { await engine.next(p.flowId); await engine.idle(); }
     assert.deepEqual(errors, []);

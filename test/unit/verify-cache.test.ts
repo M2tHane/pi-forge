@@ -25,7 +25,7 @@ test('reusableRuns：代码树不同、命令内容变了、别的流程、工�
   assert.equal(reusableRuns(events, 'B-001', 't2', plan).size, 0);
   assert.equal(reusableRuns(events, 'B-002', 't1', plan).size, 0);
   assert.equal(reusableRuns(events, 'B-001', null, plan).size, 0);
-  // P1 或变更请求批准后 commands 变了：同名命令不再沿用
+  // commands.yaml 变了：同名命令不再沿用
   assert.deepEqual([...reusableRuns(events, 'B-001', 't1', [{ name: 'test', shell: 'pnpm vitest run' }, { name: 'typecheck', shell: 'pnpm typecheck' }]).keys()], ['typecheck']);
   // 首尾空白不算内容变化
   assert.equal(commandHash('pnpm test '), commandHash('pnpm test'));

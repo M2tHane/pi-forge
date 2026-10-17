@@ -106,7 +106,7 @@ test('stage-qa 超出 qa.max_rounds → needs_human；/forge accept S1 --note �
   } finally { p.cleanup(); }
 });
 
-test('stage-qa 轮数用尽后用户打回、变更请求的 task 合入：开一轮只确认的 stage-qa 复验，而不是按旧结论直接交给用户；没有新改动时仍交给用户', async () => {
+test('stage-qa 轮数用尽后用户打回、修复合入：开一轮只确认的 stage-qa 复验，而不是按旧结论直接交给用户；没有新改动时仍交给用户', async () => {
   const p = await project(true);
   const confirms: string[] = [];
   const e = engineEnv(p, async (_role, _n, a) => {

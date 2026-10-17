@@ -16,7 +16,7 @@ const LAYERS: Record<string, number> = {
   insight: 3, // 成本、预算、角色模型、停滞检测
   spec: 4, // 规格与 intake、预检
   acceptance: 5, // 验收测试流程、覆盖率、阶段修复
-  plan: 6, // 契约、计划、变更请求、纳管、规格修订批准
+  plan: 6, // 架构阶段与计划批次、小改动的迷你计划、只追加合并、规则草案
   stage: 7, // 阶段流程、闸门、审查、签收、合入
   engine: 8, // 调度、子进程、合并队列、预检、知识与笔记
   ops: 9, // 斜杠命令与状态展示：init、doctor、resume、status-view 等

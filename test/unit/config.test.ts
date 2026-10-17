@@ -90,7 +90,7 @@ test('工具组展开、类别与唯一列表；orchestrator 严格使用规格�
   assert.deepEqual(orchestrator.writes, []);
   assert.equal(orchestrator.bash, 'none');
   assert.ok(!orchestrator.tools.has('bash'));
-  assert.deepEqual([...orchestrator.tools].sort(), ['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_change', 'forge_status', 'forge_wait', 'forge_change_request', 'forge_resolve_timeout', 'forge_decide', 'notes', 'history'].sort());
+  assert.deepEqual([...orchestrator.tools].sort(), ['read', 'grep', 'find', 'ls', 'forge_read', 'ask_user', 'forge_change', 'forge_status', 'forge_wait', 'forge_ask_architect', 'forge_resolve_timeout', 'forge_decide', 'notes', 'history'].sort());
   assert.equal(c.role('architect').bash, 'full');
   assert.equal(c.role('worker').bash, 'full');
   assert.ok(c.role('worker').tools.has('codegraph_search'));
@@ -128,7 +128,7 @@ test('orchestrator 不能拥有 bash、写工具、扩展读工具或可写范�
 const CODERS = ['worker', 'backend', 'frontend', 'architect'];
 const exclusiveTools: [string, string[]][] = [
   ['forge_add_dependency', CODERS], ['forge_private_deps', CODERS],
-  ['forge_service', [...CODERS, 'stage-qa']], ['forge_propose_plan', ['architect']],
+  ['forge_service', [...CODERS, 'stage-qa']], ['forge_answer', ['architect']],
   ['forge_review_report', ['reviewer']], ['forge_review_confirm', ['reviewer']],
   ['forge_qa_report', ['stage-qa']], ['forge_qa_confirm', ['stage-qa']],
   ['forge_read', ['orchestrator']], ['forge_change', ['orchestrator']],
@@ -176,7 +176,7 @@ test('worker 专属工具按真实名字校验，改名或名字后缀不能继�
 test('architect 可以用 forge_service、forge_add_dependency、forge_private_deps、forge_sync、write（S0 由 architect 执行）', () => {
   for (const source of [REAL_TEMPLATE_YAML, TEST_YAML]) {
     const a = parseConfig(source).role('architect');
-    for (const t of ['forge_service', 'forge_add_dependency', 'forge_private_deps', 'forge_sync', 'write', 'bash', 'forge_propose_plan']) assert.ok(a.tools.has(t), t);
+    for (const t of ['forge_service', 'forge_add_dependency', 'forge_private_deps', 'forge_sync', 'write', 'bash', 'forge_answer']) assert.ok(a.tools.has(t), t);
     assert.equal(a.bash, 'full');
   }
   // 其他角色仍然不行

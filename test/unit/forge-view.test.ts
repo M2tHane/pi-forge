@@ -1,4 +1,4 @@
-// forge-view：数据提取（阶段、角色、派生任务、度量、变更）、打码、HTML 生成。只读，不依赖真实模型。
+// forge-view：数据提取（阶段、角色、派生任务、度量）、打码、HTML 生成。只读，不依赖真实模型。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -24,12 +24,10 @@ async function build() {
   await store.appendHandoff(flowId, 'T-001', `完成登录。临时密钥 ${SECRET} 不要提交。`, 'worker');
   await store.createRun({ run_id: 'r-1', flow: flowId, task: 'T-001', role: 'worker', model: 'm/x', started_at: new Date().toISOString(), ended_at: null,
     tokens: { input: 10, output: 5, cache_read: null, cache_write: null }, outcome: null, token_hash: hashToken('t'), violations: 0 });
-  await store.createChange(flowId, { what: `改登录 ${SECRET}`, why: '需求变', impact: '小', source: 'main' },
-    mkTask('T-009', { stage: 'S1', kind: 'doc', role: 'architect', writes: ['docs/plan/**'] }), '起草', 'main');
   return p;
 }
 
-test('buildViewData：阶段、角色、派生任务、变更、度量都在，且已打码', async () => {
+test('buildViewData：阶段、角色、派生任务、度量都在，且已打码', async () => {
   const p = await build();
   try {
     const d = buildViewData(p.store, p.dir);
@@ -41,7 +39,7 @@ test('buildViewData：阶段、角色、派生任务、变更、度量都在，�
     const s1 = F.stageRows.find((s) => s.id === 'S1')!;
     assert.equal(s1.goal, '做出登录');
     assert.deepEqual(s1.exit, ['登录可用']);
-    assert.equal(s1.tasks, 5);
+    assert.equal(s1.tasks, 4);
     const byId = new Map(F.tasks.map((t) => [t.id, t]));
     assert.equal(byId.get('T-001')!.module, 'auth');
     assert.deepEqual(byId.get('T-001')!.ac, ['REQ-001.AC1']);
@@ -53,11 +51,9 @@ test('buildViewData：阶段、角色、派生任务、变更、度量都在，�
     assert.equal(d.runs[0]!.role, 'worker');
     assert.ok(F.metrics, '度量存在');
     assert.ok(Array.isArray((F.metrics as { stages: unknown[] }).stages));
-    assert.equal(F.changes.length, 1);
-    assert.equal(F.changes[0]!.id, 'C-001');
     assert.ok(d.transitions.some((t) => t.trigger === 'review_changes' && t.to === 'in_progress' && t.counter === 'review_rounds'));
     assert.ok(d.stageTransitions.length > 0);
-    // 打码：handoff 与变更里的密钥都不能出现在输出里
+    // 打码：handoff 里的密钥不能出现在输出里
     const all = JSON.stringify(d);
     assert.ok(!all.includes(SECRET), '密钥必须被打码');
     assert.ok(F.handoffs['T-001']!.includes('完成登录'));

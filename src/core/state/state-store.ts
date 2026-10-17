@@ -9,7 +9,7 @@ import lockfile from 'proper-lockfile';
 import { MIGRATIONS, SCHEMA_VERSION, migrationChain, type Migration } from './migrations.ts';
 import {
   validate, isLightFlow, type FlowFile, type MergeQueueFile, type RunFile, type KnowledgeFile, type ModelPausesFile, type SchemaKind, type StageStatus, type StateFile,
-  type TaskFile, type TaskStatus, type FlowEvent, type NotesFile, type ChangeFile, type ChangeActionSummary,
+  type TaskFile, type TaskStatus, type FlowEvent, type NotesFile,
 } from './schemas.ts';
 import {
   flowLimits, planStageTransition, planTransition, poolOf, type Facts, type StageTrigger, type TaskPatch, type Trigger,
@@ -64,13 +64,8 @@ interface Journal {
 
 type StagedEvent = Omit<EventInput, 'ts'> & { ts?: string };
 
-const OPEN_CHANGE: readonly ChangeFile['status'][] = ['drafting', 'proposed', 'rejected'];
-/** 变更请求可以调整未开始 task 的这些字段 */
-const CHANGE_PATCH_KEYS = new Set(['title', 'stage', 'module', 'size', 'layers', 'ac', 'writes', 'shared', 'produces', 'requires', 'manual_checks', 'risk', 'depends_on']);
-
 const TASK_PATCH_KEYS = new Set(['lease', 'worktree', 'branch', 'base_sha', 'timeout_review', 'timeout_progress']);
 
-export const changeRel = (flow: string, change: string) => `flows/${flow}/changes/${change}.json`;
 export const flowRel = (flow: string) => `flows/${flow}/flow.json`;
 export const taskRel = (flow: string, task: string) => `flows/${flow}/tasks/${task}.json`;
 export const handoffRel = (flow: string, task: string) => `flows/${flow}/handoff/${task}.md`;
@@ -86,8 +81,6 @@ export const MAIN_NOTES_REL = 'notes/main.json';
 export const MODEL_PAUSES_REL = 'model-pauses.json';
 
 export function schemaKindOf(rel: string): SchemaKind | null {
-  if (/^flows\/[^/]+\/changes\/C-[0-9]{3,}\.json$/.test(rel)) return 'change';
-  if (/^flows\/[^/]+\/plan-proposal\.json$/.test(rel)) return 'plan-proposal';
   if (rel === MQ_REL) return 'merge-queue';
   if (/^flows\/[^/]+\/flow\.json$/.test(rel)) return 'flow';
   if (/^flows\/[^/]+\/tasks\/[^/]+\.json$/.test(rel)) return 'task';
@@ -189,19 +182,6 @@ export interface CreateFlowInput {
 
 export type TaskInput = Pick<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify'>
   & Partial<Omit<TaskFile, 'id' | 'stage' | 'kind' | 'title' | 'role' | 'scopes' | 'depends_on' | 'inputs' | 'writes' | 'verify' | 'status' | 'lease' | 'created_by' | 'version'>>;
-
-/** 批准变更请求时在一个事务里落地的内容（由 change-request.ts 的纯函数推导） */
-export interface ChangeOps {
-  add: TaskInput[];
-  /** 新增 task 的初始笔记（负责的 AC 原文） */
-  notes: Record<string, string[]>;
-  /** 新增 task 的 handoff（说明来自哪个变更请求） */
-  handoffs: Record<string, string>;
-  /** 未开始 task 的字段调整；值为 undefined 表示删除该可选字段 */
-  patches: { id: string; patch: Record<string, unknown> }[];
-  cancels: { id: string; reason: string }[];
-  stages?: { stages: NonNullable<FlowFile['s_stages']> };
-}
 
 export interface IntegrityReport { ok: boolean; errors: string[] }
 
@@ -581,7 +561,7 @@ export class StateStore {
     return this.transaction((tx) => this.transitionInTx(tx, flowId, taskId, req));
   }
 
-  /** 事务内的任务转移（供需要在同一事务里改多个实体的方法复用，例如落地变更请求） */
+  /** 事务内的任务转移（供需要在同一事务里改多个实体的方法复用） */
   private transitionInTx(tx: Tx, flowId: string, taskId: string, req: TransitionRequest): TaskFile {
     {
       const flow = tx.readFlow(flowId);
@@ -604,7 +584,8 @@ export class StateStore {
         actor: req.actor,
         // 以下由程序推导，覆盖调用方传入的同名字段
         // stage-qa 在门禁进行中（awaiting_gate）运行，其余 task 只在阶段 active 时派发
-        stage_active: flow.stage === task.stage && (flow.stage_status === 'active' || (task.kind === 'qa' && flow.stage_status === 'awaiting_gate')),
+        // 架构师咨询在阶段的任何状态都可以派发（主会话签收前也可能提问）
+        stage_active: flow.stage === task.stage && (flow.stage_status === 'active' || (task.kind === 'qa' && flow.stage_status === 'awaiting_gate') || (task.kind === 'consult' && flow.stage_status !== 'done' && flow.stage_status !== 'aborted')),
         status_of: statusOf,
         // 各池分别计数（state-machine.poolOf）：backend、frontend、aux（审查与验收）、其余
         running_count: others.filter((t) => t.status === 'in_progress' && poolOf(t) === poolOf(task)).length,
@@ -971,141 +952,6 @@ export class StateStore {
     return this.transaction((tx) => {
       const saved = tx.putFlow({ ...tx.readFlow(flowId), intake });
       tx.event({ flow: flowId, actor, type: 'note', reason, data: { intake: { prd: intake.prd, prototype_path: intake.prototype_path, files: intake.files.length } } });
-      return saved;
-    });
-  }
-
-  // —— 变更请求 ——
-
-  readChange(flowId: string, id: string): ChangeFile {
-    if (!/^C-[0-9]{3,}$/.test(id)) throw new StateError(`变更请求编号不合法：${id}`);
-    const value = this.readJsonRel<ChangeFile>(changeRel(flowId, id));
-    if (!value) throw new StateError(`变更请求 ${id} 不存在`);
-    return value;
-  }
-
-  listChanges(flowId: string): ChangeFile[] {
-    this.readFlow(flowId);
-    const dir = this.abs(`flows/${flowId}/changes`);
-    return existsSync(dir) ? readdirSync(dir).filter((f) => /^C-[0-9]{3,}\.json$/.test(f)).sort().map((f) => this.readChange(flowId, f.slice(0, -5))) : [];
-  }
-
-  /** 同一事务内新建变更请求、architect 的 doc task 与它的 handoff。同一时间只允许一个未结束的变更请求。 */
-  async createChange(flowId: string, input: { what: string; why: string; impact: string; source: ChangeFile['source']; changed_acs?: string[] }, task: TaskInput, handoff: string | ((changeId: string) => string), actor: string): Promise<{ change: ChangeFile; task: TaskFile }> {
-    return this.transaction((tx) => {
-      tx.readFlow(flowId);
-      const all = this.listChanges(flowId);
-      const open = all.find((c) => OPEN_CHANGE.includes(c.status));
-      if (open) throw new StateError(`已有变更请求 ${open.id} 在处理（${open.status}），同一时间只能有一个；等它被批准或打回后再提交`);
-      const id = `C-${String(Math.max(0, ...all.map((c) => Number(c.id.slice(2)))) + 1).padStart(3, '0')}`;
-      const added = this.putNewTask(tx, flowId, task, actor);
-      tx.putText(handoffRel(flowId, task.id), `\n## ${tx.ts} ${actor}\n\n${(typeof handoff === 'function' ? handoff(id) : handoff).trim()}\n`);
-      const change: ChangeFile = { version: 1, id, what: input.what, why: input.why, impact: input.impact, source: input.source, status: 'drafting', task: task.id,
-        touched: [], rounds: 1, created_at: tx.ts };
-      const saved = tx.putJson(changeRel(flowId, id), 'change', change);
-      tx.event({ flow: flowId, task: task.id, actor, type: 'note', reason: `变更请求 ${id}（${input.source}）：${input.what}`.slice(0, 300), data: { change: id, source: input.source, task: task.id } });
-      return { change: saved, task: added };
-    });
-  }
-
-  /** architect 经 forge_propose_plan 提交（或替换）修订：保存修订后的计划与动作摘要，状态变为 proposed */
-  async saveChangeProposal(flowId: string, id: string, p: { task: string; plan_hash: string; plan_text: string; assumptions: NonNullable<ChangeFile['assumptions']>; extras: NonNullable<ChangeFile['extras']>; summary: string; actions: ChangeActionSummary[]; touched: string[]; warnings: string[] }, actor: string): Promise<ChangeFile> {
-    return this.transaction((tx) => {
-      const c = tx.readJson<ChangeFile>(changeRel(flowId, id));
-      if (!c || (c.status !== 'drafting' && c.status !== 'proposed')) throw new StateError(`变更请求 ${id} 当前不能提交修订`);
-      if (c.task !== p.task) throw new StateError(`变更请求 ${id} 的起草任务是 ${c.task}，不是 ${p.task}`);
-      const saved = tx.putJson<ChangeFile>(changeRel(flowId, id), 'change', { ...c, status: 'proposed', plan_hash: p.plan_hash, plan_text: p.plan_text, assumptions: p.assumptions, extras: p.extras,
-        summary: p.summary, actions: p.actions, touched: p.touched, warnings: p.warnings });
-      tx.event({ flow: flowId, task: p.task, actor, type: 'note', reason: `变更请求 ${id} 的修订已提交（${p.actions.length} 项动作）`, data: { change: id, plan_hash: p.plan_hash, touched: p.touched } });
-      return saved;
-    });
-  }
-
-  /** 用户打回：记下意见，状态变为 rejected；引擎随后新建 architect task 返工（ensureChangeTask） */
-  async rejectChange(flowId: string, id: string, feedback: string, actor = 'human'): Promise<ChangeFile> {
-    return this.transaction((tx) => {
-      const c = tx.readJson<ChangeFile>(changeRel(flowId, id));
-      if (!c || c.status !== 'proposed') throw new StateError(`变更请求 ${id} 没有等待批准。`);
-      const { to_user: _drop, ...rest } = c;
-      const saved = tx.putJson<ChangeFile>(changeRel(flowId, id), 'change', { ...rest, status: 'rejected', feedback, touched: [] });
-      tx.event({ flow: flowId, actor, type: 'approval', reason: `变更请求 ${id} 已打回：${feedback}`.slice(0, 500), data: { change: id, status: 'rejected' } });
-      return saved;
-    });
-  }
-
-  /** 主会话看过修订后转交用户批准：记下原因，之后只有用户能批准或打回 */
-  async handChangeToUser(flowId: string, id: string, note: string): Promise<ChangeFile> {
-    return this.transaction((tx) => {
-      const c = tx.readJson<ChangeFile>(changeRel(flowId, id));
-      if (!c || c.status !== 'proposed') throw new StateError(`变更请求 ${id} 没有等待批准。`);
-      const saved = tx.putJson<ChangeFile>(changeRel(flowId, id), 'change', { ...c, to_user: note });
-      tx.event({ flow: flowId, actor: 'orchestrator', type: 'note', reason: `变更请求 ${id} 转交用户批准：${note}`.slice(0, 500), data: { change: id } });
-      return saved;
-    });
-  }
-
-  /** 返工：新的 architect task 接手被打回的变更请求，状态回到 drafting */
-  async reopenChange(flowId: string, id: string, task: TaskInput, handoff: string, actor: string): Promise<{ change: ChangeFile; task: TaskFile }> {
-    return this.transaction((tx) => {
-      const c = tx.readJson<ChangeFile>(changeRel(flowId, id));
-      if (!c || c.status !== 'rejected') throw new StateError(`变更请求 ${id} 没有被打回。`);
-      const added = this.putNewTask(tx, flowId, task, actor);
-      tx.putText(handoffRel(flowId, task.id), `\n## ${tx.ts} ${actor}\n\n${handoff.trim()}\n`);
-      const { plan_hash: _h, plan_text: _t, summary: _s, actions: _a, ...rest } = c;
-      const saved = tx.putJson<ChangeFile>(changeRel(flowId, id), 'change', { ...rest, status: 'drafting', task: task.id, rounds: c.rounds + 1 });
-      tx.event({ flow: flowId, task: task.id, actor, type: 'note', reason: `变更请求 ${id} 返工（第 ${saved.rounds} 轮）`, data: { change: id, task: task.id } });
-      return { change: saved, task: added };
-    });
-  }
-
-  /** 取消变更请求（起草中、等待批准或被打回时）；已建的 architect task 另行处理 */
-  async cancelChange(flowId: string, id: string, reason: string, actor: string): Promise<ChangeFile> {
-    return this.transaction((tx) => {
-      const c = tx.readJson<ChangeFile>(changeRel(flowId, id));
-      if (!c || !OPEN_CHANGE.includes(c.status)) throw new StateError(`变更请求 ${id} 已经结束，不能取消。`);
-      const saved = tx.putJson<ChangeFile>(changeRel(flowId, id), 'change', { ...c, status: 'cancelled', decided_at: tx.ts, feedback: reason, touched: [] });
-      tx.event({ flow: flowId, actor, type: 'note', reason: `变更请求 ${id} 已取消：${reason}`.slice(0, 500), data: { change: id, status: 'cancelled' } });
-      return saved;
-    });
-  }
-
-  /**
-   * 批准变更请求时落地：同一事务内新增 task 与初始笔记、调整或取消未开始的 task、
-   * 写入修订后的 S 阶段（stages_revised）、把变更请求标为 approved 并记 approval 事件。任何一步失败整体回滚。
-   */
-  async applyChange(flowId: string, id: string, ops: ChangeOps, actor = 'human'): Promise<ChangeFile> {
-    return this.transaction((tx) => {
-      tx.readFlow(flowId);
-      const c = tx.readJson<ChangeFile>(changeRel(flowId, id));
-      if (!c || c.status !== 'proposed') throw new StateError(`变更请求 ${id} 没有等待批准。`);
-      // 先取消，再调整：取消不依赖别的 task；任何一个已经开始就整体失败
-      for (const x of ops.cancels) {
-        const t = tx.readTask(flowId, x.id);
-        if (t.status !== 'pending' && t.status !== 'ready') throw new StateError(`任务 ${x.id} 已经是 ${t.status}，不能取消；请打回变更请求重新起草`);
-        this.transitionInTx(tx, flowId, x.id, { to: 'cancelled', trigger: 'cancel', actor, facts: { actor: 'human', reason: x.reason }, data: { change: id } });
-      }
-      for (const x of ops.patches) {
-        const bad = Object.keys(x.patch).filter((k) => !CHANGE_PATCH_KEYS.has(k));
-        if (bad.length) throw new StateError(`变更请求不能修改任务字段：${bad.join('、')}`);
-        const t = tx.readTask(flowId, x.id);
-        if (t.status !== 'pending' && t.status !== 'ready') throw new StateError(`任务 ${x.id} 已经是 ${t.status}，不能调整；请打回变更请求重新起草`);
-        const next: Record<string, unknown> = { ...t };
-        for (const [k, v] of Object.entries(x.patch)) { if (v === undefined) delete next[k]; else next[k] = structuredClone(v); }
-        tx.putTask(flowId, next as TaskFile);
-        tx.event({ flow: flowId, task: x.id, actor, type: 'note', reason: `变更请求 ${id} 调整任务：${Object.keys(x.patch).join('、')}`, data: { change: id, fields: Object.keys(x.patch) } });
-      }
-      const added = ops.add.map((t) => this.putNewTask(tx, flowId, t, 'engine'));
-      for (const [task, goal] of Object.entries(ops.notes)) {
-        if (!goal.length) continue;
-        tx.putJson(taskNotesRel(flowId, task), 'notes', { goal: [...goal], done: [], todo: [], current: [], decisions: [], pitfalls: [], updated_at: tx.ts, version: 1 });
-      }
-      for (const [task, text] of Object.entries(ops.handoffs)) {
-        const h = handoffRel(flowId, task);
-        tx.putText(h, `${tx.readText(h) ?? ''}\n## ${tx.ts} engine\n\n${text.trim()}\n`);
-      }
-      if (ops.stages) this.putStagesInTx(tx, flowId, ops.stages.stages, actor, true);
-      const saved = tx.putJson<ChangeFile>(changeRel(flowId, id), 'change', { ...c, status: 'approved', decided_at: tx.ts, touched: [] });
-      tx.event({ flow: flowId, actor, type: 'approval', reason: `变更请求 ${id} 已批准`, data: { change: id, status: 'approved', added: added.map((t) => t.id), cancelled: ops.cancels.map((x) => x.id), adjusted: ops.patches.map((x) => x.id), stages_changed: !!ops.stages } });
       return saved;
     });
   }

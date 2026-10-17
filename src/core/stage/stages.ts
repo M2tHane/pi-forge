@@ -59,7 +59,14 @@ export async function rejectStage(d: StageDeps, flowId: string, feedback: string
     await d.store.setPlanRework(flowId, `用户打回：${feedback}`, 'human');
     return `已打回架构阶段，程序将派 architect 接着原会话按意见返工。`;
   }
-  return `已打回阶段 ${flow.stage}，意见已交给主会话：它用变更请求把修改加进本阶段，修改合入后重新验收（在那之前程序不会重新提交门禁）。`;
+  return `已打回阶段 ${flow.stage}，意见已交给主会话：它判断要改的内容属于哪个任务，交程序建修复任务或交架构师；修改合入后重新验收（在那之前程序不会重新提交门禁）。`;
+}
+
+export interface ApprovalTarget { object: string; summary: string }
+/** 等待用户批准（或处理）的对象：当前阶段的闸门 */
+export function approvalTargets(store: StateStore, flowId: string, includeNeedsHuman = false): ApprovalTarget[] {
+  const f = store.readFlow(flowId);
+  return f.stage_status === 'awaiting_human' || includeNeedsHuman && f.stage_status === 'needs_human' ? [{ object: `stage:${f.stage}`, summary: `stage:${f.stage} 等待用户${f.stage_status === 'needs_human' ? '处理' : '批准'}` }] : [];
 }
 
 export async function unblockTask(d: StageDeps, flowId: string, taskId: string, answer?: string, reset = false): Promise<string> {

@@ -61,6 +61,8 @@ export interface AssembleInput {
   priorTask?: { id: string; title: string; run: string };
   /** 接着本任务上一次运行（run）的对话继续，只给简短的续做说明 */
   continuation?: { run: string };
+  /** 上一次运行用 forge_ask_architect 提问后结束：架构师的回答（接着原会话时放进续做说明） */
+  answer?: string;
   /** 上一次运行超过时间预算被结束，主会话复核后继续：forked 表示接着那次的对话，否则从头开始（只带 handoff 与工作区） */
   timeoutResume?: { run: string; minutes: number; budget: number; forked: boolean; decision?: 'continue' | 'restart'; note?: string };
   /** 逐任务审查：reviewer 的输入（diff、AC、契约……），完整放进提示，不按 handoff 的长度截断 */
@@ -151,12 +153,15 @@ const list = (xs: readonly string[], empty = '（无）') => (xs.length ? xs.map
 /** 返工时接着上一次的对话：任务说明、上游与 handoff 都已在对话里，只说明这次为什么回来、新的临时目录与开始方式 */
 export function continuationPrompt(i: AssembleInput): string {
   const t = i.task;
+  const finish = t.kind === 'consult' ? 'forge_answer 提交回答' : 'forge_note 写 handoff 并 forge_submit';
   return [
     `# 继续任务 ${i.flowId}/${t.id}：${t.title}`,
     `这是同一任务的新一次运行，接着上面的对话继续（上次运行 ${i.continuation!.run}）。工作区保留着你上次的代码与本地提交。`,
-    `## 上次提交后没有通过的原因（请先处理）\n${t.last_failure ?? '（无记录）'}`,
+    i.answer
+      ? `## 架构师的回答\n${i.answer}\n\n程序已把集成分支（含架构师的修改）同步进你的工作区；同步有冲突时 handoff 里写了冲突文件。`
+      : `## 上次提交后没有通过的原因（请先处理）\n${t.last_failure ?? '（无记录）'}`,
     ...(i.scratchDir ? [`## 临时目录\n本次运行的临时目录换成了 \`${i.scratchDir}\`（上次的已删除）。`] : []),
-    '开始：本次运行的身份已更换，先调用 forge_claim；按上面的原因修改，然后 forge_note 写 handoff 并 forge_submit。',
+    i.answer ? `开始：本次运行的身份已更换，先调用 forge_claim；按回答接着做，然后 ${finish}。` : `开始：本次运行的身份已更换，先调用 forge_claim；按上面的原因修改，然后 ${finish}。`,
   ].join('\n\n');
 }
 
@@ -208,7 +213,7 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     const acs = (t.ac ?? []).filter((a) => /^REQ-\d+\.AC\d+$/.test(a));
     parts.push(`## 验收测试（由你编写）\n本任务没有单独的测试作者：按 AC 编号为本任务写验收测试，放在 \`tests/acceptance/${impl}/\`（辅助代码也放在这个目录下），用例标题带 \`[REQ-xxx.ACn]\`，每条 AC 至少一个用例。reviewer 会运行 \`acceptance -- ${impl}\`，这些测试必须通过；全部验收测试在阶段门禁运行。提交前自己先跑通。${acs.length ? `\n本任务的 AC：\n${list(acs.map((a) => `[${a}]`))}` : ''}`);
   }
-  // S0 由 architect 执行 impl / fix，同样需要接口清单（变更请求的 doc task 不需要）
+  // S0 由 architect 执行 impl / fix，同样需要接口清单（小改动的文档任务与咨询不需要）
   if (i.flowTasks && (INTERFACE_ROLES.includes(i.agent.name) || (i.agent.name === 'architect' && (t.kind === 'impl' || t.kind === 'fix')))) parts.push(...interfaceSections(t, i.flowTasks));
   if (i.priorTask) {
     parts.push(`## 接着你之前的对话\n上面的对话是你完成 ${i.priorTask.id}「${i.priorTask.title}」时的过程（run ${i.priorTask.run}），你熟悉这些代码，不必从头重读。那个任务已经合入；现在是一个新任务、新的 worktree（集成分支最新代码，可能包含别人之后的改动），文件路径与可写范围以本次说明为准。`);
@@ -245,7 +250,9 @@ export function assemblePrompt(i: AssembleInput): AssembledPrompt {
     parts.push('开始：用任务说明里的 git diff 命令查看改动，按技能 code-review 逐个文件审查，最后调用 forge_review_report 一次提交全部问题（没有问题提交空列表）。不要修改仓库里的文件。');
     return { system, user: parts.join('\n\n') };
   }
-  parts.push('开始：先调用 forge_claim，然后按工作流程完成任务，最后 forge_note 写 handoff 并 forge_submit。');
+  parts.push(t.kind === 'consult'
+    ? '开始：先调用 forge_claim，然后按上面的说明回答问题（需要时修改），最后用 forge_answer 提交回答。'
+    : '开始：先调用 forge_claim，然后按工作流程完成任务，最后 forge_note 写 handoff 并 forge_submit。');
   if (i.continuation) return { system, user: continuationPrompt(i) };
   return { system, user: parts.join('\n\n') };
 }

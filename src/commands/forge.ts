@@ -11,9 +11,9 @@ import { resume, type DecisionAnswer } from '../core/ops/resume.ts';
 import { buildInputProblems, formatPreflight } from '../core/spec/preflight.ts';
 import { activeFlowId, statusText } from '../tools/orchestrator-tools.ts';
 import { splitArgs } from './args.ts';
-import { approveStage, rejectStage, unblockTask, startFlow } from '../core/stage/stages.ts';
+import { approvalTargets, approveStage, rejectStage, unblockTask, startFlow } from '../core/stage/stages.ts';
 import { isArchitectStage } from '../core/plan/plan-flow.ts';
-import { approvalTargets, approveChange, rejectChange } from '../core/plan/change-flow.ts';
+import { REJECTION_GUIDE } from '../core/engine/context-injector.ts';
 import { importInputs, prepareInputs } from '../core/spec/intake.ts';
 import { PRD_PATH, PROTOTYPE_DIR, prdWarningsAt } from '../core/spec/prd.ts';
 import { readFileSync } from 'node:fs';
@@ -78,8 +78,8 @@ export const FLOW_USAGE = [
   '  /forge off               退出调度模式，恢复原来的模型与工具（流程状态不变）',
   '  /forge doctor [--fix]    状态完整性与前置条件检查；--fix 清理残留 worktree 与提示文件',
   '  /forge init              初始化项目骨架（可重复执行，不覆盖）',
-  '  /forge-approve [stage:<id>|change:<id>] [--yes]   批准等待审阅的对象（仅用户）；实施阶段批准时把集成分支合入主分支',
-  '  /forge-reject [stage:<id>|change:<id>] "<意见>"   打回对象并记录意见',
+  '  /forge-approve [stage:<id>] [--yes]   批准架构阶段或签收当前批次（仅用户）；最后一批签收时把集成分支合入主分支',
+  '  /forge-reject [stage:<id>] "<意见>"   打回并记录意见：架构阶段由架构师返工；批次由主会话交给负责的任务或架构师修改',
   '  /forge accept <阶段或任务> --note "<说明>"   阶段在"需要你处理"（门禁修复轮数用尽）时人工放行进入签收；或接受耗尽轮数的任务审查',
   '  /forge answer [<任务>]   回答阻塞任务提出的问题（弹出输入框），回答后任务继续',
   '  /forge unblock <任务> ["<回答>"] [--reset]   解除阻塞；--reset 清零对应失败计数',
@@ -237,18 +237,9 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       if (lightMode === 'change') return '小改动不需要批准：各 task 审查通过后逐个合入主分支，最后由验收者确认变更。验收"需要你处理"时用 /forge accept --note "<说明>" 放行。';
       const targets = approvalTargets(h.store, flowId);
       const args = argv.slice(1).filter((a) => a !== '--yes');
-      if (args.length > 1 || args[0] && !/^(stage|change):[^\s]+$/.test(args[0])) throw new Error('用法：/forge-approve [stage:<id>|change:<id>] [--yes]');
-      const explicit = args[0];
-      if (!explicit && targets.length > 1) return `有多个对象等待批准，请明确对象：\n${targets.map((t) => t.summary).join('\n\n')}\n用法：/forge-approve stage:<id> 或 /forge-approve change:<id>`;
-      const target = explicit ?? targets[0]?.object;
-      if (!target || !targets.some((t) => t.object === target)) throw new Error(`没有等待批准的闸门或修订 ${target ?? ''}。`);
-      if (target.startsWith('change:')) {
-        const text = await approveChange(env.root, h.store, h.config, flowId, target.slice(7));
-        await h.engine.pump(flowId);
-        const d = await h.engine.next(flowId);
-        if (env.waitForIdle) await h.engine.idle();
-        return `${text}${d.length ? `\n已派发：${d.map((x) => `${x.task} → ${x.role}`).join('；')}` : ''}\n\n${renderStatus(h.store, h.config)}`;
-      }
+      if (args.length > 1 || args[0] && !/^stage:[^\s]+$/.test(args[0])) throw new Error('用法：/forge-approve [stage:<id>] [--yes]');
+      const target = args[0] ?? targets[0]?.object;
+      if (!target || !targets.some((t) => t.object === target)) throw new Error(`没有等待批准的闸门 ${target ?? ''}。`);
       const flow = h.store.readFlow(flowId);
       // 架构阶段批准前 S0 还是最后一个阶段；批准时先落地计划、追加批次阶段，流程继续
       if (!isArchitectStage(flow.stage) && flow.stage === flow.stages.at(-1) && flow.stage_status === 'awaiting_human' && !argv.includes('--yes')) {
@@ -270,21 +261,15 @@ export async function runFlowCommand(args: string, env: CommandEnv): Promise<str
       const h = env.engine();
       const flowId = activeFlowId(h.store);
       const args = argv.slice(1);
-      const explicit = /^(stage|change):/.test(args[0] ?? '') ? args.shift() : undefined;
+      const explicit = /^stage:/.test(args[0] ?? '') ? args.shift() : undefined;
       const feedback = args.join(' ').trim();
-      if (!feedback) throw new Error('用法：/forge-reject [stage:<id>|change:<id>] "<意见>"');
+      if (!feedback) throw new Error('用法：/forge-reject [stage:<id>] "<意见>"');
       const targets = approvalTargets(h.store, flowId, true);
-      if (!explicit && targets.length > 1) return `有多个对象等待处理，请明确对象：\n${targets.map((t) => t.summary).join('\n\n')}`;
       const target = explicit ?? targets[0]?.object;
       if (!target || !targets.some((t) => t.object === target)) throw new Error(`没有等待处理的对象 ${target ?? ''}。`);
-      if (target.startsWith('change:')) {
-        const text = await rejectChange(env.root, h.store, h.config, flowId, target.slice(7), feedback);
-        await h.engine.pump(flowId);
-        return text;
-      }
       const text = await rejectStage({ root: env.root, store: h.store, config: h.config }, flowId, feedback);
-      // 架构阶段的返工由 architect 完成，主会话只需等待
-      if (!isArchitectStage(target.slice('stage:'.length))) env.startConversation?.(`阶段被打回，请带着意见继续讨论：${feedback}`);
+      // 架构阶段的返工由 architect 完成，主会话只需等待；批次被打回时主会话判断归属
+      if (!isArchitectStage(target.slice('stage:'.length))) env.startConversation?.(`用户打回了阶段 ${target.slice('stage:'.length)}：${feedback}\n${REJECTION_GUIDE}`);
       await h.engine.pump(flowId);
       return text;
     }

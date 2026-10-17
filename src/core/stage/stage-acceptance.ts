@@ -9,7 +9,6 @@ import type { FlowConfig } from '../state/config.ts';
 import type { TaskFile } from '../state/schemas.ts';
 import type { StateStore } from '../state/state-store.ts';
 import { isSettled } from '../state/state-machine.ts';
-import { isOpenChange } from '../plan/change-request.ts';
 import { isArchitectStage } from '../plan/plan-flow.ts';
 import { headSha } from '../workspace/worktree.ts';
 import { gateFailed, stageDef, type ImplementationChecks } from './gates.ts';
@@ -99,8 +98,6 @@ export async function stageStep(d: AcceptanceDeps, flowId: string, opts: { force
   if (flow.stage_status === 'active') {
     const tasks = store.listTasks(flowId);
     if (!stageWorkSettled(tasks, stage)) return 'wait';
-    // 变更请求还没结束（起草中、等待批准、被打回）：批准后可能在本阶段新增 task，先不提交门禁
-    if (store.listChanges(flowId).some(isOpenChange)) return 'wait';
     if (!opts.force && opts.gateFailedWithoutChange()) return 'wait';
     await store.transitionStage(flowId, { to: 'awaiting_gate', trigger: 'submit_gate', actor: 'engine' });
     return 'gate';
@@ -147,7 +144,7 @@ export async function afterChecks(d: AcceptanceDeps, flowId: string, g: Implemen
   await store.recordEvent({ flow: flowId, actor: 'gate', type: 'note', reason: `阶段 ${g.stage} 门禁与覆盖率通过`, data: { kind: GATE_PASSED, stage: g.stage, head: g.head } });
   if (!qaEnabled(d.config, g.stage)) return { done: await finalize(d, flowId, g.head) };
   const r = await resolveQa(d.root, store, d.config, flowId, g.stage);
-  // 轮数用尽后代码又变了（用户打回后变更请求的 task 合入）：再开一轮只确认的，不按改动之前的结论交给用户
+  // 轮数用尽后代码又变了（用户打回后的修复合入）：再开一轮只确认的，不按改动之前的结论交给用户
   //（stock run-03：S2 修完后门禁两次都按旧的 stage-qa 结论判用尽，修复没人复验）
   const stale = r.kind === 'exhausted' && !sameWork(d.root, qaHead(store, flowId, g.stage), g.head);
   if (r.kind === 'blocked' || (r.kind === 'exhausted' && !stale)) { await toNeedsHuman(store, flowId, `stage-qa：${r.reason}`); return { done: false }; }

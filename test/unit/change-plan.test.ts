@@ -1,8 +1,7 @@
 // 小改动（change）模式的迷你计划校验：纯函数，逐条规则。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkChangePlan, type ChangePlanInput } from '../../src/core/plan/change-plan.ts';
-import { forbiddenWriteOf } from '../../src/core/plan/plan.ts';
+import { checkChangePlan, forbiddenWriteOf, type ChangePlanInput } from '../../src/core/plan/change-plan.ts';
 
 const task = (o: Partial<ChangePlanInput['tasks'][number]> = {}): ChangePlanInput['tasks'][number] => ({ title: '加导出', writes: ['src/export/**'], ac: ['能导出 CSV'], ...o });
 const input = (tasks: ChangePlanInput['tasks'], o: Partial<ChangePlanInput> = {}): ChangePlanInput => ({ title: '加导出功能', tasks, ...o });

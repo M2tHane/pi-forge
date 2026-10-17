@@ -14,8 +14,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { parseDocument } from 'yaml';
 import { loadConfig } from '../src/core/state/config.ts';
-import { pendingChanges } from '../src/core/plan/change-flow.ts';
-import { changeDelegated, stageDelegated } from '../src/core/engine/decisions.ts';
+import { stageDelegated } from '../src/core/engine/decisions.ts';
 import { activePauses } from '../src/core/engine/model-pause.ts';
 import { renderDetail } from '../src/core/ops/status-detail.ts';
 import { flowMetrics, renderMetrics } from '../src/core/stage/signoff.ts';
@@ -132,10 +131,7 @@ export function readSnapshot(store: StateStore, root: string, flowId: string | n
     tasks: tasks.map((t) => ({
       id: t.id, status: t.status, blockedBy: t.blocked_by ?? null, blockedReason: t.blocked_reason, version: t.version, blockedOwner: t.blocked_owner ?? null,
     })),
-    otherApprovals: [
-      // 还没转交用户的由主会话处理
-      ...pendingChanges(store, flowId).filter((c) => !changeDelegated(c)).map((c) => `change:${c.id}`),
-    ],
+    otherApprovals: [],
   };
 }
 

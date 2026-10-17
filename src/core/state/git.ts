@@ -61,7 +61,7 @@ export function dirtyFiles(root: string): Set<string> {
 }
 
 /**
- * task 的改动基线：任务 worktree 与集成分支的合并基点。任务同步过集成分支（forge_sync）后，基点含已批准变更请求对契约的修改，
+ * task 的改动基线：任务 worktree 与集成分支的合并基点。任务同步过集成分支（forge_sync）后，基点含架构师对契约的修改，
  * 这些修改不算 worker 的改动；没有集成分支信息或算不出时用 base_sha。
  */
 export function taskBaseOf(t: { base_sha?: string | null; worktree?: string | null }, integrationBranch?: string): string | undefined {

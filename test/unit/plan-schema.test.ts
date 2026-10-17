@@ -1,54 +1,10 @@
-// M1：plan.yaml 与任务、流程新增字段的形状校验；语义校验留给 M3。
+// 任务、流程字段的形状校验。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SCHEMAS, TASK_KINDS, TASK_STATUSES, validate, type PlanFile } from '../../src/core/state/schemas.ts';
+import { SCHEMAS, TASK_KINDS, TASK_STATUSES, validate } from '../../src/core/state/schemas.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { SCHEMA_VERSION, MIGRATIONS, migrationChain } from '../../src/core/state/migrations.ts';
 
-const plan = (): PlanFile => ({
-  stages: [{ id: 'S0', goal: '骨架', exit: ['REQ-001'] }, { id: 'S1', goal: '数据源管理', exit: ['REQ-012'] }],
-  tasks: [{
-    id: 'T-003', stage: 'S1', module: 'datasource', title: '数据源管理', size: 'M',
-    layers: ['backend', 'database', 'frontend'], ac: ['REQ-012.AC1', 'REQ-012.AC2'],
-    writes: ['server/src/datasource/**'], shared: ['server/src/routes.ts'],
-    produces: ['table:datasources', 'api:POST /api/datasources'], requires: ['table:teams', '~api:GET /api/teams/{id}'],
-    manual_checks: ['新增后列表高亮'], risk: 'high',
-  }],
-});
-test('完整的计划通过；可选字段可省略', () => {
-  assert.deepEqual(validate('plan', plan()), []);
-  const minimal = plan();
-  for (const key of ['shared', 'manual_checks', 'risk'] as const) delete minimal.tasks[0]![key];
-  assert.deepEqual(validate('plan', minimal), []);
-});
-test('计划拒绝缺字段、未知字段、错误类型、负整数、空阶段或任务、错误枚举', () => {
-  for (const key of ['stages', 'tasks']) {
-    const invalid: Record<string, unknown> = structuredClone(plan()); delete invalid[key]; assert.ok(validate('plan', invalid).length, key);
-  }
-  for (const key of ['id', 'stage', 'title', 'layers', 'ac', 'writes', 'produces', 'requires']) {
-    const invalid = plan(); const entry = invalid.tasks[0]! as unknown as Record<string, unknown>; delete entry[key]; assert.ok(validate('plan', invalid).length, key);
-  }
-  for (const change of [
-    { extra: true }, { mode: 'unknown' }, { stages: [] }, { tasks: [] },
-    { stages: [{ id: 'S0', goal: '骨架', exit: 'REQ-001' }] },
-    { tasks: [{ ...plan().tasks[0], review: 'strong' }] }, { tasks: [{ ...plan().tasks[0], risk: 'critical' }] },
-    { tasks: [{ ...plan().tasks[0], acceptance: ['旧字段'] }] },
-  ]) assert.ok(validate('plan', { ...plan(), ...change }).length);
-});
-test('parsePlan：多写的字段忽略，列表字段与 exit 缺省为空，module 与 size 可省略；description 保留给 worker', async () => {
-  const { parsePlan, deriveTasks } = await import('../../src/core/plan/plan.ts');
-  const r = parsePlan(['size_estimate: { loc: 100 }', 'note: 随手写的', 'stages:', '  - { id: S0, goal: 骨架 }', 'tasks:', '  - { id: T-001, stage: S0, title: 骨架, description: 夹具用固定数据, owner: architect }'].join('\n'));
-  assert.deepEqual(r.errors, []);
-  assert.deepEqual(r.plan!.stages[0]!.exit, []);
-  assert.deepEqual(r.plan!.tasks[0]!.writes, []);
-  assert.equal((r.plan!.tasks[0] as Record<string, unknown>)['owner'], undefined);
-  assert.equal(deriveTasks(r.plan!, new Map(), { worker: [] })[0]!.description, '夹具用固定数据');
-  assert.ok(parsePlan('stages: []\ntasks: []').errors.length, '空阶段与空任务仍然拒绝');
-});
-test('M1 只校验形状：重复编号、未知阶段、符号和 AC 暂由后续语义检查处理', () => {
-  const p = plan(); p.tasks.push(structuredClone(p.tasks[0]!)); p.tasks[0]!.stage = 'unknown'; p.tasks[0]!.requires = ['任意符号'];
-  assert.deepEqual(validate('plan', p), []);
-});
 test('编号支持主任务与 .rv/.fx 派生任务与阶段 .qa，其他后缀与旧 kind 被拒', () => {
   for (const id of ['T-003', 'T-1000', 'T-003.rv', 'T-003.rv-2', 'T-003.fx-1', 'T-003.fx', 'S1.qa', 'S1.qa-2']) assert.deepEqual(validate('task', mkTask(id)), [], id);
   for (const id of ['T-03', 'T-003.at', 'T-003.at-2', 'T-003.rv-x', 'T-003.rv-2.fx', 'T-003.foo', 'T-003.rv-', 'S1.rv']) assert.ok(validate('task', mkTask(id)).length, id);
@@ -83,6 +39,5 @@ test('格式版本 4：内置 1 → 2、2 → 3、3 → 4 的迁移，旧流程�
   assert.deepEqual(migrationChain(4, 4), { steps: [], missing: null });
   assert.equal(migrationChain(1, 4).steps.length, 3);
   assert.deepEqual(migrationChain(4, 5), { steps: [], missing: 4 });
-  assert.ok('plan' in SCHEMAS);
-  for (const key of ['proposal', 'revision', 'acceptance', 'final-review', 'amend']) assert.equal(key in SCHEMAS, false);
+  for (const key of ['plan', 'plan-proposal', 'change', 'proposal', 'revision', 'acceptance', 'final-review', 'amend']) assert.equal(key in SCHEMAS, false, key);
 });

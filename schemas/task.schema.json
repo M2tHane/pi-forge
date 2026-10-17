@@ -43,7 +43,8 @@
         "review",
         "qa",
         "fix",
-        "merge-fix"
+        "merge-fix",
+        "consult"
       ]
     },
     "title": {
@@ -230,7 +231,8 @@
             "dispatcher",
             "user",
             "integration_broken",
-            "no_changes"
+            "no_changes",
+            "architect"
           ]
         },
         {

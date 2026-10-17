@@ -16,8 +16,8 @@ export const TASK_STATUSES = [
 export const TaskStatus = Type.Enum(TASK_STATUSES);
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
-/** 实现、文档、审查、阶段验收、修复与合并冲突修复 */
-export const TASK_KINDS = ['impl', 'doc', 'review', 'qa', 'fix', 'merge-fix'] as const;
+/** 实现、文档、审查、阶段验收、修复、合并冲突修复与架构师咨询 */
+export const TASK_KINDS = ['impl', 'doc', 'review', 'qa', 'fix', 'merge-fix', 'consult'] as const;
 export const TaskKind = Type.Enum(TASK_KINDS);
 export type TaskKind = (typeof TASK_KINDS)[number];
 
@@ -74,6 +74,8 @@ const StringList = Type.Array(Type.String({ minLength: 1 }));
 const BlockedBy = Type.Enum([
   'review_exhausted', 'merge_exhausted', 'attempts',
   'agent', 'dispatcher', 'user', 'integration_broken', 'no_changes',
+  /** 等架构师回答（forge_ask_architect）：程序在咨询任务完成后自动恢复，不交给主会话 */
+  'architect',
 ]);
 
 export const FlowFile = Type.Object({
@@ -133,7 +135,7 @@ export const FlowFile = Type.Object({
   version: Type.Integer({ minimum: 1 }),
 }, { additionalProperties: false });
 export type FlowFile = Static<typeof FlowFile>;
-/** 轻流程（fix、change）：单一阶段 X1，无阶段闸门，直接合入主分支，不占用活动流程指针，不用变更请求、不收 PRD */
+/** 轻流程（fix、change）：单一阶段 X1，无阶段闸门，直接合入主分支，不占用活动流程指针，没有架构师咨询、不收 PRD */
 export const isLightFlow = (flow: Pick<FlowFile, 'mode'>): boolean => flow.mode !== 'build';
 
 /** 只有硬依赖：依赖的任务 done 之后才能开工 */
@@ -290,6 +292,8 @@ export const RunFile = Type.Object({
     Type.Literal('unavailable'),
     /** 超过时间预算被结束：计入运行失败，等主会话复核 */
     Type.Literal('timeout'),
+    /** 调用 forge_ask_architect 后结束：回答后接着这次的会话继续 */
+    Type.Literal('asked'),
   ])),
   /** 没有提交就结束时的失败类别（engine/failure-class.ts） */
   failure_kind: Type.Optional(Type.Enum(FAILURE_KINDS)),
@@ -457,34 +461,6 @@ export const WorkflowFile = Type.Object({
 }, { additionalProperties: false });
 export type WorkflowFile = Static<typeof WorkflowFile>;
 
-// —— plan.yaml：只校验形状；符号、DAG、覆盖率与阶段顺序由 M3 校验 ——
-
-/** 计划：只有 id、stage、title 是必填的；列表字段缺省为空，没见过的字段由 parsePlan 忽略 */
-export const PlanFile = Type.Object({
-  stages: Type.Array(PlanStage, { minItems: 1 }),
-  tasks: Type.Array(Type.Object({
-    id: TaskId,
-    stage: Type.String({ minLength: 1 }),
-    module: Type.Optional(Type.String({ minLength: 1 })),
-    title: Type.String({ minLength: 1 }),
-    /** 给 worker 与 reviewer 的说明（实现要点、测试数据怎么准备、修改 task 要改什么） */
-    description: Type.Optional(Type.String()),
-    size: Type.Optional(TaskSize),
-    layers: StringList,
-    ac: StringList,
-    writes: StringList,
-    shared: Type.Optional(StringList),
-    produces: StringList,
-    requires: StringList,
-    manual_checks: Type.Optional(ManualChecks),
-    /** high：涉及权限与鉴权、金额计算、不可恢复的批量数据操作（审查用强模型）；审查强度由程序推导，计划里不写 */
-    risk: Type.Optional(TaskRisk),
-    /** 只在变更请求的修订里使用：这是对已开始或已完成的 task 的修改 task，程序让它硬依赖原 task */
-    modifies: Type.Optional(Type.String({ pattern: '^T-\\d{3,}$' })),
-  }, { additionalProperties: false }), { minItems: 1 }),
-}, { additionalProperties: false });
-export type PlanFile = Static<typeof PlanFile>;
-
 // —— 项目级知识库（.forge/knowledge.json）：跨流程积累的约定、坑、决策；只由程序写入 ——
 
 export const KNOWLEDGE_CATEGORIES = ['convention', 'pitfall', 'decision', 'environment', 'dependency'] as const;
@@ -605,77 +581,7 @@ export const RoleSettingsFile = Type.Object({
 }, { additionalProperties: false });
 export type RoleSettingsFile = Static<typeof RoleSettingsFile>;
 
-// —— P1 计划提案（.forge/flows/<流程>/plan-proposal.json）：architect 经 forge_propose_plan 提交，只由程序写入 ——
-
-export const PlanProposalFile = Type.Object({
-  version: Type.Integer({ minimum: 1 }),
-  task: TaskId,
-  /** 提交时 docs/plan/plan.yaml 的 sha256；预检与闸门核对它与分支上的计划一致 */
-  plan_hash: Type.String({ pattern: '^[0-9a-f]{64}$' }),
-  /** architect 默认的处理：规格没说清时采用的方案，用户批准时逐条确认 */
-  assumptions: Type.Array(Type.Object({ question: Type.String({ minLength: 1 }), decision: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
-  /** 超出需求但不得不做的设计（安全、数据完整性） */
-  extras: Type.Array(Type.Object({ what: Type.String({ minLength: 1 }), why: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
-  /** 程序生成的报告（阶段、task 数、关键路径、互斥、提醒） */
-  report: Type.String(),
-  warnings: Type.Array(Type.String()),
-  created_at: IsoTime,
-}, { additionalProperties: false });
-export type PlanProposalFile = Static<typeof PlanProposalFile>;
-
-// —— 变更请求（.forge/flows/<流程>/changes/C-001.json）：architect 起草修订，用户批准后在一个事务里落地 ——
-
-export const CHANGE_STATUSES = ['drafting', 'proposed', 'approved', 'rejected', 'cancelled'] as const;
-export type ChangeStatus = (typeof CHANGE_STATUSES)[number];
-export const CHANGE_ACTION_KINDS = ['add', 'adjust', 'cancel', 'followup', 'stages'] as const;
-/** 修订里的一项动作（摘要；落地时程序按当时的状态重新推导并与它核对） */
-export const ChangeActionSummary = Type.Object({
-  kind: Type.Enum(CHANGE_ACTION_KINDS),
-  /** add、adjust、cancel：计划里的 task；followup：新的修改 task（计划里的编号） */
-  task: Type.Optional(Type.String({ minLength: 1 })),
-  /** followup：被修改的原 task */
-  of: Type.Optional(Type.String({ minLength: 1 })),
-  stage: Type.Optional(Type.String({ minLength: 1 })),
-  /** adjust：改动的字段；stages：新增/调整/删除的阶段 */
-  fields: Type.Optional(Type.Array(Type.String())),
-  detail: Type.Optional(Type.String()),
-}, { additionalProperties: false });
-export type ChangeActionSummary = Static<typeof ChangeActionSummary>;
-
-export const ChangeFile = Type.Object({
-  version: Type.Integer({ minimum: 1 }),
-  id: Type.String({ pattern: '^C-[0-9]{3,}$' }),
-  what: Type.String({ minLength: 1 }),
-  why: Type.String({ minLength: 1 }),
-  impact: Type.String({ minLength: 1 }),
-  /** worker:<task>、main */
-  source: Type.String({ pattern: '^(main|worker:T-[0-9]{3,}(\\.(rv|fx)(-[0-9]+)?)?)$' }),
-  status: Type.Enum(CHANGE_STATUSES),
-  /** 当前起草修订的 architect task（打回返工时换成新的） */
-  task: TaskId,
-  /** forge_propose_plan 通过时保存：修订后的 plan.yaml（批准时按它落地，也是下一次变更的"当前计划"） */
-  plan_hash: Type.Optional(Type.String({ pattern: '^[0-9a-f]{64}$' })),
-  plan_text: Type.Optional(Type.String()),
-  assumptions: Type.Optional(Type.Array(Type.Object({ question: Type.String({ minLength: 1 }), decision: Type.String({ minLength: 1 }) }, { additionalProperties: false }))),
-  extras: Type.Optional(Type.Array(Type.Object({ what: Type.String({ minLength: 1 }), why: Type.String({ minLength: 1 }) }, { additionalProperties: false }))),
-  summary: Type.Optional(Type.String()),
-  actions: Type.Optional(Type.Array(ChangeActionSummary)),
-  /** 等待批准期间不派发的 task：修订要调整或取消的未开始 task（及其验收测试） */
-  touched: Type.Array(TaskId),
-  warnings: Type.Optional(Type.Array(Type.String())),
-  /** architect 起草的轮数（打回一次加 1） */
-  rounds: Type.Integer({ minimum: 1 }),
-  created_at: IsoTime,
-  decided_at: Type.Optional(IsoTime),
-  feedback: Type.Optional(Type.String()),
-  /** 主会话看过修订后转交用户批准（之后只有用户能批准或打回） */
-  to_user: Type.Optional(Type.String({ minLength: 1 })),
-}, { additionalProperties: false });
-export type ChangeFile = Static<typeof ChangeFile>;
-
 export const SCHEMAS = {
-  change: ChangeFile,
-  'plan-proposal': PlanProposalFile,
   state: StateFile,
   flow: FlowFile,
   task: TaskFile,
@@ -684,7 +590,6 @@ export const SCHEMAS = {
   'merge-queue': MergeQueueFile,
   workflow: WorkflowFile,
   'role-settings': RoleSettingsFile,
-  plan: PlanFile,
   knowledge: KnowledgeFile,
   'model-pauses': ModelPausesFile,
   notes: NotesFile,

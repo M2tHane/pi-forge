@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { setupProject, PROJECT_YAML, type Project } from '../helpers/project.ts';
 import { mkTask } from '../helpers/tasks.ts';
 import { parseConfig } from '../../src/core/state/config.ts';
-import { changeRel, flowRel, taskRel, type TaskInput } from '../../src/core/state/state-store.ts';
+import { flowRel, taskRel, type TaskInput } from '../../src/core/state/state-store.ts';
 import { hashToken } from '../../src/core/state/state-machine.ts';
 import { actionsNeeded, renderStatus, statusLine } from '../../src/core/ops/status-view.ts';
 import { renderDetail, renderMetricsView, renderCostView, sortTasks, taskTable } from '../../src/core/ops/status-detail.ts';
@@ -185,17 +185,14 @@ scenario('budget-exceeded', async () => {
   return p;
 });
 
-// —— 变更与修订 ——
+// —— 等架构师回答 ——
 
-scenario('change-request-pending', async () => {
-  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' })] });
+scenario('consult-waiting', async () => {
+  const p = await mk({ plan: true, at: 'S1', approvals: ['S0'], tasks: [impl('T-001', 'S1', { title: '看板列表接口' }), impl('T-002', 'S1', { title: '创建看板接口' }),
+    mkTask('T-003', { stage: 'S1', kind: 'consult', role: 'architect', for_task: 'T-002', writes: ['**'], title: '咨询：看板状态要不要加"归档"' })] });
   forceTask(p, 'T-001', { status: 'done' });
-  forceTask(p, 'T-002', running('worker', 'r-2'));
-  const { change } = await p.store.createChange(p.flowId, { what: '看板增加归档功能', why: '用户要求', impact: '新增 1 个接口', source: 'main' },
-    mkTask('T-009', { stage: 'S1', kind: 'doc', role: 'architect', scopes: ['plan'], writes: ['docs/**'], title: '变更请求：看板增加归档功能' }) as TaskInput, '起草修订', 'orchestrator');
-  forceTask(p, 'T-009', { status: 'done' });
-  const f = path.join(p.dir, '.forge', changeRel(p.flowId, change.id));
-  writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), status: 'proposed', summary: '新增 T-007 归档接口' }, null, 2));
+  forceTask(p, 'T-002', { status: 'blocked', blocked_by: 'architect', blocked_reason: '等架构师回答（T-003）：看板状态要不要加"归档"', branch: 'b', worktree: '/w', base_sha: 'a'.repeat(40) });
+  forceTask(p, 'T-003', running('architect', 'r-3'));
   return p;
 });
 

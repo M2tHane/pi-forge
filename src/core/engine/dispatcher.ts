@@ -35,8 +35,7 @@ import { autoTimeoutDecision, awaitingReview, graceMinutes, measureProgress, run
 import { stallOf, stuckTasks } from '../insight/forge-watch.ts';
 import { stopAllServices } from '../workspace/services.ts';
 import { ensureArchitectTask, isArchitectStage } from '../plan/plan-flow.ts';
-import { ensureChangeTask } from '../plan/change-flow.ts';
-import { pausedByChange } from '../plan/change-request.ts';
+import { decisionsSection, heldConsults, lastArchitectTask, latestConsultOf, readAnswer, resolveConsults } from './consult.ts';
 import { allocateResources, releaseResources, resourceEnv, resourceOptions } from '../workspace/resources.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { readSharedEnv, sharedEnvDir, syncSharedEnv } from '../workspace/shared-env.ts';
@@ -188,10 +187,10 @@ export class Engine {
   /** pending → ready（硬依赖已完成且属于当前活动阶段） */
   async promote(flowId: string): Promise<string[]> {
     const flow = this.d.store.readFlow(flowId);
-    if (flow.stage_status !== 'active' && flow.stage_status !== 'awaiting_gate') return [];
-    // 门禁进行中只有 stage-qa 可以就绪
+    if (flow.stage_status === 'done' || flow.stage_status === 'aborted') return [];
+    // 门禁进行中只有 stage-qa 可以就绪；架构师咨询在阶段的任何状态都可以就绪
     const ids = computeReady(this.d.store.listTasks(flowId), flow.stage)
-      .filter((id) => flow.stage_status === 'active' || this.d.store.readTask(flowId, id).kind === 'qa');
+      .filter((id) => { const kind = this.d.store.readTask(flowId, id).kind; return flow.stage_status === 'active' || kind === 'consult' || (kind === 'qa' && flow.stage_status === 'awaiting_gate'); });
     // promote 有几处调用不在 pump 的串行队列里（/forge next、run 结束的回调），两次同时算出同一批时，后一次会撞上已经 ready 的 task
     //（stock run-02：程序步骤出错，T-010.rv ready -> ready）。已经不是 pending 的跳过
     const done: string[] = [];
@@ -214,8 +213,9 @@ export class Engine {
     const flow = this.d.store.readFlow(flowId);
     if (flow.sync?.status === 'conflict') return [];
     if (budgetState(this.d.store, this.d.config, flow, this.now())?.exceeded) return [];
-    const changes = this.d.store.listChanges(flowId);
-    const ids = selectDispatchable(this.d.store.listTasks(flowId).filter((t) => !this.pausedFor(flowId, t) && !pausedByChange(changes, t.id)), flow.stage, flowLimits(this.d.config.limits, flow));
+    const tasks = this.d.store.listTasks(flowId);
+    const held = heldConsults(tasks);
+    const ids = selectDispatchable(tasks.filter((t) => !this.pausedFor(flowId, t) && !held.has(t.id)), flow.stage, flowLimits(this.d.config.limits, flow));
     const out: Dispatched[] = [];
     for (const id of ids) {
       try { out.push(await this.dispatch(flowId, id)); } catch (e) { if (!(e instanceof HandedToUser)) throw e; }
@@ -238,7 +238,6 @@ export class Engine {
     ensureLocalExcludes(root);
     const flow = store.readFlow(flowId);
     let task = store.readTask(flowId, taskId);
-    if (task.status === 'ready' && pausedByChange(store.listChanges(flowId), taskId)) throw new DispatchError(`任务 ${taskId} 被等待批准的变更请求暂停（修订要调整或取消它），批准或打回后再派发`);
     const plan = this.planModel(flowId, task);
     const { role, model, thinking, escalated, fallback } = plan;
     const paused = activePause(store, model, this.now());
@@ -278,8 +277,8 @@ export class Engine {
           ? { path: task.worktree, branch: task.branch, base_sha: task.base_sha }
           : createTaskWorktree(root, flowId, taskId, flow.integration_branch, flow.integration_branch);
       await this.prepareDeps(flowId, task, wt.path);
-      // 修复任务接着写过这些代码的任务的对话继续（第四轮后续）
-      const forkFrom = task.fork_from_task ?? null;
+      // 修复任务接着写过这些代码的任务的对话继续（第四轮后续）；咨询接着 architect 最近一次的会话
+      const forkFrom = task.fork_from_task ?? (task.kind === 'consult' ? lastArchitectTask(store, flowId, taskId) : null);
       if (forkFrom && tasksHas(store, flowId, forkFrom)) fork = this.forkSource(flowId, store.readTask(flowId, forkFrom), role, model);
       task = await store.transitionTask(flowId, taskId, {
         to: 'in_progress', trigger: 'dispatch', actor: 'dispatcher',
@@ -430,8 +429,8 @@ export class Engine {
     if (this.d.config.limits.continue_session === false) return null;
     const prev = this.d.store.listRuns().filter((r) => r.flow === flowId && r.task === task.id && r.role === role && r.ended_at)
       .sort((a, b) => a.started_at.localeCompare(b.started_at)).at(-1);
-    // 正常提交过的会话，或超时被结束的会话（主会话复核后决定接着做）
-    if (!prev || !(prev.outcome === 'submitted' || prev.outcome === 'timeout') || prev.model !== model || !prev.session_file) return null;
+    // 正常提交过的会话、超时被结束的会话（主会话复核后决定接着做），或提问后等架构师回答的会话
+    if (!prev || !(prev.outcome === 'submitted' || prev.outcome === 'timeout' || prev.outcome === 'asked') || prev.model !== model || !prev.session_file) return null;
     try {
       if (statSync(prev.session_file).size > MAX_FORK_BYTES) return null;
     } catch { return null; }
@@ -453,8 +452,9 @@ export class Engine {
       if (status || stat) existingWork = [stat, status && `未提交：\n${status}`].filter(Boolean).join('\n\n');
     }
     // worker 自己写验收测试（带上 acceptance-tests），reviewer 审查这些测试（同一份技能当检查依据）
-    const s0Architect = role === 'architect' && isArchitectStage(task.stage) && (task.kind === 'impl' || task.kind === 'fix');
-    const skillNames = [...new Set([...(s0Architect ? ['design-contract', 'domain-modeling', 'plan-batches', 'write-rules', 'acceptance-tests', 'simplicity', 'receiving-feedback'] : role === 'architect' ? (task.stage === 'X1' ? ['design-contract', 'domain-modeling'] : ['design-contract', 'plan-dag', 'domain-modeling', 'write-rules', 'change-request']) : role === 'reviewer' ? ['code-review', 'tdd', 'simplicity', 'acceptance-tests'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd', 'simplicity', 'receiving-feedback', 'acceptance-tests']), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
+    // 架构阶段与之后的咨询用同一份技能：咨询接着架构阶段的会话，系统提示不变才能命中提示缓存
+    const mainArchitect = role === 'architect' && task.stage !== 'X1';
+    const skillNames = [...new Set([...(mainArchitect ? ['design-contract', 'domain-modeling', 'plan-batches', 'write-rules', 'acceptance-tests', 'simplicity', 'receiving-feedback'] : role === 'architect' ? ['design-contract', 'domain-modeling'] : role === 'reviewer' ? ['code-review', 'tdd', 'simplicity', 'acceptance-tests'] : role === 'stage-qa' ? ['stage-qa'] : ['tdd', 'simplicity', 'receiving-feedback', 'acceptance-tests']), ...(config.role(role).writes.length ? ['write-handoff'] : [])])];
     const skills = skillNames.map((n) => {
       const f = this.d.packageSkillsDir ? path.join(this.d.packageSkillsDir, n, 'SKILL.md') : '';
       return f && existsSync(f) ? { path: `skills/${n}`, content: readFileSync(f, 'utf8').replace(/^---[\s\S]*?---\s*/, '').trim() } : null;
@@ -468,8 +468,14 @@ export class Engine {
     const confirmRound = (task.kind === 'review' || task.kind === 'qa') && (readReviewEvidence<ReviewInputFile>(store, flowId, task.id, task.kind === 'qa' ? QA_INPUT : REVIEW_INPUT)?.prior_must.length ?? 0) > 0;
     // PRD 的「通用约定」（字段规则）放进写代码与审查代码的任务说明（stock run-03：S2 打回 3 次都是字段规则）
     const conventions = ['worker', 'backend', 'frontend', 'reviewer'].includes(role) ? conventionsSection(readPrdText(root, `refs/heads/${flow.integration_branch}`) ?? '') : '';
+    // 咨询开新会话（没有可接的会话或太大）时，带上 decisions.md 恢复上下文
+    const decisions = task.kind === 'consult' && !fork ? decisionsSection(root, store, flowId) : '';
+    // 提问后等到了回答：接着原会话时，回答放进继续说明
+    const asked = fork && fork.task === task.id && store.readRun(fork.run_id).outcome === 'asked' ? latestConsultOf(tasks, task.id) : undefined;
+    const answer = asked ? readAnswer(store, flowId, asked.id)?.trim() : undefined;
     const prompt = assemblePrompt({
-      agent, rules, skills, task, flowId, flowTasks: tasks, ...(conventions ? { conventions } : {}), handoff: reviewBrief ? '' : store.readHandoff(flowId, task.id), mode,
+      agent, rules, skills, task, flowId, flowTasks: tasks, ...(conventions ? { conventions } : {}), handoff: reviewBrief ? '' : [store.readHandoff(flowId, task.id), decisions].filter(Boolean).join('\n\n'), mode,
+      ...(answer ? { answer } : {}),
       ...(reviewBrief ? { reviewBrief, confirmRound } : {}), commands: config.commands,
       knowledge: selectKnowledge(store.readKnowledge(), task).map(formatEntry),
       ...(scratch ? { scratchDir: scratch } : {}),
@@ -615,8 +621,8 @@ export class Engine {
     } catch (e) { report(e); }
     // 审查结论先处理：新建的 .rv 要在随后的 promote 中变为 ready
     try { await resolveReviews(this.d.root, this.d.store, this.d.config, flowId); } catch (e) { report(e); }
-    // 被打回的变更请求：新建 architect task 返工（要在 promote 之前，新 task 才能就绪）
-    try { await ensureChangeTask(this.d.root, this.d.store, this.d.config, flowId); } catch (e) { report(e); }
+    // 架构师回答了：提问的任务拿到回答、同步集成分支后回到 in_progress，下面接着原会话重新派发
+    try { await resolveConsults(this.d.store, flowId); } catch (e) { report(e); }
     try {
       await this.promote(flowId);
     } catch (e) { report(e); }
@@ -663,13 +669,15 @@ export class Engine {
     this.notify();
   }
 
-  /** 不经主会话、由程序直接派发的 ready 任务：merge-fix、逐任务审查（.rv）、复现确认、文档任务与 S0 的全部任务（architect 与门禁修复） */
+  /** 不经主会话、由程序直接派发的 ready 任务：merge-fix、逐任务审查（.rv）、复现确认、文档任务、架构师咨询与 S0 的全部任务（architect 与门禁修复） */
   private async dispatchProgramDriven(flowId: string): Promise<void> {
     const flow = this.d.store.readFlow(flowId);
-    const tasks = this.d.store.listTasks(flowId);
+    const all = this.d.store.listTasks(flowId);
+    const held = heldConsults(all);
+    const tasks = all.filter((t) => !held.has(t.id));
     const ids = selectDispatchable(tasks, flow.stage, flowLimits(this.d.config.limits, flow)).filter((id) => {
       const t = tasks.find((x) => x.id === id);
-      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || t.kind === 'qa' || t.kind === 'doc' || isArchitectStage(t.stage)) && !this.pausedFor(flowId, t);
+      return !!t && (t.kind === 'merge-fix' || t.kind === 'review' || t.kind === 'qa' || t.kind === 'doc' || t.kind === 'consult' || isArchitectStage(t.stage)) && !this.pausedFor(flowId, t);
     });
     for (const id of ids) {
       // 循环里有 await，别的推进（子进程退出回调）可能已经派发了它：以最新状态为准

@@ -53,14 +53,11 @@ export function buildViewData(store: StateStore, root: string, now = new Date())
         if (existsSync(e)) (evidence[t.id] ??= {})[name] = tail(readFileSync(e, 'utf8'), EVIDENCE_TAIL);
       }
     }
-    // 变更请求里的完整计划文本很长，页面只看摘要与动作
-    const changes = store.listChanges(id).map(({ plan_text: _p, ...c }) => c);
-    const amends: unknown[] = []; // 规格修订已删除（M1 删减）
     let metrics: unknown = null;
     try { metrics = flowMetrics(store, id, now, root); } catch {
       try { metrics = flowMetrics(store, id, now); } catch { metrics = null; }
     }
-    return { flow, kind: flowKind(flow), stageRows: stageRows(flow, tasks), tasks, handoffs, evidence, changes, amends, metrics };
+    return { flow, kind: flowKind(flow), stageRows: stageRows(flow, tasks), tasks, handoffs, evidence, metrics };
   });
   const events = store.readEvents().map(({ entities: _e, prev_hash: _p, hash: _h, ...e }) => e);
   const data = {

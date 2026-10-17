@@ -54,6 +54,10 @@ const cases: Case[] = [
   ...(['run_failed', 'run_interrupted', 'run_paused', 'run_timeout'] as const).map((trigger): Case => ({ from: 'in_progress', to: 'in_progress', trigger, task: trigger === 'run_timeout' ? { timeout_review: { run: 'r-1', at: NOW.toISOString(), minutes: 30 } } : {}, reject: { reason: '' }, rejectTask: { lease: null } })),
   { from: 'in_progress', to: 'ready', trigger: 'lease_expired', facts: { now: new Date('2026-01-01T00:31:00Z'), worktree_clean: true }, reject: { worktree_clean: false } },
   ...(['pending', 'ready', 'blocked'] as const).map((from): Case => ({ from, to: 'cancelled', trigger: 'cancel', facts: { actor: 'human' }, reject: { actor: 'engine' } })),
+  { from: 'in_progress', to: 'queued_merge', trigger: 'submit', task: { kind: 'consult', writes: ['**'] }, facts: { review_required: false }, reject: { review_required: true }, rejectTask: { kind: 'review' } },
+  { from: 'in_progress', to: 'done', trigger: 'report', task: { kind: 'consult' }, facts: { diff_files: [] }, reject: { structured_report: false }, rejectTask: { kind: 'merge-fix' } },
+  { from: 'in_progress', to: 'blocked', trigger: 'ask', facts: { actor: 'run:r-1' }, reject: { reason: '' }, rejectTask: { lease: null } },
+  { from: 'blocked', to: 'in_progress', trigger: 'answered', task: { blocked_by: 'architect' }, reject: { actor: 'orchestrator' }, rejectTask: { blocked_by: 'agent' } },
 ];
 for (const [i, c] of cases.entries()) test(`转移 ${i + 1}：${c.from} → ${c.to}（${c.trigger}，${c.task?.kind ?? 'impl'}）正反例`, () => {
   const t = task(c.from, c.task), f = facts(c.facts);
@@ -64,6 +68,13 @@ for (const [i, c] of cases.entries()) test(`转移 ${i + 1}：${c.from} → ${c.
   // 检查整份任务变化前的形状与 blocked 原因。
   if (c.to === 'blocked') assert.ok(result.task.blocked_by);
   if (c.from === 'blocked' && c.to !== 'blocked') assert.equal(result.task.blocked_by, null);
+});
+
+test('提问等架构师：阻塞原因 architect，不交给主会话；只有程序能在回答后恢复', () => {
+  const asked = ok(planTransition(task('in_progress'), 'blocked', 'ask', facts({ actor: 'run:r-1', reason: '等架构师回答' }))).task;
+  assert.deepEqual([asked.blocked_by, asked.blocked_owner, asked.lease], ['architect', undefined, null]);
+  bad(planTransition(asked, 'in_progress', 'answered', facts({ actor: 'human' })));
+  assert.equal(ok(planTransition(asked, 'in_progress', 'answered', facts())).task.blocked_by, null);
 });
 
 test('阻塞先交给主会话：程序与子进程造成的阻塞带 blocked_owner；主会话可解除、放行、转交用户；决定次数到上限后直接等用户', () => {

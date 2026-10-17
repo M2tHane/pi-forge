@@ -8,9 +8,8 @@ import type { StateStore, TaskInput } from '../state/state-store.ts';
 import { git, gitOk } from '../state/git.ts';
 import { isSettled } from '../state/state-machine.ts';
 import { COMMANDS_FILE, commandsProblems } from '../state/project-commands.ts';
-import { ownAcceptanceGlob } from '../state/paths.ts';
+import { nextPlanTaskId, ownAcceptanceGlob } from '../state/paths.ts';
 import { checkPrd, parsePrd, PRD_PATH } from '../spec/prd.ts';
-import { nextPlanTaskId } from './plan.ts';
 import { ARCH_REQUIRED_FILES, PLAN_MD, S0_EXTRA_WRITES, checkBatchPlan, deriveBatchTasks, parseBatchPlan, risksSection, splitPlan, type BatchPlan } from './batches.ts';
 
 export const ARCH_STAGE = 'S0';

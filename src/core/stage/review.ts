@@ -27,8 +27,8 @@ export function reviewPolicy(config: FlowConfig): ReviewPolicy {
   };
 }
 
-/** 这些类型的 task 不做逐任务审查：fix（.fx-n，审查任务编号 T-001.fx-1.rv 不符合编号规则，回归由阶段门禁和 stage-qa 的确认轮核对）、doc 不是实施代码，review/qa 本身是审查 */
-const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'review', 'qa'];
+/** 这些类型的 task 不做逐任务审查：fix（.fx-n，审查任务编号 T-001.fx-1.rv 不符合编号规则，回归由阶段门禁和 stage-qa 的确认轮核对）、doc 不是实施代码，review/qa 本身是审查；consult（架构师咨询）不审查，改动由批次门禁的 contract_check 与 stage-qa 兜底 */
+const NO_REVIEW_KINDS: readonly string[] = ['fix', 'merge-fix', 'doc', 'review', 'qa', 'consult'];
 
 /**
  * 推导一个 impl task 的审查强度（审查者读 diff 并运行本 task 自己的测试）。

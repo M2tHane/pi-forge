@@ -8,7 +8,7 @@ import type { StateStore, TaskInput } from '../core/state/state-store.ts';
 import { git } from '../core/state/git.ts';
 import { isDocsUpdateTask } from '../core/state/state-machine.ts';
 import { CHANGE_STAGE, checkChangePlan, type ChangePlanInput } from '../core/plan/change-plan.ts';
-import { nextPlanTaskId } from '../core/plan/plan.ts';
+import { nextPlanTaskId } from '../core/state/paths.ts';
 import { headSha } from '../core/workspace/worktree.ts';
 import { stageBaseFor, stageDiffStat } from '../core/stage/stage-qa.ts';
 import { fixRefusal } from './refusal.ts';

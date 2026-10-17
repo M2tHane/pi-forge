@@ -162,7 +162,7 @@ test('reviewer 用 for_task 的 impl 的 produces；stage-qa、architect 不输�
   assert.match(rv, /api:POST \/api\/datasources（T-003 正在实现）/);
   assert.match(rv, /## 本阶段及之前已交付的接口/);
   assert.doesNotMatch(ifaceUser('stage-qa', 'T-003'), /## 本阶段及之前已交付的接口/);
-  // architect：P1 / 变更请求的 doc task 不输出；S0 的 impl / fix 与 worker 一样输出
+  // architect：小改动的 doc task 不输出；S0 的 impl / fix 与 worker 一样输出
   const doc = mkTask('T-009', { kind: 'doc', role: 'architect' });
   assert.doesNotMatch(ifaceUser('architect', 'T-009', [...ifaceTasks(), doc]), /## 本阶段及之前已交付的接口/);
   assert.match(ifaceUser('architect', 'T-003'), /## 本阶段及之前已交付的接口[\s\S]*api:POST \/api\/datasources/);

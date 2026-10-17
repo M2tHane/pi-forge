@@ -18,7 +18,7 @@ import { testAdjustEnabled } from '../verify/test-adjust.ts';
 import { cleanTreeOf, recordVerified, reusableRuns, reuseText } from '../verify/verify-cache.ts';
 import { prepareWorkspaceRecorded } from '../workspace/workspace.ts';
 import { resourceOptions, withResources } from '../workspace/resources.ts';
-import { nextPlanTaskId } from '../plan/plan.ts';
+import { nextPlanTaskId } from '../state/paths.ts';
 import { usedTaskIds } from '../plan/plan-flow.ts';
 
 

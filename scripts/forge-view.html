@@ -107,7 +107,6 @@ details summary { cursor: pointer; color: var(--text-secondary); }
   <button role="tab" data-tab="stages">阶段</button>
   <button role="tab" data-tab="dag">任务 DAG</button>
   <button role="tab" data-tab="metrics">度量</button>
-  <button role="tab" data-tab="changes">变更与修订</button>
   <button role="tab" data-tab="tl">运行时间线</button>
   <button role="tab" data-tab="cost">成本</button>
   <button role="tab" data-tab="ev">事件日志</button>
@@ -152,10 +151,6 @@ details summary { cursor: pointer; color: var(--text-secondary); }
       <div class="card grow"><h2>成本（按阶段）</h2><div style="overflow:auto"><table id="mCost"></table></div></div>
     </div>
     <div class="card" style="margin-top:16px"><h2>任务耗时（派发到完成）</h2><div id="mTaskBars"></div></div>
-  </section>
-  <section class="panel" id="p-changes">
-    <div class="card"><h2>变更请求</h2><div class="hint">worker 或主会话用 forge_change_request 发起，architect 起草，用户 /forge-approve change:/forge-change 起草、用户批准后落地。同一时间只有一个在处理。lt;id/forge-change 起草、用户批准后落地。同一时间只有一个在处理。gt; 批准后落地。同一时间只有一个在处理。</div><div id="chList"></div></div>
-    <div class="card" style="margin-top:16px"><h2>规格修订</h2><div class="hint">P0 批准后对 docs/spec/features 的修订；批准前相关任务不派发。</div><div id="amList"></div></div>
   </section>
   <section class="panel" id="p-dag">
     <div class="row">
@@ -270,7 +265,7 @@ const TRIG = {
   run_paused: ['程序', '模型额度用完或服务不可用：不计失败，暂停该模型'],
   run_timeout: ['程序', '运行超过时间预算被结束（计一次失败），等主会话复核'],
   report: ['审查者', '审查或 stage-qa 提交结论，直接完成'],
-  cancel: ['用户', '批准的变更请求取消未开始的任务'],
+  cancel: ['用户', '取消未开始或阻塞的任务'],
 };
 // 运行结果：标签是具体结果，颜色按大类（图例按大类显示）
 const OUT = {
@@ -326,7 +321,6 @@ function render() {
   renderStages(F);
   renderDAG(F, runs, evs);
   renderMetrics(F);
-  renderChanges(F);
   renderTimeline(flow, runs, evs, tasks);
   renderCost(F, runs, evs, tasks);
   renderEvents(evs);
@@ -728,21 +722,6 @@ function renderMetrics(F) {
   const withRun = m.tasks.filter((t) => t.run_min != null).sort((a, b) => b.run_min - a.run_min).slice(0, 15);
   const max = Math.max(1, ...withRun.map((t) => t.run_min));
   $('#mTaskBars').innerHTML = withRun.map((t) => { const task = F.tasks.find((x) => x.id === t.task); return `<div class="bar-row"><span>${esc(t.task)}</span><div class="bar-track"><div class="bar" style="width:${t.run_min / max * 100}%;background:${roleC(task?.role)}"></div></div><span class="hint" style="text-align:right">${t.run_min} 分钟${t.queue_min != null ? `（排队 ${t.queue_min}）` : ''}</span></div>`; }).join('') || '<div class="hint">还没有完成的任务</div>';
-}
-
-// —— 变更请求与规格修订 ——
-const CH_ST = { drafting: '起草中', proposed: '等你批准', approved: '已批准', rejected: '已打回', cancelled: '已取消' };
-const ACT_KIND = { add: '新增', adjust: '调整', cancel: '取消', followup: '跟进修改', acctest: '改验收测试', stages: '调整阶段' };
-function renderChanges(F) {
-  const list = (items) => items.length ? `<ul style="margin:0;padding-left:18px">${items.map((x) => `<li>${x}</li>`).join('')}</ul>` : '<span class="hint">无</span>';
-  $('#chList').innerHTML = F.changes.map((c) => `<div class="card" style="margin:8px 0"><b>${esc(c.id)}</b> · ${esc(CH_ST[c.status] ?? c.status)} · 来源 ${esc(c.source)} · 起草 ${c.rounds} 轮 · 起草任务 ${esc(c.task)} <span class="hint">${time(c.created_at)}</span>
-    <dl class="kv" style="margin-top:6px"><dt>改什么</dt><dd>${esc(c.what)}</dd><dt>为什么</dt><dd>${esc(c.why)}</dd><dt>影响</dt><dd>${esc(c.impact)}</dd>
-    ${c.summary ? `<dt>摘要</dt><dd>${esc(c.summary)}</dd>` : ''}${c.changed_acs.length ? `<dt>变化的 AC</dt><dd>${c.changed_acs.map(esc).join('、')}</dd>` : ''}
-    <dt>暂停派发</dt><dd>${c.touched.map(esc).join('、') || '无'}</dd><dt>动作</dt><dd>${list((c.actions ?? []).map((a) => `${esc(ACT_KIND[a.kind] ?? a.kind)}${a.task ? ' ' + esc(a.task) : ''}${a.of ? '（改 ' + esc(a.of) + '）' : ''}${a.stage ? ' @' + esc(a.stage) : ''}${a.mode ? ' [' + esc(a.mode) + ']' : ''}${a.detail ? '：' + esc(a.detail) : ''}`))}</dd>
-    ${(c.warnings ?? []).length ? `<dt>提醒</dt><dd>${c.warnings.map(esc).join('<br>')}</dd>` : ''}${c.feedback ? `<dt>反馈</dt><dd>${esc(c.feedback)}</dd>` : ''}</dl></div>`).join('') || '<div class="hint">没有变更请求</div>';
-  $('#amList').innerHTML = F.amends.map((a) => `<div class="card" style="margin:8px 0"><b>${esc(a.id)}</b> · ${esc(CH_ST[a.status] ?? a.status)} · ${esc(a.name)} <span class="hint">${esc(a.path)} · ${time(a.created_at)}</span>
-    <dl class="kv" style="margin-top:6px"><dt>原因</dt><dd>${esc(a.reason)}</dd><dt>新增 AC</dt><dd>${a.diff.added.map(esc).join('、') || '无'}</dd><dt>改动 AC</dt><dd>${a.diff.changed.map(esc).join('、') || '无'}</dd><dt>删除 AC</dt><dd>${a.diff.removed.map(esc).join('、') || '无'}</dd>
-    <dt>影响的任务</dt><dd>${a.affected_tasks.map(esc).join('、') || '无'}</dd>${a.feedback ? `<dt>反馈</dt><dd>${esc(a.feedback)}</dd>` : ''}${a.sha ? `<dt>提交</dt><dd>${esc(a.sha.slice(0, 10))}</dd>` : ''}</dl></div>`).join('') || '<div class="hint">没有规格修订</div>';
 }
 
 

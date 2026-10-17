@@ -7,7 +7,7 @@ import { matchesAny, ownAcceptanceGlob } from '../state/paths.ts';
 import { git } from '../state/git.ts';
 import { nextFixId } from './acceptance-flow.ts';
 
-export type StageFixSource = 'gate' | 'qa' | 'post_merge';
+export type StageFixSource = 'gate' | 'qa' | 'post_merge' | 'signoff';
 /**
  * 一个问题：涉及的文件与给 worker 的说明。
  * owner：直接指定负责的 impl task（跳过 ownerOf 查找，例如验收测试目录 tests/acceptance/<T-xxx>/ 的失败，worker 不能写测试）；
@@ -15,7 +15,7 @@ export type StageFixSource = 'gate' | 'qa' | 'post_merge';
  */
 export interface StageIssue { files: readonly string[]; text: string; owner?: string; writes?: readonly string[] }
 
-const SOURCE_LABEL: Record<StageFixSource, string> = { gate: '阶段门禁', qa: 'stage-qa', post_merge: '合并后回归测试' };
+const SOURCE_LABEL: Record<StageFixSource, string> = { gate: '阶段门禁', qa: 'stage-qa', post_merge: '合并后回归测试', signoff: '用户签收' };
 
 /** task 没有时间戳：按编号排序（T-003 < T-010；T-003.fx-2 < T-003.fx-10） */
 const idKey = (id: string) => [Number(/^T-(\d+)/.exec(id)?.[1] ?? 0), Number(/\.fx-(\d+)$/.exec(id)?.[1] ?? 0)] as const;

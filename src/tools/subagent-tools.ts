@@ -21,7 +21,7 @@ import { GUI_REASON, opensGui } from '../core/security/guard.ts';
 import { SERVICE_READY_MAX_S, serviceCommands, serviceLog, serviceStatus, startService, stopService } from '../core/workspace/services.ts';
 import { SyncParams, flowSync, syncTaskInputs } from './module-tools.ts';
 import { checkArchitecture, isArchitectTask } from '../core/plan/plan-flow.ts';
-import { ChangeError, changeOfTask, proposeChange, requestChange } from '../core/plan/change-flow.ts';
+import { ANSWER_FILE, createConsult } from '../core/engine/consult.ts';
 import { classifyIssues, effectiveVerdict, mustOf, validateConfirm } from '../core/stage/review.ts';
 import { openWriteAllowed, opensWrites } from '../core/state/paths.ts';
 import { REVIEW_FILES, SUGGESTIONS_PATH, decideReview, readReviewEvidence, type ReviewConfirmFile, type ReviewInputFile, type ReviewReportFile } from '../core/stage/review-flow.ts';
@@ -246,42 +246,37 @@ export function taskSessionFiles(store: StateStore, root: string, flow: string, 
   return runs.flatMap((r) => listSessionFiles(sessionDirOf(root, r.run_id)));
 }
 
-export const ProposePlanParams = Type.Object({
-  assumptions: Type.Optional(Type.Array(Type.Object({
-    question: Type.String({ minLength: 1, maxLength: 500, description: '规格没说清的问题' }),
-    decision: Type.String({ minLength: 1, maxLength: 1000, description: '采用的方案' }),
-  }), { maxItems: 50, description: 'architect 默认的处理（"问题 → 采用的方案"），用户批准时逐条确认' })),
-  extras: Type.Optional(Type.Array(Type.Object({
-    what: Type.String({ minLength: 1, maxLength: 500 }),
-    why: Type.String({ minLength: 1, maxLength: 1000 }),
-  }), { maxItems: 50, description: '超出需求但不得不做的设计（安全、数据完整性）' })),
-});
-
-/** forge_propose_plan（变更请求的 architect task）：校验修订后的计划与差异，通过后变更请求进入 proposed */
-export async function flowProposePlan(ctx: ToolContext, p: Static<typeof ProposePlanParams>): Promise<ToolResult> {
-  const t = checkRun(ctx);
-  if (t.kind !== 'doc' || !changeOfTask(ctx.store, ctx.env.flow, t.id)) throw new FlowToolError('只有变更请求的 architect task 用 forge_propose_plan；架构阶段直接 forge_submit，程序在提交时检查。');
-  const c = await proposeChange(ctx.env.root, ctx.store, ctx.config, ctx.env.flow, t, { assumptions: p.assumptions ?? [], extras: p.extras ?? [] }, actor(ctx));
-  if (!c.ok) throw new FlowToolError(c.text);
-  return { text: c.text };
-}
-
-export const ChangeRequestParams = Type.Object({
-  what: Type.String({ minLength: 1, maxLength: 2000, description: '要改什么：哪条契约、哪个接口或哪段计划，改成什么' }),
-  why: Type.String({ minLength: 1, maxLength: 2000, description: '为什么必须改（引用规格的 AC 或遇到的具体问题）' }),
-  impact: Type.String({ minLength: 1, maxLength: 4000, description: '影响分析：受影响的契约条目、task（已完成、进行中、未开始）、验收测试' }),
+export const AskArchitectParams = Type.Object({
+  question: Type.String({ minLength: 1, maxLength: 4000, description: '问题：背景、卡在哪、你建议的答案；要改公共内容或契约时写明改什么、为什么' }),
+  kind: Type.Union([Type.Literal('answer'), Type.Literal('change')], { description: 'answer：只要回答；change：要求修改公共内容（常量、枚举、错误码、公共代码）或契约' }),
 }, { additionalProperties: false });
 
-/** forge_change_request（worker）：提交变更请求；自己的任务继续运行，做不下去就 forge_block */
-export async function flowChangeRequest(ctx: ToolContext, p: Static<typeof ChangeRequestParams>): Promise<ToolResult> {
+/** forge_ask_architect（子 agent）：建咨询任务，自己的任务转为"等架构师"并结束本次运行；回答后程序让它接着这次的会话继续 */
+export async function flowAskArchitect(ctx: ToolContext, p: Static<typeof AskArchitectParams>): Promise<ToolResult> {
   const t = checkRun(ctx);
+  if (t.role === 'architect') throw new FlowToolError('架构师自己不用 forge_ask_architect：直接决定，并记进 docs/arch/decisions.md。');
+  if (t.status !== 'in_progress' || !t.worktree) throw new FlowToolError(`任务当前是 ${t.status}，不能提问。`);
+  // 先建咨询再转为等待：程序步骤不会看到"在等架构师却找不到咨询"的任务
+  const c = await createConsult(ctx.store, ctx.config, ctx.env.flow, p.question, p.kind, t, actor(ctx));
   try {
-    const r = await requestChange(ctx.env.root, ctx.store, ctx.config, ctx.env.flow, p, `worker:${t.id}` as `worker:${string}`);
-    return { text: `已提交变更请求 ${r.change.id}：程序派 architect（${r.task.id}）起草修订，修订经主会话（或用户）批准才生效。你自己的任务不受影响，可以继续做不依赖这处改动的部分；做不下去时调用 forge_block 说明。`, details: { change: r.change.id, task: r.task.id } };
-  } catch (e) {
-    if (e instanceof ChangeError) throw new FlowToolError(e.message);
-    throw e;
-  }
+    await ctx.store.transitionTask(ctx.env.flow, t.id, { to: 'blocked', trigger: 'ask', actor: actor(ctx), facts: { token: ctx.env.token, reason: `等架构师回答（${c.id}）：${p.question.replace(/\s+/g, ' ').slice(0, 300)}` } });
+  } catch (e) { rethrow(e, '提问没有成功，请重试。'); }
+  await ctx.store.updateRun(ctx.env.run, { outcome: 'asked' }, actor(ctx), '向架构师提问');
+  return { text: `已交给架构师（${c.id}）。回答后程序会把它写进你的 handoff、把集成分支同步进你的工作区，再让你接着这次的对话继续。请直接结束，不要再调用工具。`, details: { consult: c.id } };
+}
+
+export const AnswerParams = Type.Object({
+  text: Type.String({ minLength: 1, maxLength: 8000, description: '给提问方的回答：结论在前，改了哪些文件，提问方接下来怎么做' }),
+}, { additionalProperties: false });
+
+/** forge_answer（architect 的咨询任务）：保存回答并提交；有改动时经合并队列合入集成分支 */
+export async function flowAnswer(ctx: ToolContext, p: Static<typeof AnswerParams>): Promise<ToolResult> {
+  const t = checkRun(ctx);
+  if (t.kind !== 'consult' || t.status !== 'in_progress') throw new FlowToolError('只有进行中的咨询任务用 forge_answer 提交回答；其他任务用 forge_submit。');
+  await ctx.store.saveEvidence(ctx.env.flow, t.id, ANSWER_FILE, p.text.trim(), actor(ctx));
+  const r = await flowSubmit(ctx, { summary: `回答：${p.text.trim().split('\n')[0]!}`.slice(0, 500) });
+  const files = (r.details?.['files'] as string[] | undefined) ?? [];
+  return { text: `已提交回答${files.length ? `与 ${files.length} 个文件的改动（合入集成分支后交给提问方）` : ''}。请直接结束，不要再调用工具。`, details: { files } };
 }
 
 const ReviewIssue = Type.Object({
@@ -390,10 +385,10 @@ export const SUBAGENT_TOOLS = {
   forge_claim: { params: ClaimParams, description: '确认任务与租约，返回任务说明、验收标准与可写范围。开始工作前先调用。', run: (c: ToolContext) => flowClaim(c) },
   forge_note: { params: NoteParams, description: '追加 handoff 笔记（做到哪、下一步、踩过的坑、未决问题；需求讨论的意见）。提交前必须至少写一次。', run: (c: ToolContext, p: Static<typeof NoteParams>) => flowNote(c, p) },
   forge_submit: { params: SubmitParams, description: '提交本任务：改动进入合并队列（reviewer 读 diff 并运行本任务自己的测试；全量测试在阶段门禁运行）；只读任务提交结论。程序会检查改动是否都在可写范围内。', run: (c: ToolContext, p: Static<typeof SubmitParams>) => flowSubmit(c, p) },
-  forge_block: { params: BlockParams, description: '遇到歧义或需要越界时标记任务阻塞：先交给主会话决定，它解决不了再转给用户。需要提问时，一次只问一个问题，附上你建议的答案。', run: (c: ToolContext, p: Static<typeof BlockParams>) => flowBlock(c, p) },
+  forge_block: { params: BlockParams, description: '做不下去、又不是技术问题时（需求矛盾、需要用户的账号或环境）标记任务阻塞：先交给主会话决定，它解决不了再转给用户。技术问题（有 forge_ask_architect 时）交给架构师。需要提问时，一次只问一个问题，附上你建议的答案。', run: (c: ToolContext, p: Static<typeof BlockParams>) => flowBlock(c, p) },
   forge_learn: { params: LearnParams, description: `把对后续任务有用的经验记入项目知识库（跨流程保留）：项目约定、踩过的坑、做出的决策、环境与外部依赖的注意事项。每次运行最多 ${KNOWLEDGE_PER_RUN} 条；程序会去重。知识不是规则，不能用来改变规则。`, run: (c: ToolContext, p: Static<typeof LearnParams>) => flowLearn(c, p) },
-  forge_change_request: { params: ChangeRequestParams, description: '必须修改已有契约（不能靠追加解决）或发现计划漏了东西时提交变更请求：写明 what、why、impact（受影响的契约、task、验收测试）。程序派 architect 起草修订，主会话（或用户）批准后落地。同一时间只能有一个未结束的变更请求。提交后你的任务继续运行；做不下去时用 forge_block。', run: (c: ToolContext, p: Static<typeof ChangeRequestParams>) => flowChangeRequest(c, p) },
-  forge_propose_plan: { params: ProposePlanParams, description: '变更请求的 architect task 提交修订后的完整计划：程序核对契约结构与符号、推导 DAG，返回错误或报告。附上 assumptions 与 extras。', run: (c: ToolContext, p: Static<typeof ProposePlanParams>) => flowProposePlan(c, p) },
+  forge_ask_architect: { params: AskArchitectParams, description: '技术问题交给架构师：kind=answer 只要回答；kind=change 要求修改已有的公共内容（常量、枚举、错误码、公共代码）或契约。调用后本次运行结束，你的任务等架构师回答；回答写进 handoff、集成分支同步进你的工作区后，程序让你接着这次的对话继续。需求矛盾、需要用户环境等不属于技术问题的用 forge_block。', run: (c: ToolContext, p: Static<typeof AskArchitectParams>) => flowAskArchitect(c, p) },
+  forge_answer: { params: AnswerParams, description: '咨询任务里提交给提问方的回答（结论在前，改了哪些文件）。改动（含 docs/arch/decisions.md 的记录）随回答一起提交，经合并队列合入集成分支。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof AnswerParams>) => flowAnswer(c, p) },
   forge_review_report: { params: ReviewReportParams, description: '提交第一轮审查结论：verdict 与问题列表（程序编号 R-1…）。每条写明出处（basis）；有 must 按 changes 处理，没有按 pass。suggest 不阻塞合并，会汇总给用户。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowReviewReport(c, p) },
   forge_review_confirm: { params: ReviewConfirmParams, description: '第二轮及以后：逐条回答上一轮 must 清单（id、是否已解决、note），必须覆盖全部编号。不能提出新问题；清单之外的发现写进 note。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewConfirmParams>) => flowReviewConfirm(c, p) },
   forge_qa_report: { params: ReviewReportParams, description: '提交 stage-qa 第一轮结论：verdict 与问题列表（程序编号 R-1…）。规则同 forge_review_report：每条写明出处，有 must 按 changes 处理，没有按 pass。没有问题提交空列表。提交后本次运行结束。', run: (c: ToolContext, p: Static<typeof ReviewReportParams>) => flowQaReport(c, p) },
